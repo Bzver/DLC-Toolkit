@@ -8,34 +8,99 @@ import yaml
 
 import cv2
 from PySide6 import QtWidgets
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QtGui
 
 #######################    W    #######################    I    #######################    P    #######################
 
-class DLCOutlierFinder:  # GUI for manually select the outliers
+class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the outliers
     def __init__(self):
+        super().__init__()
+        self.setWindowTitle("DLC Outlier Finder")
+        self.setGeometry(100, 100, 800, 600)
 
+        self.central_widget = QtWidgets.QWidget()
+        self.setCentralWidget(self.central_widget)
+        self.layout = QtWidgets.QVBoxLayout(self.central_widget)
 
+        # Video display area
+        self.video_label = QtWidgets.QLabel("No video loaded")
+        self.video_label.setAlignment(Qt.AlignCenter)
+        self.video_label.setStyleSheet("background-color: black; color: white;")
+        self.layout.addWidget(self.video_label)
 
-        self.original_vid = original_vid
-        self.prediction = prediction
+        # Buttons
+        self.button_layout = QtWidgets.QHBoxLayout()
+        self.load_video_button = QtWidgets.QPushButton("Load Video")
+        self.load_prediction_button = QtWidgets.QPushButton("Load Prediction")
+        self.save_frame_button = QtWidgets.QPushButton("Save Current Frame")
+
+        self.button_layout.addWidget(self.load_video_button)
+        self.button_layout.addWidget(self.load_prediction_button)
+        self.button_layout.addWidget(self.save_frame_button)
+        self.layout.addLayout(self.button_layout)
+
+        # Connect buttons to placeholder methods
+        self.load_video_button.clicked.connect(self.load_video)
+        self.load_prediction_button.clicked.connect(self.load_prediction)
+        self.save_frame_button.clicked.connect(self.save_current_frame)
+
+        self.original_vid = None
+        self.prediction = None
         self.frame_list = None
-        self.deeplabcut_dir = deeplabcut_dir
-
-
+        self.deeplabcut_dir = None
+        self.cap = None # Video capture object
+        self.current_frame = None # Current frame image
+        self.frame_list = []
 
     def load_video(self):
-        pass
+        file_dialog = QtWidgets.QFileDialog(self)
+        video_path, _ = file_dialog.getOpenFileName(self, "Load Video", "", "Video Files (*.mp4 *.avi *.mov);;All Files (*)")
+        if video_path:
+            self.original_vid = video_path
+            self.cap = cv2.VideoCapture(self.original_vid)
+            if not self.cap.isOpened():
+                print(f"Error: Could not open video {self.original_vid}")
+                self.video_label.setText("Error: Could not open video")
+                self.cap = None
+                return
+            self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            self.current_frame_idx = 0
+            self.display_current_frame()
+            print(f"Video loaded: {self.original_vid}")
 
-    def load_and_plot_pose_estimation(self):
-        config = os.path.join(self.deeplabcut_dir,"config.yaml")
+    def load_prediction(self):
+        file_dialog = QtWidgets.QFileDialog(self)
+        prediction_path, _ = file_dialog.getOpenFileName(self, "Load Prediction", "", "HDF5 Files (*.h5);;All Files (*)")
+        if prediction_path:
+            self.prediction = prediction_path
+            print(f"Prediction loaded: {self.prediction}")
 
-        with open(config, "r") as conf:
-            cfg = yaml.safe_load(conf)
-        self.multi_animal = cfg["multianimalproject"]
+    def change_current_frame_status(self):
+        if self.current_frame is not None and not self.current_frame in self.frame_list:
+            self.frame_list.append(self.current_frame_idx)
+        elif self.current_frame in self.frame_list:
+            self.frame_list.remove(self.current_frame_idx)
 
-        pass
-
+    def display_current_frame(self):
+        if self.cap and self.cap.isOpened():
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame_idx)
+            ret, frame = self.cap.read()
+            if ret:
+                self.current_frame = frame
+                # Convert OpenCV image to QPixmap
+                rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                h, w, ch = rgb_image.shape
+                bytes_per_line = ch * w
+                qt_image = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
+                pixmap = QtGui.QPixmap.fromImage(qt_image)
+                # Scale pixmap to fit label
+                scaled_pixmap = pixmap.scaled(self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                self.video_label.setPixmap(scaled_pixmap)
+                self.video_label.setText("") # Clear "No video loaded" text
+            else:
+                self.video_label.setText("Error: Could not read frame")
+        else:
+            self.video_label.setText("No video loaded")
 
 class DLCOutlierExtractor:  # Backend for extracting outliers for further labelling
     def __init__(self, original_vid, prediction, frame_list, deeplabcut_dir):
@@ -236,10 +301,7 @@ class DLCOutlierExtractor:  # Backend for extracting outliers for further labell
             pass
 
 if __name__ == "__main__":
-    video_name = ""
-    frame_list = [0,3,5,8]
-    original_vid = "D:/Project/DLC-Models/NTD/videos/jobs/20250626C1-first3h-conv/view3/20250626C1-first3h-D.mp4"
-    prediction = "D:/Project/DLC-Models/NTD/videos/jobs/20250626C1-first3h-conv/view3/20250626C1-first3h-DDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_090_snapshot_080_el.h5"
-    deeplabcut_dir = "D:/Project/DLC-Models/NTD"
-    extractor = DLCOutlierExtractor(original_vid, prediction, frame_list, deeplabcut_dir)
-    extractor.extract_frame_and_label()
+    app = QtWidgets.QApplication([])
+    window = DLCOutlierFinder()
+    window.show()
+    app.exec()
