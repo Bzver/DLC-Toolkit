@@ -111,6 +111,7 @@ class DLCOutlierExtractor:  # Backend for extracting outliers for further labell
 
         self.project_dir = None
         self.multi_animal = False
+        self.video_name = None
         self.scorer = "machine-labeled"
         self.data = []
         self.existing_project = False
@@ -124,11 +125,11 @@ class DLCOutlierExtractor:  # Backend for extracting outliers for further labell
             print(f"Prediction file not found at {self.prediction}")
             return False
         else:
-            video_name = os.path.basename(self.original_vid).split(".")[0]
+            self.video_name = os.path.basename(self.original_vid).split(".")[0]
             video_path = os.path.dirname(self.original_vid)
 
             if self.deeplabcut_dir is not None:
-                self.project_dir = os.path.join(self.deeplabcut_dir,"labeled-data",video_name)
+                self.project_dir = os.path.join(self.deeplabcut_dir,"labeled-data",self.video_name)
                 if os.path.isdir(self.project_dir) and any(os.scandir(self.project_dir)):
                     print(f"Existing project folder found, checking for already labelled image...")
                     self.existing_project = True
@@ -238,7 +239,7 @@ class DLCOutlierExtractor:  # Backend for extracting outliers for further labell
         labels_df = pd.DataFrame(self.data, columns=columns)
         labels_df["frame"] = labels_df["frame"].apply(
             lambda x: (
-                f"labeled-data/{video_name}/"
+                f"labeled-data/{self.video_name}/"
                 f"img{str(int(x)).zfill(8)}.png"
             )
         )
