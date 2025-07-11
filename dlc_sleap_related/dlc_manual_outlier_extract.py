@@ -333,58 +333,39 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
             print(f"Frame index {self.current_frame_idx} out of bounds for prediction data.")
             return frame
 
-        # Colors for drawing
         colors = [(0, 255, 0), (0, 0, 255), (255, 255, 0), (255, 0, 255), (0, 255, 255)] # BGR
-        
+        if self.keypoints is None: 
+            num_keypoints = current_frame_data.size // self.instance_count * 2 // 3 # Consider the confidence col
+        elif len(self.keypoints) != current_frame_data.size // self.instance_count * 2 // 3:
+            print("Error: Keypoints in config and keypoints in prediction do not match! Falling back to prediction parameters!")
+            self.keypoints = None
+            self.skeleton = None
+            num_keypoints = current_frame_data.size // self.instance_count * 2 // 3
+        else:
+            num_keypoints = len(self.keypoints)
+
         # Iterate over each individual (animal)
         for inst in range(self.instance_count):
-            # Determine the color based on the individual
             color = colors[inst % len(colors)]
-            
-            # Dictionary to store keypoint coordinates for this individual
+            # Initiate an empty dict for storing coordinates
             keypoint_coords = {}
-
-        #     # Iterate over each keypoint (bodypart)
-        #     for i, keypoint in enumerate(self.keypoints):
-        #         # Construct the column name based on single or multi-animal project
-        #         if self.multi_animal:
-        #             col_name_x = (self.individuals[inst], keypoint, 'x')
-        #             col_name_y = (self.individuals[inst], keypoint, 'y')
-        #         else:
-        #             col_name_x = (keypoint, 'x')
-        #             col_name_y = (keypoint, 'y')
+            for i in range(num_keypoints):
+                x = current_frame_data(i*3) # every third col in confidence col lol
+                if x is None:
+                    continue # Skip empty coords
+                y = current_frame_data(i*3+1)
+                keypoint = i if self.keypoints is None else self.keypoints[i]
+                keypoint_coords[keypoint] = (x,y)
                 
-        #         # Retrieve x and y coordinates using the column names
-        #         # Find the index of the column tuple in the structured data's field names
-        #         try:
-        #             x_idx = self.pred_data.dtype.names.index(col_name_x)
-        #             y_idx = self.pred_data.dtype.names.index(col_name_y)
+                cv2.circle(frame, (x,y), 3, color, -1) # Draw the dot
+                cv2.putText(frame, keypoint, (x + 10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA) # Add the label
 
-        #             x = int(current_frame_data[x_idx])
-        #             y = int(current_frame_data[y_idx])
-                    
-        #             # Store the coordinates for later skeleton drawing
-        #             keypoint_coords[keypoint] = (x, y)
-                    
-        #             # Draw the circle on the frame at the (x, y) coordinates
-        #             cv2.circle(frame, (x, y), 5, color, -1) # -1 fills the circle
-                    
-        #             # Optional: Add text label
-        #             cv2.putText(frame, keypoint, (x + 10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
-
-        #         except ValueError:
-        #             # Handle cases where a keypoint column is not found
-        #             print(f"Warning: Columns for {col_name_x} or {col_name_y} not found.")
-        #             continue
-
-        #     # Draw the skeleton (lines between connected keypoints)
-        #     if self.skeleton:
-        #         for start_kp, end_kp in self.skeleton:
-        #             start_coord = keypoint_coords.get(start_kp)
-        #             end_coord = keypoint_coords.get(end_kp)
-        #             if start_coord and end_coord:
-        #                 cv2.line(frame, start_coord, end_coord, color, 2)
-        
+            if self.skeleton: # Draw the skeleton
+                for start_kp, end_kp in self.skeleton:
+                    start_coord = keypoint_coords.get(start_kp)
+                    end_coord = keypoint_coords.get(end_kp)
+                    if start_coord and end_coord:
+                        cv2.line(frame, start_coord, end_coord, color, 2)
         return frame
 
     def change_frame(self, delta):
@@ -507,6 +488,7 @@ class custom_slider(QtWidgets.QSlider):
     def __init__(self, orientation):
         super().__init__(orientation)
         self.marked_frames = set()
+        self.labeled_frames = set()
         self.setStyleSheet("""
             QSlider::groove:horizontal {
                 border: 1px solid #999999;
@@ -522,7 +504,6 @@ class custom_slider(QtWidgets.QSlider):
                 margin: -2px 0;
                 border-radius: 3px;
             }
-                           
         """)
 
     def set_marked_frames(self, marked_frames):
@@ -530,18 +511,21 @@ class custom_slider(QtWidgets.QSlider):
         self.update()
 
     def set_labeled_frames(self, labeled_frame):
-        self.labeled_frame = set(labeled_frame)
+        self.labeled_frames = set(labeled_frame)
         self.update()
 
     def paintEvent(self, event):
         super().paintEvent(event)
         
-        if not self.marked_frames:
+        if not self.marked_frames and not self.labeled_frames:
             return
-            
+
+        self.paintEvent_painter(self.marked_frames,"#E28F13")
+        self.paintEvent_painter(self.labeled_frames,"#1F32D7")
+        
+    def paintEvent_painter(self, frames, color):
         painter = QtGui.QPainter(self)
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
-        
         # Get slider geometry
         opt = QtWidgets.QStyleOptionSlider()
         self.initStyleOption(opt)
@@ -551,17 +535,14 @@ class custom_slider(QtWidgets.QSlider):
             QtWidgets.QStyle.SC_SliderGroove, 
             self
         )
-        
         # Calculate available width and range
         min_val = self.minimum()
         max_val = self.maximum()
         available_width = groove_rect.width()
-        
-        # Draw each marked frame
-        for frame in self.marked_frames:
+        # Draw each frame on slider
+        for frame in frames:
             if frame < min_val or frame > max_val:
-                continue
-                
+                continue  
             pos = QtWidgets.QStyle.sliderPositionFromValue(
                 min_val, 
                 max_val, 
@@ -569,40 +550,15 @@ class custom_slider(QtWidgets.QSlider):
                 available_width,
                 opt.upsideDown
             ) + groove_rect.left()
-            
             # Draw marker
             painter.setPen(QtCore.Qt.NoPen)
-            painter.setBrush(QtGui.QColor("#E28F13"))
+            painter.setBrush(QtGui.QColor(color))
             painter.drawRect(
                 int(pos) - 1,  # Center the mark
                 groove_rect.top(),
                 3,  # Width
                 groove_rect.height()
             )
-        
-        # Draw each labeled frame
-        for frame in self.labeled_frame:
-            if frame < min_val or frame > max_val:
-                continue
-                
-            pos = QtWidgets.QStyle.sliderPositionFromValue(
-                min_val, 
-                max_val, 
-                frame, 
-                available_width,
-                opt.upsideDown
-            ) + groove_rect.left()
-            
-            # Draw marker
-            painter.setPen(QtCore.Qt.NoPen)
-            painter.setBrush(QtGui.QColor("#1F32D7"))
-            painter.drawRect(
-                int(pos) - 1,  # Center the mark
-                groove_rect.top(),
-                3,  # Width
-                groove_rect.height()
-            )
-        
         painter.end()
 
 #########################################################################################################################################################################################
