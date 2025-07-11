@@ -52,7 +52,7 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
         self.progress_layout = QtWidgets.QHBoxLayout()
         self.play_button = QtWidgets.QPushButton("▶")
         self.play_button.setFixedWidth(20)
-        self.progress_slider = CustomSliderWithMarks(Qt.Horizontal)
+        self.progress_slider = custom_slider(Qt.Horizontal)
         self.progress_slider.setRange(0, 0) # Will be set dynamically
         self.progress_slider.setTracking(True)
 
@@ -84,6 +84,7 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
         self.navigation_layout.addWidget(self.next_marked_frame_button, 1, 2, 1, 2)
 
         self.layout.addWidget(self.navigation_group_box)
+        self.navigation_group_box.hide()
 
         # Connect buttons to events
         self.load_video_button.clicked.connect(self.load_video)
@@ -112,27 +113,42 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
         QShortcut(QKeySequence(Qt.Key_Down), self).activated.connect(self.prev_marked_frame)
         QShortcut(QKeySequence(Qt.Key_Up), self).activated.connect(self.next_marked_frame)
         QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.toggle_playback)
+        QShortcut(QKeySequence(Qt.Key_L | Qt.ShiftModifier), self).activated.connect(self.load_dlc_file)
+        QShortcut(QKeySequence(Qt.Key_S | Qt.ControlModifier), self).activated.connect(self.save_frame_mark)
         
         self.original_vid = None
         self.prediction = None
-        self.deeplabcut_dir = None
+        self.dlc_dir = None
+        self.video_name = None
+
+        self.pred_data = None
+
+        self.multi_animal = False
+        self.keypoints = None
+        self.skeleton = None
+        self.individuals = None
+        self.instance_count = 1
+        self.project_dir = None
+        self.labeled_frame_list = []
+
         self.cap = None
         self.current_frame = None
         self.frame_list = []
-        self.video_name = None
 
-        self.isSaved = True
+        self.is_saved = True
         self.last_saved = []
 
     def load_video(self):
+        self.reset_state()
         file_dialog = QtWidgets.QFileDialog(self)
         video_path, _ = file_dialog.getOpenFileName(self, "Load Video", "", "Video Files (*.mp4 *.avi *.mov *.mkv);;All Files (*)")
         if video_path:
             self.original_vid = video_path
             self.initialize_loaded_video()
+            self.navigation_group_box.show()
+            self.video_name = os.path.basename(self.original_vid).split(".")[0]
 
     def initialize_loaded_video(self):
-        self.video_name = os.path.basename(self.original_vid)
         self.cap = cv2.VideoCapture(self.original_vid)
         if not self.cap.isOpened():
             print(f"Error: Could not open video {self.original_vid}")
@@ -143,6 +159,7 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
         self.current_frame_idx = 0
         self.progress_slider.setRange(0, self.total_frames - 1) # Initialize slider range
         self.progress_slider.set_marked_frames(self.frame_list) # Update marked frames
+        self.progress_slider.set_labeled_frames(self.labeled_frame_list)
         self.display_current_frame()
         self.navigation_box_title_controller()
         print(f"Video loaded: {self.original_vid}")
@@ -153,6 +170,50 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
         if prediction_path:
             self.prediction = prediction_path
             print(f"Prediction loaded: {self.prediction}")
+            if self.dlc_dir is None:
+                self.dlc_loader_query()
+            with h5py.File(self.prediction, "r") as pred_file:
+                if not "tracks" in pred_file.keys():
+                    print("Error: Prediction file not valid, no 'tracks' key found in prediction file.")
+                    return False
+                elif not "table" in pred_file["tracks"].keys():
+                    print("Errpr: Prediction file not valid, no prediction table found in 'tracks'.")
+                    return False
+                self.pred_data = pred_file["tracks"]["table"][:]
+
+    def dlc_loader_query(self):
+        dlc_loader = QMessageBox(self)
+        dlc_loader.setWindowTitle("Load DLC Config? (optional)")
+        dlc_loader.setText("Do you want to also load DLC config? (necessary for displaying keypoint labels, skeleton, and more)")
+        okay_btn = dlc_loader.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
+        no_btn = dlc_loader.addButton("No", QMessageBox.RejectRole)
+        dlc_loader.setDefaultButton(no_btn)
+        dlc_loader.exec()
+        clicked_button = dlc_loader.clickedButton()
+        if clicked_button == okay_btn:
+            self.load_dlc_file()
+        else:
+            QMessageBox.information(self, "OK", "No DLC config has been loaded, press Shift + L if you change your mind.")
+
+    def load_dlc_file(self):
+        if self.current_frame is None:
+            QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
+            return
+        file_dialog = QtWidgets.QFileDialog(self)
+        dlc_config, _ = file_dialog.getOpenFileName(self, "Load DLC Config", "", "YAML Files (*.yaml);;All Files (*)")
+        if dlc_config:
+            self.dlc_dir = os.path.dirname(dlc_config)
+            with open(dlc_config, "r") as conf:
+                cfg = yaml.safe_load(conf)
+            self.multi_animal = cfg["multianimalproject"]
+            self.keypoints = cfg["bodyparts"] if not self.multi_animal else cfg["multianimalbodyparts"]
+            self.skeleton = cfg["skeleton"]
+            self.individuals = cfg["individuals"]
+            self.instance_count = len(self.individuals) if self.individuals is not None else 1
+            labeled_data = os.path.join(self.dlc_dir,"labeled-data")
+            if self.video_name in os.listdir(labeled_data):
+                self.project_dir = os.path.join(labeled_data, self.video_name)
+                self.labeled_frame_list = [ int(f.split("img")[1].split(".")[0]) for f in os.listdir(self.project_dir) if f.endswith(".png") and f.startswith("img") ]
 
     def load_marked_frames(self):
         file_dialog = QtWidgets.QFileDialog(self)
@@ -182,6 +243,9 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
         self.navigation_box_title_controller()
 
     def display_marked_frames_list(self):
+        if self.current_frame is None:
+            QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
+            return
         if self.frame_list:
             self.frame_list.sort()
             frame_list_msg = QMessageBox(self)
@@ -242,6 +306,7 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
             ret, frame = self.cap.read()
             if ret:
                 self.current_frame = frame
+                frame = self.plot_predictions(frame) if self.pred_data is not None else frame
                 # Convert OpenCV image to QPixmap
                 rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 h, w, ch = rgb_image.shape
@@ -257,6 +322,70 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
                 self.video_label.setText("Error: Could not read frame")
         else:
             self.video_label.setText("No video loaded")
+
+    def plot_predictions(self, frame):
+        if self.pred_data is None:
+            return frame
+        try:
+            current_frame_data = self.pred_data[self.current_frame_idx][1]
+            print(type(current_frame_data))
+        except IndexError:
+            print(f"Frame index {self.current_frame_idx} out of bounds for prediction data.")
+            return frame
+
+        # Colors for drawing
+        colors = [(0, 255, 0), (0, 0, 255), (255, 255, 0), (255, 0, 255), (0, 255, 255)] # BGR
+        
+        # Iterate over each individual (animal)
+        for inst in range(self.instance_count):
+            # Determine the color based on the individual
+            color = colors[inst % len(colors)]
+            
+            # Dictionary to store keypoint coordinates for this individual
+            keypoint_coords = {}
+
+        #     # Iterate over each keypoint (bodypart)
+        #     for i, keypoint in enumerate(self.keypoints):
+        #         # Construct the column name based on single or multi-animal project
+        #         if self.multi_animal:
+        #             col_name_x = (self.individuals[inst], keypoint, 'x')
+        #             col_name_y = (self.individuals[inst], keypoint, 'y')
+        #         else:
+        #             col_name_x = (keypoint, 'x')
+        #             col_name_y = (keypoint, 'y')
+                
+        #         # Retrieve x and y coordinates using the column names
+        #         # Find the index of the column tuple in the structured data's field names
+        #         try:
+        #             x_idx = self.pred_data.dtype.names.index(col_name_x)
+        #             y_idx = self.pred_data.dtype.names.index(col_name_y)
+
+        #             x = int(current_frame_data[x_idx])
+        #             y = int(current_frame_data[y_idx])
+                    
+        #             # Store the coordinates for later skeleton drawing
+        #             keypoint_coords[keypoint] = (x, y)
+                    
+        #             # Draw the circle on the frame at the (x, y) coordinates
+        #             cv2.circle(frame, (x, y), 5, color, -1) # -1 fills the circle
+                    
+        #             # Optional: Add text label
+        #             cv2.putText(frame, keypoint, (x + 10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+
+        #         except ValueError:
+        #             # Handle cases where a keypoint column is not found
+        #             print(f"Warning: Columns for {col_name_x} or {col_name_y} not found.")
+        #             continue
+
+        #     # Draw the skeleton (lines between connected keypoints)
+        #     if self.skeleton:
+        #         for start_kp, end_kp in self.skeleton:
+        #             start_coord = keypoint_coords.get(start_kp)
+        #             end_coord = keypoint_coords.get(end_kp)
+        #             if start_coord and end_coord:
+        #                 cv2.line(frame, start_coord, end_coord, color, 2)
+        
+        return frame
 
     def change_frame(self, delta):
         if self.cap and self.cap.isOpened():
@@ -298,29 +427,55 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
 
     def determine_save_status(self):
         if set(self.last_saved) == set(self.frame_list):
-            self.isSaved = True
+            self.is_saved = True
         else:
-            self.isSaved = False
+            self.is_saved = False
 
     def navigation_box_title_controller(self):
-        self.navigation_group_box.setTitle(f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames} | Video: {self.video_name}")
-        if self.current_frame_idx in self.frame_list:
+        self.navigation_group_box.setTitle(f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | Video: {self.video_name}")
+        if self.current_frame_idx in self.labeled_frame_list:
+            self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: #1F32D7;}""")
+        elif self.current_frame_idx in self.frame_list:
             self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: #E28F13;}""")
         else:
             self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: black;}""")
 
     def save_frame_mark(self):
+        if self.current_frame is None:
+            QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
+            return
         self.last_saved = self.frame_list
-        self.isSaved = True
+        self.is_saved = True
         save_yaml = {'video_path': self.original_vid, 'frame_list': self.last_saved}
-        video_name_no_suffix = self.video_name.split(".")[0]
-        output_filepath = os.path.join(os.path.dirname(self.original_vid), f"{video_name_no_suffix}_frame_list.yaml")
+        output_filepath = os.path.join(os.path.dirname(self.original_vid), f"{self.video_name}_frame_list.yaml")
         with open(output_filepath, 'w') as file:
             yaml.dump(save_yaml, file)
-        pass
+        QMessageBox.information(self, "Success", f"Marked frames have been saved to {output_filepath}")
+
+    def reset_state(self):
+        self.progress_slider.setRange(0, 0)
+        self.navigation_group_box.hide()
+        self.original_vid = None
+        self.prediction = None
+        self.dlc_dir = None
+        self.video_name = None
+        self.multianimal = False
+        self.keypoints = None
+        self.skeleton = None
+        self.individuals = None
+        self.instance_count = 1
+        self.pred_data = None
+        self.labeled_folder = None
+        self.labeled_frame_list = []
+        self.cap = None
+        self.current_frame = None
+        self.frame_list = []
+        self.is_saved = True
+        self.last_saved = []
+        self.is_playing = False
 
     def closeEvent(self, event: QCloseEvent):
-        if not self.isSaved:
+        if not self.is_saved:
             # Create a dialog to confirm saving
             close_call = QMessageBox(self)
             close_call.setWindowTitle("Marked Frame Unsaved")
@@ -335,7 +490,7 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
             
             if clicked_button == save_btn:
                 self.save_frame_mark()
-                if self.isSaved:
+                if self.is_saved:
                     event.accept()
                 else:
                     event.ignore()
@@ -348,7 +503,7 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
 
 #########################################################################################################################################################################################
 
-class CustomSliderWithMarks(QtWidgets.QSlider):
+class custom_slider(QtWidgets.QSlider):
     def __init__(self, orientation):
         super().__init__(orientation)
         self.marked_frames = set()
@@ -372,6 +527,10 @@ class CustomSliderWithMarks(QtWidgets.QSlider):
 
     def set_marked_frames(self, marked_frames):
         self.marked_frames = set(marked_frames)
+        self.update()
+
+    def set_labeled_frames(self, labeled_frame):
+        self.labeled_frame = set(labeled_frame)
         self.update()
 
     def paintEvent(self, event):
@@ -414,6 +573,29 @@ class CustomSliderWithMarks(QtWidgets.QSlider):
             # Draw marker
             painter.setPen(QtCore.Qt.NoPen)
             painter.setBrush(QtGui.QColor("#E28F13"))
+            painter.drawRect(
+                int(pos) - 1,  # Center the mark
+                groove_rect.top(),
+                3,  # Width
+                groove_rect.height()
+            )
+        
+        # Draw each labeled frame
+        for frame in self.labeled_frame:
+            if frame < min_val or frame > max_val:
+                continue
+                
+            pos = QtWidgets.QStyle.sliderPositionFromValue(
+                min_val, 
+                max_val, 
+                frame, 
+                available_width,
+                opt.upsideDown
+            ) + groove_rect.left()
+            
+            # Draw marker
+            painter.setPen(QtCore.Qt.NoPen)
+            painter.setBrush(QtGui.QColor("#1F32D7"))
             painter.drawRect(
                 int(pos) - 1,  # Center the mark
                 groove_rect.top(),
