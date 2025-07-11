@@ -328,19 +328,18 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
             return frame
         try:
             current_frame_data = self.pred_data[self.current_frame_idx][1]
-            print(type(current_frame_data))
         except IndexError:
             print(f"Frame index {self.current_frame_idx} out of bounds for prediction data.")
             return frame
-
         colors = [(0, 255, 0), (0, 0, 255), (255, 255, 0), (255, 0, 255), (0, 255, 255)] # BGR
         if self.keypoints is None: 
-            num_keypoints = current_frame_data.size // self.instance_count * 2 // 3 # Consider the confidence col
-        elif len(self.keypoints) != current_frame_data.size // self.instance_count * 2 // 3:
-            print("Error: Keypoints in config and keypoints in prediction do not match! Falling back to prediction parameters!")
-            self.keypoints = None
+            num_keypoints = current_frame_data.size // self.instance_count // 3 # Consider the confidence col
+        elif len(self.keypoints) != current_frame_data.size // self.instance_count // 3:
+            print("Error: Keypoints in config and in prediction do not match! Falling back to prediction parameters!")
+            print(f"Keypoints in config: {len(self.keypoints)} \n Keypoints in prediction: {current_frame_data.size // self.instance_count * 2 // 3}")
+            self.keypoints = None   # Falling back to prediction parameters
             self.skeleton = None
-            num_keypoints = current_frame_data.size // self.instance_count * 2 // 3
+            num_keypoints = current_frame_data.size // self.instance_count // 3
         else:
             num_keypoints = len(self.keypoints)
 
@@ -350,15 +349,17 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
             # Initiate an empty dict for storing coordinates
             keypoint_coords = {}
             for i in range(num_keypoints):
-                x = current_frame_data(i*3) # every third col in confidence col lol
-                if x is None:
-                    continue # Skip empty coords
-                y = current_frame_data(i*3+1)
+                x = current_frame_data[inst * num_keypoints * 3 + i * 3] # every third col in confidence col lol
+                y = current_frame_data[inst * num_keypoints * 3 + i * 3 + 1]
                 keypoint = i if self.keypoints is None else self.keypoints[i]
-                keypoint_coords[keypoint] = (x,y)
+                if pd.isna(x) or pd.isna(y):
+                    keypoint_coords[keypoint] = None
+                    continue # Skip plotting empty coords
+                else:
+                    keypoint_coords[keypoint] = (int(x),int(y))
                 
-                cv2.circle(frame, (x,y), 3, color, -1) # Draw the dot
-                cv2.putText(frame, keypoint, (x + 10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA) # Add the label
+                cv2.circle(frame, (int(x), int(y)), 3, color, -1) # Draw the dot
+                cv2.putText(frame, str(keypoint), (int(x) + 10, int(y)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA) # Add the label
 
             if self.skeleton: # Draw the skeleton
                 for start_kp, end_kp in self.skeleton:
