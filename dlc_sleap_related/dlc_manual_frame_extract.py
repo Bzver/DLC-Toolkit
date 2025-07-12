@@ -255,6 +255,160 @@ class dlcFrameFinder(QtWidgets.QMainWindow):  # GUI for manually select the fram
                 self.progress_slider.set_marked_frames(self.frame_list)
             self.determine_save_status()
 
+    ###################################################################################################################################################
+
+    def display_current_frame(self):
+        if self.cap and self.cap.isOpened():
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame_idx)
+            ret, frame = self.cap.read()
+            if ret:
+                self.current_frame = frame
+                frame = self.plot_predictions(frame) if self.pred_data is not None else frame
+                # Convert OpenCV image to QPixmap
+                rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                h, w, ch = rgb_image.shape
+                bytes_per_line = ch * w
+                qt_image = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
+                pixmap = QtGui.QPixmap.fromImage(qt_image)
+                # Scale pixmap to fit label
+                scaled_pixmap = pixmap.scaled(self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                self.video_label.setPixmap(scaled_pixmap)
+                self.video_label.setText("") # Clear "No video loaded" text
+                self.progress_slider.setValue(self.current_frame_idx) # Update slider position
+            else:
+                self.video_label.setText("Error: Could not read frame")
+        else:
+            self.video_label.setText("No video loaded")
+
+    def plot_predictions(self, frame):
+        if self.pred_data is None:
+            return frame
+        try:
+            current_frame_data = self.pred_data[self.current_frame_idx][1]
+        except IndexError:
+            print(f"Frame index {self.current_frame_idx} out of bounds for prediction data.")
+            return frame
+        colors = [(0, 255, 0), (0, 0, 255), (255, 255, 0), (255, 0, 255), (0, 255, 255)] # BGR
+        if self.keypoints is None: 
+            num_keypoints = current_frame_data.size // self.instance_count // 3 # Consider the confidence col
+        elif len(self.keypoints) != current_frame_data.size // self.instance_count // 3:
+            QMessageBox.warning(self, "Error: Keypoint Mismatch", "Keypoints in config and in prediction do not match! Falling back to prediction parameters!")
+            print(f"Keypoints in config: {len(self.keypoints)} \n Keypoints in prediction: {current_frame_data.size // self.instance_count * 2 // 3}")
+            self.keypoints = None   # Falling back to prediction parameters
+            self.skeleton = None
+            num_keypoints = current_frame_data.size // self.instance_count // 3
+        else:
+            num_keypoints = len(self.keypoints)
+
+        # Iterate over each individual (animal)
+        for inst in range(self.instance_count):
+            color = colors[inst % len(colors)]
+            # Initiate an empty dict for storing coordinates
+            keypoint_coords = {}
+            for i in range(num_keypoints):
+                x = current_frame_data[inst * num_keypoints * 3 + i * 3] # every third col in confidence col lol
+                y = current_frame_data[inst * num_keypoints * 3 + i * 3 + 1]
+                keypoint = i if self.keypoints is None else self.keypoints[i]
+                text_size = 0.5 if self.keypoints is None else 0.3
+                text_color = color if self.keypoints is None else (255, 255, 86)
+                if pd.isna(x) or pd.isna(y):
+                    keypoint_coords[keypoint] = None
+                    continue # Skip plotting empty coords
+                else:
+                    keypoint_coords[keypoint] = (int(x),int(y))
+                
+                cv2.circle(frame, (int(x), int(y)), 3, color, -1) # Draw the dot
+                cv2.putText(frame, str(keypoint), (int(x) + 10, int(y)), cv2.FONT_HERSHEY_SIMPLEX, text_size, text_color, 1, cv2.LINE_AA) # Add the label
+
+            if self.individuals is not None and len(keypoint_coords) >= 2:
+                self.plot_bounding_box(keypoint_coords, frame, color, inst)
+            if self.skeleton:
+                self.plot_skeleton(keypoint_coords, frame, color)
+
+        return frame
+    
+    def plot_bounding_box(self, keypoint_coords, frame, color, inst):
+        # Calculate bounding box coordinates
+        x_coords = [keypoint_coords[p][0] for p in keypoint_coords if keypoint_coords[p] is not None]
+        y_coords = [keypoint_coords[p][1] for p in keypoint_coords if keypoint_coords[p] is not None]
+
+        if not x_coords or not y_coords: # Skip if the mice has no keypoint
+            return frame
+            
+        min_x, max_x = min(x_coords), max(x_coords)
+        min_y, max_y = min(y_coords), max(y_coords)
+
+        padding = 10
+        min_x = max(0, min_x - padding)
+        min_y = max(0, min_y - padding)
+        max_x = min(frame.shape[1] - 1, max_x + padding)
+        max_y = min(frame.shape[0] - 1, max_y + padding)
+            
+        cv2.rectangle(frame, (min_x, min_y), (max_x, max_y), color, 1) # Draw the bounding box
+
+        #Add individual label
+        cv2.putText(frame, f"Instance: {self.individuals[inst]}", (min_x, min_y), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1, cv2.LINE_AA)
+        return frame
+    
+    def plot_skeleton(self, keypoint_coords, frame, color):
+        for start_kp, end_kp in self.skeleton:
+            start_coord = keypoint_coords.get(start_kp)
+            end_coord = keypoint_coords.get(end_kp)
+            if start_coord and end_coord:
+                cv2.line(frame, start_coord, end_coord, color, 2)
+                return frame
+            
+    ###################################################################################################################################################
+
+    def change_frame(self, delta):
+        if self.cap and self.cap.isOpened():
+            new_frame_idx = self.current_frame_idx + delta
+            if 0 <= new_frame_idx < self.total_frames:
+                self.current_frame_idx = new_frame_idx
+                self.display_current_frame()
+                self.navigation_box_title_controller()
+
+    def set_frame_from_slider(self, value):
+        if self.cap and self.cap.isOpened():
+            self.current_frame_idx = value
+            self.display_current_frame()
+            self.navigation_box_title_controller()
+
+    def autoplay_video(self):
+        if self.cap and self.cap.isOpened():
+            if self.current_frame_idx < self.total_frames - 1:
+                self.current_frame_idx += 1
+                self.display_current_frame()
+                self.navigation_box_title_controller()
+            else:
+                self.playback_timer.stop()
+                self.play_button.setText("▶")
+                self.is_playing = False
+
+    def toggle_playback(self):
+        if self.current_frame is None:
+            QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
+            return
+        if not self.is_playing:
+            self.playback_timer.start(1000/100) # 100 fps
+            self.play_button.setText("■")
+            self.is_playing = True
+        else:
+            self.playback_timer.stop()
+            self.play_button.setText("▶")
+            self.is_playing = False
+
+    def navigation_box_title_controller(self):
+        self.navigation_group_box.setTitle(f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | Video: {self.video_name}")
+        if self.current_frame_idx in self.labeled_frame_list:
+            self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: #1F32D7;}""")
+        elif self.current_frame_idx in self.frame_list:
+            self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: #E28F13;}""")
+        else:
+            self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: black;}""")
+
+    ###################################################################################################################################################
+
     def change_current_frame_status(self):
         if self.current_frame is None:
             QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
@@ -325,149 +479,7 @@ class dlcFrameFinder(QtWidgets.QMainWindow):  # GUI for manually select the fram
         else:
             QMessageBox.information(self, "Navigation", "No next marked frame found.")
 
-    def display_current_frame(self):
-        if self.cap and self.cap.isOpened():
-            self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame_idx)
-            ret, frame = self.cap.read()
-            if ret:
-                self.current_frame = frame
-                frame = self.plot_predictions(frame) if self.pred_data is not None else frame
-                # Convert OpenCV image to QPixmap
-                rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                h, w, ch = rgb_image.shape
-                bytes_per_line = ch * w
-                qt_image = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
-                pixmap = QtGui.QPixmap.fromImage(qt_image)
-                # Scale pixmap to fit label
-                scaled_pixmap = pixmap.scaled(self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                self.video_label.setPixmap(scaled_pixmap)
-                self.video_label.setText("") # Clear "No video loaded" text
-                self.progress_slider.setValue(self.current_frame_idx) # Update slider position
-            else:
-                self.video_label.setText("Error: Could not read frame")
-        else:
-            self.video_label.setText("No video loaded")
-
-    def plot_predictions(self, frame):
-        if self.pred_data is None:
-            return frame
-        try:
-            current_frame_data = self.pred_data[self.current_frame_idx][1]
-        except IndexError:
-            print(f"Frame index {self.current_frame_idx} out of bounds for prediction data.")
-            return frame
-        colors = [(0, 255, 0), (0, 0, 255), (255, 255, 0), (255, 0, 255), (0, 255, 255)] # BGR
-        if self.keypoints is None: 
-            num_keypoints = current_frame_data.size // self.instance_count // 3 # Consider the confidence col
-        elif len(self.keypoints) != current_frame_data.size // self.instance_count // 3:
-            QMessageBox.warning(self, "Error: Keypoint Mismatch", "Keypoints in config and in prediction do not match! Falling back to prediction parameters!")
-            print(f"Keypoints in config: {len(self.keypoints)} \n Keypoints in prediction: {current_frame_data.size // self.instance_count * 2 // 3}")
-            self.keypoints = None   # Falling back to prediction parameters
-            self.skeleton = None
-            num_keypoints = current_frame_data.size // self.instance_count // 3
-        else:
-            num_keypoints = len(self.keypoints)
-
-        # Iterate over each individual (animal)
-        for inst in range(self.instance_count):
-            color = colors[inst % len(colors)]
-            # Initiate an empty dict for storing coordinates
-            keypoint_coords = {}
-            for i in range(num_keypoints):
-                x = current_frame_data[inst * num_keypoints * 3 + i * 3] # every third col in confidence col lol
-                y = current_frame_data[inst * num_keypoints * 3 + i * 3 + 1]
-                keypoint = i if self.keypoints is None else self.keypoints[i]
-                text_size = 0.5 if self.keypoints is None else 0.3
-                text_color = color if self.keypoints is None else (255, 255, 86)
-                if pd.isna(x) or pd.isna(y):
-                    keypoint_coords[keypoint] = None
-                    continue # Skip plotting empty coords
-                else:
-                    keypoint_coords[keypoint] = (int(x),int(y))
-                
-                cv2.circle(frame, (int(x), int(y)), 3, color, -1) # Draw the dot
-                cv2.putText(frame, str(keypoint), (int(x) + 10, int(y)), cv2.FONT_HERSHEY_SIMPLEX, text_size, text_color, 1, cv2.LINE_AA) # Add the label
-
-            if self.individuals is not None and len(keypoint_coords) >= 2:
-                self.plot_bounding_box(keypoint_coords, frame, color, inst)
-
-            if self.skeleton: # Draw the skeleton
-                for start_kp, end_kp in self.skeleton:
-                    start_coord = keypoint_coords.get(start_kp)
-                    end_coord = keypoint_coords.get(end_kp)
-                    if start_coord and end_coord:
-                        cv2.line(frame, start_coord, end_coord, color, 2)
-        return frame
-    
-    def plot_bounding_box(self, keypoint_coords, frame, color, inst):
-        # Calculate bounding box coordinates
-        x_coords = [keypoint_coords[p][0] for p in keypoint_coords if keypoint_coords[p] is not None]
-        y_coords = [keypoint_coords[p][1] for p in keypoint_coords if keypoint_coords[p] is not None]
-
-        if not x_coords or not y_coords: # Skip if the mice has no keypoint
-            return frame
-            
-        min_x, max_x = min(x_coords), max(x_coords)
-        min_y, max_y = min(y_coords), max(y_coords)
-
-        padding = 10
-        min_x = max(0, min_x - padding)
-        min_y = max(0, min_y - padding)
-        max_x = min(frame.shape[1] - 1, max_x + padding)
-        max_y = min(frame.shape[0] - 1, max_y + padding)
-            
-        cv2.rectangle(frame, (min_x, min_y), (max_x, max_y), color, 1) # Draw the bounding box
-
-        #Add individual label
-        cv2.putText(frame, f"Instance: {self.individuals[inst]}", (min_x, min_y), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1, cv2.LINE_AA)
-        return frame
-
-    def change_frame(self, delta):
-        if self.cap and self.cap.isOpened():
-            new_frame_idx = self.current_frame_idx + delta
-            if 0 <= new_frame_idx < self.total_frames:
-                self.current_frame_idx = new_frame_idx
-                self.display_current_frame()
-                self.navigation_box_title_controller()
-
-    def set_frame_from_slider(self, value):
-        if self.cap and self.cap.isOpened():
-            self.current_frame_idx = value
-            self.display_current_frame()
-            self.navigation_box_title_controller()
-
-    def autoplay_video(self):
-        if self.cap and self.cap.isOpened():
-            if self.current_frame_idx < self.total_frames - 1:
-                self.current_frame_idx += 1
-                self.display_current_frame()
-                self.navigation_box_title_controller()
-            else:
-                self.playback_timer.stop()
-                self.play_button.setText("▶")
-                self.is_playing = False
-
-    def toggle_playback(self):
-        if self.current_frame is None:
-            QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
-            return
-        if not self.is_playing:
-            self.playback_timer.start(1000/100) # 100 fps
-            self.play_button.setText("■")
-            self.is_playing = True
-        else:
-            self.playback_timer.stop()
-            self.play_button.setText("▶")
-            self.is_playing = False
-
-    def navigation_box_title_controller(self):
-        self.navigation_group_box.setTitle(f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | Video: {self.video_name}")
-        if self.current_frame_idx in self.labeled_frame_list:
-            self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: #1F32D7;}""")
-        elif self.current_frame_idx in self.frame_list:
-            self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: #E28F13;}""")
-        else:
-            self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: black;}""")
+    ###################################################################################################################################################
 
     def determine_save_status(self):
         if set(self.last_saved) == set(self.frame_list):
@@ -604,7 +616,7 @@ class dlcFrameFinder(QtWidgets.QMainWindow):  # GUI for manually select the fram
         else:
             event.accept()  # No unsaved changes, close normally
 
-#########################################################################################################################################################################################
+#######################################################################################################################################################
 
 class custom_slider(QtWidgets.QSlider):
     def __init__(self, orientation):
@@ -683,7 +695,7 @@ class custom_slider(QtWidgets.QSlider):
             )
         painter.end()
 
-#########################################################################################################################################################################################
+#######################################################################################################################################################
 
 class dlcFrameExtractor:  # Backend for extracting frames for labeling in DLC
     def __init__(self, original_vid, prediction, frame_list, dlc_dir, project_dir, video_name, pred_data, keypoints, individuals, multi_animal=False):
