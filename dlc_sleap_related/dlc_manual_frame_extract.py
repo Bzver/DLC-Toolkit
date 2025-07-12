@@ -14,7 +14,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QShortcut, QKeySequence, QCloseEvent
 from PySide6.QtWidgets import QMessageBox
 
-class dlcFrameFinder(QtWidgets.QMainWindow):  # GUI for manually select the frames
+class dlcFrameFinder(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("DLC Manual Frame Extractor")
@@ -306,7 +306,7 @@ class dlcFrameFinder(QtWidgets.QMainWindow):  # GUI for manually select the fram
             # Initiate an empty dict for storing coordinates
             keypoint_coords = {}
             for i in range(num_keypoints):
-                x = current_frame_data[inst * num_keypoints * 3 + i * 3] # every third col in confidence col lol
+                x = current_frame_data[inst * num_keypoints * 3 + i * 3] # x, y, confidence triplet
                 y = current_frame_data[inst * num_keypoints * 3 + i * 3 + 1]
                 keypoint = i if self.keypoints is None else self.keypoints[i]
                 text_size = 0.5 if self.keypoints is None else 0.3
@@ -317,7 +317,7 @@ class dlcFrameFinder(QtWidgets.QMainWindow):  # GUI for manually select the fram
                 else:
                     keypoint_coords[keypoint] = (int(x),int(y))
                 
-                cv2.circle(frame, (int(x), int(y)), 3, color, -1) # Draw the dot
+                cv2.circle(frame, (int(x), int(y)), 3, color, -1) # Draw the dot representing the keypoints
                 cv2.putText(frame, str(keypoint), (int(x) + 10, int(y)), cv2.FONT_HERSHEY_SIMPLEX, text_size, text_color, 1, cv2.LINE_AA) # Add the label
 
             if self.individuals is not None and len(keypoint_coords) >= 2:
@@ -767,7 +767,7 @@ class dlcFrameExtractor:  # Backend for extracting frames for labeling in DLC
             print("Exported csv transformed into h5.")
         return True
 
-    def prediction_to_csv(self): # Adapted from DeepLabCut
+    def prediction_to_csv(self): # Adapted from agosztolai's pull request: https://github.com/DeepLabCut/DeepLabCut/pull/2977
         data_frames = []
         columns = ["frame"]
         bodyparts_row = ["bodyparts"]
@@ -818,7 +818,7 @@ class dlcFrameExtractor:  # Backend for extracting frames for labeling in DLC
         )
         return True
 
-    def csv_to_h5(self): # Adapted from DeepLabCut
+    def csv_to_h5(self):  # Adapted from deeplabcut.utils.conversioncode
         try:
             fn = os.path.join(self.project_dir, f"MachineLabelsRefine.csv")
             with open(fn) as datafile:
