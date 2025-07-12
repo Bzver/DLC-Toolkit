@@ -356,7 +356,7 @@ class dlcFrameFinder(QtWidgets.QMainWindow):
             end_coord = keypoint_coords.get(end_kp)
             if start_coord and end_coord:
                 cv2.line(frame, start_coord, end_coord, color, 2)
-                return frame
+        return frame
             
     ###################################################################################################################################################
 
