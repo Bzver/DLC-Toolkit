@@ -14,10 +14,10 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QShortcut, QKeySequence, QCloseEvent
 from PySide6.QtWidgets import QMessageBox
 
-class dlcFrameFinder(QtWidgets.QMainWindow):  # GUI for manually select the outliers
+class dlcFrameFinder(QtWidgets.QMainWindow):  # GUI for manually select the frames
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("DLC Manual Outlier Extractor")
+        self.setWindowTitle("DLC Manual Frame Extractor")
         self.setGeometry(100, 100, 1200, 960)
 
         self.central_widget = QtWidgets.QWidget()
@@ -149,9 +149,9 @@ class dlcFrameFinder(QtWidgets.QMainWindow):  # GUI for manually select the outl
             self.original_vid = video_path
             self.initialize_loaded_video()
             self.navigation_group_box.show()
-            self.video_name = os.path.basename(self.original_vid).split(".")[0]
 
     def initialize_loaded_video(self):
+        self.video_name = os.path.basename(self.original_vid).split(".")[0]
         self.cap = cv2.VideoCapture(self.original_vid)
         if not self.cap.isOpened():
             print(f"Error: Could not open video {self.original_vid}")
@@ -211,7 +211,7 @@ class dlcFrameFinder(QtWidgets.QMainWindow):  # GUI for manually select the outl
             QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
             return
         file_dialog = QtWidgets.QFileDialog(self)
-        dlc_config, _ = file_dialog.getOpenFileName(self, "Load DLC Config", "", "YAML Files (*.yaml);;All Files (*)")
+        dlc_config, _ = file_dialog.getOpenFileName(self, "Load DLC Config", "", "YAML Files (config.yaml);;All Files (*)")
         if dlc_config:
             self.dlc_dir = os.path.dirname(dlc_config)
             with open(dlc_config, "r") as conf:
@@ -243,6 +243,9 @@ class dlcFrameFinder(QtWidgets.QMainWindow):  # GUI for manually select the outl
         if marked_frame_path:
             with open(marked_frame_path, "r") as fmkf:
                 fmk = yaml.safe_load(fmkf)
+            if not "frame_list" in fmk.keys():
+                QMessageBox.warning(self, "File Error", "Not a marked frame file, make sure to load the correct file.")
+                return
             self.frame_list = fmk["frame_list"]
             print(f"Marked frames loaded: {self.frame_list}")
             if self.original_vid is None:
@@ -463,7 +466,7 @@ class dlcFrameFinder(QtWidgets.QMainWindow):  # GUI for manually select the outl
         if self.current_frame is None:
             QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
             return False
-        if self.frame_list is None:
+        if not self.frame_list:
             QMessageBox.warning(self, "No Marked Frame", "No frame has been marked, please mark some frames first.")
             return False
         if self.dlc_dir is None:
@@ -487,16 +490,19 @@ class dlcFrameFinder(QtWidgets.QMainWindow):  # GUI for manually select the outl
         try:
             # Initialize DLC extractor backend
             extractor = dlcFrameExtractor(
-                original_vid=self.original_vid,
-                prediction=self.prediction,
-                frame_list=self.frame_list,
-                dlc_dir=self.dlc_dir,
-                project_dir=self.project_dir,
-                video_name=self.video_name,
-                pred_data=self.pred_data,
+                self.original_vid,
+                self.prediction,
+                self.frame_list,
+                self.dlc_dir,
+                self.project_dir,
+                self.video_name,
+                self.pred_data,
+                self.keypoints,
+                self.individuals,
                 multi_animal=self.multi_animal
             )
             # Perform the extraction
+            os.makedirs(self.project_dir, exist_ok=True)
             if not frame_only_mode:
                 success = extractor.extract_frame_and_label()
             else:
@@ -653,8 +659,8 @@ class custom_slider(QtWidgets.QSlider):
 
 #########################################################################################################################################################################################
 
-class dlcFrameExtractor:  # Backend for extracting outliers for labeling in DLC
-    def __init__(self, original_vid, prediction, frame_list, dlc_dir, project_dir, video_name, pred_data, multi_animal=False):
+class dlcFrameExtractor:  # Backend for extracting frames for labeling in DLC
+    def __init__(self, original_vid, prediction, frame_list, dlc_dir, project_dir, video_name, pred_data, keypoints, individuals, multi_animal=False):
         self.original_vid = original_vid
         self.prediction = prediction
         self.frame_list = frame_list
@@ -663,9 +669,11 @@ class dlcFrameExtractor:  # Backend for extracting outliers for labeling in DLC
         self.video_name = video_name
         self.multi_animal = multi_animal
         self.pred_data = pred_data
+        self.keypoints = keypoints
+        self.individuals = individuals
 
         self.data = []
-        
+
     def extract_frame_and_label(self):
         if not os.path.isfile(self.original_vid):
             print(f"Original video not found at {self.original_vid}")
@@ -708,17 +716,18 @@ class dlcFrameExtractor:  # Backend for extracting outliers for labeling in DLC
             frame_data = self.pred_data[frame][1]
             filtered_frame_data = [val for i, val in enumerate(frame_data) if (i % 3 != 2)] # Remove likelihood
             self.data.append([frame_idx] + filtered_frame_data)
-            if not self.prediction_to_csv():
-                print("Error exporting predictions to csv.")
-                return False
-            else:
-                print("Prediction of selected frames successfully exported to csv.")
-                if not self.csv_to_h5():
-                    print("Error transforming to h5.")
-                    return False
-                else:
-                    print("Exported csv transformed into h5.")
-                    return True
+            
+        if not self.prediction_to_csv():
+            print("Error exporting predictions to csv.")
+            return False
+        else:
+            print("Prediction of selected frames successfully exported to csv.")
+        if not self.csv_to_h5():
+            print("Error transforming to h5.")
+            return False
+        else:
+            print("Exported csv transformed into h5.")
+        return True
 
     def prediction_to_csv(self): # Adapted from DeepLabCut
         data_frames = []
@@ -735,14 +744,14 @@ class dlcFrameExtractor:  # Backend for extracting outliers for labeling in DLC
             max_instances = 1
         else:
             individuals_row = ["individuals"]
-            max_instances = len(individuals)
-            individuals = [str(k) for k in range(1,max_instances+1)]
+            max_instances = len(self.individuals)
+            self.individuals = [str(k) for k in range(1,max_instances+1)]
             for m in range(max_instances):
                 columns += ([f"{kp}_x" for kp in self.keypoints] + [f"{kp}_y" for kp in self.keypoints])
                 bodyparts_row += [ f"{kp}" for kp in self.keypoints for _ in (0, 1) ]
                 coords_row += (["x", "y"] * num_keypoints)
                 for _ in range(num_keypoints*2):
-                    individuals_row += [individuals[m]]
+                    individuals_row += [self.individuals[m]]
         scorer_row = ["scorer"] + ["machine-labeled"] * (len(columns) - 1)
 
         labels_df = pd.DataFrame(self.data, columns=columns)
