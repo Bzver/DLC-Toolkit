@@ -388,12 +388,38 @@ class dlcFrameFinder(QtWidgets.QMainWindow):  # GUI for manually select the fram
                 cv2.circle(frame, (int(x), int(y)), 3, color, -1) # Draw the dot
                 cv2.putText(frame, str(keypoint), (int(x) + 10, int(y)), cv2.FONT_HERSHEY_SIMPLEX, text_size, text_color, 1, cv2.LINE_AA) # Add the label
 
+            if self.individuals is not None and len(keypoint_coords) >= 2:
+                self.plot_bounding_box(keypoint_coords, frame, color, inst)
+
             if self.skeleton: # Draw the skeleton
                 for start_kp, end_kp in self.skeleton:
                     start_coord = keypoint_coords.get(start_kp)
                     end_coord = keypoint_coords.get(end_kp)
                     if start_coord and end_coord:
                         cv2.line(frame, start_coord, end_coord, color, 2)
+        return frame
+    
+    def plot_bounding_box(self, keypoint_coords, frame, color, inst):
+        # Calculate bounding box coordinates
+        x_coords = [keypoint_coords[p][0] for p in keypoint_coords if keypoint_coords[p] is not None]
+        y_coords = [keypoint_coords[p][1] for p in keypoint_coords if keypoint_coords[p] is not None]
+
+        if not x_coords or not y_coords: # Skip if the mice has no keypoint
+            return frame
+            
+        min_x, max_x = min(x_coords), max(x_coords)
+        min_y, max_y = min(y_coords), max(y_coords)
+
+        padding = 10
+        min_x = max(0, min_x - padding)
+        min_y = max(0, min_y - padding)
+        max_x = min(frame.shape[1] - 1, max_x + padding)
+        max_y = min(frame.shape[0] - 1, max_y + padding)
+            
+        cv2.rectangle(frame, (min_x, min_y), (max_x, max_y), color, 1) # Draw the bounding box
+
+        #Add individual label
+        cv2.putText(frame, f"Instance: {self.individuals[inst]}", (min_x, min_y), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1, cv2.LINE_AA)
         return frame
 
     def change_frame(self, delta):
@@ -716,7 +742,7 @@ class dlcFrameExtractor:  # Backend for extracting frames for labeling in DLC
             frame_data = self.pred_data[frame][1]
             filtered_frame_data = [val for i, val in enumerate(frame_data) if (i % 3 != 2)] # Remove likelihood
             self.data.append([frame_idx] + filtered_frame_data)
-            
+
         if not self.prediction_to_csv():
             print("Error exporting predictions to csv.")
             return False
