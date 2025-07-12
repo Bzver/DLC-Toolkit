@@ -14,8 +14,6 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QShortcut, QKeySequence, QCloseEvent
 from PySide6.QtWidgets import QMessageBox
 
-#######################    W    #######################    I    #######################    P    #######################
-
 class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the outliers
     def __init__(self):
         super().__init__()
@@ -31,14 +29,13 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
         self.load_video_button = QtWidgets.QPushButton("Load Video")
         self.load_prediction_button = QtWidgets.QPushButton("Load Prediction")
         self.load_marked_frames_button = QtWidgets.QPushButton("Load Marked Frames")
-        self.mark_frame_button = QtWidgets.QPushButton("Mark / Unmark Current Frame (X)")
-        self.check_current_marks = QtWidgets.QPushButton("Check Current Marks")
+        self.save_to_dlc_button = QtWidgets.QPushButton("Save to DLC")
 
         self.button_layout.addWidget(self.load_video_button)
         self.button_layout.addWidget(self.load_prediction_button)
         self.button_layout.addWidget(self.load_marked_frames_button)
-        self.button_layout.addWidget(self.mark_frame_button)
-        self.button_layout.addWidget(self.check_current_marks)
+        self.button_layout.addWidget(self.save_to_dlc_button)
+
         self.layout.addLayout(self.button_layout)
 
         # Video display area
@@ -74,14 +71,18 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
 
         self.prev_marked_frame_button = QtWidgets.QPushButton("◄ Prev Marked (↓)")
         self.next_marked_frame_button = QtWidgets.QPushButton("► Next Marked (↑)")
+        self.mark_frame_button = QtWidgets.QPushButton("Mark / Unmark Current Frame (X)")
+        self.check_current_mark_button = QtWidgets.QPushButton("Check & Save Current Marked")
 
         self.navigation_layout.addWidget(self.prev_10_frames_button, 0, 0)
         self.navigation_layout.addWidget(self.prev_frame_button, 0, 1)
         self.navigation_layout.addWidget(self.next_frame_button, 0, 2)
         self.navigation_layout.addWidget(self.next_10_frames_button, 0, 3)
 
-        self.navigation_layout.addWidget(self.prev_marked_frame_button, 1, 0, 1, 2)
-        self.navigation_layout.addWidget(self.next_marked_frame_button, 1, 2, 1, 2)
+        self.navigation_layout.addWidget(self.mark_frame_button, 1, 0)
+        self.navigation_layout.addWidget(self.prev_marked_frame_button, 1, 1)
+        self.navigation_layout.addWidget(self.next_marked_frame_button, 1, 2)
+        self.navigation_layout.addWidget(self.check_current_mark_button, 1, 3)
 
         self.layout.addWidget(self.navigation_group_box)
         self.navigation_group_box.hide()
@@ -90,8 +91,6 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
         self.load_video_button.clicked.connect(self.load_video)
         self.load_prediction_button.clicked.connect(self.load_prediction)
         self.load_marked_frames_button.clicked.connect(self.load_marked_frames)
-        self.mark_frame_button.clicked.connect(self.change_current_frame_status)
-        self.check_current_marks.clicked.connect(self.display_marked_frames_list)
 
         self.progress_slider.sliderMoved.connect(self.set_frame_from_slider)
         self.play_button.clicked.connect(self.toggle_playback)
@@ -103,6 +102,10 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
 
         self.prev_marked_frame_button.clicked.connect(self.prev_marked_frame)
         self.next_marked_frame_button.clicked.connect(self.next_marked_frame)
+        self.mark_frame_button.clicked.connect(self.change_current_frame_status)
+        self.check_current_mark_button.clicked.connect(self.display_marked_frames_list)
+
+        self.save_to_dlc_button.clicked.connect(self.save_to_dlc)
 
         # Keyboard shortcuts
         QShortcut(QKeySequence(Qt.Key_Left | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(-10))
@@ -164,7 +167,10 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
         self.navigation_box_title_controller()
         print(f"Video loaded: {self.original_vid}")
 
-    def load_prediction(self):  # Dummy function, needs to be implemented
+    def load_prediction(self):
+        if self.current_frame is None:
+            QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
+            return
         file_dialog = QtWidgets.QFileDialog(self)
         prediction_path, _ = file_dialog.getOpenFileName(self, "Load Prediction", "", "HDF5 Files (*.h5);;All Files (*)")
         if prediction_path:
@@ -180,6 +186,11 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
                     print("Errpr: Prediction file not valid, no prediction table found in 'tracks'.")
                     return False
                 self.pred_data = pred_file["tracks"]["table"][:]
+                pred_frame_count = self.pred_data.size
+                if pred_frame_count != self.total_frames:
+                    QMessageBox.warning(self, "Error: Frame Mismatch", "Total frames in video and in prediction do not match!")
+                    print(f"Frames in config: {self.total_frames} \n Frames in prediction: {pred_frame_count}")
+                self.display_current_frame()
 
     def dlc_loader_query(self):
         dlc_loader = QMessageBox(self)
@@ -210,10 +221,21 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
             self.skeleton = cfg["skeleton"]
             self.individuals = cfg["individuals"]
             self.instance_count = len(self.individuals) if self.individuals is not None else 1
-            labeled_data = os.path.join(self.dlc_dir,"labeled-data")
-            if self.video_name in os.listdir(labeled_data):
-                self.project_dir = os.path.join(labeled_data, self.video_name)
-                self.labeled_frame_list = [ int(f.split("img")[1].split(".")[0]) for f in os.listdir(self.project_dir) if f.endswith(".png") and f.startswith("img") ]
+            self.project_dir = os.path.join(self.dlc_dir,"labeled-data", self.video_name)
+            self.display_current_frame()
+            if not os.path.isdir(self.project_dir):
+                self.labeled_frame_list = []
+                return
+            label_data_files = [ f for f in os.listdir(self.project_dir) if f.startswith("CollectedData_") and f.endswith(".h5") ]
+            if not label_data_files:
+                return
+            label_frame_list = []
+            for label_data_file in label_data_files:
+                with h5py.File(os.path.join(self.project_dir, label_data_file), "r") as lbf:
+                    label_frame_list.extend(lbf["df_with_missing"]["axis1_level2"].asstr()[()])
+                continue
+            self.labeled_frame_list = [ int(f.split("img")[1].split(".")[0]) for f in label_frame_list ]
+            self.display_current_frame()
 
     def load_marked_frames(self):
         file_dialog = QtWidgets.QFileDialog(self)
@@ -335,7 +357,7 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
         if self.keypoints is None: 
             num_keypoints = current_frame_data.size // self.instance_count // 3 # Consider the confidence col
         elif len(self.keypoints) != current_frame_data.size // self.instance_count // 3:
-            print("Error: Keypoints in config and in prediction do not match! Falling back to prediction parameters!")
+            QMessageBox.warning(self, "Error: Keypoint Mismatch", "Keypoints in config and in prediction do not match! Falling back to prediction parameters!")
             print(f"Keypoints in config: {len(self.keypoints)} \n Keypoints in prediction: {current_frame_data.size // self.instance_count * 2 // 3}")
             self.keypoints = None   # Falling back to prediction parameters
             self.skeleton = None
@@ -352,6 +374,8 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
                 x = current_frame_data[inst * num_keypoints * 3 + i * 3] # every third col in confidence col lol
                 y = current_frame_data[inst * num_keypoints * 3 + i * 3 + 1]
                 keypoint = i if self.keypoints is None else self.keypoints[i]
+                text_size = 0.5 if self.keypoints is None else 0.3
+                text_color = color if self.keypoints is None else (255, 255, 86)
                 if pd.isna(x) or pd.isna(y):
                     keypoint_coords[keypoint] = None
                     continue # Skip plotting empty coords
@@ -359,7 +383,7 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
                     keypoint_coords[keypoint] = (int(x),int(y))
                 
                 cv2.circle(frame, (int(x), int(y)), 3, color, -1) # Draw the dot
-                cv2.putText(frame, str(keypoint), (int(x) + 10, int(y)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA) # Add the label
+                cv2.putText(frame, str(keypoint), (int(x) + 10, int(y)), cv2.FONT_HERSHEY_SIMPLEX, text_size, text_color, 1, cv2.LINE_AA) # Add the label
 
             if self.skeleton: # Draw the skeleton
                 for start_kp, end_kp in self.skeleton:
@@ -407,12 +431,6 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
             self.play_button.setText("▶")
             self.is_playing = False
 
-    def determine_save_status(self):
-        if set(self.last_saved) == set(self.frame_list):
-            self.is_saved = True
-        else:
-            self.is_saved = False
-
     def navigation_box_title_controller(self):
         self.navigation_group_box.setTitle(f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | Video: {self.video_name}")
         if self.current_frame_idx in self.labeled_frame_list:
@@ -421,6 +439,12 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
             self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: #E28F13;}""")
         else:
             self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: black;}""")
+
+    def determine_save_status(self):
+        if set(self.last_saved) == set(self.frame_list):
+            self.is_saved = True
+        else:
+            self.is_saved = False
 
     def save_frame_mark(self):
         if self.current_frame is None:
@@ -433,6 +457,68 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
         with open(output_filepath, 'w') as file:
             yaml.dump(save_yaml, file)
         QMessageBox.information(self, "Success", f"Marked frames have been saved to {output_filepath}")
+
+    def save_to_dlc(self):
+        frame_only_mode = False
+        if self.current_frame is None:
+            QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
+            return False
+        if self.frame_list is None:
+            QMessageBox.warning(self, "No Marked Frame", "No frame has been marked, please mark some frames first.")
+            return False
+        if self.dlc_dir is None:
+            QMessageBox.warning(self, "No DLC Config", "DLC config is required for saving to DLC.")
+            self.load_dlc_file()
+            if self.dlc_dir is None: # When user close the file selection window
+                return False
+        if self.prediction is None:
+            reply = QMessageBox.question(
+                self,
+                "No Prediction Loaded",
+                "No prodiction has been loaded. Would you like export frames only?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                frame_only_mode = True
+            else:
+                self.load_prediction()
+                if self.prediction is None:
+                    return False       
+        try:
+            # Initialize DLC extractor backend
+            extractor = DLCOutlierExtractor(
+                original_vid=self.original_vid,
+                prediction=self.prediction,
+                frame_list=self.frame_list,
+                dlc_dir=self.dlc_dir,
+                project_dir=self.project_dir,
+                video_name=self.video_name,
+                pred_data=self.pred_data,
+                multi_animal=self.multi_animal
+            )
+            # Perform the extraction
+            if not frame_only_mode:
+                success = extractor.extract_frame_and_label()
+            else:
+                success = extractor.extract_frame()        
+            if success:
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    f"Successfully saved {len(self.frame_list)} frames to:\n"
+                    f"{os.path.join(self.dlc_dir, 'labeled-data', self.video_name)}"
+                )
+                return True
+            else:
+                QMessageBox.warning(self, "Error", "Failed to save frames to DLC format.")
+                return False
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"An error occurred while saving to DLC:\n{str(e)}"
+            )
+            return False
 
     def reset_state(self):
         self.progress_slider.setRange(0, 0)
@@ -466,7 +552,10 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
 
             save_btn = close_call.addButton("Save", QMessageBox.ButtonRole.AcceptRole)
             discard_btn = close_call.addButton("Don't Save", QMessageBox.ButtonRole.DestructiveRole)
+            close_btn = close_call.addButton("Close", QMessageBox.RejectRole)
             
+            close_call.setDefaultButton(close_btn)
+
             close_call.exec()
             clicked_button = close_call.clickedButton()
             
@@ -564,19 +653,18 @@ class custom_slider(QtWidgets.QSlider):
 
 #########################################################################################################################################################################################
 
-class DLCOutlierExtractor:  # Backend for extracting outliers for further labelling
-    def __init__(self, original_vid, prediction, frame_list, deeplabcut_dir):
+class DLCOutlierExtractor:  # Backend for extracting outliers for labeling in DLC
+    def __init__(self, original_vid, prediction, frame_list, dlc_dir, project_dir, video_name, pred_data, multi_animal=False):
         self.original_vid = original_vid
         self.prediction = prediction
         self.frame_list = frame_list
-        self.deeplabcut_dir = deeplabcut_dir
+        self.dlc_dir = dlc_dir
+        self.project_dir = project_dir
+        self.video_name = video_name
+        self.multi_animal = multi_animal
+        self.pred_data = pred_data
 
-        self.project_dir = None
-        self.multi_animal = False
-        self.video_name = None
-        self.scorer = "machine-labeled"
         self.data = []
-        self.existing_project = False
         
     def extract_frame_and_label(self):
         if not os.path.isfile(self.original_vid):
@@ -586,28 +674,8 @@ class DLCOutlierExtractor:  # Backend for extracting outliers for further labell
             print(f"Prediction file not found at {self.prediction}")
             return False
         else:
-            self.video_name = os.path.basename(self.original_vid).split(".")[0]
-            video_path = os.path.dirname(self.original_vid)
-
-            if self.deeplabcut_dir is not None:
-                self.project_dir = os.path.join(self.deeplabcut_dir,"labeled-data",self.video_name)
-                if os.path.isdir(self.project_dir) and any(os.scandir(self.project_dir)):
-                    print(f"Existing project folder found, checking for already labelled image...")
-                    self.existing_project = True
-                    existing_img = [ int(f.split("img")[1].split(".")[0]) for f in os.listdir(self.project_dir) if f.endswith(".png") and f.startswith("img") ]
-                else:
-                    existing_img = []
-                for frame in self.frame_list:
-                    if frame in existing_img:
-                        self.frame_list.remove(frame)
-                        print(f"Frame {frame} already in the {self.project_dir}, skipping...")
-            else:
-                self.project_dir = video_path
-
-            os.makedirs(self.project_dir, exist_ok=True)
             frame_extraction = self.extract_frame()
             label_extraction = self.extract_label()
-
             if frame_extraction and label_extraction:
                 print("Extraction successful.")
                 return True
@@ -634,20 +702,12 @@ class DLCOutlierExtractor:  # Backend for extracting outliers for further labell
                 cv2.imwrite(image_output_path, frame)
         return True
 
-    def extract_label(self): # Adapted from DeepLabCut
-        with h5py.File(self.prediction, "r") as pred_file:
-            if not "tracks" in pred_file.keys():
-                print("Error: Prediction file not valid, no 'tracks' key found in prediction file.")
-                return False
-            else:
-                if not "table" in pred_file["tracks"].keys():
-                    print("Errpr: Prediction file not valid, no prediction table found in 'tracks'.")
-                    return False
-            for frame in self.frame_list:
-                frame_idx = pred_file["tracks"]["table"][frame][0]
-                frame_data = pred_file["tracks"]["table"][frame][1]
-                filtered_frame_data = [val for i, val in enumerate(frame_data) if (i % 3 != 2)] # Remove likelihood
-                self.data.append([frame_idx] + filtered_frame_data)
+    def extract_label(self):
+        for frame in self.frame_list:
+            frame_idx = self.pred_data[frame][0]
+            frame_data = self.pred_data[frame][1]
+            filtered_frame_data = [val for i, val in enumerate(frame_data) if (i % 3 != 2)] # Remove likelihood
+            self.data.append([frame_idx] + filtered_frame_data)
             if not self.prediction_to_csv():
                 print("Error exporting predictions to csv.")
                 return False
@@ -661,37 +721,29 @@ class DLCOutlierExtractor:  # Backend for extracting outliers for further labell
                     return True
 
     def prediction_to_csv(self): # Adapted from DeepLabCut
-        config = os.path.join(self.deeplabcut_dir,"config.yaml")
-
-        with open(config, "r") as conf:
-            cfg = yaml.safe_load(conf)
-        self.multi_animal = cfg["multianimalproject"]
-        keypoints = cfg["bodyparts"] if not self.multi_animal else cfg["multianimalbodyparts"]
-            
         data_frames = []
         columns = ["frame"]
         bodyparts_row = ["bodyparts"]
         coords_row = ["coords"]
 
-        num_keypoints = len(keypoints)
-        max_instances = 1
+        num_keypoints = len(self.keypoints)
 
         if not self.multi_animal:
-            columns += ([f"{kp}_x" for kp in keypoints] + [f"{kp}_y" for kp in keypoints])
-            bodyparts_row += [ f"{kp}" for kp in keypoints for _ in (0, 1) ]
-            coords_row += (["x", "y"] * num_keypoints)
+            columns += ([f"{kp}_x" for kp in self.keypoints] + [f"{kp}_y" for kp in self.keypoints])
+            bodyparts_row += [ f"{kp}" for kp in self.keypoints for _ in (0, 1) ]
+            coords_row += (["x", "y"] * self.keypoints)
+            max_instances = 1
         else:
             individuals_row = ["individuals"]
-            individuals = cfg["individuals"]
             max_instances = len(individuals)
             individuals = [str(k) for k in range(1,max_instances+1)]
             for m in range(max_instances):
-                columns += ([f"{kp}_x" for kp in keypoints] + [f"{kp}_y" for kp in keypoints])
-                bodyparts_row += [ f"{kp}" for kp in keypoints for _ in (0, 1) ]
+                columns += ([f"{kp}_x" for kp in self.keypoints] + [f"{kp}_y" for kp in self.keypoints])
+                bodyparts_row += [ f"{kp}" for kp in self.keypoints for _ in (0, 1) ]
                 coords_row += (["x", "y"] * num_keypoints)
                 for _ in range(num_keypoints*2):
                     individuals_row += [individuals[m]]
-        scorer_row = ["scorer"] + [f"{self.scorer}"] * (len(columns) - 1)
+        scorer_row = ["scorer"] + ["machine-labeled"] * (len(columns) - 1)
 
         labels_df = pd.DataFrame(self.data, columns=columns)
         labels_df["frame"] = labels_df["frame"].apply(
@@ -733,7 +785,7 @@ class DLCOutlierExtractor:  # Backend for extracting outliers for further labell
             else:
                 index_col = 0
             data = pd.read_csv(fn, index_col=index_col, header=header)
-            data.columns = data.columns.set_levels([self.scorer], level="scorer")
+            data.columns = data.columns.set_levels(["machine-labeled"], level="scorer")
             self.guarantee_multiindex_rows(data)
             data.to_hdf(fn.replace(".csv", ".h5"), key="df_with_missing", mode="w")
             data.to_csv(fn)
