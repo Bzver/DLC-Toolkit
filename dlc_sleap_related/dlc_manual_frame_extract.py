@@ -14,7 +14,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QShortcut, QKeySequence, QCloseEvent
 from PySide6.QtWidgets import QMessageBox
 
-class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the outliers
+class dlcFrameFinder(QtWidgets.QMainWindow):  # GUI for manually select the outliers
     def __init__(self):
         super().__init__()
         self.setWindowTitle("DLC Manual Outlier Extractor")
@@ -486,7 +486,7 @@ class DLCOutlierFinder(QtWidgets.QMainWindow):  # GUI for manually select the ou
                     return False       
         try:
             # Initialize DLC extractor backend
-            extractor = DLCOutlierExtractor(
+            extractor = dlcFrameExtractor(
                 original_vid=self.original_vid,
                 prediction=self.prediction,
                 frame_list=self.frame_list,
@@ -653,7 +653,7 @@ class custom_slider(QtWidgets.QSlider):
 
 #########################################################################################################################################################################################
 
-class DLCOutlierExtractor:  # Backend for extracting outliers for labeling in DLC
+class dlcFrameExtractor:  # Backend for extracting outliers for labeling in DLC
     def __init__(self, original_vid, prediction, frame_list, dlc_dir, project_dir, video_name, pred_data, multi_animal=False):
         self.original_vid = original_vid
         self.prediction = prediction
@@ -811,6 +811,6 @@ class DLCOutlierExtractor:  # Backend for extracting outliers for labeling in DL
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication([])
-    window = DLCOutlierFinder()
+    window = dlcFrameFinder()
     window.show()
     app.exec()
