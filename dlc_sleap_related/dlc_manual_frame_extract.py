@@ -1,11 +1,11 @@
 import os
 
+import h5py
+import yaml
+
 import pandas as pd
 from itertools import islice
 import bisect
-
-import h5py
-import yaml
 
 import cv2
 
@@ -72,7 +72,7 @@ class dlcFrameFinder(QtWidgets.QMainWindow):
         self.prev_marked_frame_button = QtWidgets.QPushButton("◄ Prev Marked (↓)")
         self.next_marked_frame_button = QtWidgets.QPushButton("► Next Marked (↑)")
         self.mark_frame_button = QtWidgets.QPushButton("Mark / Unmark Current Frame (X)")
-        self.check_current_mark_button = QtWidgets.QPushButton("Check & Save Current Marked")
+        self.adjust_confidence_cutoff_button = QtWidgets.QPushButton("Adjust Confidence Cutoff")
 
         self.navigation_layout.addWidget(self.prev_10_frames_button, 0, 0)
         self.navigation_layout.addWidget(self.prev_frame_button, 0, 1)
@@ -82,7 +82,7 @@ class dlcFrameFinder(QtWidgets.QMainWindow):
         self.navigation_layout.addWidget(self.mark_frame_button, 1, 0)
         self.navigation_layout.addWidget(self.prev_marked_frame_button, 1, 1)
         self.navigation_layout.addWidget(self.next_marked_frame_button, 1, 2)
-        self.navigation_layout.addWidget(self.check_current_mark_button, 1, 3)
+        self.navigation_layout.addWidget(self.adjust_confidence_cutoff_button, 1, 3)
 
         self.layout.addWidget(self.navigation_group_box)
         self.navigation_group_box.hide()
@@ -103,11 +103,10 @@ class dlcFrameFinder(QtWidgets.QMainWindow):
         self.prev_marked_frame_button.clicked.connect(self.prev_marked_frame)
         self.next_marked_frame_button.clicked.connect(self.next_marked_frame)
         self.mark_frame_button.clicked.connect(self.change_current_frame_status)
-        self.check_current_mark_button.clicked.connect(self.display_marked_frames_list)
+        self.adjust_confidence_cutoff_button.clicked.connect(self.adjust_confidence_cutoff)
 
         self.save_to_dlc_button.clicked.connect(self.save_to_dlc)
 
-        # Keyboard shortcuts
         QShortcut(QKeySequence(Qt.Key_Left | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(-10))
         QShortcut(QKeySequence(Qt.Key_Left), self).activated.connect(lambda: self.change_frame(-1))
         QShortcut(QKeySequence(Qt.Key_Right), self).activated.connect(lambda: self.change_frame(1))
@@ -137,6 +136,7 @@ class dlcFrameFinder(QtWidgets.QMainWindow):
         self.cap = None
         self.current_frame = None
         self.frame_list = []
+        self.confidence_cutoff = 0 # Default confidence cutoff
 
         self.is_saved = True
         self.last_saved = []
@@ -308,10 +308,13 @@ class dlcFrameFinder(QtWidgets.QMainWindow):
             for i in range(num_keypoints):
                 x = current_frame_data[inst * num_keypoints * 3 + i * 3] # x, y, confidence triplet
                 y = current_frame_data[inst * num_keypoints * 3 + i * 3 + 1]
+                confidence = current_frame_data[inst * num_keypoints * 3 + i * 3 + 2]
+                if pd.isna(confidence):
+                    confidence = 0 # Set confidence value to 0 for NaN confidence
                 keypoint = i if self.keypoints is None else self.keypoints[i]
                 text_size = 0.5 if self.keypoints is None else 0.3
                 text_color = color if self.keypoints is None else (255, 255, 86)
-                if pd.isna(x) or pd.isna(y):
+                if pd.isna(x) or pd.isna(y) or confidence <= self.confidence_cutoff: # Apply confidence cutoff
                     keypoint_coords[keypoint] = None
                     continue # Skip plotting empty coords
                 else:
@@ -421,24 +424,35 @@ class dlcFrameFinder(QtWidgets.QMainWindow):
         self.progress_slider.set_marked_frames(self.frame_list)
         self.navigation_box_title_controller()
 
-    def display_marked_frames_list(self):
-        if self.current_frame is None:
-            QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
-            return
-        if self.frame_list:
-            self.frame_list.sort()
-            frame_list_msg = QMessageBox(self)
-            frame_list_msg.setWindowTitle("Current Marked Frames")
-            frame_list_msg.setText(str(self.frame_list))
-            save_btn = frame_list_msg.addButton("Save", QMessageBox.ButtonRole.AcceptRole)
-            close_btn = frame_list_msg.addButton("Close", QMessageBox.RejectRole)
-            frame_list_msg.setDefaultButton(close_btn)
-            frame_list_msg.exec()
-            clicked_button = frame_list_msg.clickedButton()
-            if clicked_button == save_btn:
-                self.save_frame_mark()
-        else:
-            QMessageBox.information(self, "No Marked Frames", "There are no frames marked yet.")
+    def adjust_confidence_cutoff(self):
+        """Pops out a menu with a QSlider to adjust self.confidence_cutoff."""
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Adjust Confidence Cutoff")
+        dialog.setModal(True)
+
+        layout = QtWidgets.QVBoxLayout(dialog)
+
+        # Label to display current value
+        self.confidence_label = QtWidgets.QLabel(f"Confidence Cutoff: {self.confidence_cutoff:.2f}")
+        layout.addWidget(self.confidence_label)
+
+        # Slider
+        slider = QtWidgets.QSlider(Qt.Horizontal)
+        slider.setRange(0, 100) # Scale 0.00 to 1.00 to 0 to 100
+        slider.setValue(int(self.confidence_cutoff * 100))
+        slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
+        slider.setTickInterval(10)
+        layout.addWidget(slider)
+
+        slider.valueChanged.connect(self._update_confidence_cutoff) # Connect slider to update label
+
+        dialog.exec()
+            
+    def _update_confidence_cutoff(self, value):
+        """Updates the label and the value to show the current slider value."""
+        self.confidence_label.setText(f"Confidence Cutoff: {value / 100.0:.2f}")
+        self.confidence_cutoff = value / 100.0
+        self.display_current_frame() # Redraw frame with new cutoff
 
     def prev_marked_frame(self):
         if not self.frame_list:
