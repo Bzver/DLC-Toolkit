@@ -12,7 +12,7 @@ import cv2
 from PySide6 import QtWidgets, QtGui, QtCore
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QShortcut, QKeySequence, QCloseEvent
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QMessageBox, QPushButton
 
 class dlcFrameFinder(QtWidgets.QMainWindow):
     def __init__(self):
@@ -26,10 +26,10 @@ class dlcFrameFinder(QtWidgets.QMainWindow):
 
         # Buttons
         self.button_layout = QtWidgets.QHBoxLayout()
-        self.load_video_button = QtWidgets.QPushButton("Load Video")
-        self.load_prediction_button = QtWidgets.QPushButton("Load Prediction")
-        self.load_marked_frames_button = QtWidgets.QPushButton("Load Marked Frames")
-        self.save_to_dlc_button = QtWidgets.QPushButton("Save to DLC")
+        self.load_video_button = QPushButton("Load Video")
+        self.load_prediction_button = QPushButton("Load Prediction")
+        self.load_marked_frames_button = QPushButton("Load Marked Frames")
+        self.save_to_dlc_button = QPushButton("Save to DLC")
 
         self.button_layout.addWidget(self.load_video_button)
         self.button_layout.addWidget(self.load_prediction_button)
@@ -47,7 +47,7 @@ class dlcFrameFinder(QtWidgets.QMainWindow):
 
         # Progress bar
         self.progress_layout = QtWidgets.QHBoxLayout()
-        self.play_button = QtWidgets.QPushButton("▶")
+        self.play_button = QPushButton("▶")
         self.play_button.setFixedWidth(20)
         self.progress_slider = custom_slider(Qt.Horizontal)
         self.progress_slider.setRange(0, 0) # Will be set dynamically
@@ -64,15 +64,15 @@ class dlcFrameFinder(QtWidgets.QMainWindow):
         self.navigation_group_box = QtWidgets.QGroupBox("Video Navigation")
         self.navigation_layout = QtWidgets.QGridLayout(self.navigation_group_box)
 
-        self.prev_10_frames_button = QtWidgets.QPushButton("Prev 10 Frames (Shift + ←)")
-        self.prev_frame_button = QtWidgets.QPushButton("Prev Frame (←)")
-        self.next_frame_button = QtWidgets.QPushButton("Next Frame (→)")
-        self.next_10_frames_button = QtWidgets.QPushButton("Next 10 Frames (Shift + →)")
+        self.prev_10_frames_button = QPushButton("Prev 10 Frames (Shift + ←)")
+        self.prev_frame_button = QPushButton("Prev Frame (←)")
+        self.next_frame_button = QPushButton("Next Frame (→)")
+        self.next_10_frames_button = QPushButton("Next 10 Frames (Shift + →)")
 
-        self.prev_marked_frame_button = QtWidgets.QPushButton("◄ Prev Marked (↓)")
-        self.next_marked_frame_button = QtWidgets.QPushButton("► Next Marked (↑)")
-        self.mark_frame_button = QtWidgets.QPushButton("Mark / Unmark Current Frame (X)")
-        self.adjust_confidence_cutoff_button = QtWidgets.QPushButton("Adjust Confidence Cutoff")
+        self.prev_marked_frame_button = QPushButton("◄ Prev Marked (↓)")
+        self.next_marked_frame_button = QPushButton("► Next Marked (↑)")
+        self.mark_frame_button = QPushButton("Mark / Unmark Current Frame (X)")
+        self.adjust_confidence_cutoff_button = QPushButton("Adjust Confidence Cutoff")
 
         self.navigation_layout.addWidget(self.prev_10_frames_button, 0, 0)
         self.navigation_layout.addWidget(self.prev_frame_button, 0, 1)
