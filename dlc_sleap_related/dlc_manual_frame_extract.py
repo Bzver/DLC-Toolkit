@@ -118,24 +118,16 @@ class dlcFrameFinder(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_L | Qt.ShiftModifier), self).activated.connect(self.load_dlc_file)
         QShortcut(QKeySequence(Qt.Key_S | Qt.ControlModifier), self).activated.connect(self.save_frame_mark)
         
-        self.original_vid = None
-        self.prediction = None
-        self.dlc_dir = None
-        self.video_name = None
-
-        self.pred_data = None
+        self.original_vid, self.prediction, self.dlc_dir, self.video_name = None, None, None, None
+        self.keypoints, self.skeleton, self.individuals, self.instance_count = None, None, None, None
 
         self.multi_animal = False
-        self.keypoints = None
-        self.skeleton = None
-        self.individuals = None
-        self.instance_count = 1
-        self.project_dir = None
-        self.labeled_frame_list = []
+        self.pred_data = None
 
-        self.cap = None
-        self.current_frame = None
-        self.frame_list = []
+        self.project_dir = None
+        self.labeled_frame_list, self.frame_list = [], []
+
+        self.cap, self.current_frame = None, None
         self.confidence_cutoff = 0 # Default confidence cutoff
 
         self.is_saved = True
@@ -181,9 +173,6 @@ class dlcFrameFinder(QtWidgets.QMainWindow):
             with h5py.File(self.prediction, "r") as pred_file:
                 if not "tracks" in pred_file.keys():
                     print("Error: Prediction file not valid, no 'tracks' key found in prediction file.")
-                    return False
-                elif not "table" in pred_file["tracks"].keys():
-                    print("Errpr: Prediction file not valid, no prediction table found in 'tracks'.")
                     return False
                 self.pred_data = pred_file["tracks"]["table"][:]
                 pred_frame_count = self.pred_data.size
