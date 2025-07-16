@@ -13,9 +13,23 @@ from PySide6 import QtWidgets, QtGui
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QShortcut, QKeySequence, QCloseEvent
 from PySide6.QtWidgets import QMessageBox, QPushButton
+from PySide6.QtCore import Signal
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+
+class ClickableVideoLabel(QtWidgets.QLabel):
+    clicked = Signal(int) # Signal to emit cam_idx when clicked
+
+    def __init__(self, cam_idx, parent=None):
+        super().__init__(parent)
+        self.cam_idx = cam_idx
+        self.setMouseTracking(True) # Enable mouse tracking for hover effects if needed
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(self.cam_idx)
+        super().mousePressEvent(event)
 
 class DLC_3D_plotter(QtWidgets.QMainWindow):
     def __init__(self):
@@ -43,7 +57,9 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.video_labels = [] # Store video labels in a list for easy access
         for row in range(2):
             for col in range(2):
-                label = QtWidgets.QLabel(f"Video {row*2 + col + 1}")
+                cam_idx = row * 2 + col # 0-indexed camera index
+                label = ClickableVideoLabel(cam_idx, self) # Use the custom label
+                label.setText(f"Video {cam_idx + 1}")
                 label.setAlignment(Qt.AlignCenter) # Center the "Video X" text
                 label.setFixedSize(480, 360) # Set a fixed size for video display
                 label.setStyleSheet("border: 1px solid gray;") # Add a border for visibility
@@ -105,6 +121,9 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.load_video_folder_button.clicked.connect(self.open_video_folder_dialog)
         self.load_calibrations_button.clicked.connect(self.load_calibrations)
 
+        for label in self.video_labels:
+            label.clicked.connect(self.set_selected_camera)
+
         self.size_slider.sliderMoved.connect(self.set_plot_lim_from_slider)
         self.progress_slider.sliderMoved.connect(self.set_frame_from_slider)
         self.play_button.clicked.connect(self.toggle_playback)
@@ -142,6 +161,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         
         self.current_frame_idx = 0      # Single frame index for all synchronized videos
         self.total_frames = 0      # Max frames across all videos
+        self.selected_cam_idx = 0  # Default to camera 0
 
     def open_video_folder_dialog(self):
         if self.keypoints is None:
@@ -290,6 +310,13 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             else:
                 self.video_labels[i].setText(f"Video {i+1} Not Loaded/Available")
                 self.video_labels[i].setPixmap(QtGui.QPixmap())
+            
+            # Update border color based on selection
+            if i == self.selected_cam_idx:
+                self.video_labels[i].setStyleSheet("border: 2px solid red;")
+            else:
+                self.video_labels[i].setStyleSheet("border: 1px solid gray;")
+
         self.progress_slider.setValue(self.current_frame_idx) # Update the slider after all frames are displayed
         self.plot_3d_points()
 
@@ -385,6 +412,11 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
     ###################################################################################################################################################
 
+    def set_selected_camera(self, cam_idx):
+        self.selected_cam_idx = cam_idx
+        print(f"Selected Camera Index: {self.selected_cam_idx}")
+        self.display_current_frame() # Refresh display to update border
+
     def data_loader_for_plot(self, cam_idx):
         try:
             pred_data = self.pred_data_list[cam_idx]
@@ -417,6 +449,22 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
     def data_loader_for_3d_plot(self, undistorted_images=False):
         self.keypoint_coords_3d = [{} for _ in range(self.instance_count)]
+        # Determine how many instances each camera detects in the current frame
+        if self.instance_count > 1: # This check is only relevant if multiple instances are expected
+            instances_detected_per_camera = [0] * self.num_cam
+            for cam_idx_check in range(self.num_cam):
+                detected_instances_in_cam = 0
+                for inst_check in range(self.instance_count):
+                    # Check if this instance has any valid keypoint data for this camera in the current frame
+                    has_valid_data = False
+                    for keypoint_check in self.keypoints:
+                        if self.keypoint_coords[cam_idx_check][inst_check][keypoint_check] is not None:
+                            has_valid_data = True
+                            break
+                    if has_valid_data:
+                        detected_instances_in_cam += 1
+                instances_detected_per_camera[cam_idx_check] = detected_instances_in_cam
+
         for inst in range(self.instance_count):
             for keypoint in self.keypoints:
                 valid_projection_matrices = []
@@ -425,6 +473,10 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 valid_cam_view = 0
 
                 for cam_idx in range(self.num_cam):
+                    # If multiple instances are expected but this camera only detects one, skip its data for triangulation
+                    if self.instance_count > 1 and instances_detected_per_camera[cam_idx] == 1:
+                        continue
+
                     point_2d_data = self.keypoint_coords[cam_idx][inst][keypoint]
                     if point_2d_data is None:
                         continue
@@ -448,47 +500,45 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                     valid_cam_view += 1
 
                 if valid_cam_view >= 2:
-                    # Implement a triangulation method that is both fast and take account of the confidence value of individual points
-                    # Weighted Linear Triangulation (WLT)
-                    # Construct the A matrix for Ax = 0, where x is the 3D point (X, Y, Z, 1)
-                    # For each camera i, and its projection matrix P_i = [p_i1 p_i2 p_i3 p_i4]
-                    # u_i * p_i3 - p_i1 = 0
-                    # v_i * p_i3 - p_i2 = 0
-                    # We can weight these equations by the confidence.
+                    self.triangulation_coords()
 
-                    A = []
-                    for i in range(valid_cam_view):
-                        P_i = valid_projection_matrices[i]
-                        u, v = valid_points_2d[i]
-                        w = valid_confidences[i] # Weight by confidence
+    def triangulation_coords(self, valid_cam_view, valid_projection_matrices, valid_points_2d, valid_confidences, inst, keypoint):
+        """
+        Implement a triangulation method that is both fast and take account of the confidence value of individual points
+        Weighted Linear Triangulation (WLT)
+        Construct the A matrix for Ax = 0, where x is the 3D point (X, Y, Z, 1)
+        For each camera i, and its projection matrix P_i = [p_i1 p_i2 p_i3 p_i4]
+        u_i * p_i3 - p_i1 = 0
+        v_i * p_i3 - p_i2 = 0
+        """
+        A = []
+        for i in range(valid_cam_view):
+            P_i = valid_projection_matrices[i]
+            u, v = valid_points_2d[i]
+            w = valid_confidences[i] # Weight by confidence
 
-                        # Ensure P_i is a numpy array for slicing
-                        P_i = np.array(P_i)
+            # Ensure P_i is a numpy array for slicing
+            P_i = np.array(P_i)
 
-                        # Equations for DLT:
-                        # u * P_i[2,:] - P_i[0,:] = 0
-                        # v * P_i[2,:] - P_i[1,:] = 0
-                        # Apply weight 'w' to each row
-                        A.append(w * (u * P_i[2,:] - P_i[0,:]))
-                        A.append(w * (v * P_i[2,:] - P_i[1,:]))
+            # Equations for DLT:
+            # u * P_i[2,:] - P_i[0,:] = 0
+            # v * P_i[2,:] - P_i[1,:] = 0
+            # Apply weight 'w' to each row
+            A.append(w * (u * P_i[2,:] - P_i[0,:]))
+            A.append(w * (v * P_i[2,:] - P_i[1,:]))
 
-                    A = np.array(A)
-                    # Solve Ax = 0 using SVD
-                    U, S, Vt = np.linalg.svd(A)
-                    # The 3D point is the last column of V (or last row of Vt)
-                    point_4d_hom = Vt[-1]
-                    # Convert from homogeneous to Euclidean coordinates
-                    point_3d = point_4d_hom[:3] / point_4d_hom[3]
-                # If valid_cam_view < 2, point_3d remains None, which is handled by the initialization.
-                    
-                    # Convert from homogeneous to Euclidean coordinates (x/w, y/w, z/w)
-                    point_3d = (point_4d_hom / point_4d_hom[3]).flatten()[:3]
-                    # The line `point_3d[marker_idx, :] = point_3d` was incorrect.
-                    # It should be `points_3d[marker_idx, :] = point_3d` if `points_3d` is an array of all 3D points.
-                    # However, in this context, `point_3d` is a single 3D point for a specific keypoint.
-                    # The assignment `self.keypoint_coords_3d[inst][keypoint] = point_3d` is correct.
+        A = np.array(A) # Solve Ax = 0 using SVD
+        U, S, Vt = np.linalg.svd(A) # The 3D point is the last column of V (or last row of Vt)
+        
+        point_4d_hom = Vt[-1]
+        # Convert from homogeneous to Euclidean coordinates
+        point_3d = point_4d_hom[:3] / point_4d_hom[3]
+        # If valid_cam_view < 2, point_3d remains None, which is handled by the initialization.
+        
+        # Convert from homogeneous to Euclidean coordinates (x/w, y/w, z/w)
+        point_3d = (point_4d_hom / point_4d_hom[3]).flatten()[:3]
 
-                self.keypoint_coords_3d[inst][keypoint] = point_3d
+        self.keypoint_coords_3d[inst][keypoint] = point_3d
 
     def get_projection_matrix(self, K, R, t):
         # Ensure t is a 3x1 column vector
@@ -544,7 +594,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
     def toggle_playback(self):
         if not self.is_playing:
-            self.playback_timer.start(1000/100) # 100 fps
+            self.playback_timer.start(1000/50) # 50 fps
             self.play_button.setText("■")
             self.is_playing = True
         else:
