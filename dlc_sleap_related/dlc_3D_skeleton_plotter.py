@@ -18,6 +18,10 @@ from PySide6.QtCore import Signal
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
+# Todo - Using dataframe logic for data processing
+#        Add a reprojection button to reproject the 3D coords back to the views
+#        Move video ploting and reprojection to another thread or optional
+
 class ClickableVideoLabel(QtWidgets.QLabel):
     clicked = Signal(int) # Signal to emit cam_idx when clicked
 
@@ -69,9 +73,10 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         #Store plot and a slider for adjust plot size
         self.plot_layout = QtWidgets.QVBoxLayout()
         self.size_slider = QtWidgets.QSlider(Qt.Horizontal)
-        self.size_slider.setRange(1, 300)
+        self.size_slider.setRange(1, 301)
         self.size_slider.setTracking(True)
         self.plot_layout.addWidget(self.size_slider)
+        self.size_slider.setValue(300)
         self.size_slider.hide()
         self.figure = plt.figure()
         self.canvas = FigureCanvas(self.figure)
@@ -140,19 +145,15 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.toggle_playback)
         QShortcut(QKeySequence(Qt.Key_R), self).activated.connect(self.reset_3d_view)
 
-        self.num_cam = 4
-        self.video_list = [None] * self.num_cam
-        self.cap_list = [None] * self.num_cam
-        self.pred_data_list = [None] * self.num_cam
+        self.num_cam = None
 
         self.confidence_cutoff = 0.6 # Initialize confidence cutoff
 
         self.multi_animal, self.keypoints, self.skeleton, self.individuals = False, None, None, None
         self.instance_count = 1
 
-        self.cam_pos, self.cam_dir = [None] * self.num_cam, [None] * self.num_cam
+        self.num_cam_from_calib = None
 
-        self.camera_params = [{} for _ in range(self.num_cam)]
         self.keypoint_coords = {}
         self.keypoint_coords_3d = {}
 
@@ -161,19 +162,29 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         
         self.current_frame_idx = 0      # Single frame index for all synchronized videos
         self.total_frames = 0      # Max frames across all videos
-        self.selected_cam_idx = 0  # Default to camera 0
+        self.selected_cam_idx = 0  # Selected view, default to camera 0
 
     def open_video_folder_dialog(self):
         if self.keypoints is None:
+            QMessageBox.warning(self, "Warning", "DLC config is not loaded, load DLC config first!")
             print("DLC config is not loaded, load DLC config first!")
             self.load_dlc_config()
             if self.keypoints is None: # User close DLC loading window
+                return
+        if self.num_cam_from_calib is None:
+            QMessageBox.warning(self, "Warning", "Calibrations are not loaded, load calibrations first!")
+            print("Calibrations are not loaded, load calibrations first!")
+            self.load_calibrations()
+            if self.num_cam_from_calib is None: # User close calibration loading window
                 return
         folder_path = QtWidgets.QFileDialog.getExistingDirectory(self, "Select Video Folder")
         if folder_path:
             self.load_video_folder(folder_path)
 
     def load_video_folder(self, folder_path):
+        self.num_cam = len([f for f in os.listdir(folder_path) if f.startswith("Camera")])
+        print(self.num_cam)
+        self.initialize_data_dict()
         print(f"Loading videos from: {folder_path}")
         max_frames = 0
         for i in range(self.num_cam):  # Loop through expected camera folders
@@ -246,15 +257,6 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             self.skeleton = cfg["skeleton"]
             self.individuals = cfg["individuals"]
             self.instance_count = len(self.individuals) if self.individuals is not None else 1
-            # Initialize data dict
-            for cam_idx in range(self.num_cam):
-                self.keypoint_coords[cam_idx] = {} # Initialize for cam_idx
-                for inst in range(self.instance_count):
-                    self.keypoint_coords[cam_idx][inst] = {} # Initialize for inst
-                    self.keypoint_coords_3d[inst] = {}
-                    for keypoint in self.keypoints:
-                        self.keypoint_coords[cam_idx][inst][keypoint] = {}
-                        self.keypoint_coords_3d[inst][keypoint] = {}
 
     def load_calibrations(self):
         file_path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select Calibration File", "", "Calibration Files (*.mat)")
@@ -263,21 +265,39 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             print(f"Calibration loaded: {calibration_file}")
             QMessageBox.information(self, "Success", "Calibrations loaded successfully!")
             calib = sio.loadmat(calibration_file)
-            num_cam_from_calib = calib["params"].size
-            for i in range(num_cam_from_calib):
-                self.load_calibration_mat(i, calib)
+            self.num_cam_from_calib = calib["params"].size
+            self.camera_params = [{} for _ in range(self.num_cam_from_calib)]
+            self.load_calibration_mat(calib)
             self.plot_camera_geometry()
 
-    def load_calibration_mat(self, cam_idx, calib):
-        self.camera_params[cam_idx]["RDistort"] = calib["params"][cam_idx,0][0,0]["RDistort"][0]
-        self.camera_params[cam_idx]["TDistort"] = calib["params"][cam_idx,0][0,0]["TDistort"][0]
-        K = calib["params"][cam_idx,0][0,0]["K"].T
-        r = calib["params"][cam_idx,0][0,0]["r"].T
-        t = calib["params"][cam_idx,0][0,0]["t"].flatten()
-        self.cam_pos[cam_idx] = -np.dot(r.T, t)
-        self.cam_dir[cam_idx] = r[:, 2]
-        self.camera_params[cam_idx]["K"] = K
-        self.camera_params[cam_idx]["P"] = self.get_projection_matrix(K,r,t)
+    def load_calibration_mat(self, calib):
+        cam_pos = [None] * self.num_cam_from_calib
+        cam_dir = [None] * self.num_cam_from_calib
+        for i in range(self.num_cam_from_calib):
+            self.camera_params[i]["RDistort"] = calib["params"][i,0][0,0]["RDistort"][0]
+            self.camera_params[i]["TDistort"] = calib["params"][i,0][0,0]["TDistort"][0]
+            K = calib["params"][i,0][0,0]["K"].T
+            r = calib["params"][i,0][0,0]["r"].T
+            t = calib["params"][i,0][0,0]["t"].flatten()
+            cam_pos[i] = -np.dot(r.T, t)
+            cam_dir[i] = r[2, :]
+            self.camera_params[i]["K"] = K
+            self.camera_params[i]["P"] = self.get_projection_matrix(K,r,t)
+        self.cam_pos = np.array(cam_pos)
+        self.cam_dir = np.array(cam_dir)
+
+    def initialize_data_dict(self):
+        self.video_list = [None] * self.num_cam
+        self.cap_list = [None] * self.num_cam
+        self.pred_data_list = [None] * self.num_cam
+        for cam_idx in range(self.num_cam):
+            self.keypoint_coords[cam_idx] = {} # Initialize for cam_idx
+            for inst in range(self.instance_count):
+                self.keypoint_coords[cam_idx][inst] = {} # Initialize for inst
+                self.keypoint_coords_3d[inst] = {}
+                for keypoint in self.keypoints:
+                    self.keypoint_coords[cam_idx][inst][keypoint] = {}
+                    self.keypoint_coords_3d[inst][keypoint] = {}
 
     ###################################################################################################################################################
 
@@ -324,7 +344,9 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.data_loader_for_plot(cam_idx)
         # Iterate over each individual (animal)
         for inst in range(self.instance_count):
-            color = self.instance_color[inst % len(self.instance_color)]
+            color_rgb = self.instance_color[inst % len(self.instance_color)]
+            # Convert RGB to BGR for OpenCV
+            color_bgr = (color_rgb[2], color_rgb[1], color_rgb[0])
             keypoint_coords = dict()
             for keypoint in self.keypoints:
                 kp = self.keypoint_coords[cam_idx][inst][keypoint]
@@ -332,12 +354,12 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                     continue
                 x, y = kp[0], kp[1]
                 keypoint_coords[keypoint] = (int(x),int(y))
-                cv2.circle(frame, (int(x), int(y)), 3, color, -1) # Draw the dot representing the keypoints
+                cv2.circle(frame, (int(x), int(y)), 3, color_bgr, -1) # Draw the dot representing the keypoints
 
             if self.individuals is not None and len(self.keypoint_coords[cam_idx][inst]) >= 2: # Only plot bounding box with more than one points
-                self.plot_bounding_box(keypoint_coords, frame, color, inst)
+                self.plot_bounding_box(keypoint_coords, frame, color_bgr, inst)
             if self.skeleton:
-                self.plot_2d_skeleton(keypoint_coords, frame, color)
+                self.plot_2d_skeleton(keypoint_coords, frame, color_bgr)
 
         return frame
 
@@ -405,9 +427,15 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
     def plot_camera_geometry(self):
         """Plots the relative geometry on a given Axes3D object."""
-        for i in range(self.num_cam):
+        for i in range(self.num_cam_from_calib):
             self.ax.scatter(*self.cam_pos[i], s=100, label=f"Camera {i+1} Pos")
             self.ax.quiver(*self.cam_pos[i], *self.cam_dir[i], length=100, color='blue', normalize=True)
+        # Plot ground plane
+        xlim = self.ax.get_xlim()
+        ylim = self.ax.get_ylim()
+        X, Y = np.meshgrid(np.linspace(xlim[0], xlim[1], 10), np.linspace(ylim[0], ylim[1], 10))
+        Z = np.zeros_like(X)
+        self.ax.plot_surface(X, Y, Z, alpha=0.1, color='gray')
         self.canvas.draw_idle() 
 
     ###################################################################################################################################################
@@ -499,18 +527,11 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                     valid_confidences.append(confidence)
                     valid_cam_view += 1
 
-                if valid_cam_view >= 2:
-                    self.triangulation_coords()
+                if valid_cam_view >= 2: # Only triangulate the points when there is more than two views of them
+                    self.keypoint_coords_3d[inst][keypoint] = self.triangulate_point(valid_cam_view, valid_projection_matrices, valid_points_2d, valid_confidences)
 
-    def triangulation_coords(self, valid_cam_view, valid_projection_matrices, valid_points_2d, valid_confidences, inst, keypoint):
-        """
-        Implement a triangulation method that is both fast and take account of the confidence value of individual points
-        Weighted Linear Triangulation (WLT)
-        Construct the A matrix for Ax = 0, where x is the 3D point (X, Y, Z, 1)
-        For each camera i, and its projection matrix P_i = [p_i1 p_i2 p_i3 p_i4]
-        u_i * p_i3 - p_i1 = 0
-        v_i * p_i3 - p_i2 = 0
-        """
+    @staticmethod
+    def triangulate_point(valid_cam_view, valid_projection_matrices, valid_points_2d, valid_confidences):
         A = []
         for i in range(valid_cam_view):
             P_i = valid_projection_matrices[i]
@@ -531,16 +552,12 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         U, S, Vt = np.linalg.svd(A) # The 3D point is the last column of V (or last row of Vt)
         
         point_4d_hom = Vt[-1]
-        # Convert from homogeneous to Euclidean coordinates
-        point_3d = point_4d_hom[:3] / point_4d_hom[3]
-        # If valid_cam_view < 2, point_3d remains None, which is handled by the initialization.
-        
         # Convert from homogeneous to Euclidean coordinates (x/w, y/w, z/w)
         point_3d = (point_4d_hom / point_4d_hom[3]).flatten()[:3]
+        return point_3d
 
-        self.keypoint_coords_3d[inst][keypoint] = point_3d
-
-    def get_projection_matrix(self, K, R, t):
+    @staticmethod
+    def get_projection_matrix(K, R, t):
         # Ensure t is a 3x1 column vector
         if t.shape == (3,):
             t = t.reshape(3, 1)
@@ -556,7 +573,8 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         P = K @ extrinsic_matrix
         return P
 
-    def undistort_points(self, points, K, RDistort, TDistort):
+    @staticmethod
+    def undistort_points(points, K, RDistort, TDistort):
         dist_coeffs = np.array([RDistort[0], RDistort[1], TDistort[0], TDistort[1], 0])
         points_array = np.array(points)
         points_array = points_array.reshape(-1, 1, 2).astype(np.float32) # Reshape points for OpenCV: (N, 1, 2)
@@ -613,9 +631,10 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
     def closeEvent(self, event: QCloseEvent):
         # Ensure all VideoCapture objects are released when the window closes
-        for cap in self.cap_list:
-            if cap and cap.isOpened():
-                cap.release()
+        if hasattr(self, 'cap_list'):
+            for cap in self.cap_list:
+                if cap and cap.isOpened():
+                    cap.release()
         event.accept()
 
 if __name__ == "__main__":
