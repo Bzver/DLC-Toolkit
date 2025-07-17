@@ -18,9 +18,9 @@ from PySide6.QtCore import Signal
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
-# Todo - Using dataframe logic for data processing
+# Todo:
 #        Add a reprojection button to reproject the 3D coords back to the views
-#        Move video ploting and reprojection to another thread or optional
+#        Move video ploting and reprojection to another thread or optional (toggled via a button)
 
 class ClickableVideoLabel(QtWidgets.QLabel):
     clicked = Signal(int) # Signal to emit cam_idx when clicked
@@ -154,9 +154,6 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
         self.num_cam_from_calib = None
 
-        self.keypoint_coords = {}
-        self.keypoint_coords_3d = {}
-
         self.plot_lim = 300
         self.instance_color = [(0, 255, 0), (0, 0, 255), (255, 255, 0), (255, 0, 255), (0, 255, 255)] # BGR
         
@@ -180,69 +177,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         folder_path = QtWidgets.QFileDialog.getExistingDirectory(self, "Select Video Folder")
         if folder_path:
             self.load_video_folder(folder_path)
-
-    def load_video_folder(self, folder_path):
-        self.num_cam = len([f for f in os.listdir(folder_path) if f.startswith("Camera")])
-        print(self.num_cam)
-        self.initialize_data_dict()
-        print(f"Loading videos from: {folder_path}")
-        max_frames = 0
-        for i in range(self.num_cam):  # Loop through expected camera folders
-            folder = os.path.join(folder_path, f"Camera{i+1}")
-            video_file = os.path.join(folder, "0.mp4")
-            self.video_list[i] = video_file
-            
-            cap = cv2.VideoCapture(video_file) # Try to open the video capture
-            if not cap.isOpened():
-                print(f"Warning: Could not open video file: {video_file}")
-                cap = None
-            else:
-                # Update max_frames based on the longest video
-                num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                if num_frames > max_frames:
-                    max_frames = num_frames
-
-            self.cap_list[i] = cap # Add the capture object (or None) to the list
-
-            self.load_prediction(i, folder, cap, num_frames)
-
-        if not self.cap_list:
-            QMessageBox.warning(self, "Error", "No video files were loaded successfully.")
-            return
-
-        self.total_frames = max_frames
-        self.current_frame_idx = 0
-        self.progress_slider.setRange(0, self.total_frames - 1)
-        self.progress_slider.setValue(0)
-        self.navigation_group_box.show()
-        self.display_current_frame() # Display the first frames
-
-    def load_prediction(self, cam_idx, folder, cap, num_frame):
-        h5_files = glob.glob(os.path.join(folder, "*.h5"))
-        if not h5_files:
-            print(f"Warning: No .h5 prediction file found in {folder}")
-            return
-        
-        try:
-            with h5py.File(h5_files[0], 'r') as pred_file:
-                if "tracks" not in pred_file.keys():
-                    print(f"Error: Prediction file {h5_files[0]} not valid, no 'tracks' key found.")
-                    self.pred_data_list[cam_idx] = None
-                    return
-                
-                pred_data = pred_file["tracks"]["table"][:]
-                self.pred_data_list[cam_idx] = pred_data                    
-                
-                # Check for frame count mismatch only if video was loaded successfully
-                if cap is not None:
-                    pred_frame_count = pred_data.shape[0] # Assuming first dimension is frame count
-                    if pred_frame_count != num_frame:
-                        QMessageBox.warning(self, "Error: Frame Mismatch", f"Frames in video {cam_idx+1} ({num_frame}) and prediction ({pred_frame_count}) do not match!")
-
-        except Exception as e:
-            print(f"Error loading H5 file {h5_files[0]}: {e}")
-            return
-            
+   
     def load_dlc_config(self):
         file_dialog = QtWidgets.QFileDialog(self)
         dlc_config, _ = file_dialog.getOpenFileName(self, "Load DLC Config", "", "YAML Files (config.yaml);;All Files (*)")
@@ -257,6 +192,8 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             self.skeleton = cfg["skeleton"]
             self.individuals = cfg["individuals"]
             self.instance_count = len(self.individuals) if self.individuals is not None else 1
+            self.num_keypoints = len(self.keypoints)
+            self.keypoint_to_idx = {name: idx for idx, name in enumerate(self.keypoints)}
 
     def load_calibrations(self):
         file_path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select Calibration File", "", "Calibration Files (*.mat)")
@@ -270,9 +207,72 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             self.load_calibration_mat(calib)
             self.plot_camera_geometry()
 
+    def load_video_folder(self, folder_path):
+        self.num_cam = len([f for f in os.listdir(folder_path) if f.startswith("Camera")])
+        self.video_list = [None] * self.num_cam
+        self.cap_list = [None] * self.num_cam
+        folder_list = [None] * self.num_cam
+        print(f"Loading videos from: {folder_path}")
+        max_frame = 0
+        for i in range(self.num_cam):  # Loop through expected camera folders
+            folder = os.path.join(folder_path, f"Camera{i+1}")
+            video_file = os.path.join(folder, "0.mp4")
+            self.video_list[i] = video_file
+            
+            cap = cv2.VideoCapture(video_file) # Try to open the video capture
+            if not cap.isOpened():
+                print(f"Warning: Could not open video file: {video_file}")
+                cap = None
+            elif self.total_frames == 0: # Fallback if not loaded frame counts from calibration file
+                # Update max_frames based on the longest video
+                num_frame = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                if num_frame > self.total_frames:
+                    self.total_frames = num_frame
+                print(num_frame)
+
+            self.cap_list[i] = cap # Add the capture object (or None) to the list
+            folder_list[i] = folder
+
+        if not self.cap_list:
+            QMessageBox.warning(self, "Error", "No video files were loaded successfully.")
+            return
+
+        self.pred_data_array = np.full((self.total_frames, self.num_cam, self.instance_count, self.num_keypoints*3), np.nan)
+        for k in range(self.num_cam):
+            if folder_list[k] is not None:
+                folder = folder_list[k]
+                self.load_prediction(k, folder)
+
+        self.current_frame_idx = 0
+        self.progress_slider.setRange(0, self.total_frames - 1)
+        self.progress_slider.setValue(0)
+        self.navigation_group_box.show()
+        self.display_current_frame() # Display the first frames
+
+    def load_prediction(self, cam_idx, folder):
+        h5_files = glob.glob(os.path.join(folder, "*.h5"))
+        if not h5_files:
+            print(f"Warning: No .h5 prediction file found in {folder}")
+            return False
+        try:
+            with h5py.File(h5_files[0], 'r') as pred_file:
+                if "tracks" not in pred_file.keys():
+                    print(f"Error: Prediction file {h5_files[0]} not valid, no 'tracks' key found.")
+                    return False
+
+                pred_data_raw = pred_file["tracks"]["table"][:]
+                pred_data_values = np.array([item[1] for item in pred_data_raw])
+                for inst in range(self.instance_count): # Sort inst out
+                    self.pred_data_array[:,cam_idx,inst,:] = pred_data_values[:, inst*self.num_keypoints*3:(inst+1)*self.num_keypoints*3]
+                
+        except Exception as e:
+            print(f"Error loading H5 file {h5_files[0]}: {e}")
+            return False
+
     def load_calibration_mat(self, calib):
         cam_pos = [None] * self.num_cam_from_calib
         cam_dir = [None] * self.num_cam_from_calib
+        frame_count = [None] * self.num_cam_from_calib
         for i in range(self.num_cam_from_calib):
             self.camera_params[i]["RDistort"] = calib["params"][i,0][0,0]["RDistort"][0]
             self.camera_params[i]["TDistort"] = calib["params"][i,0][0,0]["TDistort"][0]
@@ -283,21 +283,10 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             cam_dir[i] = r[2, :]
             self.camera_params[i]["K"] = K
             self.camera_params[i]["P"] = self.get_projection_matrix(K,r,t)
+            frame_count[i] = len(calib["sync"][i,0][0,0]["data_sampleID"][0])
         self.cam_pos = np.array(cam_pos)
         self.cam_dir = np.array(cam_dir)
-
-    def initialize_data_dict(self):
-        self.video_list = [None] * self.num_cam
-        self.cap_list = [None] * self.num_cam
-        self.pred_data_list = [None] * self.num_cam
-        for cam_idx in range(self.num_cam):
-            self.keypoint_coords[cam_idx] = {} # Initialize for cam_idx
-            for inst in range(self.instance_count):
-                self.keypoint_coords[cam_idx][inst] = {} # Initialize for inst
-                self.keypoint_coords_3d[inst] = {}
-                for keypoint in self.keypoints:
-                    self.keypoint_coords[cam_idx][inst][keypoint] = {}
-                    self.keypoint_coords_3d[inst][keypoint] = {}
+        self.total_frames = max(frame_count)
 
     ###################################################################################################################################################
 
@@ -307,7 +296,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame_idx)
                 ret, frame = cap.read()
                 if ret:
-                    if self.pred_data_list[i] is None:
+                    if np.all(np.isnan(self.pred_data_array[self.current_frame_idx,i,:,:])):
                         return frame
                     frame = self.plot_2d_points(frame, i) 
 
@@ -341,26 +330,24 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.plot_3d_points()
 
     def plot_2d_points(self, frame, cam_idx):
-        self.data_loader_for_plot(cam_idx)
         # Iterate over each individual (animal)
         for inst in range(self.instance_count):
             color_rgb = self.instance_color[inst % len(self.instance_color)]
             # Convert RGB to BGR for OpenCV
             color_bgr = (color_rgb[2], color_rgb[1], color_rgb[0])
             keypoint_coords = dict()
-            for keypoint in self.keypoints:
-                kp = self.keypoint_coords[cam_idx][inst][keypoint]
-                if kp is None:
+            for kp_idx in range(self.num_keypoints):
+                kp = self.pred_data_array[self.current_frame_idx,cam_idx,inst,kp_idx*3:kp_idx*3+3]
+                if kp is None or kp[2] < self.confidence_cutoff:
                     continue
                 x, y = kp[0], kp[1]
-                keypoint_coords[keypoint] = (int(x),int(y))
+                keypoint_coords[kp_idx] = (int(x),int(y))
                 cv2.circle(frame, (int(x), int(y)), 3, color_bgr, -1) # Draw the dot representing the keypoints
 
-            if self.individuals is not None and len(self.keypoint_coords[cam_idx][inst]) >= 2: # Only plot bounding box with more than one points
+            if self.individuals is not None and len(keypoint_coords) >= 2: # Only plot bounding box with more than one points
                 self.plot_bounding_box(keypoint_coords, frame, color_bgr, inst)
             if self.skeleton:
                 self.plot_2d_skeleton(keypoint_coords, frame, color_bgr)
-
         return frame
 
     def plot_bounding_box(self, keypoint_coords, frame, color, inst):
@@ -388,14 +375,16 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
     
     def plot_2d_skeleton(self, keypoint_coords, frame, color):
         for start_kp, end_kp in self.skeleton:
-            start_coord = keypoint_coords.get(start_kp)
-            end_coord = keypoint_coords.get(end_kp)
+            start_kp_idx = self.keypoint_to_idx[start_kp]
+            end_kp_idx = self.keypoint_to_idx[end_kp]
+            start_coord = keypoint_coords.get(start_kp_idx)
+            end_coord = keypoint_coords.get(end_kp_idx)
             if start_coord and end_coord:
                 cv2.line(frame, start_coord, end_coord, color, 2)
         return frame
     
     def plot_3d_points(self):
-        self.data_loader_for_3d_plot()
+        point_3d_array = self.data_loader_for_3d_plot()
         self.ax.clear()
         self.ax.set_xlabel('X')
         self.ax.set_ylabel('Y')
@@ -409,15 +398,18 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         for inst in range(self.instance_count):
             color = self.instance_color[inst % len(self.instance_color)]
             # Plot 3D keypoints
-            for keypoint_name, point_3d in self.keypoint_coords_3d[inst].items():
-                if point_3d is not None:
+            for kp_idx in range(self.num_keypoints):
+                point_3d = point_3d_array[inst, kp_idx, :]
+                if point_3d[0] is not None:
                     self.ax.scatter(point_3d[0], point_3d[1], point_3d[2], color=np.array(color)/255, s=50)
 
             # Plot 3D skeleton
             if self.skeleton:
                 for start_kp, end_kp in self.skeleton:
-                    start_point = self.keypoint_coords_3d[inst].get(start_kp)
-                    end_point = self.keypoint_coords_3d[inst].get(end_kp)
+                    start_kp_idx = self.keypoint_to_idx[start_kp]
+                    end_kp_idx = self.keypoint_to_idx[end_kp]
+                    start_point = point_3d_array[inst, start_kp_idx, :]
+                    end_point = point_3d_array[inst, end_kp_idx, :]
                     if start_point is not None and end_point is not None:
                         self.ax.plot([start_point[0], end_point[0]],
                                      [start_point[1], end_point[1]],
@@ -440,106 +432,97 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
     ###################################################################################################################################################
 
-    def set_selected_camera(self, cam_idx):
-        self.selected_cam_idx = cam_idx
-        print(f"Selected Camera Index: {self.selected_cam_idx}")
-        self.display_current_frame() # Refresh display to update border
-
-    def data_loader_for_plot(self, cam_idx):
-        try:
-            pred_data = self.pred_data_list[cam_idx]
-            current_frame_data = pred_data[self.current_frame_idx][1] # 1 for extracting keypoints data from ( frame_idx, [ keypoint_1_x, keypoint_1_y, ... ])
-        except IndexError:
-            print(f"Frame index {self.current_frame_idx} of Camera {cam_idx} out of bounds for prediction data.")
-            return
-        
-        num_keypoints_from_pred = current_frame_data.size // self.instance_count // 3  # Consider the confidence col
-        if num_keypoints_from_pred != len(self.keypoints):
-            QMessageBox.warning(self, "Error: Keypoint Mismatch", "Keypoints in config and in prediction do not match! Falling back to prediction parameters!")
-            print(f"Keypoints in config: {len(self.keypoints)} \n Keypoints in prediction: {num_keypoints_from_pred}")
-            return
-
-        for inst in range(self.instance_count):
-            for i in range(len(self.keypoints)):
-                keypoint = self.keypoints[i]
-                x = current_frame_data[inst * len(self.keypoints) * 3 + i * 3] # x, y, confidence triplet
-                y = current_frame_data[inst * len(self.keypoints) * 3 + i * 3 + 1]
-                confidence = current_frame_data[inst * len(self.keypoints) * 3 + i * 3 + 2]
-                
-                if pd.isna(confidence):
-                    confidence = 0 # Set confidence value to
-                    confidence = 0 # Set confidence value to 0 for NaN confidence
-                if pd.isna(x) or pd.isna(y) or confidence <= self.confidence_cutoff: # Apply confidence cutoff
-                    self.keypoint_coords[cam_idx][inst][keypoint] = None
-                    continue
-                else:
-                    self.keypoint_coords[cam_idx][inst][keypoint] = (float(x),float(y),float(confidence))
-
     def data_loader_for_3d_plot(self, undistorted_images=False):
-        self.keypoint_coords_3d = [{} for _ in range(self.instance_count)]
+        point_3d_array = np.full((self.instance_count, self.num_keypoints, 3), np.nan)
+
         # Determine how many instances each camera detects in the current frame
-        if self.instance_count > 1: # This check is only relevant if multiple instances are expected
+        if self.instance_count > 1:
             instances_detected_per_camera = [0] * self.num_cam
             for cam_idx_check in range(self.num_cam):
                 detected_instances_in_cam = 0
                 for inst_check in range(self.instance_count):
-                    # Check if this instance has any valid keypoint data for this camera in the current frame
                     has_valid_data = False
-                    for keypoint_check in self.keypoints:
-                        if self.keypoint_coords[cam_idx_check][inst_check][keypoint_check] is not None:
+                    for kp_idx_check in range(self.num_keypoints):
+                        if self.pred_data_array[self.current_frame_idx,cam_idx_check, inst_check, kp_idx_check*3] is not None:
                             has_valid_data = True
                             break
                     if has_valid_data:
                         detected_instances_in_cam += 1
                 instances_detected_per_camera[cam_idx_check] = detected_instances_in_cam
+        else:
+            instances_detected_per_camera = [1] * self.num_cam # All cameras valid for the single instance
 
         for inst in range(self.instance_count):
-            for keypoint in self.keypoints:
-                valid_projection_matrices = []
-                valid_points_2d = []
-                valid_confidences = []
-                valid_cam_view = 0
+            # Dictionary to store per-keypoint data across cameras:
+            keypoint_data_for_triangulation = {
+                kp_idx: {'projs': [], '2d_pts': [], 'confs': []}
+                for kp_idx in range(self.num_keypoints)
+            }
 
-                for cam_idx in range(self.num_cam):
-                    # If multiple instances are expected but this camera only detects one, skip its data for triangulation
-                    if self.instance_count > 1 and instances_detected_per_camera[cam_idx] == 1:
-                        continue
+            for cam_idx in range(self.num_cam):
+                if self.instance_count > 1 and instances_detected_per_camera[cam_idx] == 1:
+                    continue # Skip if this camera only detected one instance in multi-instance scenario
 
-                    point_2d_data = self.keypoint_coords[cam_idx][inst][keypoint]
-                    if point_2d_data is None:
-                        continue
+                RDistort = self.camera_params[cam_idx]['RDistort']
+                TDistort = self.camera_params[cam_idx]['TDistort']
+                K = self.camera_params[cam_idx]['K']
+                P = self.camera_params[cam_idx]['P']
 
-                    RDistort = self.camera_params[cam_idx]['RDistort']
-                    TDistort = self.camera_params[cam_idx]['TDistort']
-                    K = self.camera_params[cam_idx]['K']
-                    P = self.camera_params[cam_idx]['P']
+                # Get all keypoint data (flattened) for the current frame, camera, and instance
+                keypoint_data_all_kps_flattened = self.pred_data_array[self.current_frame_idx, cam_idx, inst, :]
 
-                    point_2d_no_confidence = (point_2d_data[0], point_2d_data[1]) # Remove confidence
-                    confidence = point_2d_data[2]
+                if not undistorted_images:
+                    keypoint_data_all_kps_flattened = self.undistort_points(keypoint_data_all_kps_flattened, K, RDistort, TDistort)
+                
+                # Shape the flattened data back into (num_keypoints, 3) for easier iteration
+                keypoint_data_all_kps_reshaped = keypoint_data_all_kps_flattened.reshape(-1, 3)
 
-                    if not undistorted_images:  # Undistort points
-                        point_2d_undistorted = self.undistort_points(point_2d_no_confidence, K, RDistort, TDistort)
-                        valid_points_2d.append(point_2d_undistorted)
-                    else:
-                        valid_points_2d.append(point_2d_no_confidence)
+                # Iterate through each keypoint's (x,y,conf) for the current camera
+                for kp_idx in range(self.num_keypoints):
+                    point_2d = keypoint_data_all_kps_reshaped[kp_idx, :2] # (x, y)
+                    confidence = keypoint_data_all_kps_reshaped[kp_idx, 2] # confidence
 
-                    valid_projection_matrices.append(P)
-                    valid_confidences.append(confidence)
-                    valid_cam_view += 1
+                    # Only add data if the confidence is above a threshold (or another validity check)
+                    if confidence >= self.confidence_cutoff:
+                        keypoint_data_for_triangulation[kp_idx]['projs'].append(P)
+                        keypoint_data_for_triangulation[kp_idx]['2d_pts'].append(point_2d)
+                        keypoint_data_for_triangulation[kp_idx]['confs'].append(confidence)
 
-                if valid_cam_view >= 2: # Only triangulate the points when there is more than two views of them
-                    self.keypoint_coords_3d[inst][keypoint] = self.triangulate_point(valid_cam_view, valid_projection_matrices, valid_points_2d, valid_confidences)
+            # iterate through each keypoint to perform triangulation
+            for kp_idx in range(self.num_keypoints):
+                projs = keypoint_data_for_triangulation[kp_idx]['projs']
+                pts_2d = keypoint_data_for_triangulation[kp_idx]['2d_pts']
+                confs = keypoint_data_for_triangulation[kp_idx]['confs']
+                num_valid_views = len(projs)
+
+                if num_valid_views >= 2:
+                    point_3d_array[inst, kp_idx, :] = self.triangulate_point(num_valid_views, projs, pts_2d, confs)
+
+        return point_3d_array
+
 
     @staticmethod
-    def triangulate_point(valid_cam_view, valid_projection_matrices, valid_points_2d, valid_confidences):
-        A = []
-        for i in range(valid_cam_view):
-            P_i = valid_projection_matrices[i]
-            u, v = valid_points_2d[i]
-            w = valid_confidences[i] # Weight by confidence
+    def triangulate_point(num_views, projs, pts_2d, confs):
+        """
+        Triangulates a single 3D point from multiple 2D camera views using the Direct Linear Transformation (DLT) method.
+        Each 2D point's contribution to the system of equations is weighted by its confidence.
 
-            # Ensure P_i is a numpy array for slicing
-            P_i = np.array(P_i)
+        Args:
+            num_views (int): The number of camera views providing observations for this point.
+            projs (list of np.array): A list of 3x4 projection matrices, one for each camera view.
+            pts_2d (list of tuple/np.array): A list of 2D image points (u, v), one for each camera view.
+            confs (list of float): A list of confidence values, one for each 2D point. Used as weights in the triangulation.
+
+        Returns:
+            np.array: The triangulated 3D point in Euclidean coordinates (x, y, z).
+        """
+        A = []
+        for i in range(num_views):
+            P_i = projs[i]
+            u, v = pts_2d[i]
+            w = confs[i] # Weight by confidence
+
+            P_i = np.array(P_i) # Ensure P_i is a numpy array for slicing
 
             # Equations for DLT:
             # u * P_i[2,:] - P_i[0,:] = 0
@@ -551,13 +534,30 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         A = np.array(A) # Solve Ax = 0 using SVD
         U, S, Vt = np.linalg.svd(A) # The 3D point is the last column of V (or last row of Vt)
         
-        point_4d_hom = Vt[-1]
-        # Convert from homogeneous to Euclidean coordinates (x/w, y/w, z/w)
-        point_3d = (point_4d_hom / point_4d_hom[3]).flatten()[:3]
+        point_4d_hom = Vt[-1] 
+        point_3d = (point_4d_hom / point_4d_hom[3]).flatten()[:3] # Convert from homogeneous to Euclidean coordinates (x/w, y/w, z/w)
         return point_3d
 
     @staticmethod
     def get_projection_matrix(K, R, t):
+        """
+        Computes the projection matrix from camera intrinsic and extrinsic parameters.
+
+        The projection matrix P combines the camera's intrinsic properties (K)
+        with its extrinsic pose (rotation R and translation t) relative to the
+        world coordinate system. It maps 3D world points to 2D image points.
+
+        Args:
+            K (np.array): The camera intrinsic matrix (3x3).
+                        Example: [[fx, 0, cx], [0, fy, cy], [0, 0, 1]]
+            R (np.array): The 3x3 rotation matrix representing the camera's orientation
+                        in the world coordinate system.
+            t (np.array): The 3x1 or (3,) translation vector representing the camera's
+                        position in the world coordinate system.
+
+        Returns:
+            np.array: The 3x4 projection matrix P = K * [R | t].
+        """
         # Ensure t is a 3x1 column vector
         if t.shape == (3,):
             t = t.reshape(3, 1)
@@ -574,14 +574,53 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         return P
 
     @staticmethod
-    def undistort_points(points, K, RDistort, TDistort):
+    def undistort_points(points_xy_conf, K, RDistort, TDistort):
+        """
+        Undistorts 2D image points given camera intrinsic matrix and distortion coefficients.
+
+        Args:
+            points_xy_conf (list or np.array): A 1D array or list of (x, y, confidence) triplets.
+                                            Example: [x1, y1, conf1, x2, y2, conf2, ...]
+            K (np.array): The camera intrinsic matrix (3x3).
+                        Example: [[fx, 0, cx], [0, fy, cy], [0, 0, 1]]
+            RDistort (list or np.array): Radial distortion coefficients [k1, k2].
+            TDistort (list or np.array): Tangential distortion coefficients [p1, p2].
+
+        Returns:
+            np.array: A 1D array of undistorted (x, y, confidence) triplets.
+                    Example: [undistorted_x1, undistorted_y1, conf1, ...]
+        """
+        if points_xy_conf.size % 3 != 0:
+            raise ValueError("Input 'points_xy_conf' must contain triplets of (x, y, confidence).")
+        
+        num_points = points_xy_conf.size // 3
         dist_coeffs = np.array([RDistort[0], RDistort[1], TDistort[0], TDistort[1], 0])
-        points_array = np.array(points)
-        points_array = points_array.reshape(-1, 1, 2).astype(np.float32) # Reshape points for OpenCV: (N, 1, 2)
-        undistorted_pts = cv2.undistortPoints(points_array, K, dist_coeffs, P=K)
-        return tuple(undistorted_pts.flatten()) # Reshape back to (N, 2) and convert to tuple
+        points_xy_conf = np.array(points_xy_conf, dtype=np.float32)
+
+        reshaped_points = points_xy_conf.reshape(-1, 3) # Separate (x, y) coordinates from confidences
+        xy_coords = reshaped_points[:, :2]    # Shape (N, 2)
+        confidences = reshaped_points[:, 2]   # Shape (N,)
+
+        points_xy_conf = xy_coords.reshape(-1, 1, 2).astype(np.float32) # Reshape points for OpenCV: (N, 1, 2)
+        undistorted_pts = cv2.undistortPoints(points_xy_conf, K, dist_coeffs, P=K)
+
+        undistorted_pts_clean = undistorted_pts.reshape(-1, 2) #Reshape the undistorted (x, y) back to a simple (N, 2) array
+
+        output_combined = np.empty((num_points, 3), dtype=np.float32) #Create an empty array to hold the final (x, y, conf) triplets
+        output_combined[:, :2] = undistorted_pts_clean
+        output_combined[:, 2] = confidences
+
+        return output_combined.flatten() # Reshape back to 1D array
 
     ###################################################################################################################################################
+
+    def set_selected_camera(self, cam_idx):
+        if hasattr(self, 'cap_list'):
+            self.selected_cam_idx = cam_idx
+            print(f"Selected Camera Index: {self.selected_cam_idx}")
+            self.display_current_frame() # Refresh display to update border
+        else:
+            pass
 
     def change_frame(self, delta):
         new_frame_idx = self.current_frame_idx + delta
