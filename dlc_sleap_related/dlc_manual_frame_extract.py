@@ -224,6 +224,7 @@ class dlcFrameFinder(QtWidgets.QMainWindow):
                     label_frame_list.extend(lbf["df_with_missing"]["axis1_level2"].asstr()[()])
                 continue
             self.labeled_frame_list = [ int(f.split("img")[1].split(".")[0]) for f in label_frame_list ]
+            self.progress_slider.set_labeled_frames(self.labeled_frame_list)
             self.display_current_frame()
 
     def load_marked_frames(self):
