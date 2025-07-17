@@ -22,6 +22,10 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 #        Add a reprojection button to reproject the 3D coords back to the views
 #        Move video ploting and reprojection to another thread or optional (toggled via a button)
 
+DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/COM3D/config.yaml"
+CALIB_FILE_DEBUG = "D:/Project/SDANNCE-Models/4CAM-250620/SD-20250705-MULTI/sync_dannce.mat"
+VIDEO_FOLDER_DEBUG = "D:/Project/SDANNCE-Models/4CAM-250620/SD-20250705-MULTI/Videos"
+
 class ClickableVideoLabel(QtWidgets.QLabel):
     clicked = Signal(int) # Signal to emit cam_idx when clicked
 
@@ -161,7 +165,14 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.total_frames = 0      # Max frames across all videos
         self.selected_cam_idx = 0  # Selected view, default to camera 0
 
+        self.is_debug = True
+
     def open_video_folder_dialog(self):
+        if self.is_debug:
+            self.load_dlc_config(DLC_CONFIG_DEBUG)
+            self.load_calibrations(CALIB_FILE_DEBUG)
+            self.load_video_folder(VIDEO_FOLDER_DEBUG)
+            return
         if self.keypoints is None:
             QMessageBox.warning(self, "Warning", "DLC config is not loaded, load DLC config first!")
             print("DLC config is not loaded, load DLC config first!")
@@ -178,34 +189,42 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         if folder_path:
             self.load_video_folder(folder_path)
    
-    def load_dlc_config(self):
-        file_dialog = QtWidgets.QFileDialog(self)
-        dlc_config, _ = file_dialog.getOpenFileName(self, "Load DLC Config", "", "YAML Files (config.yaml);;All Files (*)")
-        if dlc_config:
-            with open(dlc_config, "r") as conf:
-                cfg = yaml.safe_load(conf)
-            if cfg:
-                print(f"DLC Config loaded: {dlc_config}")
-                QMessageBox.information(self, "Success", "DLC Config loaded successfully!")
-            self.multi_animal = cfg["multianimalproject"]
-            self.keypoints = cfg["bodyparts"] if not self.multi_animal else cfg["multianimalbodyparts"]
-            self.skeleton = cfg["skeleton"]
-            self.individuals = cfg["individuals"]
-            self.instance_count = len(self.individuals) if self.individuals is not None else 1
-            self.num_keypoints = len(self.keypoints)
-            self.keypoint_to_idx = {name: idx for idx, name in enumerate(self.keypoints)}
+    def load_dlc_config(self, dlc_config=None):
+        if dlc_config is None:
+            file_dialog = QtWidgets.QFileDialog(self)
+            dlc_config, _ = file_dialog.getOpenFileName(self, "Load DLC Config", "", "YAML Files (config.yaml);;All Files (*)")
+        with open(dlc_config, "r") as conf:
+            cfg = yaml.safe_load(conf)
+        if cfg:
+            print(f"DLC Config loaded: {dlc_config}")
+            QMessageBox.information(self, "Success", "DLC Config loaded successfully!")
+        self.multi_animal = cfg["multianimalproject"]
+        self.keypoints = cfg["bodyparts"] if not self.multi_animal else cfg["multianimalbodyparts"]
+        self.skeleton = cfg["skeleton"]
+        self.individuals = cfg["individuals"]
+        self.instance_count = len(self.individuals) if self.individuals is not None else 1
+        self.num_keypoints = len(self.keypoints)
+        self.keypoint_to_idx = {name: idx for idx, name in enumerate(self.keypoints)}
 
-    def load_calibrations(self):
-        file_path, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select Calibration File", "", "Calibration Files (*.mat)")
-        if file_path:
-            calibration_file = file_path
-            print(f"Calibration loaded: {calibration_file}")
-            QMessageBox.information(self, "Success", "Calibrations loaded successfully!")
+    def load_calibrations(self, calib_file=None):
+        if calib_file is None:
+            calib_file, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select Calibration File", "", "Calibration Files (*.mat)")
+        calibration_file = calib_file
+        print(f"Calibration loaded: {calibration_file}")
+        try:
             calib = sio.loadmat(calibration_file)
+            if not self.is_debug:
+                QMessageBox.information(self, "Success", "Calibrations loaded successfully!")
             self.num_cam_from_calib = calib["params"].size
-            self.camera_params = [{} for _ in range(self.num_cam_from_calib)]
-            self.load_calibration_mat(calib)
-            self.plot_camera_geometry()
+        except FileNotFoundError:
+            QMessageBox.critical(self, "Error", f"Calibration file not found: {calibration_file}")
+            return
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load calibration file: {e}")
+            return
+        self.camera_params = [{} for _ in range(self.num_cam_from_calib)]
+        self.load_calibration_mat(calib)
+        self.plot_camera_geometry()
 
     def load_video_folder(self, folder_path):
         self.num_cam = len([f for f in os.listdir(folder_path) if f.startswith("Camera")])
@@ -213,7 +232,6 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.cap_list = [None] * self.num_cam
         folder_list = [None] * self.num_cam
         print(f"Loading videos from: {folder_path}")
-        max_frame = 0
         for i in range(self.num_cam):  # Loop through expected camera folders
             folder = os.path.join(folder_path, f"Camera{i+1}")
             video_file = os.path.join(folder, "0.mp4")
@@ -338,7 +356,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             keypoint_coords = dict()
             for kp_idx in range(self.num_keypoints):
                 kp = self.pred_data_array[self.current_frame_idx,cam_idx,inst,kp_idx*3:kp_idx*3+3]
-                if kp is None or kp[2] < self.confidence_cutoff:
+                if pd.isna(kp[0]) or kp[2] < self.confidence_cutoff:
                     continue
                 x, y = kp[0], kp[1]
                 keypoint_coords[kp_idx] = (int(x),int(y))
