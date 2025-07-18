@@ -1,4 +1,5 @@
 import os
+import shutil
 
 import h5py
 import yaml
@@ -11,7 +12,7 @@ import cv2
 
 from PySide6 import QtWidgets, QtGui, QtCore
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QShortcut, QKeySequence, QPainter, QColor, QPen
+from PySide6.QtGui import QShortcut, QKeySequence, QPainter, QColor, QPen, QCloseEvent
 from PySide6.QtWidgets import QMessageBox, QPushButton, QGraphicsScene, QGraphicsView, QGraphicsRectItem
 
 #################   W   ##################   I   ##################   P   ##################   
@@ -74,31 +75,42 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.is_playing = False
         self.layout.addLayout(self.progress_layout)
 
-        # Navigation controls
+        # Navigation controls and refiner controls
+        self.control_layout = QtWidgets.QHBoxLayout()
+
         self.navigation_group_box = QtWidgets.QGroupBox("Video Navigation")
         self.navigation_layout = QtWidgets.QGridLayout(self.navigation_group_box)
         self.prev_10_frames_button = QPushButton("Prev 10 Frames (Shift + ←)")
+        self.next_10_frames_button = QPushButton("Next 10 Frames (Shift + →)")
         self.prev_frame_button = QPushButton("Prev Frame (←)")
         self.next_frame_button = QPushButton("Next Frame (→)")
-        self.next_10_frames_button = QPushButton("Next 10 Frames (Shift + →)")
-
         self.prev_instance_change_button = QPushButton("◄ Prev ROI (↓)")
         self.next_instance_change_button = QPushButton("► Next ROI (↑)")
-        self.swap_track_button = QPushButton("Swap Track")
-        self.delete_track_button = QPushButton("Delete Track")
 
         self.navigation_layout.addWidget(self.prev_10_frames_button, 0, 0)
+        self.navigation_layout.addWidget(self.next_10_frames_button, 1, 0)
         self.navigation_layout.addWidget(self.prev_frame_button, 0, 1)
-        self.navigation_layout.addWidget(self.next_frame_button, 0, 2)
-        self.navigation_layout.addWidget(self.next_10_frames_button, 0, 3)
-
-        self.navigation_layout.addWidget(self.prev_instance_change_button, 1, 1)
+        self.navigation_layout.addWidget(self.next_frame_button, 1, 1)
+        self.navigation_layout.addWidget(self.prev_instance_change_button, 0, 2)
         self.navigation_layout.addWidget(self.next_instance_change_button, 1, 2)
-        self.navigation_layout.addWidget(self.swap_track_button, 1, 0)
-        self.navigation_layout.addWidget(self.delete_track_button, 1, 3)
 
-        self.layout.addWidget(self.navigation_group_box)
+        self.refiner_group_box = QtWidgets.QGroupBox("Track Refiner")
+        self.refiner_layout = QtWidgets.QGridLayout(self.refiner_group_box)
 
+        self.swap_track_button = QPushButton("Swap Track (W)")
+        self.delete_track_button = QPushButton("Delete Track ")
+        self.interpolate_track_button = QPushButton("Interpolate Track")
+        self.duplicate_track_button = QPushButton("Duplicate Prior")
+
+        self.refiner_layout.addWidget(self.swap_track_button, 0, 0)
+        self.refiner_layout.addWidget(self.delete_track_button, 0, 1)
+        self.refiner_layout.addWidget(self.interpolate_track_button, 1, 0)
+        self.refiner_layout.addWidget(self.duplicate_track_button, 1, 1)
+
+        self.control_layout.addWidget(self.navigation_group_box)
+        self.control_layout.addWidget(self.refiner_group_box)
+        self.layout.addLayout(self.control_layout)
+        
         # Connect buttons to events
         self.load_video_button.clicked.connect(self.load_video)
         self.load_DLC_config_button.clicked.connect(self.load_DLC_config)
@@ -116,7 +128,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.next_10_frames_button.clicked.connect(lambda: self.change_frame(10))
 
         self.prev_instance_change_button.clicked.connect(self.prev_instance_change)
-        self.next_instance_change_button.clicked.connect(self.next_instance_change)
+        self.next_instance_change_button.clicked.connect(lambda:self.next_instance_change(mode="frame"))
         self.swap_track_button.clicked.connect(self.swap_track)
         self.delete_track_button.clicked.connect(self.delete_track)
 
@@ -133,12 +145,11 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.toggle_playback)
         QShortcut(QKeySequence(Qt.Key_S | Qt.ControlModifier), self).activated.connect(self.save_prediction)
         
-        self.graphics_view.mousePressEvent = self.graphics_view_mouse_press_event # Override mousePressEvent for the view
+        self.graphics_view.mousePressEvent = self.graphics_view_mouse_press_event
         self.graphics_scene.parent = lambda: self # Allow items to access the main window
 
         self.reset_state()
         self.is_debug = True
-        self.selected_box = None # To keep track of the currently selected box
 
     def load_video(self):
         if self.is_debug:
@@ -156,6 +167,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             
     def initialize_loaded_video(self):
         self.navigation_group_box.show()
+        self.refiner_group_box.show()
         self.video_name = os.path.basename(self.original_vid).split(".")[0]
         self.cap = cv2.VideoCapture(self.original_vid)
         if not self.cap.isOpened():
@@ -185,7 +197,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.skeleton = cfg["skeleton"]
         self.individuals = cfg["individuals"]
         self.instance_count = len(self.individuals) if self.individuals is not None else 1
-        self.project_dir = os.path.join(self.dlc_dir,"labeled-data", self.video_name)
         self.num_keypoints = len(self.keypoints)
         self.keypoint_to_idx = {name: idx for idx, name in enumerate(self.keypoints)}
 
@@ -205,7 +216,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             if not "tracks" in pred_file.keys():
                 print("Error: Prediction file not valid, no 'tracks' key found in prediction file.")
                 return False
-            self.pred_data = pred_file["tracks"]["table"][:]
+            self.pred_data = pred_file["tracks"]["table"]
             pred_data_values = np.array([item[1] for item in self.pred_data])
             pred_frame_count = self.pred_data.size
             self.pred_data_array = np.full((pred_frame_count, self.instance_count, self.num_keypoints*3),np.nan)
@@ -226,8 +237,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             ret, frame = self.cap.read()
             if ret:
                 self.current_frame = frame
-                # Clear previous graphics items
-                self.graphics_scene.clear()
+                self.graphics_scene.clear() # Clear previous graphics items
 
                 # Convert OpenCV image to QPixmap and add to scene
                 rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -238,28 +248,24 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 
                 # Add pixmap to the scene
                 pixmap_item = self.graphics_scene.addPixmap(pixmap)
-                pixmap_item.setZValue(-1) # Ensure pixmap is behind other items
+                pixmap_item.setZValue(-1)
 
-                # Set scene rect to original frame dimensions
                 self.graphics_scene.setSceneRect(0, 0, w, h)
-                # Fit view to the scene, maintaining aspect ratio
                 self.graphics_view.fitInView(self.graphics_scene.sceneRect(), Qt.KeepAspectRatio)
                 
                 # Plot predictions (keypoints, bounding boxes, skeleton)
                 if self.pred_data is not None:
-                    self.plot_predictions(frame.copy()) # Pass a copy to avoid modifying original frame for QPixmap
+                    self.plot_predictions(frame.copy())
                 
                 self.progress_slider.setValue(self.current_frame_idx) # Update slider position
                 self.graphics_view.update() # Force update of the graphics view
 
-            else:
-                # If video frame cannot be read, clear scene and display error
+            else: # If video frame cannot be read, clear scene and display error
                 self.graphics_scene.clear()
                 error_text_item = self.graphics_scene.addText("Error: Could not read frame")
                 error_text_item.setDefaultTextColor(QColor(255, 255, 255)) # White text
                 self.graphics_view.fitInView(error_text_item.boundingRect(), Qt.KeepAspectRatio)
-        else:
-            # If no video loaded, clear scene and display message
+        else: # If no video loaded, clear scene and display message
             self.graphics_scene.clear()
             no_video_text_item = self.graphics_scene.addText("No video loaded")
             no_video_text_item.setDefaultTextColor(QColor(255, 255, 255)) # White text
@@ -267,11 +273,11 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
     def plot_predictions(self, frame):
         self.current_selectable_boxes = [] # Store selectable boxes for the current frame
-        color_bgr = [(255, 165, 0), (128, 0, 128), (0, 128, 128), (128, 128, 0), (0, 0, 128)] # BGR
+        color_rgb = [(255, 165, 0), (128, 0, 128), (0, 128, 128), (128, 128, 0), (0, 0, 128)]
 
         # Iterate over each individual (animal)
         for inst in range(self.instance_count):
-            color = color_bgr[inst % len(color_bgr)]
+            color = color_rgb[inst % len(color_rgb)]
             
             # Initiate an empty dict for storing coordinates
             keypoint_coords = dict()
@@ -281,7 +287,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                     continue
                 x, y = kp[0], kp[1]
                 keypoint_coords[kp_idx] = (int(x),int(y))
-                cv2.circle(frame, (int(x), int(y)), 3, color, -1) # Draw the dot representing the keypoints
+                # Draw the dot representing the keypoints
+                ellipse = QtWidgets.QGraphicsEllipseItem(x - 3, y - 3, 6, 6)
+                ellipse.setBrush(QtGui.QBrush(QtGui.QColor(*color)))
+                self.graphics_scene.addItem(ellipse)
 
             if self.individuals is not None and len(keypoint_coords) >= 2:
                 self.plot_bounding_box(keypoint_coords, frame, color, inst)
@@ -306,18 +315,19 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         min_y = max(0, min_y - padding)
         max_x = min(frame.shape[1] - 1, max_x + padding)
         max_y = min(frame.shape[0] - 1, max_y + padding)
-            
-        b, g, r = color
-        color_rgb = (r,g,b)
 
         # Draw bounding box using QGraphicsRectItem
-        rect_item = Selectable_Instance(min_x, min_y, max_x - min_x, max_y - min_y, inst, default_color_rgb=color_rgb)
+        rect_item = Selectable_Instance(min_x, min_y, max_x - min_x, max_y - min_y, inst, default_color_rgb=color)
         self.graphics_scene.addItem(rect_item)
         self.current_selectable_boxes.append(rect_item)
         rect_item.clicked.connect(self.handle_box_selection) # Connect the signal
 
         # Add individual label using OpenCV for now (can be converted to QGraphicsTextItem later if needed)
-        cv2.putText(frame, f"Instance: {self.individuals[inst]}", (min_x, min_y), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1, cv2.LINE_AA)
+        # Add individual label
+        text_item = QtWidgets.QGraphicsTextItem(f"Instance: {self.individuals[inst]}")
+        text_item.setPos(min_x, min_y - 15) # Adjust position to be above the bounding box
+        text_item.setDefaultTextColor(QtGui.QColor(*color))
+        self.graphics_scene.addItem(text_item)
         return frame
     
     def plot_skeleton(self, keypoint_coords, frame, color):
@@ -327,7 +337,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             start_coord = keypoint_coords.get(start_kp_idx)
             end_coord = keypoint_coords.get(end_kp_idx)
             if start_coord and end_coord:
-                cv2.line(frame, start_coord, end_coord, color, 2)
+                line = QtWidgets.QGraphicsLineItem(start_coord[0], start_coord[1], end_coord[0], end_coord[1])
+                line.setPen(QtGui.QPen(QtGui.QColor(*color), 2))
+                self.graphics_scene.addItem(line)
         return frame
 
     ###################################################################################################################################################
@@ -406,7 +418,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         else:
             QMessageBox.information(self, "Navigation", "No previous ROI frame found.")
 
-    def next_instance_change(self):
+    def next_instance_change(self, mode="frame"):
         if not self.roi_frame_list:
             QMessageBox.information(self, "No Instance Change", "No frames with instance count change to navigate.")
             return
@@ -415,28 +427,51 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         try:
             current_idx_in_roi = self.roi_frame_list.index(self.current_frame_idx) + 1
         except ValueError:
-            # Current frame is not marked, find the closest previous marked frame
             current_idx_in_roi = bisect.bisect_right(self.roi_frame_list, self.current_frame_idx)
 
         if current_idx_in_roi < len(self.roi_frame_list):
-            self.current_frame_idx = self.roi_frame_list[current_idx_in_roi]
+            if mode == "idx":
+                return self.roi_frame_list[current_idx_in_roi]
+            else:
+                self.current_frame_idx = self.roi_frame_list[current_idx_in_roi]
             self.display_current_frame()
             self.navigation_box_title_controller()
         else:
             QMessageBox.information(self, "Navigation", "No next ROI frame found.")
+            return
 
     def delete_track(self):
-        pass
+        if not self.selected_box:
+            QMessageBox.information(self, "Track Not Delected", "No track is selected.")
+            return
+        instance_for_track_deletion = self.selected_box.instance_id
+        next_roi_frame_idx = self.next_instance_change(mode="idx")
+        if next_roi_frame_idx:
+            self.pred_data_array[self.current_frame_idx:next_roi_frame_idx, instance_for_track_deletion, :] = np.nan
+            self.selected_box = None
+            self.display_current_frame()
+            self.determine_save_status()
 
     def swap_track(self):
-        pass
+        if self.instance_count == 2: # 2 instances need no selection
+            next_roi_frame_idx = self.next_instance_change(mode="idx")
+            if next_roi_frame_idx:
+                self.selected_box = None
+                temp_array = self.pred_data_array[self.current_frame_idx:next_roi_frame_idx, 0, :]
+                self.pred_data_array[self.current_frame_idx:next_roi_frame_idx, 0, :] = self.pred_data_array[self.current_frame_idx:next_roi_frame_idx, 1, :]
+                self.pred_data_array[self.current_frame_idx:next_roi_frame_idx, 1, :] = temp_array
+                self.display_current_frame()
+                self.determine_save_status()
+        else:
+            if not self.selected_box:
+                QMessageBox.information(self, "Track Not Swapped", "No track is swapped.")
+                return
+            raise NotImplementedError
 
     def handle_box_selection(self, clicked_box):
         if self.selected_box and self.selected_box != clicked_box:
             self.selected_box.toggle_selection() # Deselect previously selected box
-        
         clicked_box.toggle_selection() # Toggle selection of the clicked box
-        
         if clicked_box.is_selected:
             self.selected_box = clicked_box
             print(f"Selected Instance: {clicked_box.instance_id}")
@@ -459,8 +494,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
     def determine_save_status(self):
         if np.all(self.last_saved_pred_array == self.pred_data_array):
             self.is_saved = True
+            self.save_prediction_button.setEnabled(False)
         else:
             self.is_saved = False
+            self.save_prediction_button.setEnabled(True)
 
     def undo_changes():
         pass
@@ -468,8 +505,44 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
     def redo_changes():
         pass
 
-    def save_prediction():
-        pass
+    def save_prediction(self):
+        if self.is_saved:
+            QMessageBox.information("Save Cancelled", "No change needed to be saved.")
+            return
+        # Made a copy of the original data and save upon that
+        pred_file_dir = os.path.dirname(self.prediction)
+        pred_file_name = os.path.dirname(self.prediction).split(".")[0]
+        trrf_suffix = "_track_refiner_modified_"
+        if not trrf_suffix in pred_file_name:
+            save_idx = 0
+        else:
+            pred_file_name, save_idx = pred_file_name.split(trrf_suffix)[0], int(pred_file_name.split(trrf_suffix)[1]) + 1
+        pred_file_to_save_path = os.path.join(pred_file_dir,f"{pred_file_name}{trrf_suffix}{save_idx}.h5")
+        shutil.copy(self.prediction, pred_file_to_save_path)
+        print(f"Copied original prediction to: {pred_file_to_save_path}")
+        new_data = []
+        num_frames = self.pred_data_array.shape[0]
+        for frame_idx in range(num_frames):
+            frame_data = self.pred_data_array[frame_idx, :, :].flatten()
+            new_data.append((frame_idx, frame_data))
+        try:
+            if new_data:
+                num_vals_per_frame = new_data[0][1].shape[0]
+                dtype = np.dtype([('index', 'i8'), ('data', 'f8', (num_vals_per_frame,))])
+            else:
+                print("No data to save. Skipping HDF5 write.")
+                return
+            with h5py.File(pred_file_to_save_path, "a") as pred_file_to_save: # Open the copied HDF5 file in write mode
+                del pred_file_to_save['tracks/table']
+                structured_data = np.array([(idx, arr) for idx, arr in new_data], dtype=dtype)
+                pred_file_to_save.create_dataset('tracks/table', data=structured_data)
+            self.prediction = pred_file_to_save_path
+            self.load_prediction(self.prediction)
+            self.determine_save_status()
+            QMessageBox.information("Save Successful", f"Successfully saved modified prediction to: {self.prediction}")
+        except Exception as e: # Catch specific exceptions for better debugging
+            print(f"An error occurred during HDF5 saving: {e}")
+            pass # Or handle the error more gracefully
 
     def reset_state(self):
         self.original_vid, self.prediction, self.dlc_config, self.video_name = None, None, None, None
@@ -488,7 +561,41 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.is_saved = True
 
         self.progress_slider.setRange(0, 0)
+        self.save_prediction_button.setEnabled(False)
         self.navigation_group_box.hide()
+        self.refiner_group_box.hide()
+
+        self.selected_box = None # To keep track of the currently selected box
+
+    def closeEvent(self, event: QCloseEvent):
+        if not self.is_saved:
+            # Create a dialog to confirm saving
+            close_call = QMessageBox(self)
+            close_call.setWindowTitle("Prediction Unsaved")
+            close_call.setText("Do you want to save your changes before closing?")
+            close_call.setIcon(QMessageBox.Icon.Question)
+
+            save_btn = close_call.addButton("Save", QMessageBox.ButtonRole.AcceptRole)
+            discard_btn = close_call.addButton("Don't Save", QMessageBox.ButtonRole.DestructiveRole)
+            close_btn = close_call.addButton("Close", QMessageBox.RejectRole)
+            
+            close_call.setDefaultButton(close_btn)
+
+            close_call.exec()
+            clicked_button = close_call.clickedButton()
+            
+            if clicked_button == save_btn:
+                self.save_prediction()
+                if self.is_saved:
+                    event.accept()
+                else:
+                    event.ignore()
+            elif clicked_button == discard_btn:
+                event.accept()  # Close without saving
+            else:
+                event.ignore()  # Cancel the close action
+        else:
+            event.accept()  # No unsaved changes, close normally
 
 #######################################################################################################################################################
 
