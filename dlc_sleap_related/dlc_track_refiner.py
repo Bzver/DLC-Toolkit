@@ -5,15 +5,14 @@ import yaml
 
 import pandas as pd
 import numpy as np
-from itertools import islice
 import bisect
 
 import cv2
 
 from PySide6 import QtWidgets, QtGui, QtCore
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QShortcut, QKeySequence, QCloseEvent
-from PySide6.QtWidgets import QMessageBox, QPushButton
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QShortcut, QKeySequence, QPainter, QColor, QPen
+from PySide6.QtWidgets import QMessageBox, QPushButton, QGraphicsScene, QGraphicsView, QGraphicsRectItem
 
 #################   W   ##################   I   ##################   P   ##################   
 
@@ -43,12 +42,17 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.button_layout.addWidget(self.save_prediction_button)
         self.layout.addLayout(self.button_layout)
 
-        # Video display area
-        self.video_label = QtWidgets.QLabel("No video loaded")
-        self.video_label.setAlignment(Qt.AlignCenter)
-        self.video_label.setStyleSheet("background-color: black; color: white;")
-        self.video_label.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
-        self.layout.addWidget(self.video_label, 1)
+        # Graphics view for interactive elements and video display
+        self.graphics_scene = QGraphicsScene(self)
+        self.graphics_view = QGraphicsView(self.graphics_scene)
+        self.graphics_view.setRenderHint(QPainter.Antialiasing)
+        self.graphics_view.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self.graphics_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.graphics_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.graphics_view.setMouseTracking(True) # Enable mouse tracking for hover effects
+        self.graphics_view.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        self.graphics_view.setStyleSheet("background-color: black;") # Set background for empty view
+        self.layout.addWidget(self.graphics_view, 1)
 
         # Progress bar
         self.progress_layout = QtWidgets.QHBoxLayout()
@@ -66,7 +70,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.progress_layout.addWidget(self.undo_button)
         self.progress_layout.addWidget(self.redo_button)
         self.playback_timer = QTimer()
-        # self.playback_timer.timeout.connect(self.autoplay_video)
+        self.playback_timer.timeout.connect(self.autoplay_video)
         self.is_playing = False
         self.layout.addLayout(self.progress_layout)
 
@@ -127,16 +131,20 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_Down), self).activated.connect(self.prev_instance_change)
         QShortcut(QKeySequence(Qt.Key_Up), self).activated.connect(self.next_instance_change)
         QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.toggle_playback)
-        QShortcut(QKeySequence(Qt.Key_S | Qt.ControlModifier), self).activated.connect(self.save_frame_mark)
+        QShortcut(QKeySequence(Qt.Key_S | Qt.ControlModifier), self).activated.connect(self.save_prediction)
+        
+        self.graphics_view.mousePressEvent = self.graphics_view_mouse_press_event # Override mousePressEvent for the view
+        self.graphics_scene.parent = lambda: self # Allow items to access the main window
 
         self.reset_state()
         self.is_debug = True
+        self.selected_box = None # To keep track of the currently selected box
 
     def load_video(self):
         if self.is_debug:
             self.original_vid = VIDEO_FILE_DEBUG
             self.initialize_loaded_video()
-            self.load_dlc_file(DLC_CONFIG_DEBUG)
+            self.load_DLC_config(DLC_CONFIG_DEBUG)
             self.load_prediction(PRED_FILE_DEBUG)
             return
         self.reset_state()
@@ -158,13 +166,11 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.current_frame_idx = 0
         self.progress_slider.setRange(0, self.total_frames - 1) # Initialize slider range
-        self.progress_slider.set_marked_frames(self.frame_list) # Update marked frames
-        self.progress_slider.set_labeled_frames(self.labeled_frame_list)
         self.display_current_frame()
         self.navigation_box_title_controller()
         print(f"Video loaded: {self.original_vid}")
 
-    def load_dlc_file(self, dlc_config=None):
+    def load_DLC_config(self, dlc_config=None):
         if self.current_frame is None:
             QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
             return
@@ -180,7 +186,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.individuals = cfg["individuals"]
         self.instance_count = len(self.individuals) if self.individuals is not None else 1
         self.project_dir = os.path.join(self.dlc_dir,"labeled-data", self.video_name)
-        self.display_current_frame()
+        self.num_keypoints = len(self.keypoints)
+        self.keypoint_to_idx = {name: idx for idx, name in enumerate(self.keypoints)}
 
     def load_prediction(self, prediction_path=None):
         if self.current_frame is None:
@@ -199,12 +206,16 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 print("Error: Prediction file not valid, no 'tracks' key found in prediction file.")
                 return False
             self.pred_data = pred_file["tracks"]["table"][:]
-            pred_data_values = np.array([item[1] for item in pred_data_raw])
+            pred_data_values = np.array([item[1] for item in self.pred_data])
             pred_frame_count = self.pred_data.size
-            self.pred_data_array = np.full((pred_frame_count, self.instance_count, len(self.keypoints)),np.nan)
+            self.pred_data_array = np.full((pred_frame_count, self.instance_count, self.num_keypoints*3),np.nan)
+            for inst in range(self.instance_count): # Sort inst out
+                    self.pred_data_array[:,inst,:] = pred_data_values[:, inst*self.num_keypoints*3:(inst+1)*self.num_keypoints*3]
+            self.check_instance_count_per_frame()
             if pred_frame_count != self.total_frames:
                 QMessageBox.warning(self, "Error: Frame Mismatch", "Total frames in video and in prediction do not match!")
                 print(f"Frames in config: {self.total_frames} \n Frames in prediction: {pred_frame_count}")
+            self.last_saved_pred_array = self.pred_data_array
             self.display_current_frame()
 
     ###################################################################################################################################################
@@ -215,65 +226,62 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             ret, frame = self.cap.read()
             if ret:
                 self.current_frame = frame
-                frame = self.plot_predictions(frame) if self.pred_data is not None else frame
-                # Convert OpenCV image to QPixmap
+                # Clear previous graphics items
+                self.graphics_scene.clear()
+
+                # Convert OpenCV image to QPixmap and add to scene
                 rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 h, w, ch = rgb_image.shape
                 bytes_per_line = ch * w
                 qt_image = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
                 pixmap = QtGui.QPixmap.fromImage(qt_image)
-                # Scale pixmap to fit label
-                scaled_pixmap = pixmap.scaled(self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                self.video_label.setPixmap(scaled_pixmap)
-                self.video_label.setText("") # Clear "No video loaded" text
+                
+                # Add pixmap to the scene
+                pixmap_item = self.graphics_scene.addPixmap(pixmap)
+                pixmap_item.setZValue(-1) # Ensure pixmap is behind other items
+
+                # Set scene rect to original frame dimensions
+                self.graphics_scene.setSceneRect(0, 0, w, h)
+                # Fit view to the scene, maintaining aspect ratio
+                self.graphics_view.fitInView(self.graphics_scene.sceneRect(), Qt.KeepAspectRatio)
+                
+                # Plot predictions (keypoints, bounding boxes, skeleton)
+                if self.pred_data is not None:
+                    self.plot_predictions(frame.copy()) # Pass a copy to avoid modifying original frame for QPixmap
+                
                 self.progress_slider.setValue(self.current_frame_idx) # Update slider position
+                self.graphics_view.update() # Force update of the graphics view
+
             else:
-                self.video_label.setText("Error: Could not read frame")
+                # If video frame cannot be read, clear scene and display error
+                self.graphics_scene.clear()
+                error_text_item = self.graphics_scene.addText("Error: Could not read frame")
+                error_text_item.setDefaultTextColor(QColor(255, 255, 255)) # White text
+                self.graphics_view.fitInView(error_text_item.boundingRect(), Qt.KeepAspectRatio)
         else:
-            self.video_label.setText("No video loaded")
+            # If no video loaded, clear scene and display message
+            self.graphics_scene.clear()
+            no_video_text_item = self.graphics_scene.addText("No video loaded")
+            no_video_text_item.setDefaultTextColor(QColor(255, 255, 255)) # White text
+            self.graphics_view.fitInView(no_video_text_item.boundingRect(), Qt.KeepAspectRatio)
 
     def plot_predictions(self, frame):
-        if self.pred_data is None:
-            return frame
-        try:
-            current_frame_data = self.pred_data[self.current_frame_idx][1]
-        except IndexError:
-            print(f"Frame index {self.current_frame_idx} out of bounds for prediction data.")
-            return frame
-        colors = [(0, 255, 0), (0, 0, 255), (255, 255, 0), (255, 0, 255), (0, 255, 255)] # BGR
-        if self.keypoints is None: 
-            num_keypoints = current_frame_data.size // self.instance_count // 3 # Consider the confidence col
-        elif len(self.keypoints) != current_frame_data.size // self.instance_count // 3:
-            QMessageBox.warning(self, "Error: Keypoint Mismatch", "Keypoints in config and in prediction do not match! Falling back to prediction parameters!")
-            print(f"Keypoints in config: {len(self.keypoints)} \n Keypoints in prediction: {current_frame_data.size // self.instance_count * 2 // 3}")
-            self.keypoints = None   # Falling back to prediction parameters
-            self.skeleton = None
-            num_keypoints = current_frame_data.size // self.instance_count // 3
-        else:
-            num_keypoints = len(self.keypoints)
+        self.current_selectable_boxes = [] # Store selectable boxes for the current frame
+        color_bgr = [(255, 165, 0), (128, 0, 128), (0, 128, 128), (128, 128, 0), (0, 0, 128)] # BGR
 
         # Iterate over each individual (animal)
         for inst in range(self.instance_count):
-            color = colors[inst % len(colors)]
+            color = color_bgr[inst % len(color_bgr)]
+            
             # Initiate an empty dict for storing coordinates
-            keypoint_coords = {}
-            for i in range(num_keypoints):
-                x = current_frame_data[inst * num_keypoints * 3 + i * 3] # x, y, confidence triplet
-                y = current_frame_data[inst * num_keypoints * 3 + i * 3 + 1]
-                confidence = current_frame_data[inst * num_keypoints * 3 + i * 3 + 2]
-                if pd.isna(confidence):
-                    confidence = 0 # Set confidence value to 0 for NaN confidence
-                keypoint = i if self.keypoints is None else self.keypoints[i]
-                text_size = 0.5 if self.keypoints is None else 0.3
-                text_color = color if self.keypoints is None else (255, 255, 86)
-                if pd.isna(x) or pd.isna(y) or confidence <= self.confidence_cutoff: # Apply confidence cutoff
-                    keypoint_coords[keypoint] = None
-                    continue # Skip plotting empty coords
-                else:
-                    keypoint_coords[keypoint] = (int(x),int(y))
-                
+            keypoint_coords = dict()
+            for kp_idx in range(self.num_keypoints):
+                kp = self.pred_data_array[self.current_frame_idx,inst,kp_idx*3:kp_idx*3+3]
+                if pd.isna(kp[0]):
+                    continue
+                x, y = kp[0], kp[1]
+                keypoint_coords[kp_idx] = (int(x),int(y))
                 cv2.circle(frame, (int(x), int(y)), 3, color, -1) # Draw the dot representing the keypoints
-                cv2.putText(frame, str(keypoint), (int(x) + 10, int(y)), cv2.FONT_HERSHEY_SIMPLEX, text_size, text_color, 1, cv2.LINE_AA) # Add the label
 
             if self.individuals is not None and len(keypoint_coords) >= 2:
                 self.plot_bounding_box(keypoint_coords, frame, color, inst)
@@ -299,16 +307,25 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         max_x = min(frame.shape[1] - 1, max_x + padding)
         max_y = min(frame.shape[0] - 1, max_y + padding)
             
-        cv2.rectangle(frame, (min_x, min_y), (max_x, max_y), color, 1) # Draw the bounding box
+        b, g, r = color
+        color_rgb = (r,g,b)
 
-        #Add individual label
+        # Draw bounding box using QGraphicsRectItem
+        rect_item = Selectable_Instance(min_x, min_y, max_x - min_x, max_y - min_y, inst, default_color_rgb=color_rgb)
+        self.graphics_scene.addItem(rect_item)
+        self.current_selectable_boxes.append(rect_item)
+        rect_item.clicked.connect(self.handle_box_selection) # Connect the signal
+
+        # Add individual label using OpenCV for now (can be converted to QGraphicsTextItem later if needed)
         cv2.putText(frame, f"Instance: {self.individuals[inst]}", (min_x, min_y), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1, cv2.LINE_AA)
         return frame
     
     def plot_skeleton(self, keypoint_coords, frame, color):
         for start_kp, end_kp in self.skeleton:
-            start_coord = keypoint_coords.get(start_kp)
-            end_coord = keypoint_coords.get(end_kp)
+            start_kp_idx = self.keypoint_to_idx[start_kp]
+            end_kp_idx = self.keypoint_to_idx[end_kp]
+            start_coord = keypoint_coords.get(start_kp_idx)
+            end_coord = keypoint_coords.get(end_kp_idx)
             if start_coord and end_coord:
                 cv2.line(frame, start_coord, end_coord, color, 2)
         return frame
@@ -355,34 +372,240 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
     def navigation_box_title_controller(self):
         self.navigation_group_box.setTitle(f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | Video: {self.video_name}")
-        if self.current_frame_idx in self.frame_list:
+        if self.current_frame_idx in self.roi_frame_list:
             self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: #F04C4C;}""")
         else:
             self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: black;}""")
 
     ###################################################################################################################################################
 
+    def check_instance_count_per_frame(self):
+        nan_mask = np.isnan(self.pred_data_array)
+        empty_instance = np.all(nan_mask, axis=2)
+        non_empty_instance_numerical = (~empty_instance)*1
+        instance_count_per_frame = non_empty_instance_numerical.sum(axis=1)
+        roi_frames = np.where(np.diff(instance_count_per_frame)!=0)[0]+1
+        self.roi_frame_list = list(roi_frames)
+        self.progress_slider.set_marked_frames(self.roi_frame_list) # Update ROI frames
 
+    def prev_instance_change(self):
+        if not self.roi_frame_list:
+            QMessageBox.information(self, "No Instance Change", "No frames with instance count change to navigate.")
+            return
+        
+        self.roi_frame_list.sort()
+        try:
+            current_idx_in_roi = self.roi_frame_list.index(self.current_frame_idx) - 1
+        except ValueError:
+            current_idx_in_roi = bisect.bisect_left(self.roi_frame_list, self.current_frame_idx) - 1
 
+        if current_idx_in_roi >= 0:
+            self.current_frame_idx = self.roi_frame_list[current_idx_in_roi]
+            self.display_current_frame()
+            self.navigation_box_title_controller()
+        else:
+            QMessageBox.information(self, "Navigation", "No previous ROI frame found.")
+
+    def next_instance_change(self):
+        if not self.roi_frame_list:
+            QMessageBox.information(self, "No Instance Change", "No frames with instance count change to navigate.")
+            return
+        
+        self.roi_frame_list.sort()
+        try:
+            current_idx_in_roi = self.roi_frame_list.index(self.current_frame_idx) + 1
+        except ValueError:
+            # Current frame is not marked, find the closest previous marked frame
+            current_idx_in_roi = bisect.bisect_right(self.roi_frame_list, self.current_frame_idx)
+
+        if current_idx_in_roi < len(self.roi_frame_list):
+            self.current_frame_idx = self.roi_frame_list[current_idx_in_roi]
+            self.display_current_frame()
+            self.navigation_box_title_controller()
+        else:
+            QMessageBox.information(self, "Navigation", "No next ROI frame found.")
+
+    def delete_track(self):
+        pass
+
+    def swap_track(self):
+        pass
+
+    def handle_box_selection(self, clicked_box):
+        if self.selected_box and self.selected_box != clicked_box:
+            self.selected_box.toggle_selection() # Deselect previously selected box
+        
+        clicked_box.toggle_selection() # Toggle selection of the clicked box
+        
+        if clicked_box.is_selected:
+            self.selected_box = clicked_box
+            print(f"Selected Instance: {clicked_box.instance_id}")
+        else:
+            self.selected_box = None
+            print("No instance selected.")
+
+    def graphics_view_mouse_press_event(self, event):
+        # Called when the mouse is pressed on the QGraphicsView
+        item = self.graphics_view.itemAt(event.position().toPoint())
+        if item and isinstance(item, Selectable_Instance):
+            pass
+        else: # If no item was clicked, deselect any currently selected box
+            if self.selected_box:
+                self.selected_box.toggle_selection()
+                self.selected_box = None
+                print("No instance selected.")
+        QtWidgets.QGraphicsView.mousePressEvent(self.graphics_view, event)
+
+    def determine_save_status(self):
+        if np.all(self.last_saved_pred_array == self.pred_data_array):
+            self.is_saved = True
+        else:
+            self.is_saved = False
+
+    def undo_changes():
+        pass
+
+    def redo_changes():
+        pass
+
+    def save_prediction():
+        pass
 
     def reset_state(self):
         self.original_vid, self.prediction, self.dlc_config, self.video_name = None, None, None, None
-        self.keypoints, self.skeleton, self.individuals, self.project_dir = None, None, None, None
+        self.keypoints, self.skeleton, self.individuals, self.num_keypoints = None, None, None, None
+        self.keypoint_to_idx = None
 
         self.instance_count = 1
         self.multi_animal = False
-        self.pred_data = None
+        self.pred_data, self.pred_data_array, self.last_saved_pred_array = None, None, None
 
-        self.labeled_frame_list, self.frame_list = [], []
+        self.roi_frame_list = []
 
         self.cap, self.current_frame = None, None
 
         self.is_playing = False
         self.is_saved = True
-        self.last_saved = []
 
         self.progress_slider.setRange(0, 0)
         self.navigation_group_box.hide()
+
+#######################################################################################################################################################
+
+class Slider_With_Marks(QtWidgets.QSlider):
+    def __init__(self, orientation):
+        super().__init__(orientation)
+        self.marked_frames = set()
+        self.setStyleSheet("""
+            QSlider::groove:horizontal {
+                border: 1px solid #999999;
+                height: 8px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #B1B1B1, stop:1 #B1B1B1);
+                margin: 2px 0;
+            }
+            
+            QSlider::handle:horizontal {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #b4b4b4, stop:1 #8f8f8f);
+                border: 1px solid #5c5c5c;
+                width: 10px;
+                margin: -2px 0;
+                border-radius: 3px;
+            }
+        """)
+
+    def set_marked_frames(self, marked_frames):
+        self.marked_frames = set(marked_frames)
+        self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        
+        if not self.marked_frames:
+            return
+
+        self.paintEvent_painter(self.marked_frames,"#F04C4C")
+        
+    def paintEvent_painter(self, frames, color):
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing)
+        # Get slider geometry
+        opt = QtWidgets.QStyleOptionSlider()
+        self.initStyleOption(opt)
+        groove_rect = self.style().subControlRect(
+            QtWidgets.QStyle.CC_Slider, 
+            opt, 
+            QtWidgets.QStyle.SC_SliderGroove, 
+            self
+        )
+        # Calculate available width and range
+        min_val = self.minimum()
+        max_val = self.maximum()
+        available_width = groove_rect.width()
+        # Draw each frame on slider
+        for frame in frames:
+            if frame < min_val or frame > max_val:
+                continue  
+            pos = QtWidgets.QStyle.sliderPositionFromValue(
+                min_val, 
+                max_val, 
+                frame, 
+                available_width,
+                opt.upsideDown
+            ) + groove_rect.left()
+            # Draw marker
+            painter.setPen(QtCore.Qt.NoPen)
+            painter.setBrush(QtGui.QColor(color))
+            painter.drawRect(
+                int(pos) - 1,  # Center the mark
+                groove_rect.top(),
+                3,  # Width
+                groove_rect.height()
+            )
+        painter.end()
+
+class Selectable_Instance(QtCore.QObject, QGraphicsRectItem):
+    clicked = Signal(object) # Signal to emit when this box is clicked
+
+    def __init__(self, x, y, width, height, instance_id, default_color_rgb, parent=None):
+        QtCore.QObject.__init__(self, parent)
+        QGraphicsRectItem.__init__(self, x, y, width, height, parent)
+        self.instance_id = instance_id
+        self.setFlag(QGraphicsRectItem.ItemIsSelectable, True)
+        self.setFlag(QGraphicsRectItem.ItemSendsGeometryChanges, True)
+        self.setAcceptHoverEvents(True)
+
+        self.default_pen = QPen(QColor(*default_color_rgb), 1) # Use passed color
+        self.selected_pen = QPen(QColor(255, 0, 0), 2) # Red, 2px
+        self.hover_pen = QPen(QColor(255, 255, 0), 1) # Yellow, 1px
+
+        self.setPen(self.default_pen)
+        self.is_selected = False
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(self) # Emit the signal
+            event.accept()
+        super().mousePressEvent(event)
+
+    def hoverEnterEvent(self, event):
+        if not self.is_selected:
+            self.setPen(self.hover_pen)
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        if not self.is_selected:
+            self.setPen(self.default_pen)
+        super().hoverLeaveEvent(event)
+
+    def toggle_selection(self):
+        self.is_selected = not self.is_selected
+        self.update_visual()
+
+    def update_visual(self):
+        if self.is_selected:
+            self.setPen(self.selected_pen)
+        else:
+            self.setPen(self.default_pen)
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication([])
