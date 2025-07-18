@@ -127,10 +127,12 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.next_frame_button.clicked.connect(lambda: self.change_frame(1))
         self.next_10_frames_button.clicked.connect(lambda: self.change_frame(10))
 
-        self.prev_instance_change_button.clicked.connect(self.prev_instance_change)
+        self.prev_instance_change_button.clicked.connect(lambda:self.prev_instance_change(mode="frame"))
         self.next_instance_change_button.clicked.connect(lambda:self.next_instance_change(mode="frame"))
         self.swap_track_button.clicked.connect(self.swap_track)
         self.delete_track_button.clicked.connect(self.delete_track)
+        self.interpolate_track_button.clicked.connect(self.interpolate_track)
+        self.duplicate_track_button.clicked.connect(self.duplicate_track)
 
         QShortcut(QKeySequence(Qt.Key_Left | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(-10))
         QShortcut(QKeySequence(Qt.Key_Left), self).activated.connect(lambda: self.change_frame(-1))
@@ -322,7 +324,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.current_selectable_boxes.append(rect_item)
         rect_item.clicked.connect(self.handle_box_selection) # Connect the signal
 
-        # Add individual label using OpenCV for now (can be converted to QGraphicsTextItem later if needed)
         # Add individual label
         text_item = QtWidgets.QGraphicsTextItem(f"Instance: {self.individuals[inst]}")
         text_item.setPos(min_x, min_y - 15) # Adjust position to be above the bounding box
@@ -400,7 +401,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.roi_frame_list = list(roi_frames)
         self.progress_slider.set_marked_frames(self.roi_frame_list) # Update ROI frames
 
-    def prev_instance_change(self):
+    def prev_instance_change(self, mode="frame"):
         if not self.roi_frame_list:
             QMessageBox.information(self, "No Instance Change", "No frames with instance count change to navigate.")
             return
@@ -412,7 +413,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             current_idx_in_roi = bisect.bisect_left(self.roi_frame_list, self.current_frame_idx) - 1
 
         if current_idx_in_roi >= 0:
-            self.current_frame_idx = self.roi_frame_list[current_idx_in_roi]
+            if mode == "idx":
+                return self.roi_frame_list[current_idx_in_roi]
+            else:
+                self.current_frame_idx = self.roi_frame_list[current_idx_in_roi]
             self.display_current_frame()
             self.navigation_box_title_controller()
         else:
@@ -441,11 +445,13 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             return
 
     def delete_track(self):
+        if self.pred_data_array is None: # Silent fail
+            return
         if not self.selected_box:
             QMessageBox.information(self, "Track Not Delected", "No track is selected.")
             return
         instance_for_track_deletion = self.selected_box.instance_id
-        next_roi_frame_idx = self.next_instance_change(mode="idx")
+        next_roi_frame_idx = self.next_instance_change(mode="idx") - 1 # "-1" for not including the next roi frame
         if next_roi_frame_idx:
             self.pred_data_array[self.current_frame_idx:next_roi_frame_idx, instance_for_track_deletion, :] = np.nan
             self.selected_box = None
@@ -453,8 +459,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             self.determine_save_status()
 
     def swap_track(self):
+        if self.pred_data_array is None: # Silent fail
+            return
         if self.instance_count == 2: # 2 instances need no selection
-            next_roi_frame_idx = self.next_instance_change(mode="idx")
+            next_roi_frame_idx = self.next_instance_change(mode="idx") - 1 # "-1" for not including the next roi frame
             if next_roi_frame_idx:
                 self.selected_box = None
                 temp_array = self.pred_data_array[self.current_frame_idx:next_roi_frame_idx, 0, :]
@@ -467,6 +475,33 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 QMessageBox.information(self, "Track Not Swapped", "No track is swapped.")
                 return
             raise NotImplementedError
+
+    def interpolate_track(self):
+        if self.pred_data_array is None: # Silent fail
+            return
+        if not self.selected_box:
+            QMessageBox.information(self, "Track Not Delected", "No track is selected.")
+            return
+        instance_for_track_interpolate = self.selected_box.instance_id
+        next_roi_frame_idx = self.next_instance_change(mode="idx")
+        if next_roi_frame_idx:
+            #self.pred_data_array[self.current_frame_idx:next_roi_frame_idx, instance_for_track_deletion, :] = np.nan
+
+            self.selected_box = None
+            self.display_current_frame()
+            self.determine_save_status()
+
+    def duplicate_track(self):
+        if self.pred_data_array is None: # Silent fail
+            return
+        if not self.selected_box:
+            QMessageBox.information(self, "Track Not Delected", "No track is selected.")
+            return
+        instance_for_track_duplicate = self.selected_box.instance_id
+        prev_roi_frame_idx = self.next_instance_change(mode="idx")
+        if prev_roi_frame_idx:
+
+            pass
 
     def handle_box_selection(self, clicked_box):
         if self.selected_box and self.selected_box != clicked_box:
