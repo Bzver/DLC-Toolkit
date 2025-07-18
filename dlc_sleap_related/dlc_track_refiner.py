@@ -485,7 +485,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         instance_for_track_interpolate = self.selected_box.instance_id
         next_roi_frame_idx = self.next_instance_change(mode="idx")
         if next_roi_frame_idx:
-            #self.pred_data_array[self.current_frame_idx:next_roi_frame_idx, instance_for_track_deletion, :] = np.nan
+            current_kp = self.pred_data_array[self.current_frame_idx, instance_for_track_interpolate, :]
+            end_kp = self.pred_data_array[next_roi_frame_idx, instance_for_track_interpolate, :]
+            #self.pred_data_array[self.current_frame_idx+1:next_roi_frame_idx, instance_for_track_interpolate, :]
+
 
             self.selected_box = None
             self.display_current_frame()
@@ -500,10 +503,13 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         instance_for_track_duplicate = self.selected_box.instance_id
         prev_roi_frame_idx = self.next_instance_change(mode="idx")
         if prev_roi_frame_idx:
+            self.pred_data_array[prev_roi_frame_idx+1:self.current_frame_idx, instance_for_track_duplicate, :]\
+                  = self.pred_data_array[prev_roi_frame_idx, instance_for_track_duplicate, :].copy()
+            self.selected_box = None
+            self.display_current_frame()
+            self.determine_save_status()
 
-            pass
-
-    def handle_box_selection(self, clicked_box):
+    def handle_box_selection(self, clicked_box):  
         if self.selected_box and self.selected_box != clicked_box:
             self.selected_box.toggle_selection() # Deselect previously selected box
         clicked_box.toggle_selection() # Toggle selection of the clicked box
