@@ -446,7 +446,6 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         if current_idx_in_marked >= 0:
             self.current_frame_idx = self.frame_list[current_idx_in_marked]
             self.display_current_frame()
-            self.current_marked_idx_in_list = current_idx_in_marked
             self.navigation_box_title_controller()
         else:
             QMessageBox.information(self, "Navigation", "No previous marked frame found.")
@@ -465,7 +464,6 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         if current_idx_in_marked < len(self.frame_list):
             self.current_frame_idx = self.frame_list[current_idx_in_marked]
             self.display_current_frame()
-            self.current_marked_idx_in_list = current_idx_in_marked
             self.navigation_box_title_controller()
         else:
             QMessageBox.information(self, "Navigation", "No next marked frame found.")
