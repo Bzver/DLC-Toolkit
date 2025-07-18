@@ -49,7 +49,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         self.progress_layout = QtWidgets.QHBoxLayout()
         self.play_button = QPushButton("▶")
         self.play_button.setFixedWidth(20)
-        self.progress_slider = custom_slider(Qt.Horizontal)
+        self.progress_slider = Slider_With_Marks(Qt.Horizontal)
         self.progress_slider.setRange(0, 0) # Will be set dynamically
         self.progress_slider.setTracking(True)
 
@@ -607,7 +607,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
 
 #######################################################################################################################################################
 
-class custom_slider(QtWidgets.QSlider):
+class Slider_With_Marks(QtWidgets.QSlider):
     def __init__(self, orientation):
         super().__init__(orientation)
         self.marked_frames = set()
