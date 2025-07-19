@@ -576,7 +576,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 QMessageBox.information(self, "Selection Cancelled", "No instance was selected. Operation cancelled.")
                 return # Exit the function if no instance is selected or cancelled
         else:
-            instance_for_track_fill = instance_for_track_fill[0]
+            instance_for_track_fill = list(instance_for_track_fill)[0]
         # Find the last non-empty frame for inst, the copy the kp of that frame to all the empty frames in between and the current one
         iter_frame_idx = self.current_frame_idx
         frames_to_fill = []
