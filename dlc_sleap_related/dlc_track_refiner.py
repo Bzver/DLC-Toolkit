@@ -84,8 +84,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.next_10_frames_button = QPushButton("Next 10 Frames (Shift + →)")
         self.prev_frame_button = QPushButton("Prev Frame (←)")
         self.next_frame_button = QPushButton("Next Frame (→)")
-        self.prev_instance_change_button = QPushButton("◄ Prev ROI (↓)")
-        self.next_instance_change_button = QPushButton("► Next ROI (↑)")
+        self.prev_instance_change_button = QPushButton("◄ Prev ROI (↑)")
+        self.next_instance_change_button = QPushButton("► Next ROI (↓)")
 
         self.navigation_layout.addWidget(self.prev_10_frames_button, 0, 0)
         self.navigation_layout.addWidget(self.next_10_frames_button, 1, 0)
@@ -98,7 +98,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.refiner_layout = QtWidgets.QGridLayout(self.refiner_group_box)
 
         self.swap_track_button = QPushButton("Swap Track (W)")
-        self.delete_track_button = QPushButton("Delete Track ")
+        self.swap_track_button.setToolTip("Shift + W for swapping all the frames instance before next ROI.")
+        self.delete_track_button = QPushButton("Delete Track (X)")
+        self.delete_track_button.setToolTip("Shift + X for deleting all the frames instance before next ROI.")
         self.interpolate_track_button = QPushButton("Interpolate Track")
         self.fill_track_button = QPushButton("Fill Track")
 
@@ -127,10 +129,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.next_frame_button.clicked.connect(lambda: self.change_frame(1))
         self.next_10_frames_button.clicked.connect(lambda: self.change_frame(10))
 
-        self.prev_instance_change_button.clicked.connect(lambda:self.prev_instance_change(mode="frame"))
-        self.next_instance_change_button.clicked.connect(lambda:self.next_instance_change(mode="frame"))
-        self.swap_track_button.clicked.connect(self.swap_track)
-        self.delete_track_button.clicked.connect(self.delete_track)
+        self.prev_instance_change_button.clicked.connect(lambda:self.prev_instance_change("frame"))
+        self.next_instance_change_button.clicked.connect(lambda:self.next_instance_change("frame"))
+        self.swap_track_button.clicked.connect(lambda:self.swap_track("point"))
+        self.delete_track_button.clicked.connect(lambda:self.delete_track("point"))
         self.interpolate_track_button.clicked.connect(self.interpolate_track)
         self.fill_track_button.clicked.connect(self.fill_track)
 
@@ -138,12 +140,14 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_Left), self).activated.connect(lambda: self.change_frame(-1))
         QShortcut(QKeySequence(Qt.Key_Right), self).activated.connect(lambda: self.change_frame(1))
         QShortcut(QKeySequence(Qt.Key_Right | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(10))
-        QShortcut(QKeySequence(Qt.Key_W), self).activated.connect(self.swap_track)
-        QShortcut(QKeySequence(Qt.Key_X), self).activated.connect(self.delete_track)
-        QShortcut(QKeySequence(Qt.Key_Z | Qt.ShiftModifier), self).activated.connect(self.undo_changes)
-        QShortcut(QKeySequence(Qt.Key_Y | Qt.ShiftModifier), self).activated.connect(self.redo_changes)
-        QShortcut(QKeySequence(Qt.Key_Down), self).activated.connect(self.prev_instance_change)
-        QShortcut(QKeySequence(Qt.Key_Up), self).activated.connect(self.next_instance_change)
+        QShortcut(QKeySequence(Qt.Key_W), self).activated.connect(lambda:self.swap_track("point"))
+        QShortcut(QKeySequence(Qt.Key_X), self).activated.connect(lambda:self.delete_track("point"))
+        QShortcut(QKeySequence(Qt.Key_W | Qt.ShiftModifier), self).activated.connect(lambda:self.swap_track("batch"))
+        QShortcut(QKeySequence(Qt.Key_X | Qt.ShiftModifier), self).activated.connect(lambda:self.delete_track("batch"))
+        QShortcut(QKeySequence(Qt.Key_Z | Qt.ControlModifier), self).activated.connect(self.undo_changes)
+        QShortcut(QKeySequence(Qt.Key_Y | Qt.ControlModifier), self).activated.connect(self.redo_changes)
+        QShortcut(QKeySequence(Qt.Key_Up), self).activated.connect(self.prev_instance_change)
+        QShortcut(QKeySequence(Qt.Key_Down), self).activated.connect(self.next_instance_change)
         QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.toggle_playback)
         QShortcut(QKeySequence(Qt.Key_S | Qt.ControlModifier), self).activated.connect(self.save_prediction)
         
@@ -151,12 +155,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.graphics_scene.parent = lambda: self # Allow items to access the main window
 
         self.reset_state()
-        self.is_debug = True
-
-        # Undo/Redo stacks
-        self.undo_stack = []
-        self.redo_stack = []
-        self.max_undo_stack_size = 10
+        self.is_debug = False
 
     def load_video(self):
         if self.is_debug:
@@ -178,7 +177,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.video_name = os.path.basename(self.original_vid).split(".")[0]
         self.cap = cv2.VideoCapture(self.original_vid)
         if not self.cap.isOpened():
-            QMessageBox.warning("Error Open Video", f"Error: Could not open video {self.original_vid}")
+            QMessageBox.warning(self, "Error Open Video", f"Error: Could not open video {self.original_vid}")
             self.cap = None
             return
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -195,7 +194,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         if dlc_config is None:
             file_dialog = QtWidgets.QFileDialog(self)
             dlc_config, _ = file_dialog.getOpenFileName(self, "Load DLC Config", "", "YAML Files (config.yaml);;All Files (*)")
-        self.dlc_dir = os.path.dirname(dlc_config)
         with open(dlc_config, "r") as conf:
             cfg = yaml.safe_load(conf)
         self.multi_animal = cfg["multianimalproject"]
@@ -210,7 +208,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         if self.current_frame is None:
             QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
             return
-        if self.dlc_dir is None:
+        if self.dlc_config is None:
             QMessageBox.warning(self, "No DLC Config", "No dlc config has been loaded, please load it first.")
             return
         if prediction_path is None:
@@ -222,6 +220,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             if not "tracks" in pred_file.keys():
                 print("Error: Prediction file not valid, no 'tracks' key found in prediction file.")
                 return False
+            QMessageBox.information(self, "Checking Frame Instance","Checking detected instance count per frame, this usually takes a few seconds, please wait...")
             self.pred_data = pred_file["tracks"]["table"]
             pred_data_values = np.array([item[1] for item in self.pred_data])
             pred_frame_count = self.pred_data.size
@@ -454,7 +453,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             if len(self.undo_stack) > self.max_undo_stack_size:
                 self.undo_stack.pop(0) # Remove the oldest state
 
-    def delete_track(self):
+    def delete_track(self, mode="point"):
         if self.pred_data_array is None: # Silent fail
             return
         if not self.selected_box:
@@ -462,26 +461,34 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             return
         self._save_state_for_undo() # Save state before modification
         instance_for_track_deletion = self.selected_box.instance_id
-        next_roi_frame_idx = self.next_instance_change(mode="idx") - 1 # "-1" for not including the next roi frame
-        if next_roi_frame_idx:
-            self.pred_data_array[self.current_frame_idx:next_roi_frame_idx, instance_for_track_deletion, :] = np.nan
-            self.selected_box = None
-            self.display_current_frame()
-            self.determine_save_status()
+        if mode == "point": # Only removing the current frame
+            self.pred_data_array[self.current_frame_idx, instance_for_track_deletion, :] = np.nan
+        else:
+            next_roi_frame_idx = self.next_instance_change("idx")
+            if next_roi_frame_idx:
+                self.pred_data_array[self.current_frame_idx:next_roi_frame_idx, instance_for_track_deletion, :] = np.nan
+        self.selected_box = None
+        self.display_current_frame()
+        self.determine_save_status()
 
-    def swap_track(self):
+    def swap_track(self, mode="point"):
         if self.pred_data_array is None:
             return
         self._save_state_for_undo() # Save state before modification
         if self.instance_count == 2: # 2 instances need no selection
-            next_roi_frame_idx = self.next_instance_change(mode="idx") - 1 # "-1" for not including the next roi frame
-            if next_roi_frame_idx:
-                self.selected_box = None
-                temp_array = self.pred_data_array[self.current_frame_idx:next_roi_frame_idx, 0, :]
-                self.pred_data_array[self.current_frame_idx:next_roi_frame_idx, 0, :] = self.pred_data_array[self.current_frame_idx:next_roi_frame_idx, 1, :]
-                self.pred_data_array[self.current_frame_idx:next_roi_frame_idx, 1, :] = temp_array
-                self.display_current_frame()
-                self.determine_save_status()
+            if mode == "point":
+                self.pred_data_array[self.current_frame_idx, 0, :], self.pred_data_array[self.current_frame_idx, 1, :] = \
+                self.pred_data_array[self.current_frame_idx, 1, :].copy(), self.pred_data_array[self.current_frame_idx, 0, :].copy()
+            else:
+                next_roi_frame_idx = self.next_instance_change("idx")
+                if next_roi_frame_idx:
+                    self.pred_data_array[self.current_frame_idx:next_roi_frame_idx, 0, :], \
+                    self.pred_data_array[self.current_frame_idx:next_roi_frame_idx, 1, :] = \
+                    self.pred_data_array[self.current_frame_idx:next_roi_frame_idx, 1, :].copy(), \
+                    self.pred_data_array[self.current_frame_idx:next_roi_frame_idx, 0, :].copy()
+            self.selected_box = None
+            self.display_current_frame()
+            self.determine_save_status()
         else:
             if not self.selected_box:
                 QMessageBox.information(self, "Track Not Swapped", "No track is swapped.")
@@ -496,40 +503,83 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             return
         self._save_state_for_undo() # Save state before modification
         instance_for_track_interpolate = self.selected_box.instance_id
-        next_roi_frame_idx = self.next_instance_change(mode="idx")
-        if next_roi_frame_idx:
-            current_kp = self.pred_data_array[self.current_frame_idx, instance_for_track_interpolate, :]
-            end_kp = self.pred_data_array[next_roi_frame_idx, instance_for_track_interpolate, :]
-            if np.all(np.isnan(current_kp)) or np.all(np.isnan(end_kp)):
-                QMessageBox.information(self, "Instance not found", "Selected instance not found in the current frame or the next ROI frame.")
+        iter_frame_idx = self.current_frame_idx + 1
+        frames_to_interpolate = []
+        while np.all(np.isnan(self.pred_data_array[iter_frame_idx, instance_for_track_interpolate, :])):
+            frames_to_interpolate.append(iter_frame_idx)
+            iter_frame_idx += 1
+            if iter_frame_idx >= self.total_frames:
+                QMessageBox.information(self, "Interpolation Failed", "No valid subsequent keypoint data found for this instance to interpolate to.")
                 return
-            self.pred_data_array[self.current_frame_idx+1:next_roi_frame_idx, instance_for_track_interpolate, :]\
-                = np.linspace(current_kp, end_kp, num=next_roi_frame_idx-(self.current_frame_idx+1), axis=0)
+        if frames_to_interpolate:
+            frames_to_interpolate.sort()
+            start_kp = self.pred_data_array[frames_to_interpolate[0]-1, instance_for_track_interpolate, :]
+            end_kp = self.pred_data_array[frames_to_interpolate[-1]+1, instance_for_track_interpolate, :]
+            if np.all(np.isnan(start_kp)) or np.all(np.isnan(end_kp)):
+                QMessageBox.information(self, "Instance not found", "Selected keypoint not found in the current frame or the next ROI frame.")
+                return
+            self.pred_data_array[frames_to_interpolate[0]-1:frames_to_interpolate[-1]+2, instance_for_track_interpolate, :]\
+                = np.linspace(start_kp, end_kp, num=len(frames_to_interpolate)+2, axis=0)
             self.selected_box = None
             self.display_current_frame()
             self.determine_save_status()
 
-    def fill_track(self):
+    def fill_track(self): # Retroactively fill frame from the last vaid kp from previous frames
         if self.pred_data_array is None:
             return
-        if not self.selected_box:
-            QMessageBox.information(self, "Track Not Filld", "No track is selected.")
-            return
         self._save_state_for_undo() # Save state before modification
-        instance_for_track_fill = self.selected_box.instance_id
-        prev_roi_frame_idx = self.next_instance_change(mode="idx") # This seems incorrect, should be prev_instance_change
-        if prev_roi_frame_idx:
-            if np.all(np.isnan(self.pred_data_array[prev_roi_frame_idx, instance_for_track_fill, :])):
-                QMessageBox.information(self, "Instance not found", "Selected instance not found in the  previous ROI frame.")
+        all_inst = [ inst for inst in range(self.instance_count) ]
+        instance_for_track_fill = [ inst for inst in range(self.instance_count) ]
+        for inst in all_inst:
+            if np.any(~np.isnan(self.pred_data_array[self.current_frame_idx, inst, :])):
+                instance_for_track_fill.remove(inst)
+        if len(instance_for_track_fill) > 1: # Multiple empty instance
+            # Construct the question message and buttons dynamically
+            question_text = "Multiple missing instances on the current frame. Which instance would you like to duplicate from the previous ROI frame?"
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Multiple Instance")
+            msg_box.setText(question_text)
+            msg_box.setIcon(QMessageBox.Icon.Question)
+            buttons = []
+            for inst_id in instance_for_track_fill:
+                button_text = f"Instance {self.individuals[inst_id]}" if self.individuals else f"Instance {inst_id}"
+                button = msg_box.addButton(button_text, QMessageBox.ButtonRole.ActionRole)
+                buttons.append((button, inst_id))
+            cancel_button = msg_box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+            msg_box.setDefaultButton(cancel_button)
+            msg_box.exec()
+            clicked_button = msg_box.clickedButton()
+            selected_instance = None
+            for button, inst_id in buttons:
+                if clicked_button == button:
+                    selected_instance = inst_id
+                    break
+            if selected_instance is not None:
+                instance_for_track_fill = selected_instance
+            else:
+                QMessageBox.information(self, "Selection Cancelled", "No instance was selected. Operation cancelled.")
+                return # Exit the function if no instance is selected or cancelled
+        else:
+            instance_for_track_fill = instance_for_track_fill[0]
+        # Find the last non-empty frame for inst, the copy the kp of that frame to all the empty frames in between and the current one
+        iter_frame_idx = self.current_frame_idx
+        frames_to_fill = []
+        while np.all(np.isnan(self.pred_data_array[iter_frame_idx, instance_for_track_fill, :])):
+            frames_to_fill.append(iter_frame_idx)
+            iter_frame_idx -= 1
+            if iter_frame_idx < 0:
+                QMessageBox.information(self, "No Previous Data", "No valid previous keypoint data found for this instance.")
                 return
-            self.pred_data_array[prev_roi_frame_idx+1:self.current_frame_idx, instance_for_track_fill, :]\
-                  = self.pred_data_array[prev_roi_frame_idx, instance_for_track_fill, :].copy()
+        if frames_to_fill:
+            frames_to_fill.sort()
+            self.pred_data_array[frames_to_fill[0]:frames_to_fill[-1]+1, instance_for_track_fill, :]\
+                    = self.pred_data_array[iter_frame_idx, instance_for_track_fill, :].copy()
             self.selected_box = None
             self.display_current_frame()
             self.determine_save_status()
 
     def handle_box_selection(self, clicked_box):
-        if self.selected_box and self.selected_box != clicked_box:
+        if self.selected_box and self.selected_box != clicked_box and self.selected_box.scene() is not None:
             self.selected_box.toggle_selection() # Deselect previously selected box
         clicked_box.toggle_selection() # Toggle selection of the clicked box
         if clicked_box.is_selected:
@@ -551,7 +601,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         QtWidgets.QGraphicsView.mousePressEvent(self.graphics_view, event)
 
     def determine_save_status(self):
-        if self.last_saved_pred_array is None or np.all(self.last_saved_pred_array == self.pred_data_array):
+        if self.pred_data is None or np.all(self.last_saved_pred_array == self.pred_data_array):
             self.is_saved = True
             self.save_prediction_button.setEnabled(False)
         else:
@@ -648,8 +698,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.refiner_group_box.hide()
 
         self.selected_box = None # To keep track of the currently selected box
+        
         self.undo_stack = [] # Clear undo stack on reset
         self.redo_stack = [] # Clear redo stack on reset
+        self.max_undo_stack_size = 10
 
     def closeEvent(self, event: QCloseEvent):
         if not self.is_saved:
