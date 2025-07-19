@@ -230,7 +230,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             if not "tracks" in pred_file.keys():
                 print("Error: Prediction file not valid, no 'tracks' key found in prediction file.")
                 return False
-            QMessageBox.information(self, "Checking Frame Instance","Checking detected instance count per frame, this usually takes a few seconds, please wait...")
+            QMessageBox.information(self, "Loading Prediction","Loading and parsing prediction file, this could take a few seconds, please wait...")
             self.pred_data = pred_file["tracks"]["table"]
             pred_data_values = np.array([item[1] for item in self.pred_data])
             pred_frame_count = self.pred_data.size
@@ -576,7 +576,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 QMessageBox.information(self, "Selection Cancelled", "No instance was selected. Operation cancelled.")
                 return # Exit the function if no instance is selected or cancelled
         else:
-            instance_for_track_fill = instance_for_track_fill
+            instance_for_track_fill = instance_for_track_fill[0]
         # Find the last non-empty frame for inst, the copy the kp of that frame to all the empty frames in between and the current one
         iter_frame_idx = self.current_frame_idx
         frames_to_fill = []
