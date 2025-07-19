@@ -100,12 +100,12 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.swap_track_button = QPushButton("Swap Track (W)")
         self.delete_track_button = QPushButton("Delete Track ")
         self.interpolate_track_button = QPushButton("Interpolate Track")
-        self.duplicate_track_button = QPushButton("Duplicate Prior")
+        self.fill_track_button = QPushButton("Fill Track")
 
         self.refiner_layout.addWidget(self.swap_track_button, 0, 0)
         self.refiner_layout.addWidget(self.delete_track_button, 0, 1)
         self.refiner_layout.addWidget(self.interpolate_track_button, 1, 0)
-        self.refiner_layout.addWidget(self.duplicate_track_button, 1, 1)
+        self.refiner_layout.addWidget(self.fill_track_button, 1, 1)
 
         self.control_layout.addWidget(self.navigation_group_box)
         self.control_layout.addWidget(self.refiner_group_box)
@@ -132,7 +132,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.swap_track_button.clicked.connect(self.swap_track)
         self.delete_track_button.clicked.connect(self.delete_track)
         self.interpolate_track_button.clicked.connect(self.interpolate_track)
-        self.duplicate_track_button.clicked.connect(self.duplicate_track)
+        self.fill_track_button.clicked.connect(self.fill_track)
 
         QShortcut(QKeySequence(Qt.Key_Left | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(-10))
         QShortcut(QKeySequence(Qt.Key_Left), self).activated.connect(lambda: self.change_frame(-1))
@@ -173,8 +173,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.video_name = os.path.basename(self.original_vid).split(".")[0]
         self.cap = cv2.VideoCapture(self.original_vid)
         if not self.cap.isOpened():
-            print(f"Error: Could not open video {self.original_vid}")
-            self.video_label.setText("Error: Could not open video")
+            QMessageBox.warning("Error Open Video", f"Error: Could not open video {self.original_vid}")
             self.cap = None
             return
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -459,7 +458,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             self.determine_save_status()
 
     def swap_track(self):
-        if self.pred_data_array is None: # Silent fail
+        if self.pred_data_array is None:
             return
         if self.instance_count == 2: # 2 instances need no selection
             next_roi_frame_idx = self.next_instance_change(mode="idx") - 1 # "-1" for not including the next roi frame
@@ -477,34 +476,39 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             raise NotImplementedError
 
     def interpolate_track(self):
-        if self.pred_data_array is None: # Silent fail
+        if self.pred_data_array is None:
             return
         if not self.selected_box:
-            QMessageBox.information(self, "Track Not Delected", "No track is selected.")
+            QMessageBox.information(self, "Track Not Interpolated", "No track is selected.")
             return
         instance_for_track_interpolate = self.selected_box.instance_id
         next_roi_frame_idx = self.next_instance_change(mode="idx")
         if next_roi_frame_idx:
             current_kp = self.pred_data_array[self.current_frame_idx, instance_for_track_interpolate, :]
             end_kp = self.pred_data_array[next_roi_frame_idx, instance_for_track_interpolate, :]
-            #self.pred_data_array[self.current_frame_idx+1:next_roi_frame_idx, instance_for_track_interpolate, :]
-
-
+            if np.all(np.isnan(current_kp)) or np.all(np.isnan(end_kp)):
+                QMessageBox.information("Instance not found", "Selected instance not found in the current frame or the next ROI frame.")
+                return
+            self.pred_data_array[self.current_frame_idx+1:next_roi_frame_idx-1, instance_for_track_interpolate, :]\
+                = np.linspace(current_kp, end_kp, num=next_roi_frame_idx-self.current_frame_idx-1, axis=0)
             self.selected_box = None
             self.display_current_frame()
             self.determine_save_status()
 
-    def duplicate_track(self):
-        if self.pred_data_array is None: # Silent fail
+    def fill_track(self):
+        if self.pred_data_array is None:
             return
         if not self.selected_box:
-            QMessageBox.information(self, "Track Not Delected", "No track is selected.")
+            QMessageBox.information(self, "Track Not Filld", "No track is selected.")
             return
-        instance_for_track_duplicate = self.selected_box.instance_id
+        instance_for_track_fill = self.selected_box.instance_id
         prev_roi_frame_idx = self.next_instance_change(mode="idx")
         if prev_roi_frame_idx:
-            self.pred_data_array[prev_roi_frame_idx+1:self.current_frame_idx, instance_for_track_duplicate, :]\
-                  = self.pred_data_array[prev_roi_frame_idx, instance_for_track_duplicate, :].copy()
+            if np.all(np.isnan(self.pred_data_array[prev_roi_frame_idx, instance_for_track_fill, :])):
+                QMessageBox.information("Instance not found", "Selected instance not found in the  previous ROI frame.")
+                return
+            self.pred_data_array[prev_roi_frame_idx+1:self.current_frame_idx, instance_for_track_fill, :]\
+                  = self.pred_data_array[prev_roi_frame_idx, instance_for_track_fill, :].copy()
             self.selected_box = None
             self.display_current_frame()
             self.determine_save_status()
@@ -521,7 +525,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             print("No instance selected.")
 
     def graphics_view_mouse_press_event(self, event):
-        # Called when the mouse is pressed on the QGraphicsView
         item = self.graphics_view.itemAt(event.position().toPoint())
         if item and isinstance(item, Selectable_Instance):
             pass
