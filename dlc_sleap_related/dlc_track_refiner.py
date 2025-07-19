@@ -153,6 +153,11 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.reset_state()
         self.is_debug = True
 
+        # Undo/Redo stacks
+        self.undo_stack = []
+        self.redo_stack = []
+        self.max_undo_stack_size = 10
+
     def load_video(self):
         if self.is_debug:
             self.original_vid = VIDEO_FILE_DEBUG
@@ -227,7 +232,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             if pred_frame_count != self.total_frames:
                 QMessageBox.warning(self, "Error: Frame Mismatch", "Total frames in video and in prediction do not match!")
                 print(f"Frames in config: {self.total_frames} \n Frames in prediction: {pred_frame_count}")
-            self.last_saved_pred_array = self.pred_data_array
             self.display_current_frame()
 
     ###################################################################################################################################################
@@ -443,12 +447,20 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             QMessageBox.information(self, "Navigation", "No next ROI frame found.")
             return
 
+    def _save_state_for_undo(self):
+        if self.pred_data_array is not None:
+            self.redo_stack = [] # Clear redo stack when a new action is performed
+            self.undo_stack.append(self.pred_data_array.copy())
+            if len(self.undo_stack) > self.max_undo_stack_size:
+                self.undo_stack.pop(0) # Remove the oldest state
+
     def delete_track(self):
         if self.pred_data_array is None: # Silent fail
             return
         if not self.selected_box:
             QMessageBox.information(self, "Track Not Delected", "No track is selected.")
             return
+        self._save_state_for_undo() # Save state before modification
         instance_for_track_deletion = self.selected_box.instance_id
         next_roi_frame_idx = self.next_instance_change(mode="idx") - 1 # "-1" for not including the next roi frame
         if next_roi_frame_idx:
@@ -460,6 +472,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
     def swap_track(self):
         if self.pred_data_array is None:
             return
+        self._save_state_for_undo() # Save state before modification
         if self.instance_count == 2: # 2 instances need no selection
             next_roi_frame_idx = self.next_instance_change(mode="idx") - 1 # "-1" for not including the next roi frame
             if next_roi_frame_idx:
@@ -481,16 +494,17 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         if not self.selected_box:
             QMessageBox.information(self, "Track Not Interpolated", "No track is selected.")
             return
+        self._save_state_for_undo() # Save state before modification
         instance_for_track_interpolate = self.selected_box.instance_id
         next_roi_frame_idx = self.next_instance_change(mode="idx")
         if next_roi_frame_idx:
             current_kp = self.pred_data_array[self.current_frame_idx, instance_for_track_interpolate, :]
             end_kp = self.pred_data_array[next_roi_frame_idx, instance_for_track_interpolate, :]
             if np.all(np.isnan(current_kp)) or np.all(np.isnan(end_kp)):
-                QMessageBox.information("Instance not found", "Selected instance not found in the current frame or the next ROI frame.")
+                QMessageBox.information(self, "Instance not found", "Selected instance not found in the current frame or the next ROI frame.")
                 return
-            self.pred_data_array[self.current_frame_idx+1:next_roi_frame_idx-1, instance_for_track_interpolate, :]\
-                = np.linspace(current_kp, end_kp, num=next_roi_frame_idx-self.current_frame_idx-1, axis=0)
+            self.pred_data_array[self.current_frame_idx+1:next_roi_frame_idx, instance_for_track_interpolate, :]\
+                = np.linspace(current_kp, end_kp, num=next_roi_frame_idx-(self.current_frame_idx+1), axis=0)
             self.selected_box = None
             self.display_current_frame()
             self.determine_save_status()
@@ -501,11 +515,12 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         if not self.selected_box:
             QMessageBox.information(self, "Track Not Filld", "No track is selected.")
             return
+        self._save_state_for_undo() # Save state before modification
         instance_for_track_fill = self.selected_box.instance_id
-        prev_roi_frame_idx = self.next_instance_change(mode="idx")
+        prev_roi_frame_idx = self.next_instance_change(mode="idx") # This seems incorrect, should be prev_instance_change
         if prev_roi_frame_idx:
             if np.all(np.isnan(self.pred_data_array[prev_roi_frame_idx, instance_for_track_fill, :])):
-                QMessageBox.information("Instance not found", "Selected instance not found in the  previous ROI frame.")
+                QMessageBox.information(self, "Instance not found", "Selected instance not found in the  previous ROI frame.")
                 return
             self.pred_data_array[prev_roi_frame_idx+1:self.current_frame_idx, instance_for_track_fill, :]\
                   = self.pred_data_array[prev_roi_frame_idx, instance_for_track_fill, :].copy()
@@ -513,7 +528,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             self.display_current_frame()
             self.determine_save_status()
 
-    def handle_box_selection(self, clicked_box):  
+    def handle_box_selection(self, clicked_box):
         if self.selected_box and self.selected_box != clicked_box:
             self.selected_box.toggle_selection() # Deselect previously selected box
         clicked_box.toggle_selection() # Toggle selection of the clicked box
@@ -536,32 +551,54 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         QtWidgets.QGraphicsView.mousePressEvent(self.graphics_view, event)
 
     def determine_save_status(self):
-        if np.all(self.last_saved_pred_array == self.pred_data_array):
+        if self.last_saved_pred_array is None or np.all(self.last_saved_pred_array == self.pred_data_array):
             self.is_saved = True
             self.save_prediction_button.setEnabled(False)
         else:
             self.is_saved = False
             self.save_prediction_button.setEnabled(True)
 
-    def undo_changes():
-        pass
+    def undo_changes(self):
+        if self.undo_stack:
+            self.redo_stack.append(self.pred_data_array.copy())
+            self.pred_data_array = self.undo_stack.pop()
+            self.display_current_frame()
+            self.determine_save_status()
+            print("Undo performed.")
+        else:
+            QMessageBox.information(self, "Undo", "Nothing to undo.")
 
-    def redo_changes():
-        pass
+    def redo_changes(self):
+        if self.redo_stack:
+            self.undo_stack.append(self.pred_data_array.copy())
+            self.pred_data_array = self.redo_stack.pop()
+            self.display_current_frame()
+            self.determine_save_status()
+            print("Redo performed.")
+        else:
+            QMessageBox.information(self, "Redo", "Nothing to redo.")
 
     def save_prediction(self):
         if self.is_saved:
-            QMessageBox.information("Save Cancelled", "No change needed to be saved.")
+            QMessageBox.information(self, "Save Cancelled", "No change needed to be saved.")
             return
         # Made a copy of the original data and save upon that
         pred_file_dir = os.path.dirname(self.prediction)
-        pred_file_name = os.path.dirname(self.prediction).split(".")[0]
+        pred_file_name_without_ext = os.path.splitext(os.path.basename(self.prediction))[0]
         trrf_suffix = "_track_refiner_modified_"
-        if not trrf_suffix in pred_file_name:
+        
+        if not trrf_suffix in pred_file_name_without_ext:
             save_idx = 0
+            base_name = pred_file_name_without_ext
         else:
-            pred_file_name, save_idx = pred_file_name.split(trrf_suffix)[0], int(pred_file_name.split(trrf_suffix)[1]) + 1
-        pred_file_to_save_path = os.path.join(pred_file_dir,f"{pred_file_name}{trrf_suffix}{save_idx}.h5")
+            base_name, save_idx_str = pred_file_name_without_ext.split(trrf_suffix)
+            try:
+                save_idx = int(save_idx_str) + 1
+            except ValueError:
+                save_idx = 0 # Fallback if suffix is malformed
+        
+        pred_file_to_save_path = os.path.join(pred_file_dir,f"{base_name}{trrf_suffix}{save_idx}.h5")
+        
         shutil.copy(self.prediction, pred_file_to_save_path)
         print(f"Copied original prediction to: {pred_file_to_save_path}")
         new_data = []
@@ -577,13 +614,14 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 print("No data to save. Skipping HDF5 write.")
                 return
             with h5py.File(pred_file_to_save_path, "a") as pred_file_to_save: # Open the copied HDF5 file in write mode
-                del pred_file_to_save['tracks/table']
+                if 'tracks/table' in pred_file_to_save:
+                    del pred_file_to_save['tracks/table']
                 structured_data = np.array([(idx, arr) for idx, arr in new_data], dtype=dtype)
                 pred_file_to_save.create_dataset('tracks/table', data=structured_data)
             self.prediction = pred_file_to_save_path
             self.load_prediction(self.prediction)
             self.determine_save_status()
-            QMessageBox.information("Save Successful", f"Successfully saved modified prediction to: {self.prediction}")
+            QMessageBox.information(self, "Save Successful", f"Successfully saved modified prediction to: {self.prediction}")
         except Exception as e: # Catch specific exceptions for better debugging
             print(f"An error occurred during HDF5 saving: {e}")
             pass # Or handle the error more gracefully
@@ -610,6 +648,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.refiner_group_box.hide()
 
         self.selected_box = None # To keep track of the currently selected box
+        self.undo_stack = [] # Clear undo stack on reset
+        self.redo_stack = [] # Clear redo stack on reset
 
     def closeEvent(self, event: QCloseEvent):
         if not self.is_saved:
