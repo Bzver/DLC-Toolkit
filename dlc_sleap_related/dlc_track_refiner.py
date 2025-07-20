@@ -17,7 +17,6 @@ from PySide6.QtWidgets import QMessageBox, QPushButton, QGraphicsScene, QGraphic
 
 #################   W   ##################   I   ##################   P   ##################   
 
-DEBUG_STATUS = False
 DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/NTD/config.yaml"
 VIDEO_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/jobs/20250626C1-first3h-conv/20250626C1-first3h-D.mp4"
 PRED_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/jobs/20250626C1-first3h-conv/20250626C1-first3h-DDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_090_snapshot_080_el.h5"
@@ -140,6 +139,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.save_prediction_action.triggered.connect(self.save_prediction)
 
         self.purge_inst_by_conf_action.triggered.connect(self.purge_inst_by_conf)
+        self.precision_fill_action.triggered.connect(self.precision_fill)
 
         # Connect buttons to events
         self.progress_slider.sliderMoved.connect(self.set_frame_from_slider)
@@ -182,7 +182,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.graphics_scene.parent = lambda: self # Allow items to access the main window
 
         self.reset_state()
-        self.is_debug = DEBUG_STATUS
+        self.is_debug = False
 
     def load_video(self):
         if self.is_debug:
@@ -255,7 +255,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             if not "tracks" in pred_file.keys():
                 print("Error: Prediction file not valid, no 'tracks' key found in prediction file.")
                 return False
-            QMessageBox.information(self, "Loading Prediction","Loading and parsing prediction file, this could take a few seconds, please wait...")
+            if self.is_initialize:
+                QMessageBox.information(self, "Loading Prediction","Loading and parsing prediction file, this could take a few seconds, please wait...")
+                self.is_initialize = False
             self.pred_data = pred_file["tracks"]["table"]
             pred_data_values = np.array([item[1] for item in self.pred_data])
             pred_frame_count = self.pred_data.size
@@ -313,7 +315,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
     def plot_predictions(self, frame):
         self.current_selectable_boxes = [] # Store selectable boxes for the current frame
-        color_rgb = [(255, 165, 0), (128, 0, 128), (0, 128, 128), (128, 128, 0), (0, 0, 128)]
+        color_rgb = [(255, 165, 0), (51, 255, 51), (51, 153, 255), (255, 51, 51), (255, 255, 102)]
 
         # Iterate over each individual (animal)
         for inst in range(self.instance_count):
@@ -457,7 +459,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             if mode == "idx":
                 return self.roi_frame_list[current_idx_in_roi]
             else:
-                self.current_frame_idx = self.roi_frame_list[current_idx_in_roi]
+                self.current_frame_idx = self.roi_frame_list[current_idx_in_roi] - 1
             self.display_current_frame()
             self.navigation_box_title_controller()
         else:
@@ -515,6 +517,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         else:
             QMessageBox.information(self, "Input Cancelled", "Confidence input cancelled.")
 
+    def precision_fill():
+        pass
+
     ###################################################################################################################################################
 
 
@@ -539,7 +544,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.selected_box = None
         self.check_instance_count_per_frame()
         self.display_current_frame()
-        self.determine_save_status()
 
     def swap_track(self, mode="point"):
         if self.pred_data_array is None:
@@ -557,7 +561,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             self.selected_box = None
             self.check_instance_count_per_frame()
             self.display_current_frame()
-            self.determine_save_status()
         else:
             if not self.selected_box:
                 QMessageBox.information(self, "Track Not Swapped", "No track is swapped.")
@@ -596,7 +599,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             self.selected_box = None
             self.check_instance_count_per_frame()
             self.display_current_frame()
-            self.determine_save_status()
 
     def fill_track(self): # Retroactively fill frame from the last vaid kp from previous frames
         if self.pred_data_array is None:
@@ -648,7 +650,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             self.selected_box = None
             self.check_instance_count_per_frame()
             self.display_current_frame()
-            self.determine_save_status()
+            
 
     ###################################################################################################################################################
 
@@ -683,21 +685,13 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
     ###################################################################################################################################################
 
-    def determine_save_status(self):
-        if self.pred_data is None or np.all(self.last_saved_pred_array == self.pred_data_array):
-            self.is_saved = True
-            self.save_prediction_action.setEnabled(False)
-        else:
-            self.is_saved = False
-            self.save_prediction_action.setEnabled(True)
-
     def undo_changes(self):
         if self.undo_stack:
             self.redo_stack.append(self.pred_data_array.copy())
             self.pred_data_array = self.undo_stack.pop()
             self.check_instance_count_per_frame()
             self.display_current_frame()
-            self.determine_save_status()
+            
             print("Undo performed.")
         else:
             QMessageBox.information(self, "Undo", "Nothing to undo.")
@@ -708,7 +702,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             self.pred_data_array = self.redo_stack.pop()
             self.check_instance_count_per_frame()
             self.display_current_frame()
-            self.determine_save_status()
+            
             print("Redo performed.")
         else:
             QMessageBox.information(self, "Redo", "Nothing to redo.")
@@ -721,9 +715,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 self.undo_stack.pop(0) # Remove the oldest state
 
     def save_prediction(self):
-        if self.is_saved:
-            QMessageBox.information(self, "Save Cancelled", "No change needed to be saved.")
-            return
         # Made a copy of the original data and save upon that
         pred_file_dir = os.path.dirname(self.prediction)
         pred_file_name_without_ext = os.path.splitext(os.path.basename(self.prediction))[0]
@@ -759,9 +750,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 if 'tracks/table' in pred_file_to_save:
                     pred_file_to_save['tracks/table'][...] = new_data
             self.prediction = pred_file_to_save_path
-            self.last_saved_pred_array = self.pred_data_array.copy()
             self.prediction_loader()
-            self.determine_save_status()
+            
             QMessageBox.information(self, "Save Successful", f"Successfully saved modified prediction to: {self.prediction}")
         except Exception as e:
             print(f"An error occurred during HDF5 saving: {e}")
@@ -774,17 +764,15 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         self.instance_count = 1
         self.multi_animal = False
-        self.pred_data, self.pred_data_array, self.last_saved_pred_array = None, None, None
+        self.pred_data, self.pred_data_array = None, None
 
         self.roi_frame_list = []
 
         self.cap, self.current_frame = None, None
 
         self.is_playing = False
-        self.is_saved = True
 
         self.progress_slider.setRange(0, 0)
-        self.save_prediction_action.setEnabled(False)
         self.navigation_group_box.hide()
         self.refiner_group_box.hide()
 
@@ -793,36 +781,32 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.undo_stack = [] # Clear undo stack on reset
         self.redo_stack = [] # Clear redo stack on reset
         self.max_undo_stack_size = 10
+        self.is_initialize = True
 
     def closeEvent(self, event: QCloseEvent):
-        if not self.is_saved:
+        if not self.is_debug:
             # Create a dialog to confirm saving
             close_call = QMessageBox(self)
-            close_call.setWindowTitle("Prediction Unsaved")
-            close_call.setText("Do you want to save your changes before closing?")
+            close_call.setWindowTitle("Close Application?")
+            close_call.setText("Do you want to save your current prediction before closing?")
             close_call.setIcon(QMessageBox.Icon.Question)
 
             save_btn = close_call.addButton("Save", QMessageBox.ButtonRole.AcceptRole)
             discard_btn = close_call.addButton("Don't Save", QMessageBox.ButtonRole.DestructiveRole)
-            close_btn = close_call.addButton("Close", QMessageBox.RejectRole)
+            close_btn = close_call.addButton("Cancel", QMessageBox.RejectRole)
             
             close_call.setDefaultButton(close_btn)
-
             close_call.exec()
             clicked_button = close_call.clickedButton()
             
             if clicked_button == save_btn:
                 self.save_prediction()
-                if self.is_saved:
-                    event.accept()
-                else:
-                    event.ignore()
             elif clicked_button == discard_btn:
-                event.accept()  # Close without saving
+                event.accept()
             else:
-                event.ignore()  # Cancel the close action
+                event.ignore()
         else:
-            event.accept()  # No unsaved changes, close normally
+            event.accept() 
 
 #######################################################################################################################################################
 
