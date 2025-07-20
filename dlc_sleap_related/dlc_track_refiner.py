@@ -13,7 +13,7 @@ import cv2
 from PySide6 import QtWidgets, QtGui, QtCore
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QShortcut, QKeySequence, QPainter, QColor, QPen, QCloseEvent
-from PySide6.QtWidgets import QMessageBox, QPushButton, QGraphicsScene, QGraphicsView, QGraphicsRectItem
+from PySide6.QtWidgets import QMessageBox, QPushButton, QGraphicsScene, QGraphicsView, QGraphicsRectItem, QMenu, QToolButton
 
 #################   W   ##################   I   ##################   P   ##################   
 
@@ -31,17 +31,36 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.setCentralWidget(self.central_widget)
         self.layout = QtWidgets.QVBoxLayout(self.central_widget)
 
-        self.button_layout = QtWidgets.QHBoxLayout()
-        self.load_video_button = QPushButton("Load Video")
-        self.load_DLC_config_button = QPushButton("Load DLC Config")
-        self.load_prediction_button = QPushButton("Load Prediction")
-        self.save_prediction_button = QPushButton("Save Prediction")
+        # Menu bars
+        self.menu_layout = QtWidgets.QHBoxLayout()
+        self.file_menu = QMenu("File", self)
 
-        self.button_layout.addWidget(self.load_video_button)
-        self.button_layout.addWidget(self.load_DLC_config_button)
-        self.button_layout.addWidget(self.load_prediction_button)
-        self.button_layout.addWidget(self.save_prediction_button)
-        self.layout.addLayout(self.button_layout)
+        self.load_video_action = self.file_menu.addAction("Load Video")
+        self.load_dlc_config_action = self.file_menu.addAction("Load DLC Config")
+        self.load_prediction_action = self.file_menu.addAction("Load Prediction")
+        self.save_prediction_action = self.file_menu.addAction("Save Prediction")
+
+        self.file_button = QToolButton()
+        self.file_button.setText("File")
+        self.file_button.setMenu(self.file_menu)
+        self.file_button.setPopupMode(QToolButton.InstantPopup)
+
+        self.refiner_menu = QMenu("Adv. Refine", self)
+
+        self.purge_inst_by_conf_action = self.refiner_menu.addAction("Delete All Track Below Set Confidence")
+        self.precision_deletion_action = self.refiner_menu.addAction("Delete Track Between Set Frames")
+        self.precision_interpolate_action = self.refiner_menu.addAction("Interpolate Track Between Set Frames")
+        self.precision_fill_action = self.refiner_menu.addAction("Fill Track Between Set Frames")
+
+        self.refiner_button = QToolButton()
+        self.refiner_button.setText("Adv. Refine")
+        self.refiner_button.setMenu(self.refiner_menu)
+        self.refiner_button.setPopupMode(QToolButton.InstantPopup)
+
+        self.menu_layout.addWidget(self.file_button, alignment=Qt.AlignLeft)
+        self.menu_layout.addWidget(self.refiner_button, alignment=Qt.AlignLeft)
+        self.menu_layout.addStretch(1)
+        self.layout.addLayout(self.menu_layout)
 
         # Graphics view for interactive elements and video display
         self.graphics_scene = QGraphicsScene(self)
@@ -113,12 +132,15 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.control_layout.addWidget(self.refiner_group_box)
         self.layout.addLayout(self.control_layout)
         
-        # Connect buttons to events
-        self.load_video_button.clicked.connect(self.load_video)
-        self.load_DLC_config_button.clicked.connect(self.load_DLC_config)
-        self.load_prediction_button.clicked.connect(self.load_prediction)
-        self.save_prediction_button.clicked.connect(self.save_prediction)
+        # Connect QActions to events
+        self.load_video_action.triggered.connect(self.load_video)
+        self.load_dlc_config_action.triggered.connect(self.load_DLC_config)
+        self.load_prediction_action.triggered.connect(self.load_prediction)
+        self.save_prediction_action.triggered.connect(self.save_prediction)
 
+        self.purge_inst_by_conf_action.triggered.connect(self.purge_inst_by_conf)
+
+        # Connect buttons to events
         self.progress_slider.sliderMoved.connect(self.set_frame_from_slider)
         self.play_button.clicked.connect(self.toggle_playback)
         self.undo_button.clicked.connect(self.undo_changes)
@@ -342,8 +364,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         rect_item.clicked.connect(self.handle_box_selection) # Connect the signal
 
         # Add individual label
-        text_item = QtWidgets.QGraphicsTextItem(f"Instance: {self.individuals[inst]} | Confidence: {kp_inst_mean}")
-        text_item.setPos(min_x, min_y - 15) # Adjust position to be above the bounding box
+        text_item = QtWidgets.QGraphicsTextItem(f"Inst: {self.individuals[inst]} | Conf:{kp_inst_mean:.4f}")
+        text_item.setPos(min_x, min_y - 20) # Adjust position to be above the bounding box
         text_item.setDefaultTextColor(QtGui.QColor(*color))
         self.graphics_scene.addItem(text_item)
         return frame
@@ -461,13 +483,39 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         else:
             QMessageBox.information(self, "Navigation", "No next ROI frame found.")
             return
+        
+    ###################################################################################################################################################
 
-    def _save_state_for_undo(self):
-        if self.pred_data_array is not None:
-            self.redo_stack = [] # Clear redo stack when a new action is performed
-            self.undo_stack.append(self.pred_data_array.copy())
-            if len(self.undo_stack) > self.max_undo_stack_size:
-                self.undo_stack.pop(0) # Remove the oldest state
+    def purge_inst_by_conf(self):
+        if self.pred_data_array is None:
+            QMessageBox.warning(self, "No Prediction Data", "Please load a prediction file first.")
+            return
+
+        confidence_threshold, ok = QtWidgets.QInputDialog.getDouble(
+            self,"Set Confidence Threshold","Delete all instances below this confidence:",
+            value=0.5,minValue=0.0,maxValue=1.0,decimals=2
+        )
+        if ok:
+            reply = QMessageBox.question(
+                self,"Confirm Deletion",
+                f"Are you sure you want to delete all instances with confidence below {confidence_threshold:.2f}?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                confidence_scores = self.pred_data_array[:, :, 2:self.num_keypoints*3:3]
+                inst_conf_all = np.mean(confidence_scores, axis=2)
+                low_conf_mask = inst_conf_all < confidence_threshold
+                f_idx, i_idx = np.where(low_conf_mask)
+                self.pred_data_array[f_idx, i_idx, :] = np.nan
+                self.display_current_frame()
+                self.check_instance_count_per_frame()
+            else:
+                QMessageBox.information(self, "Deletion Cancelled", "Deletion cancelled by user.")
+        else:
+            QMessageBox.information(self, "Input Cancelled", "Confidence input cancelled.")
+
+    ###################################################################################################################################################
+
 
     def delete_track(self, mode="point"):
         if self.pred_data_array is None: # Silent fail
@@ -601,6 +649,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             self.display_current_frame()
             self.determine_save_status()
 
+    ###################################################################################################################################################
+
     def get_current_frame_inst(self):
         current_frame_inst = []
         for inst in [ inst for inst in range(self.instance_count) ]:
@@ -630,13 +680,15 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 print("No instance selected.")
         QtWidgets.QGraphicsView.mousePressEvent(self.graphics_view, event)
 
+    ###################################################################################################################################################
+
     def determine_save_status(self):
         if self.pred_data is None or np.all(self.last_saved_pred_array == self.pred_data_array):
             self.is_saved = True
-            self.save_prediction_button.setEnabled(False)
+            self.save_prediction_action.setEnabled(False)
         else:
             self.is_saved = False
-            self.save_prediction_button.setEnabled(True)
+            self.save_prediction_action.setEnabled(True)
 
     def undo_changes(self):
         if self.undo_stack:
@@ -659,6 +711,13 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             print("Redo performed.")
         else:
             QMessageBox.information(self, "Redo", "Nothing to redo.")
+
+    def _save_state_for_undo(self):
+        if self.pred_data_array is not None:
+            self.redo_stack = [] # Clear redo stack when a new action is performed
+            self.undo_stack.append(self.pred_data_array.copy())
+            if len(self.undo_stack) > self.max_undo_stack_size:
+                self.undo_stack.pop(0) # Remove the oldest state
 
     def save_prediction(self):
         if self.is_saved:
@@ -726,7 +785,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.is_saved = True
 
         self.progress_slider.setRange(0, 0)
-        self.save_prediction_button.setEnabled(False)
+        self.save_prediction_action.setEnabled(False)
         self.navigation_group_box.hide()
         self.refiner_group_box.hide()
 
