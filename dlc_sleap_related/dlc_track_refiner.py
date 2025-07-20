@@ -201,6 +201,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         try:
             with open(dlc_file, "r") as conf:
                 cfg = yaml.safe_load(conf)
+                if cfg:
+                    QMessageBox.information(self, "Success", "DLC Config loaded successfully!")
             self.multi_animal = cfg["multianimalproject"]
             self.keypoints = cfg["bodyparts"] if not self.multi_animal else cfg["multianimalbodyparts"]
             self.skeleton = cfg["skeleton"]
@@ -246,6 +248,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
     ###################################################################################################################################################
 
     def display_current_frame(self):
+        self.selected_box = None # Ensure the selected instance is unselected
         if self.cap and self.cap.isOpened():
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame_idx)
             ret, frame = self.cap.read()
@@ -299,8 +302,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 kp = self.pred_data_array[self.current_frame_idx,inst,kp_idx*3:kp_idx*3+3]
                 if pd.isna(kp[0]):
                     continue
-                x, y = kp[0], kp[1]
-                keypoint_coords[kp_idx] = (int(x),int(y))
+                x, y, conf = kp[0], kp[1], kp[2]
+                keypoint_coords[kp_idx] = (int(x),int(y),float(conf))
                 # Draw the dot representing the keypoints
                 ellipse = QtWidgets.QGraphicsEllipseItem(x - 3, y - 3, 6, 6)
                 ellipse.setBrush(QtGui.QBrush(QtGui.QColor(*color)))
@@ -317,10 +320,12 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         # Calculate bounding box coordinates
         x_coords = [keypoint_coords[p][0] for p in keypoint_coords if keypoint_coords[p] is not None]
         y_coords = [keypoint_coords[p][1] for p in keypoint_coords if keypoint_coords[p] is not None]
+        kp_confidence = [keypoint_coords[p][2] for p in keypoint_coords if keypoint_coords[p] is not None]
 
         if not x_coords or not y_coords: # Skip if the mice has no keypoint
             return frame
             
+        kp_inst_mean = sum(kp_confidence) / len(kp_confidence)
         min_x, max_x = min(x_coords), max(x_coords)
         min_y, max_y = min(y_coords), max(y_coords)
 
@@ -337,7 +342,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         rect_item.clicked.connect(self.handle_box_selection) # Connect the signal
 
         # Add individual label
-        text_item = QtWidgets.QGraphicsTextItem(f"Instance: {self.individuals[inst]}")
+        text_item = QtWidgets.QGraphicsTextItem(f"Instance: {self.individuals[inst]} | Confidence: {kp_inst_mean}")
         text_item.setPos(min_x, min_y - 15) # Adjust position to be above the bounding box
         text_item.setDefaultTextColor(QtGui.QColor(*color))
         self.graphics_scene.addItem(text_item)
@@ -410,6 +415,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         non_empty_instance_numerical = (~empty_instance)*1
         instance_count_per_frame = non_empty_instance_numerical.sum(axis=1)
         roi_frames = np.where(np.diff(instance_count_per_frame)!=0)[0]+1
+
         self.roi_frame_list = list(roi_frames)
         self.progress_slider.set_marked_frames(self.roi_frame_list) # Update ROI frames
 
