@@ -33,33 +33,40 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         # Menu bars
         self.menu_layout = QtWidgets.QHBoxLayout()
-        self.file_menu = QMenu("File", self)
+        self.load_button = QMenu("File", self)
 
-        self.load_video_action = self.file_menu.addAction("Load Video")
-        self.load_dlc_config_action = self.file_menu.addAction("Load DLC Config")
-        self.load_prediction_action = self.file_menu.addAction("Load Prediction")
-        self.save_prediction_action = self.file_menu.addAction("Save Prediction")
+        self.load_video_action = self.load_button.addAction("Load Video")
+        self.load_dlc_config_action = self.load_button.addAction("Load DLC Config")
+        self.load_prediction_action = self.load_button.addAction("Load Prediction")
 
-        self.file_button = QToolButton()
-        self.file_button.setText("File")
-        self.file_button.setMenu(self.file_menu)
-        self.file_button.setPopupMode(QToolButton.InstantPopup)
+        self.load_button = QToolButton()
+        self.load_button.setText("File")
+        self.load_button.setMenu(self.file_menu)
+        self.load_button.setPopupMode(QToolButton.InstantPopup)
 
         self.refiner_menu = QMenu("Adv. Refine", self)
 
         self.purge_inst_by_conf_action = self.refiner_menu.addAction("Delete All Track Below Set Confidence")
-        self.precision_deletion_action = self.refiner_menu.addAction("Delete Track Between Set Frames")
-        self.precision_interpolate_action = self.refiner_menu.addAction("Interpolate Track Between Set Frames")
-        self.precision_fill_action = self.refiner_menu.addAction("Fill Track Between Set Frames")
+        self.interpolate_all_action = self.refiner_menu.addAction("Interpolate All Frames for One Inst")
 
         self.refiner_button = QToolButton()
         self.refiner_button.setText("Adv. Refine")
         self.refiner_button.setMenu(self.refiner_menu)
         self.refiner_button.setPopupMode(QToolButton.InstantPopup)
 
-        self.menu_layout.addWidget(self.file_button, alignment=Qt.AlignLeft)
+        self.save_menu = QMenu("Save", self)
+
+        self.save_prediction_action = self.save_menu.addAction("Save Prediction")
+        self.save_prediction_as_csv = self.save_menu.addAction("Save Prediction Into CSV") # 2 B Implemented
+
+        self.save_button = QToolButton()
+        self.save_button.setText("Save")
+        self.save_button.setMenu(self.save_menu)
+        self.save_button.setPopupMode(QToolButton.InstantPopup)
+
+        self.menu_layout.addWidget(self.load_button, alignment=Qt.AlignLeft)
         self.menu_layout.addWidget(self.refiner_button, alignment=Qt.AlignLeft)
-        self.menu_layout.addStretch(1)
+        self.menu_layout.addWidget(self.save_button, alignment=Qt.AlignLeft)
         self.layout.addLayout(self.menu_layout)
 
         # Graphics view for interactive elements and video display
@@ -136,10 +143,11 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.load_video_action.triggered.connect(self.load_video)
         self.load_dlc_config_action.triggered.connect(self.load_DLC_config)
         self.load_prediction_action.triggered.connect(self.load_prediction)
-        self.save_prediction_action.triggered.connect(self.save_prediction)
 
         self.purge_inst_by_conf_action.triggered.connect(self.purge_inst_by_conf)
-        self.precision_fill_action.triggered.connect(self.precision_fill)
+        self.interpolate_all_action.triggered.connect(self.interpolate_all)
+
+        self.save_prediction_action.triggered.connect(self.save_prediction)
 
         # Connect buttons to events
         self.progress_slider.sliderMoved.connect(self.set_frame_from_slider)
@@ -517,11 +525,45 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         else:
             QMessageBox.information(self, "Input Cancelled", "Confidence input cancelled.")
 
-    def precision_fill():
-        pass
+    def interpolate_all(self):
+        if self.pred_data_array is None:
+            QMessageBox.warning(self, "No Prediction Data", "Please load a prediction file first.")
+            return
+        
+        if not self.selected_box:
+            QMessageBox.information(self, "No Track Selected", "Please select a track to interpolate all frames for one instance.")
+            return
+
+        instance_to_interpolate = self.selected_box.instance_id
+        self._save_state_for_undo() # Save state before modification
+
+        for kp_idx in range(self.num_keypoints):
+            # Extract x, y, confidence for the current keypoint and instance across all frames
+            x_coords = self.pred_data_array[:, instance_to_interpolate, kp_idx*3]
+            y_coords = self.pred_data_array[:, instance_to_interpolate, kp_idx*3+1]
+            conf_values = self.pred_data_array[:, instance_to_interpolate, kp_idx*3+2]
+
+            # Convert to pandas Series for interpolation
+            x_series = pd.Series(x_coords)
+            y_series = pd.Series(y_coords)
+            conf_series = pd.Series(conf_values)
+
+            # Interpolate NaNs
+            x_interpolated = x_series.interpolate(method='linear', limit_direction='both').values
+            y_interpolated = y_series.interpolate(method='linear', limit_direction='both').values
+            conf_interpolated = conf_series.interpolate(method='linear', limit_direction='both').values
+
+            # Update the pred_data_array
+            self.pred_data_array[:, instance_to_interpolate, kp_idx*3] = x_interpolated
+            self.pred_data_array[:, instance_to_interpolate, kp_idx*3+1] = y_interpolated
+            self.pred_data_array[:, instance_to_interpolate, kp_idx*3+2] = conf_interpolated
+        
+        self.selected_box = None
+        self.check_instance_count_per_frame()
+        self.display_current_frame()
+        QMessageBox.information(self, "Interpolation Complete", f"All frames interpolated for instance {self.individuals[instance_to_interpolate]}.")
 
     ###################################################################################################################################################
-
 
     def delete_track(self, mode="point"):
         if self.pred_data_array is None: # Silent fail
@@ -715,6 +757,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 self.undo_stack.pop(0) # Remove the oldest state
 
     def save_prediction(self):
+        if self.pred_data_array is None:
+            QMessageBox.warning(self, "No Prediction Data", "Please load a prediction file first.")
+            return
         # Made a copy of the original data and save upon that
         pred_file_dir = os.path.dirname(self.prediction)
         pred_file_name_without_ext = os.path.splitext(os.path.basename(self.prediction))[0]
