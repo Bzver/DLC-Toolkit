@@ -33,15 +33,15 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         # Menu bars
         self.menu_layout = QtWidgets.QHBoxLayout()
-        self.load_button = QMenu("File", self)
+        self.laod_menu = QMenu("File", self)
 
-        self.load_video_action = self.load_button.addAction("Load Video")
-        self.load_dlc_config_action = self.load_button.addAction("Load DLC Config")
-        self.load_prediction_action = self.load_button.addAction("Load Prediction")
+        self.load_video_action = self.laod_menu.addAction("Load Video")
+        self.load_dlc_config_action = self.laod_menu.addAction("Load DLC Config")
+        self.load_prediction_action = self.laod_menu.addAction("Load Prediction")
 
         self.load_button = QToolButton()
         self.load_button.setText("File")
-        self.load_button.setMenu(self.file_menu)
+        self.load_button.setMenu(self.laod_menu)
         self.load_button.setPopupMode(QToolButton.InstantPopup)
 
         self.refiner_menu = QMenu("Adv. Refine", self)
@@ -829,7 +829,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.is_initialize = True
 
     def closeEvent(self, event: QCloseEvent):
-        if not self.is_debug:
+        if not self.is_debug and self.prediction is not None:
             # Create a dialog to confirm saving
             close_call = QMessageBox(self)
             close_call.setWindowTitle("Close Application?")
