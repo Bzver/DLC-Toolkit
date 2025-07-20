@@ -67,6 +67,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.menu_layout.addWidget(self.load_button, alignment=Qt.AlignLeft)
         self.menu_layout.addWidget(self.refiner_button, alignment=Qt.AlignLeft)
         self.menu_layout.addWidget(self.save_button, alignment=Qt.AlignLeft)
+        self.menu_layout.addStretch(1)
         self.layout.addLayout(self.menu_layout)
 
         # Graphics view for interactive elements and video display
@@ -558,6 +559,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             self.pred_data_array[:, instance_to_interpolate, kp_idx*3+1] = y_interpolated
             self.pred_data_array[:, instance_to_interpolate, kp_idx*3+2] = conf_interpolated
         
+        self.is_saved = False
         self.selected_box = None
         self.check_instance_count_per_frame()
         self.display_current_frame()
@@ -733,7 +735,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             self.pred_data_array = self.undo_stack.pop()
             self.check_instance_count_per_frame()
             self.display_current_frame()
-            
+            self.is_saved = False
             print("Undo performed.")
         else:
             QMessageBox.information(self, "Undo", "Nothing to undo.")
@@ -744,12 +746,13 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             self.pred_data_array = self.redo_stack.pop()
             self.check_instance_count_per_frame()
             self.display_current_frame()
-            
+            self.is_saved = False
             print("Redo performed.")
         else:
             QMessageBox.information(self, "Redo", "Nothing to redo.")
 
     def _save_state_for_undo(self):
+        self.is_saved = False
         if self.pred_data_array is not None:
             self.redo_stack = [] # Clear redo stack when a new action is performed
             self.undo_stack.append(self.pred_data_array.copy())
@@ -796,6 +799,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                     pred_file_to_save['tracks/table'][...] = new_data
             self.prediction = pred_file_to_save_path
             self.prediction_loader()
+            self.is_saved = True
             
             QMessageBox.information(self, "Save Successful", f"Successfully saved modified prediction to: {self.prediction}")
         except Exception as e:
@@ -827,9 +831,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.redo_stack = [] # Clear redo stack on reset
         self.max_undo_stack_size = 10
         self.is_initialize = True
+        self.is_saved = True
 
     def closeEvent(self, event: QCloseEvent):
-        if not self.is_debug and self.prediction is not None:
+        if not self.is_debug and self.prediction is not None and not self.is_saved:
             # Create a dialog to confirm saving
             close_call = QMessageBox(self)
             close_call.setWindowTitle("Close Application?")
