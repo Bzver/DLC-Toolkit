@@ -17,6 +17,7 @@ from PySide6.QtWidgets import QMessageBox, QPushButton, QGraphicsScene, QGraphic
 
 #################   W   ##################   I   ##################   P   ##################   
 
+DEBUG_STATUS = False
 DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/NTD/config.yaml"
 VIDEO_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/jobs/20250626C1-first3h-conv/20250626C1-first3h-D.mp4"
 PRED_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/jobs/20250626C1-first3h-conv/20250626C1-first3h-DDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_090_snapshot_080_el.h5"
@@ -181,7 +182,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.graphics_scene.parent = lambda: self # Allow items to access the main window
 
         self.reset_state()
-        self.is_debug = False
+        self.is_debug = DEBUG_STATUS
 
     def load_video(self):
         if self.is_debug:
@@ -756,9 +757,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 return
             with h5py.File(pred_file_to_save_path, "a") as pred_file_to_save: # Open the copied HDF5 file in write mode
                 if 'tracks/table' in pred_file_to_save:
-                    del pred_file_to_save['tracks/table']
-                structured_data = np.array([(idx, arr) for idx, arr in new_data], dtype=dtype)
-                pred_file_to_save.create_dataset('tracks/table', data=structured_data)
+                    pred_file_to_save['tracks/table'][...] = new_data
             self.prediction = pred_file_to_save_path
             self.last_saved_pred_array = self.pred_data_array.copy()
             self.prediction_loader()
