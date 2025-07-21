@@ -16,8 +16,8 @@ from PySide6.QtGui import QShortcut, QKeySequence, QPainter, QColor, QPen, QClos
 from PySide6.QtWidgets import QMessageBox, QPushButton, QGraphicsScene, QGraphicsView, QGraphicsRectItem, QMenu, QToolButton
 
 DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/NTD/config.yaml"
-VIDEO_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/jobs/20250626C1-first3h-conv/20250626C1-first3h-D.mp4"
-PRED_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/jobs/20250626C1-first3h-conv/20250626C1-first3h-DDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_090_snapshot_080_el.h5"
+VIDEO_FILE_DEBUG = "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-conv.mp4"
+PRED_FILE_DEBUG = "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-convDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_090_snapshot_080_el_tr.h5"
 
 class DLC_Track_Refiner(QtWidgets.QMainWindow):
     prediction_saved = Signal(str) # Signal to emit the path of the saved prediction file
@@ -48,8 +48,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         self.purge_inst_by_conf_action = self.refiner_menu.addAction("Delete All Track Below Set Confidence")
         self.interpolate_all_action = self.refiner_menu.addAction("Interpolate All Frames for One Inst")
-        self.segment_auto_correct_action = self.refiner_menu.addAction("Segmental Auto Correct")
         self.designate_no_mice_zone_action = self.refiner_menu.addAction("Remove All Prediction Inside Area")
+        self.segment_auto_correct_action = self.refiner_menu.addAction("Segmental Auto Correct")
 
         self.refiner_button = QToolButton()
         self.refiner_button.setText("Adv. Refine")
@@ -193,13 +193,12 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_S | Qt.ControlModifier), self).activated.connect(self.save_prediction)
         
         self.graphics_view.mousePressEvent = self.graphics_view_mouse_press_event
+        self.graphics_view.mouseMoveEvent = self.graphics_view_mouse_move_event
+        self.graphics_view.mouseReleaseEvent = self.graphics_view_mouse_release_event
         self.graphics_scene.parent = lambda: self # Allow items to access the main window
 
         self.reset_state()
         self.is_debug = False
-        self.is_drawing_zone = False
-        self.start_point = None
-        self.current_rect_item = None
 
     def load_video(self):
         if self.is_debug:
@@ -443,7 +442,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             self.is_playing = False
 
     def navigation_box_title_controller(self):
-        self.navigation_group_box.setTitle(f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | Video: {self.video_name}")
+        title = f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | Video: {self.video_name}"
+        if self.is_debug and self.current_frame_idx:
+            title += f" | Detected Instance: {self.instance_count_per_frame[self.current_frame_idx]}"
+        self.navigation_group_box.setTitle(title)
         if self.current_frame_idx in self.roi_frame_list:
             self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: #F04C4C;}""")
         else:
@@ -454,12 +456,39 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
     def check_instance_count_per_frame(self):
         nan_mask = np.isnan(self.pred_data_array)
         empty_instance = np.all(nan_mask, axis=2)
-        non_empty_instance_numerical = (~empty_instance)*1
+        # Convert the boolean mask to numerical (0 for empty, 1 for non-empty) and sum per frame
+        non_empty_instance_numerical = (~empty_instance) * 1
         self.instance_count_per_frame = non_empty_instance_numerical.sum(axis=1)
         roi_frames = np.where(np.diff(self.instance_count_per_frame)!=0)[0]+1
-
         self.roi_frame_list = list(roi_frames)
         self.progress_slider.set_marked_frames(self.roi_frame_list) # Update ROI frames
+
+        if self.is_debug:
+            print("\n--- Instance Counting Details ---")
+            f_idx = self.current_frame_idx
+            print(f"Frame {f_idx}: (Expected Count: {self.instance_count_per_frame[f_idx]})")
+            
+            # Get the NaN mask for the current frame's instances
+            current_frame_nan_mask = nan_mask[f_idx, :, :] # Shape: (num_instances, num_keypoints * 3)
+
+            for i_idx in range(self.pred_data_array.shape[1]): # Iterate through instances for the current frame
+                if not empty_instance[f_idx, i_idx]: # If this instance is NOT empty (i.e., it's being counted)
+                    
+                    # Extract the NaN status for this specific instance, then reshape to (num_keypoints, 3)
+                    instance_nan_status = current_frame_nan_mask[i_idx, :].reshape(self.num_keypoints, 3)
+                    
+                    non_nan_keypoints_found = []
+                    for k_idx in range(self.num_keypoints): # Iterate through individual keypoints
+                        # If NOT all 3 values (x, y, conf) for this keypoint are NaN, then it's contributing
+                        if not np.all(instance_nan_status[k_idx, :]):
+                            # Try to get keypoint name, fall back to index if not available
+                            keypoint_name = (self.keypoint_names[k_idx] 
+                                            if hasattr(self, 'keypoint_names') and k_idx < len(self.keypoint_names) 
+                                            else f"Keypoint_{k_idx}")
+                            non_nan_keypoints_found.append(keypoint_name)
+                    
+                    print(f"  Instance {i_idx} is counted because it has non-NaN keypoints: {', '.join(non_nan_keypoints_found)}")
+            print("-----------------------------------\n")
 
     def prev_instance_change(self, mode="frame"):
         if not self.roi_frame_list:
@@ -566,27 +595,30 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             self.pred_data_array[:, instance_to_interpolate, kp_idx*3] = x_interpolated
             self.pred_data_array[:, instance_to_interpolate, kp_idx*3+1] = y_interpolated
             self.pred_data_array[:, instance_to_interpolate, kp_idx*3+2] = conf_interpolated
-        
+
         self.is_saved = False
         self.selected_box = None
         self.check_instance_count_per_frame()
         self.display_current_frame()
         QMessageBox.information(self, "Interpolation Complete", f"All frames interpolated for instance {self.individuals[instance_to_interpolate]}.")
-
+    
     def designate_no_mice_zone(self):
-        # Sort of like a screenshot that let's user select a section of the drawn canvas (frame), get the coordinates of user selection
-        # Save to undo stack
-        # Make ALL keypoints coordinates that falls within the zone as NaN
-        # self.check_instance_count_per_frame()
-        # self.display_current_frame()
-        pass
+        if self.pred_data_array is None:
+            QMessageBox.warning(self, "No Prediction Data", "Please load a prediction file first.")
+            return
+        
+        self.is_drawing_zone = True
+        self.graphics_view.setCursor(Qt.CrossCursor)
+        QMessageBox.information(self, "Designate No Mice Zone", "Click and drag on the video to select a zone. Release to apply.")
 
     def segment_auto_correct(self):
         QMessageBox.information(self, "Segmental Auto Correct",
-                                """This function works for scenarios where only one instance persistently remains in view while another goes in and out.
-                                It will identify segments where only one instance is detected for more than 100 frames.
-                                Throughout and proceeding these segments, the track associated with the remaining instance will be swapped to instance 0.
-                                """)
+        """
+  This function works for scenarios where only one instance persistently remains in view while another goes in and out.\n
+  It will identify segments where only one instance is detected for more than 100 frames.\n
+  Throughout and proceeding these segments, the track associated with the remaining instance will be swapped to instance 0.\n
+        """
+        )
 
         if self.pred_data_array is None:
             QMessageBox.warning(self, "Error", "Prediction data not loaded. Please load a prediction file first.")
@@ -601,7 +633,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         segments_to_correct = []
         num_corrections_applied = 0
         current_segment_start = -1
-        min_segment_length = 100 # Minimum 100 frames
+        min_segment_length = 50
 
         for i in range(len(self.instance_count_per_frame)):
             if self.instance_count_per_frame[i] <= 1:
@@ -640,15 +672,15 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             # Apply the swap from (end_frame + 1) to the end of the video, IF the last instance detected was not 0
             if last_present_instance != 0:
                 print(f"Applying global swap from frame {end_frame + 1} to end.")
-                for frame_idx in range(end_frame + 1, len(self.pred_data_array)):
-                    self.pred_data_array[end_frame + 1:, 0, :], \
-                    self.pred_data_array[end_frame + 1:, 1, :] = \
-                    self.pred_data_array[end_frame + 1:, 1, :].copy(), \
-                    self.pred_data_array[end_frame + 1:, 0, :].copy()
+                self.pred_data_array[end_frame + 1:, 0, :], \
+                self.pred_data_array[end_frame + 1:, 1, :] = \
+                self.pred_data_array[end_frame + 1:, 1, :].copy(), \
+                self.pred_data_array[end_frame + 1:, 0, :].copy()
             
             num_corrections_applied += 1
 
         QMessageBox.information(self, "Success", f"Segmental auto-correction applied to {num_corrections_applied} segments.")
+        self.is_saved = False
         self.check_instance_count_per_frame()
         self.display_current_frame()
 
@@ -804,15 +836,76 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             print("No instance selected.")
 
     def graphics_view_mouse_press_event(self, event):
-        item = self.graphics_view.itemAt(event.position().toPoint())
-        if item and isinstance(item, Selectable_Instance):
-            pass
-        else: # If no item was clicked, deselect any currently selected box
-            if self.selected_box:
-                self.selected_box.toggle_selection()
-                self.selected_box = None
-                print("No instance selected.")
-        QtWidgets.QGraphicsView.mousePressEvent(self.graphics_view, event)
+        if self.is_drawing_zone:
+            self.start_point = self.graphics_view.mapToScene(event.position().toPoint())
+            if self.current_rect_item:
+                self.graphics_scene.removeItem(self.current_rect_item)
+            self.current_rect_item = QGraphicsRectItem(self.start_point.x(), self.start_point.y(), 0, 0)
+            self.current_rect_item.setPen(QPen(QColor(255, 0, 0), 2)) # Red pen for drawing
+            self.graphics_scene.addItem(self.current_rect_item)
+        else:
+            item = self.graphics_view.itemAt(event.position().toPoint())
+            if item and isinstance(item, Selectable_Instance):
+                pass
+            else: # If no item was clicked, deselect any currently selected box
+                if self.selected_box:
+                    self.selected_box.toggle_selection()
+                    self.selected_box = None
+                    print("No instance selected.")
+            QtWidgets.QGraphicsView.mousePressEvent(self.graphics_view, event)
+
+    def graphics_view_mouse_move_event(self, event):
+        if self.is_drawing_zone and self.start_point:
+            current_point = self.graphics_view.mapToScene(event.position().toPoint())
+            rect = QtCore.QRectF(self.start_point, current_point).normalized()
+            self.current_rect_item.setRect(rect)
+        QtWidgets.QGraphicsView.mouseMoveEvent(self.graphics_view, event)
+
+    def graphics_view_mouse_release_event(self, event):
+        if self.is_drawing_zone and self.start_point and self.current_rect_item:
+            self.is_drawing_zone = False
+            self.graphics_view.setCursor(Qt.ArrowCursor)
+            
+            rect = self.current_rect_item.rect()
+            self.graphics_scene.removeItem(self.current_rect_item) # Remove the temporary drawing rectangle
+            self.current_rect_item = None
+            self.start_point = None
+
+            # Convert scene coordinates to image coordinates
+            x1, y1, x2, y2 = int(rect.left()), int(rect.top()), int(rect.right()), int(rect.bottom())
+
+            self._save_state_for_undo() # Save state before modification
+            
+            self._clean_inconsistent_nans() # Cleanup ghost points (NaN for x,y yet non-nan in confidence)
+
+            # Set keypoints within the zone to NaN
+            all_x_kps = self.pred_data_array[:,:,0::3]
+            all_y_kps = self.pred_data_array[:,:,1::3]
+
+            # Create boolean masks for bounding box conditions
+            x_in_range = (all_x_kps >= x1) & (all_x_kps <= x2)
+            y_in_range = (all_y_kps >= y1) & (all_y_kps <= y2)
+            points_in_bbox_mask = x_in_range & y_in_range
+
+            # Apply the mask to set keypoint data to NaN
+            self.pred_data_array[np.repeat(points_in_bbox_mask, 3, axis=-1)] = np.nan
+            
+            self.is_saved = False
+            self.check_instance_count_per_frame()
+            self.display_current_frame()
+            QMessageBox.information(self, "No Mice Zone Applied", "Keypoints within the selected zone have been set to NaN.")
+        
+        QtWidgets.QGraphicsView.mouseReleaseEvent(self.graphics_view, event)
+
+    def _clean_inconsistent_nans(self):
+        print("Performing Operation Clean Sweep to inconsistent NaN keypoints...")
+        nan_mask = np.isnan(self.pred_data_array)
+        x_is_nan = nan_mask[:, :, 0::3]
+        y_is_nan = nan_mask[:, :, 1::3]
+        keypoints_to_fully_nan = x_is_nan | y_is_nan
+        full_nan_sweep_mask = np.repeat(keypoints_to_fully_nan, 3, axis=-1)
+        self.pred_data_array[full_nan_sweep_mask] = np.nan
+        print("Inconsistent NaN sweep completed.")
 
     ###################################################################################################################################################
 
@@ -922,8 +1015,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.start_point = None
         self.current_rect_item = None
         
-        self.undo_stack = [] # Clear undo stack on reset
-        self.redo_stack = [] # Clear redo stack on reset
+        self.undo_stack = []
+        self.redo_stack = []
         self.max_undo_stack_size = 10
         self.is_initialize = True
         self.is_saved = True
@@ -981,10 +1074,10 @@ class Slider_With_Marks(QtWidgets.QSlider):
         self.update()
 
     def paintEvent(self, event):
+        super().paintEvent(event)
         if not self.marked_frames:
             return
         self.paintEvent_painter(self.marked_frames,"#F04C4C")
-        super().paintEvent(event)
         
     def paintEvent_painter(self, frames, color):
         painter = QtGui.QPainter(self)
