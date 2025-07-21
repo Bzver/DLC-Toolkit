@@ -22,6 +22,8 @@ VIDEO_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/jobs/20250626C1-first3h-con
 PRED_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/jobs/20250626C1-first3h-conv/20250626C1-first3h-DDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_090_snapshot_080_el.h5"
 
 class DLC_Track_Refiner(QtWidgets.QMainWindow):
+    prediction_saved = Signal(str) # Signal to emit the path of the saved prediction file
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("DLC Track Refiner")
@@ -802,6 +804,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             self.is_saved = True
             
             QMessageBox.information(self, "Save Successful", f"Successfully saved modified prediction to: {self.prediction}")
+            self.prediction_saved.emit(self.prediction) # Emit the signal with the saved file path
         except Exception as e:
             print(f"An error occurred during HDF5 saving: {e}")
             pass

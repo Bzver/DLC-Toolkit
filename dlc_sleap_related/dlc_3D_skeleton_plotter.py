@@ -15,12 +15,13 @@ from PySide6.QtGui import QShortcut, QKeySequence, QCloseEvent
 from PySide6.QtWidgets import QMessageBox, QPushButton
 from PySide6.QtCore import Signal
 
+from dlc_track_refiner import DLC_Track_Refiner
+
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
-# Todo:
-#        Add a reprojection button to reproject the 3D coords back to the views
-#        Move video ploting and reprojection to another thread or optional (toggled via a button)
+#################   W   ##################   I   ##################   P   ##################   
+# Todo: Add support fot sleap-anipose / anipose toml calibration file
 
 DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/COM3D/config.yaml"
 CALIB_FILE_DEBUG = "D:/Project/SDANNCE-Models/4CAM-250620/SD-20250705-MULTI/sync_dannce.mat"
@@ -53,10 +54,12 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.load_dlc_config_button = QPushButton("1. Load DLC Configs")
         self.load_calibrations_button = QPushButton("2. Load Calibrations")
         self.load_video_folder_button = QPushButton("3. Load Videos & Predictions")
+        self.refine_tracks_button = QPushButton("4. Refine Tracks")
 
         self.button_layout.addWidget(self.load_dlc_config_button)
         self.button_layout.addWidget(self.load_calibrations_button)
         self.button_layout.addWidget(self.load_video_folder_button)
+        self.button_layout.addWidget(self.refine_tracks_button)
         self.layout.addLayout(self.button_layout)
 
         self.display_layout = QtWidgets.QHBoxLayout()
@@ -114,13 +117,10 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.prev_frame_button = QPushButton("Prev Frame (←)")
         self.next_frame_button = QPushButton("Next Frame (→)")
         self.next_10_frames_button = QPushButton("Next 10 Frames (Shift + →)")
-        self.reset_3d_view_button = QPushButton("Reset 3D View Angle (r)")
-
         self.navigation_layout.addWidget(self.prev_10_frames_button)
         self.navigation_layout.addWidget(self.prev_frame_button)
         self.navigation_layout.addWidget(self.next_frame_button)
         self.navigation_layout.addWidget(self.next_10_frames_button)
-        self.navigation_layout.addWidget(self.reset_3d_view_button)
 
         self.layout.addWidget(self.navigation_group_box)
         self.navigation_group_box.hide() # Hide until videos are loaded
@@ -129,9 +129,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.load_dlc_config_button.clicked.connect(self.load_dlc_config)
         self.load_video_folder_button.clicked.connect(self.open_video_folder_dialog)
         self.load_calibrations_button.clicked.connect(self.load_calibrations)
-
-        for label in self.video_labels:
-            label.clicked.connect(self.set_selected_camera)
+        self.refine_tracks_button.clicked.connect(self.call_track_refiner)
 
         self.size_slider.sliderMoved.connect(self.set_plot_lim_from_slider)
         self.progress_slider.sliderMoved.connect(self.set_frame_from_slider)
@@ -147,7 +145,6 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_Right), self).activated.connect(lambda: self.change_frame(1))
         QShortcut(QKeySequence(Qt.Key_Right | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(10))
         QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.toggle_playback)
-        QShortcut(QKeySequence(Qt.Key_R), self).activated.connect(self.reset_3d_view)
 
         self.num_cam = None
 
@@ -159,18 +156,19 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.num_cam_from_calib = None
 
         self.plot_lim = 300
-        self.instance_color = [(0, 255, 0), (0, 0, 255), (255, 255, 0), (255, 0, 255), (0, 255, 255)] # BGR
+        self.instance_color = [(255, 165, 0), (51, 255, 51), (51, 153, 255), (255, 51, 51), (255, 255, 102)] # RGB
         
         self.current_frame_idx = 0      # Single frame index for all synchronized videos
         self.total_frames = 0      # Max frames across all videos
-        self.selected_cam_idx = 0  # Selected view, default to camera 0
+
+        self.refiner_window = None
 
         self.is_debug = False # Make it false before committing
 
     def open_video_folder_dialog(self):
         if self.is_debug:
-            self.load_dlc_config(DLC_CONFIG_DEBUG)
-            self.load_calibrations(CALIB_FILE_DEBUG)
+            self.dlc_config_loader(DLC_CONFIG_DEBUG)
+            self.calibration_loader(CALIB_FILE_DEBUG)
             self.load_video_folder(VIDEO_FOLDER_DEBUG)
             return
         if self.keypoints is None:
@@ -189,10 +187,14 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         if folder_path:
             self.load_video_folder(folder_path)
 
-    def load_dlc_config(self, dlc_config=None):
-        if dlc_config is None:
-            file_dialog = QtWidgets.QFileDialog(self)
-            dlc_config, _ = file_dialog.getOpenFileName(self, "Load DLC Config", "", "YAML Files (config.yaml);;All Files (*)")
+    def load_dlc_config(self):
+        file_dialog = QtWidgets.QFileDialog(self)
+        dlc_config, _ = file_dialog.getOpenFileName(self, "Load DLC Config", "", "YAML Files (config.yaml);;All Files (*)")
+        if dlc_config:
+            self.dlc_config_loader(dlc_config)
+
+    def dlc_config_loader(self, dlc_config):
+        self.dlc_config_path = dlc_config # Store the path
         with open(dlc_config, "r") as conf:
             cfg = yaml.safe_load(conf)
         if cfg:
@@ -211,6 +213,8 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             calib_file, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select Calibration File", "", "Calibration Files (*.mat)")
         calibration_file = calib_file
         print(f"Calibration loaded: {calibration_file}")
+
+    def calibration_loader(self, calibration_file):
         try:
             calib = sio.loadmat(calibration_file)
             if not self.is_debug:
@@ -223,7 +227,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to load calibration file: {e}")
             return
         self.camera_params = [{} for _ in range(self.num_cam_from_calib)]
-        self.load_calibration_mat(calib)
+        self.parse_calibration_mat(calib)
         self.plot_camera_geometry()
 
     def load_video_folder(self, folder_path):
@@ -231,6 +235,8 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.video_list = [None] * self.num_cam
         self.cap_list = [None] * self.num_cam
         folder_list = [None] * self.num_cam
+        self.prediction_list = [None] * self.num_cam
+
         print(f"Loading videos from: {folder_path}")
         for i in range(self.num_cam):  # Loop through expected camera folders
             folder = os.path.join(folder_path, f"Camera{i+1}")
@@ -259,7 +265,14 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         for k in range(self.num_cam):
             if folder_list[k] is not None:
                 folder = folder_list[k]
-                self.load_prediction(k, folder)
+                h5_files = glob.glob(os.path.join(folder, "*.h5"))
+                if not h5_files:
+                    QMessageBox.warning(self, "Warning", f"No .h5 prediction file found in {folder}")
+                    continue
+                h5_files.sort()
+                h5_file = h5_files[-1] # Take the newest one
+                self.prediction_list[k] = h5_file
+                self.load_prediction(k, h5_file)
 
         self.current_frame_idx = 0
         self.progress_slider.setRange(0, self.total_frames - 1)
@@ -267,15 +280,11 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.navigation_group_box.show()
         self.display_current_frame() # Display the first frames
 
-    def load_prediction(self, cam_idx, folder):
-        h5_files = glob.glob(os.path.join(folder, "*.h5"))
-        if not h5_files:
-            print(f"Warning: No .h5 prediction file found in {folder}")
-            return False
+    def load_prediction(self, cam_idx, h5_file):
         try:
-            with h5py.File(h5_files[0], 'r') as pred_file:
+            with h5py.File(h5_file, 'r') as pred_file:
                 if "tracks" not in pred_file.keys():
-                    print(f"Error: Prediction file {h5_files[0]} not valid, no 'tracks' key found.")
+                    print(f"Error: Prediction file {h5_file} not valid, no 'tracks' key found.")
                     return False
 
                 pred_data_raw = pred_file["tracks"]["table"][:]
@@ -284,10 +293,10 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                     self.pred_data_array[:,cam_idx,inst,:] = pred_data_values[:, inst*self.num_keypoints*3:(inst+1)*self.num_keypoints*3]
                 
         except Exception as e:
-            print(f"Error loading H5 file {h5_files[0]}: {e}")
+            print(f"Error loading H5 file {h5_file}: {e}")
             return False
 
-    def load_calibration_mat(self, calib):
+    def parse_calibration_mat(self, calib):
         cam_pos = [None] * self.num_cam_from_calib
         cam_dir = [None] * self.num_cam_from_calib
         frame_count = [None] * self.num_cam_from_calib
@@ -305,6 +314,59 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.cam_pos = np.array(cam_pos)
         self.cam_dir = np.array(cam_dir)
         self.total_frames = max(frame_count)
+
+    ###################################################################################################################################################
+
+    def call_track_refiner(self):
+        if not hasattr(self, "video_list") or not hasattr(self, "prediction_list") or not hasattr(self, "dlc_config_path"):
+            QMessageBox.warning(self, "Warning", "Predictions are not loaded, load predictions first!")
+            return
+
+        dialog = Selection_Dialog(self)
+        result = dialog.exec() # Use .exec() for Qt6
+        if result == QtWidgets.QDialog.DialogCode.Accepted: # Use DialogCode.Accepted for Qt6
+            selected_value = dialog.get_selected_option()
+            self.refiner_window = DLC_Track_Refiner()
+            self.refiner_window.original_vid = self.video_list[selected_value]
+            self.refiner_window.initialize_loaded_video()
+            self.refiner_window.config_loader_DLC(self.dlc_config_path)
+            self.refiner_window.prediction = self.prediction_list[selected_value]
+            self.refiner_window.prediction_loader()
+            self.refiner_window.current_frame_idx = self.current_frame_idx # Pass current frame index
+            self.refiner_window.display_current_frame() # Update display to show the correct frame
+            self.refiner_window.navigation_box_title_controller()
+            self.refiner_window.show()
+            self.refiner_window.prediction_saved.connect(self.reload_prediction) # Reload from prediction provided by refiner
+        else:
+            QMessageBox.information(self, "Info", "Selection was cancelled or closed.")
+
+    def reload_prediction(self, pred_file_path):
+        """Reload prediction data from file and update visualization"""
+        try:
+            # Find which camera this prediction belongs to
+            cam_idx = None
+            for i, pred in enumerate(self.prediction_list):
+                if pred and os.path.dirname(pred) == os.path.dirname(pred_file_path):
+                    cam_idx = i
+                    break
+            
+            if cam_idx is not None:
+                # Load the prediction file
+                self.load_prediction(cam_idx, pred_file_path)
+
+                # Update visualization
+                self.display_current_frame()
+                QMessageBox.information(self, "Success", "Prediction reloaded successfully!")
+                
+                # Close the refiner window if it exists
+                if hasattr(self, 'refiner_window') and self.refiner_window:
+                    self.refiner_window.close()
+                    self.refiner_window = None
+            else:
+                QMessageBox.warning(self, "Warning", "Could not match prediction to camera")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to reload prediction: {str(e)}")
 
     ###################################################################################################################################################
 
@@ -337,12 +399,6 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             else:
                 self.video_labels[i].setText(f"Video {i+1} Not Loaded/Available")
                 self.video_labels[i].setPixmap(QtGui.QPixmap())
-            
-            # Update border color based on selection
-            if i == self.selected_cam_idx:
-                self.video_labels[i].setStyleSheet("border: 2px solid red;")
-            else:
-                self.video_labels[i].setStyleSheet("border: 1px solid gray;")
 
         self.progress_slider.setValue(self.current_frame_idx) # Update the slider after all frames are displayed
         self.plot_3d_points()
@@ -632,14 +688,6 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
     ###################################################################################################################################################
 
-    def set_selected_camera(self, cam_idx):
-        if hasattr(self, 'cap_list'):
-            self.selected_cam_idx = cam_idx
-            print(f"Selected Camera Index: {self.selected_cam_idx}")
-            self.display_current_frame() # Refresh display to update border
-        else:
-            pass
-
     def change_frame(self, delta):
         new_frame_idx = self.current_frame_idx + delta
         if 0 <= new_frame_idx < self.total_frames:
@@ -677,10 +725,6 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             self.play_button.setText("▶")
             self.is_playing = False
 
-    def reset_3d_view(self):
-        self.ax.view_init(elev=20, azim=-60) # Set to default view angle
-        self.canvas.draw_idle() 
-
     def navigation_box_title_controller(self):
         self.navigation_group_box.setTitle(f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1}")
 
@@ -693,6 +737,54 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 if cap and cap.isOpened():
                     cap.release()
         event.accept()
+
+class Selection_Dialog(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select an Option")
+        self.setFixedSize(200, 100)
+
+        self.selected_option = None
+
+        self.init_ui()
+
+    def init_ui(self):
+        main_layout = QtWidgets.QVBoxLayout()
+
+        instruction_label = QtWidgets.QLabel("Please select one of the options:")
+        instruction_label.setAlignment(Qt.AlignmentFlag.AlignCenter) # Use AlignmentFlag for Qt6
+        main_layout.addWidget(instruction_label)
+
+        grid_layout = QtWidgets.QGridLayout()
+        grid_layout.setSpacing(10) # Add some spacing between buttons
+
+        # Create and add buttons to the grid
+        self.button1 = QPushButton("Video 1")
+        self.button2 = QPushButton("Video 2")
+        self.button3 = QPushButton("Video 3")
+        self.button4 = QPushButton("Video 4")
+
+        # Connect buttons to a common slot
+        self.button1.clicked.connect(lambda: self.on_button_clicked(0))
+        self.button2.clicked.connect(lambda: self.on_button_clicked(1))
+        self.button3.clicked.connect(lambda: self.on_button_clicked(2))
+        self.button4.clicked.connect(lambda: self.on_button_clicked(3))
+
+        # Add buttons to the grid layout (row, column)
+        grid_layout.addWidget(self.button1, 0, 0)
+        grid_layout.addWidget(self.button2, 0, 1)
+        grid_layout.addWidget(self.button3, 1, 0)
+        grid_layout.addWidget(self.button4, 1, 1)
+
+        main_layout.addLayout(grid_layout)
+        self.setLayout(main_layout)
+
+    def on_button_clicked(self, option_number):
+        self.selected_option = option_number
+        self.accept() # Close the dialog with an 'Accepted' result
+
+    def get_selected_option(self):
+        return self.selected_option
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication([])
