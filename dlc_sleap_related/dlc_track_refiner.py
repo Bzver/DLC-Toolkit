@@ -15,8 +15,6 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QShortcut, QKeySequence, QPainter, QColor, QPen, QCloseEvent
 from PySide6.QtWidgets import QMessageBox, QPushButton, QGraphicsScene, QGraphicsView, QGraphicsRectItem, QMenu, QToolButton
 
-#################   W   ##################   I   ##################   P   ##################   
-
 DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/NTD/config.yaml"
 VIDEO_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/jobs/20250626C1-first3h-conv/20250626C1-first3h-D.mp4"
 PRED_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/jobs/20250626C1-first3h-conv/20250626C1-first3h-DDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_090_snapshot_080_el.h5"
@@ -50,6 +48,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         self.purge_inst_by_conf_action = self.refiner_menu.addAction("Delete All Track Below Set Confidence")
         self.interpolate_all_action = self.refiner_menu.addAction("Interpolate All Frames for One Inst")
+        self.segment_auto_correct_action = self.refiner_menu.addAction("Segmental Auto Correct")
+        self.designate_no_mice_zone_action = self.refiner_menu.addAction("Remove All Prediction Inside Area")
 
         self.refiner_button = QToolButton()
         self.refiner_button.setText("Adv. Refine")
@@ -59,7 +59,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.save_menu = QMenu("Save", self)
 
         self.save_prediction_action = self.save_menu.addAction("Save Prediction")
-        self.save_prediction_as_csv = self.save_menu.addAction("Save Prediction Into CSV") # 2 B Implemented
+        self.save_prediction_as_csv_action = self.save_menu.addAction("Save Prediction Into CSV") # 2 B Implemented
 
         self.save_button = QToolButton()
         self.save_button.setText("Save")
@@ -149,8 +149,11 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         self.purge_inst_by_conf_action.triggered.connect(self.purge_inst_by_conf)
         self.interpolate_all_action.triggered.connect(self.interpolate_all)
+        self.segment_auto_correct_action.triggered.connect(self.segment_auto_correct)
+        self.designate_no_mice_zone_action.triggered.connect(self.designate_no_mice_zone)
 
         self.save_prediction_action.triggered.connect(self.save_prediction)
+        self.save_prediction_as_csv_action.triggered.connect(self.save_prediction_as_csv)
 
         # Connect buttons to events
         self.progress_slider.sliderMoved.connect(self.set_frame_from_slider)
@@ -194,6 +197,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         self.reset_state()
         self.is_debug = False
+        self.is_drawing_zone = False
+        self.start_point = None
+        self.current_rect_item = None
 
     def load_video(self):
         if self.is_debug:
@@ -449,8 +455,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         nan_mask = np.isnan(self.pred_data_array)
         empty_instance = np.all(nan_mask, axis=2)
         non_empty_instance_numerical = (~empty_instance)*1
-        instance_count_per_frame = non_empty_instance_numerical.sum(axis=1)
-        roi_frames = np.where(np.diff(instance_count_per_frame)!=0)[0]+1
+        self.instance_count_per_frame = non_empty_instance_numerical.sum(axis=1)
+        roi_frames = np.where(np.diff(self.instance_count_per_frame)!=0)[0]+1
 
         self.roi_frame_list = list(roi_frames)
         self.progress_slider.set_marked_frames(self.roi_frame_list) # Update ROI frames
@@ -566,6 +572,85 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.check_instance_count_per_frame()
         self.display_current_frame()
         QMessageBox.information(self, "Interpolation Complete", f"All frames interpolated for instance {self.individuals[instance_to_interpolate]}.")
+
+    def designate_no_mice_zone(self):
+        # Sort of like a screenshot that let's user select a section of the drawn canvas (frame), get the coordinates of user selection
+        # Save to undo stack
+        # Make ALL keypoints coordinates that falls within the zone as NaN
+        # self.check_instance_count_per_frame()
+        # self.display_current_frame()
+        pass
+
+    def segment_auto_correct(self):
+        QMessageBox.information(self, "Segmental Auto Correct",
+                                """This function works for scenarios where only one instance persistently remains in view while another goes in and out.
+                                It will identify segments where only one instance is detected for more than 100 frames.
+                                Throughout and proceeding these segments, the track associated with the remaining instance will be swapped to instance 0.
+                                """)
+
+        if self.pred_data_array is None:
+            QMessageBox.warning(self, "Error", "Prediction data not loaded. Please load a prediction file first.")
+            return
+
+        if self.instance_count < 2: # Need at least two instances for swapping to make sense
+            QMessageBox.information(self, "Info", "Less than two instances configured. Segmental auto-correction is not applicable.")
+            return
+
+        self.check_instance_count_per_frame()
+
+        segments_to_correct = []
+        num_corrections_applied = 0
+        current_segment_start = -1
+        min_segment_length = 100 # Minimum 100 frames
+
+        for i in range(len(self.instance_count_per_frame)):
+            if self.instance_count_per_frame[i] <= 1:
+                if current_segment_start == -1:
+                    current_segment_start = i
+            else:
+                if current_segment_start != -1:
+                    segment_length = i - current_segment_start
+                    if segment_length >= min_segment_length: # Use >= for segments of exactly 100 frames
+                        segments_to_correct.append((current_segment_start, i - 1))
+                    current_segment_start = -1
+        
+        # Handle the last segment if it extends to the end of the video
+        if current_segment_start != -1:
+            segment_length = len(self.instance_count_per_frame) - current_segment_start
+            if segment_length >= min_segment_length:
+                segments_to_correct.append((current_segment_start, len(self.instance_count_per_frame) - 1))
+
+        if not segments_to_correct:
+            QMessageBox.information(self, "Info", "No segments found where less than two instance is persistently detected for more than 100 frames.")
+            return
+
+        self._save_state_for_undo() # Save state before making changes
+
+        for start_frame, end_frame in segments_to_correct:
+            # Apply the swap for the entire detected segment
+            for frame_idx in range(start_frame, end_frame + 1): # Swap non 'instance 0' with 'instance 0' for all frames in the segment
+                if self.instance_count_per_frame[frame_idx] == 0: # Skip swapping for empty predictions
+                    continue
+                current_present_at_frame = np.where(~np.all(np.isnan(self.pred_data_array[frame_idx]), axis=1))[0]
+                if current_present_at_frame[0] != 0: # Ensure that at this specific frame, the instance to be swapped is not instance 0
+                    self.pred_data_array[frame_idx, 0, :], self.pred_data_array[frame_idx, 1, :] = \
+                    self.pred_data_array[frame_idx, 1, :].copy(), self.pred_data_array[frame_idx, 0, :].copy()
+                last_present_instance = current_present_at_frame[0]
+
+            # Apply the swap from (end_frame + 1) to the end of the video, IF the last instance detected was not 0
+            if last_present_instance != 0:
+                print(f"Applying global swap from frame {end_frame + 1} to end.")
+                for frame_idx in range(end_frame + 1, len(self.pred_data_array)):
+                    self.pred_data_array[end_frame + 1:, 0, :], \
+                    self.pred_data_array[end_frame + 1:, 1, :] = \
+                    self.pred_data_array[end_frame + 1:, 1, :].copy(), \
+                    self.pred_data_array[end_frame + 1:, 0, :].copy()
+            
+            num_corrections_applied += 1
+
+        QMessageBox.information(self, "Success", f"Segmental auto-correction applied to {num_corrections_applied} segments.")
+        self.check_instance_count_per_frame()
+        self.display_current_frame()
 
     ###################################################################################################################################################
 
@@ -807,7 +892,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             self.prediction_saved.emit(self.prediction) # Emit the signal with the saved file path
         except Exception as e:
             print(f"An error occurred during HDF5 saving: {e}")
-            pass
+
+    def save_prediction_as_csv(self):
+        QMessageBox.information(self, "Not Implemented", "Sorry! This method is yet to be implemented, DM my email if you need it real bad. :D")
 
     def reset_state(self):
         self.original_vid, self.prediction, self.dlc_config, self.video_name = None, None, None, None
@@ -815,6 +902,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.keypoint_to_idx = None
 
         self.instance_count = 1
+        self.instance_count_per_frame = None
         self.multi_animal = False
         self.pred_data, self.pred_data_array = None, None
 
@@ -829,6 +917,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.refiner_group_box.hide()
 
         self.selected_box = None # To keep track of the currently selected box
+
+        self.is_drawing_zone = False
+        self.start_point = None
+        self.current_rect_item = None
         
         self.undo_stack = [] # Clear undo stack on reset
         self.redo_stack = [] # Clear redo stack on reset
@@ -889,12 +981,10 @@ class Slider_With_Marks(QtWidgets.QSlider):
         self.update()
 
     def paintEvent(self, event):
-        super().paintEvent(event)
-        
         if not self.marked_frames:
             return
-
         self.paintEvent_painter(self.marked_frames,"#F04C4C")
+        super().paintEvent(event)
         
     def paintEvent_painter(self, frames, color):
         painter = QtGui.QPainter(self)
@@ -933,6 +1023,8 @@ class Slider_With_Marks(QtWidgets.QSlider):
                 groove_rect.height()
             )
         painter.end()
+
+#######################################################################################################################################################
 
 class Selectable_Instance(QtCore.QObject, QGraphicsRectItem):
     clicked = Signal(object) # Signal to emit when this box is clicked
