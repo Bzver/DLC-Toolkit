@@ -213,6 +213,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             calib_file, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select Calibration File", "", "Calibration Files (*.mat)")
         calibration_file = calib_file
         print(f"Calibration loaded: {calibration_file}")
+        self.calibration_loader(calibration_file)
 
     def calibration_loader(self, calibration_file):
         try:
