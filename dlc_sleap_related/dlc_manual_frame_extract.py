@@ -69,8 +69,8 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         self.next_frame_button = QPushButton("Next Frame (→)")
         self.next_10_frames_button = QPushButton("Next 10 Frames (Shift + →)")
 
-        self.prev_marked_frame_button = QPushButton("◄ Prev Marked (↓)")
-        self.next_marked_frame_button = QPushButton("► Next Marked (↑)")
+        self.prev_marked_frame_button = QPushButton("◄ Prev Marked (↑)")
+        self.next_marked_frame_button = QPushButton("► Next Marked (↓)")
         self.mark_frame_button = QPushButton("Mark / Unmark Current Frame (X)")
         self.adjust_confidence_cutoff_button = QPushButton("Adjust Confidence Cutoff")
 
@@ -112,8 +112,8 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_Right), self).activated.connect(lambda: self.change_frame(1))
         QShortcut(QKeySequence(Qt.Key_Right | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(10))
         QShortcut(QKeySequence(Qt.Key_X), self).activated.connect(self.change_current_frame_status)
-        QShortcut(QKeySequence(Qt.Key_Down), self).activated.connect(self.prev_marked_frame)
-        QShortcut(QKeySequence(Qt.Key_Up), self).activated.connect(self.next_marked_frame)
+        QShortcut(QKeySequence(Qt.Key_Up), self).activated.connect(self.prev_marked_frame)
+        QShortcut(QKeySequence(Qt.Key_Down), self).activated.connect(self.next_marked_frame)
         QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.toggle_playback)
         QShortcut(QKeySequence(Qt.Key_L | Qt.ShiftModifier), self).activated.connect(self.load_dlc_file)
         QShortcut(QKeySequence(Qt.Key_S | Qt.ControlModifier), self).activated.connect(self.save_frame_mark)
@@ -379,6 +379,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             self.is_playing = False
 
     def navigation_box_title_controller(self):
+        self.navigation_group_box.show()
         self.navigation_group_box.setTitle(f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | Video: {self.video_name}")
         if self.current_frame_idx in self.labeled_frame_list:
             self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: #1F32D7;}""")
