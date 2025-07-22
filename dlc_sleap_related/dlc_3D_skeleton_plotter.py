@@ -27,23 +27,11 @@ DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/COM3D/config.yaml"
 CALIB_FILE_DEBUG = "D:/Project/SDANNCE-Models/4CAM-250620/SD-20250705-MULTI/sync_dannce.mat"
 VIDEO_FOLDER_DEBUG = "D:/Project/SDANNCE-Models/4CAM-250620/SD-20250705-MULTI/Videos"
 
-class ClickableVideoLabel(QtWidgets.QLabel):
-    clicked = Signal(int) # Signal to emit cam_idx when clicked
-
-    def __init__(self, cam_idx, parent=None):
-        super().__init__(parent)
-        self.cam_idx = cam_idx
-        self.setMouseTracking(True) # Enable mouse tracking for hover effects if needed
-
-    def mousePressEvent(self, event: QtGui.QMouseEvent):
-        if event.button() == Qt.LeftButton:
-            self.clicked.emit(self.cam_idx)
-        super().mousePressEvent(event)
-
 class DLC_3D_plotter(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("DLC 3D Plotter")
+        self.is_debug = False
+        self.setWindowTitle("DLC 3D Plotter - DEBUG MODE") if self.is_debug else self.setWindowTitle("DLC 3D Plotter")
         self.setGeometry(100, 100, 1600, 960)
 
         self.central_widget = QtWidgets.QWidget()
@@ -69,13 +57,14 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         for row in range(2):
             for col in range(2):
                 cam_idx = row * 2 + col # 0-indexed camera index
-                label = ClickableVideoLabel(cam_idx, self) # Use the custom label
+                label = Clickable_Video_Label(cam_idx, self) # Use the custom label
                 label.setText(f"Video {cam_idx + 1}")
                 label.setAlignment(Qt.AlignCenter) # Center the "Video X" text
                 label.setFixedSize(480, 360) # Set a fixed size for video display
                 label.setStyleSheet("border: 1px solid gray;") # Add a border for visibility
                 self.video_layout.addWidget(label, row, col)
                 self.video_labels.append(label)
+                label.clicked.connect(self.set_selected_camera) # Connect the clicked signal
 
         #Store plot and a slider for adjust plot size
         self.plot_layout = QtWidgets.QVBoxLayout()
@@ -160,10 +149,9 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         
         self.current_frame_idx = 0      # Single frame index for all synchronized videos
         self.total_frames = 0      # Max frames across all videos
+        self.selected_cam_idx = None
 
         self.refiner_window = None
-
-        self.is_debug = False # Make it false before committing
 
     def open_video_folder_dialog(self):
         if self.is_debug:
@@ -323,23 +311,23 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             QMessageBox.warning(self, "Warning", "Predictions are not loaded, load predictions first!")
             return
 
-        dialog = Selection_Dialog(self)
-        result = dialog.exec() # Use .exec() for Qt6
-        if result == QtWidgets.QDialog.DialogCode.Accepted: # Use DialogCode.Accepted for Qt6
-            selected_value = dialog.get_selected_option()
-            self.refiner_window = DLC_Track_Refiner()
-            self.refiner_window.original_vid = self.video_list[selected_value]
-            self.refiner_window.initialize_loaded_video()
-            self.refiner_window.config_loader_DLC(self.dlc_config_path)
-            self.refiner_window.prediction = self.prediction_list[selected_value]
-            self.refiner_window.prediction_loader()
-            self.refiner_window.current_frame_idx = self.current_frame_idx # Pass current frame index
-            self.refiner_window.display_current_frame() # Update display to show the correct frame
-            self.refiner_window.navigation_box_title_controller()
-            self.refiner_window.show()
-            self.refiner_window.prediction_saved.connect(self.reload_prediction) # Reload from prediction provided by refiner
-        else:
-            QMessageBox.information(self, "Info", "Selection was cancelled or closed.")
+        # The cam_idx is now directly passed from the clicked video label
+        if self.selected_cam_idx is None:
+            QMessageBox.information(self, "No Camera View Selected", "Please select a camera view first.")
+            return
+        
+        selected_value = self.selected_cam_idx 
+        self.refiner_window = DLC_Track_Refiner()
+        self.refiner_window.original_vid = self.video_list[selected_value]
+        self.refiner_window.initialize_loaded_video()
+        self.refiner_window.config_loader_DLC(self.dlc_config_path)
+        self.refiner_window.prediction = self.prediction_list[selected_value]
+        self.refiner_window.prediction_loader()
+        self.refiner_window.current_frame_idx = self.current_frame_idx # Pass current frame index
+        self.refiner_window.display_current_frame() # Update display to show the correct frame
+        self.refiner_window.navigation_box_title_controller()
+        self.refiner_window.show()
+        self.refiner_window.prediction_saved.connect(self.reload_prediction) # Reload from prediction provided by refiner
 
     def reload_prediction(self, pred_file_path):
         """Reload prediction data from file and update visualization"""
@@ -400,6 +388,12 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             else:
                 self.video_labels[i].setText(f"Video {i+1} Not Loaded/Available")
                 self.video_labels[i].setPixmap(QtGui.QPixmap())
+
+            # Update border color based on selection
+            if i == self.selected_cam_idx:
+                self.video_labels[i].setStyleSheet("border: 2px solid red;")
+            else:
+                self.video_labels[i].setStyleSheet("border: 1px solid gray;")
 
         self.progress_slider.setValue(self.current_frame_idx) # Update the slider after all frames are displayed
         self.plot_3d_points()
@@ -689,7 +683,16 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
     ###################################################################################################################################################
 
+    def set_selected_camera(self, cam_idx):
+        if hasattr(self, 'cap_list'):
+            self.selected_cam_idx = cam_idx
+            print(f"Selected Camera Index: {self.selected_cam_idx}")
+            self.display_current_frame() # Refresh display to update border
+        else:
+            pass
+
     def change_frame(self, delta):
+        self.selected_cam_idx = None # Clear the selected cam upon frame switch
         new_frame_idx = self.current_frame_idx + delta
         if 0 <= new_frame_idx < self.total_frames:
             self.current_frame_idx = new_frame_idx
@@ -697,6 +700,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             self.navigation_box_title_controller()
 
     def set_frame_from_slider(self, value):
+        self.selected_cam_idx = None
         self.current_frame_idx = value
         self.display_current_frame()
         self.navigation_box_title_controller()
@@ -708,6 +712,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
     def autoplay_video(self):
         if self.current_frame_idx < self.total_frames - 1:
+            self.selected_cam_idx = None
             self.current_frame_idx += 1
             self.display_current_frame()
             self.navigation_box_title_controller()
@@ -739,53 +744,22 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                     cap.release()
         event.accept()
 
-class Selection_Dialog(QtWidgets.QDialog):
-    def __init__(self, parent=None):
+###################################################################################################################################################
+
+class Clickable_Video_Label(QtWidgets.QLabel):
+    clicked = Signal(int) # Signal to emit cam_idx when clicked
+
+    def __init__(self, cam_idx, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Select an Option")
-        self.setFixedSize(200, 100)
+        self.cam_idx = cam_idx
+        self.setMouseTracking(True) # Enable mouse tracking for hover effects if needed
 
-        self.selected_option = None
+    def mousePressEvent(self, event: QtGui.QMouseEvent):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(self.cam_idx)
+        super().mousePressEvent(event)
 
-        self.init_ui()
-
-    def init_ui(self):
-        main_layout = QtWidgets.QVBoxLayout()
-
-        instruction_label = QtWidgets.QLabel("Please select one of the options:")
-        instruction_label.setAlignment(Qt.AlignmentFlag.AlignCenter) # Use AlignmentFlag for Qt6
-        main_layout.addWidget(instruction_label)
-
-        grid_layout = QtWidgets.QGridLayout()
-        grid_layout.setSpacing(10) # Add some spacing between buttons
-
-        # Create and add buttons to the grid
-        self.button1 = QPushButton("Video 1")
-        self.button2 = QPushButton("Video 2")
-        self.button3 = QPushButton("Video 3")
-        self.button4 = QPushButton("Video 4")
-
-        # Connect buttons to a common slot
-        self.button1.clicked.connect(lambda: self.on_button_clicked(0))
-        self.button2.clicked.connect(lambda: self.on_button_clicked(1))
-        self.button3.clicked.connect(lambda: self.on_button_clicked(2))
-        self.button4.clicked.connect(lambda: self.on_button_clicked(3))
-
-        # Add buttons to the grid layout (row, column)
-        grid_layout.addWidget(self.button1, 0, 0)
-        grid_layout.addWidget(self.button2, 0, 1)
-        grid_layout.addWidget(self.button3, 1, 0)
-        grid_layout.addWidget(self.button4, 1, 1)
-
-        main_layout.addLayout(grid_layout)
-        self.setLayout(main_layout)
-
-    def on_button_clicked(self, option_number):
-        self.selected_option = option_number
-        self.accept() # Close the dialog with an 'Accepted' result
-
-    def get_selected_option(self):
-        return self.selected_option
+###################################################################################################################################################
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication([])
