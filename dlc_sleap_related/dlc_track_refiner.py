@@ -13,11 +13,16 @@ import cv2
 from PySide6 import QtWidgets, QtGui, QtCore
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QShortcut, QKeySequence, QPainter, QColor, QPen, QCloseEvent
-from PySide6.QtWidgets import QMessageBox, QPushButton, QGraphicsScene, QGraphicsView, QGraphicsRectItem, QMenu, QToolButton
+from PySide6.QtWidgets import QMessageBox, QPushButton, QGraphicsScene, QGraphicsView, QGraphicsRectItem, QMenu, QToolButton, QGraphicsEllipseItem
 
 DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/NTD/config.yaml"
 VIDEO_FILE_DEBUG = "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-conv.mp4"
 PRED_FILE_DEBUG = "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-convDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_090_snapshot_080_el_tr.h5"
+
+# Todo:
+# 1. Toggleable keypoints label
+# 2. Add delete keypints in keypoint edit mode
+# 3. Add instance generation in keypoint edit mode
 
 class DLC_Track_Refiner(QtWidgets.QMainWindow):
     prediction_saved = Signal(str) # Signal to emit the path of the saved prediction file
@@ -30,6 +35,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.central_widget = QtWidgets.QWidget()
         self.setCentralWidget(self.central_widget)
         self.layout = QtWidgets.QVBoxLayout(self.central_widget)
+
+        self.is_debug = True
+        if self.is_debug:
+            self.setWindowTitle("DLC Track Refiner ----- DEBUG MODE")
 
         # Menu bars
         self.menu_layout = QtWidgets.QHBoxLayout()
@@ -46,6 +55,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         self.refiner_menu = QMenu("Adv. Refine", self)
 
+        self.direct_keypoint_edit_action = self.refiner_menu.addAction("Direct Keypoint Edit (Q) [ EXPERIMENTAL ]")
         self.purge_inst_by_conf_action = self.refiner_menu.addAction("Delete All Track Below Set Confidence")
         self.interpolate_all_action = self.refiner_menu.addAction("Interpolate All Frames for One Inst")
         self.designate_no_mice_zone_action = self.refiner_menu.addAction("Remove All Prediction Inside Area")
@@ -89,8 +99,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.play_button = QPushButton("▶")
         self.play_button.setFixedWidth(20)
         self.undo_button = QPushButton("⮌")
+        self.undo_button.setToolTip("Undo (Ctrl + Z)")
         self.undo_button.setFixedWidth(20)
         self.redo_button = QPushButton("⮎")
+        self.redo_button.setToolTip("Redo (Ctrl + Y)")
         self.redo_button.setFixedWidth(20)
         self.progress_slider = Slider_With_Marks(Qt.Horizontal)
         self.progress_slider.setTracking(True)
@@ -187,6 +199,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_X | Qt.ShiftModifier), self).activated.connect(lambda:self.delete_track("batch"))
         QShortcut(QKeySequence(Qt.Key_T), self).activated.connect(self.interpolate_track)
         QShortcut(QKeySequence(Qt.Key_F), self).activated.connect(self.fill_track)
+        QShortcut(QKeySequence(Qt.Key_Q), self).activated.connect(self.direct_keypoint_edit)
 
         QShortcut(QKeySequence(Qt.Key_Z | Qt.ControlModifier), self).activated.connect(self.undo_changes)
         QShortcut(QKeySequence(Qt.Key_Y | Qt.ControlModifier), self).activated.connect(self.redo_changes)
@@ -198,7 +211,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.graphics_scene.parent = lambda: self # Allow items to access the main window
 
         self.reset_state()
-        self.is_debug = False
 
     def load_video(self):
         if self.is_debug:
@@ -346,9 +358,15 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 x, y, conf = kp[0], kp[1], kp[2]
                 keypoint_coords[kp_idx] = (int(x),int(y),float(conf))
                 # Draw the dot representing the keypoints
-                ellipse = QtWidgets.QGraphicsEllipseItem(x - 3, y - 3, 6, 6)
-                ellipse.setBrush(QtGui.QBrush(QtGui.QColor(*color)))
-                self.graphics_scene.addItem(ellipse)
+                keypoint_item = Draggable_Keypoint(x - 3, y - 3, 6, 6, inst, kp_idx, default_color_rgb=color)
+
+                if isinstance(keypoint_item, Draggable_Keypoint):
+                    keypoint_item.setFlag(QGraphicsEllipseItem.ItemIsMovable, self.is_kp_edit)
+
+                self.graphics_scene.addItem(keypoint_item)
+                keypoint_item.setZValue(1) # Ensure keypoints are on top of the video frame
+                # Connect the keypoint_moved signal to the update method in DLC_Track_Refiner
+                keypoint_item.keypoint_moved.connect(self.update_keypoint_position)
 
             if self.individuals is not None and len(keypoint_coords) >= 2:
                 self.plot_bounding_box(keypoint_coords, frame, color, inst)
@@ -378,9 +396,13 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         # Draw bounding box using QGraphicsRectItem
         rect_item = Selectable_Instance(min_x, min_y, max_x - min_x, max_y - min_y, inst, default_color_rgb=color)
+        if isinstance(rect_item, Selectable_Instance):
+                rect_item.setFlag(QGraphicsRectItem.ItemIsMovable, self.is_kp_edit)
         self.graphics_scene.addItem(rect_item)
         self.current_selectable_boxes.append(rect_item)
         rect_item.clicked.connect(self.handle_box_selection) # Connect the signal
+        # Connect the bounding_box_moved signal to the update method in DLC_Track_Refiner
+        rect_item.bounding_box_moved.connect(self.update_instance_position)
 
         # Add individual label
         text_item = QtWidgets.QGraphicsTextItem(f"Inst: {self.individuals[inst]} | Conf:{kp_inst_mean:.4f}")
@@ -443,8 +465,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
     def navigation_box_title_controller(self):
         title = f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | Video: {self.video_name}"
-        if self.is_debug and self.current_frame_idx:
-            title += f" | Detected Instance: {self.instance_count_per_frame[self.current_frame_idx]}"
+        if self.is_kp_edit and self.current_frame_idx:
+            title += " ----- KEYPOINTS EDITING MODE ----- "
         self.navigation_group_box.setTitle(title)
         if self.current_frame_idx in self.roi_frame_list:
             self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: #F04C4C;}""")
@@ -482,8 +504,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                         # If NOT all 3 values (x, y, conf) for this keypoint are NaN, then it's contributing
                         if not np.all(instance_nan_status[k_idx, :]):
                             # Try to get keypoint name, fall back to index if not available
-                            keypoint_name = (self.keypoint_names[k_idx] 
-                                            if hasattr(self, 'keypoint_names') and k_idx < len(self.keypoint_names) 
+                            keypoint_name = (self.keypoints[k_idx] # Changed from self.keypoint_names
+                                            if hasattr(self, 'keypoints') and k_idx < len(self.keypoints) 
                                             else f"Keypoint_{k_idx}")
                             non_nan_keypoints_found.append(keypoint_name)
                     
@@ -536,10 +558,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
     ###################################################################################################################################################
 
     def purge_inst_by_conf(self):
-        if self.pred_data_array is None:
-            QMessageBox.warning(self, "No Prediction Data", "Please load a prediction file first.")
+        if not self._you_shall_not_pass():
             return
-
         confidence_threshold, ok = QtWidgets.QInputDialog.getDouble(
             self,"Set Confidence Threshold","Delete all instances below this confidence:",
             value=0.5,minValue=0.0,maxValue=1.0,decimals=2
@@ -551,11 +571,13 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 QMessageBox.Yes | QMessageBox.No
             )
             if reply == QMessageBox.Yes:
+                self._save_state_for_undo() # Save state before modification
                 confidence_scores = self.pred_data_array[:, :, 2:self.num_keypoints*3:3]
                 inst_conf_all = np.mean(confidence_scores, axis=2)
                 low_conf_mask = inst_conf_all < confidence_threshold
                 f_idx, i_idx = np.where(low_conf_mask)
                 self.pred_data_array[f_idx, i_idx, :] = np.nan
+                self.is_saved = False # Mark as unsaved
                 self.display_current_frame()
                 self.check_instance_count_per_frame()
             else:
@@ -564,8 +586,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             QMessageBox.information(self, "Input Cancelled", "Confidence input cancelled.")
 
     def interpolate_all(self):
-        if self.pred_data_array is None:
-            QMessageBox.warning(self, "No Prediction Data", "Please load a prediction file first.")
+        if not self._you_shall_not_pass():
             return
         
         if not self.selected_box:
@@ -603,10 +624,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         QMessageBox.information(self, "Interpolation Complete", f"All frames interpolated for instance {self.individuals[instance_to_interpolate]}.")
     
     def designate_no_mice_zone(self):
-        if self.pred_data_array is None:
-            QMessageBox.warning(self, "No Prediction Data", "Please load a prediction file first.")
+        if not self._you_shall_not_pass():
             return
-        
         self.is_drawing_zone = True
         self.graphics_view.setCursor(Qt.CrossCursor)
         QMessageBox.information(self, "Designate No Mice Zone", "Click and drag on the video to select a zone. Release to apply.")
@@ -620,8 +639,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         """
         )
 
-        if self.pred_data_array is None:
-            QMessageBox.warning(self, "Error", "Prediction data not loaded. Please load a prediction file first.")
+        if not self._you_shall_not_pass():
             return
 
         if self.instance_count < 2: # Need at least two instances for swapping to make sense
@@ -659,7 +677,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self._save_state_for_undo() # Save state before making changes
 
         for start_frame, end_frame in segments_to_correct:
-            # Apply the swap for the entire detected segment
             for frame_idx in range(start_frame, end_frame + 1): # Swap non 'instance 0' with 'instance 0' for all frames in the segment
                 if self.instance_count_per_frame[frame_idx] == 0: # Skip swapping for empty predictions
                     continue
@@ -670,7 +687,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 last_present_instance = current_present_at_frame[0]
 
             # Apply the swap from (end_frame + 1) to the end of the video, IF the last instance detected was not 0
-            if last_present_instance != 0:
+            if last_present_instance is not None and last_present_instance != 0:
                 print(f"Applying global swap from frame {end_frame + 1} to end.")
                 self.pred_data_array[end_frame + 1:, 0, :], \
                 self.pred_data_array[end_frame + 1:, 1, :] = \
@@ -684,10 +701,60 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.check_instance_count_per_frame()
         self.display_current_frame()
 
+    def direct_keypoint_edit(self):
+        if self.pred_data_array is None:
+            QMessageBox.warning(self, "Error", "Prediction data not loaded. Please load a prediction file first.")
+            return
+        
+        self.is_kp_edit = not self.is_kp_edit # Toggle the mode
+        self.navigation_box_title_controller() # Update title to reflect mode
+        
+        # Enable/disable draggable property of items based on self.is_kp_edit
+        for item in self.graphics_scene.items():
+            if isinstance(item, Draggable_Keypoint):
+                item.setFlag(QGraphicsEllipseItem.ItemIsMovable, self.is_kp_edit)
+            elif isinstance(item, Selectable_Instance):
+                item.setFlag(QGraphicsRectItem.ItemIsMovable, self.is_kp_edit)
+        
+        if self.is_kp_edit:
+            QMessageBox.information(self, "Keypoint Editing Mode", "Keypoint editing mode is ON. You can now drag keypoints and bounding boxes to adjust positions.")
+        else:
+            QMessageBox.information(self, "Keypoint Editing Mode", "Keypoint editing mode is OFF.")
+
+    def update_keypoint_position(self, instance_id, keypoint_id, new_x, new_y):
+        self._save_state_for_undo()
+        # Keep the confidence value as is.
+        current_conf = self.pred_data_array[self.current_frame_idx, instance_id, keypoint_id*3+2]
+        self.pred_data_array[self.current_frame_idx, instance_id, keypoint_id*3] += new_x
+        self.pred_data_array[self.current_frame_idx, instance_id, keypoint_id*3+1] += new_y
+        # Ensure confidence is not NaN if x,y are valid
+        if pd.isna(current_conf) and not (pd.isna(new_x) or pd.isna(new_y)):
+            self.pred_data_array[self.current_frame_idx, instance_id, keypoint_id*3+2] = 1.0 # Default confidence
+        print(f"Keypoint {keypoint_id} of instance {instance_id} moved by ({new_x}, {new_y})")
+        self.is_saved = False
+        QtCore.QTimer.singleShot(0, self.display_current_frame)
+
+    def update_instance_position(self, instance_id, dx, dy):
+        self._save_state_for_undo()
+        # Update all keypoints for the given instance in the current frame
+        for kp_idx in range(self.num_keypoints):
+            x_coord_idx = kp_idx * 3
+            y_coord_idx = kp_idx * 3 + 1
+            
+            current_x = self.pred_data_array[self.current_frame_idx, instance_id, x_coord_idx]
+            current_y = self.pred_data_array[self.current_frame_idx, instance_id, y_coord_idx]
+
+            if not pd.isna(current_x) and not pd.isna(current_y):
+                self.pred_data_array[self.current_frame_idx, instance_id, x_coord_idx] = current_x + dx
+                self.pred_data_array[self.current_frame_idx, instance_id, y_coord_idx] = current_y + dy
+        print(f"Instance {instance_id} moved by ({dx}, {dy})")
+        self.is_saved = False
+        QtCore.QTimer.singleShot(0, self.display_current_frame)
+
     ###################################################################################################################################################
 
     def delete_track(self, mode="point"):
-        if self.pred_data_array is None: # Silent fail
+        if not self._you_shall_not_pass():
             return
         current_frame_inst = self.get_current_frame_inst()
         if len(current_frame_inst) > 1 and not self.selected_box:
@@ -704,12 +771,16 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             next_roi_frame_idx = self.next_instance_change("idx")
             if next_roi_frame_idx:
                 self.pred_data_array[self.current_frame_idx:next_roi_frame_idx, instance_for_track_deletion, :] = np.nan
+            else: # If no next ROI, delete till end of video
+                self.pred_data_array[self.current_frame_idx:, instance_for_track_deletion, :] = np.nan
+
         self.selected_box = None
+        self.is_saved = False # Mark as unsaved
         self.check_instance_count_per_frame()
         self.display_current_frame()
 
     def swap_track(self, mode="point"):
-        if self.pred_data_array is None:
+        if not self._you_shall_not_pass():
             return
         self._save_state_for_undo() # Save state before modification
         if self.instance_count == 2: # 2 instances need no selection
@@ -722,16 +793,18 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 self.pred_data_array[self.current_frame_idx:, 1, :].copy(), \
                 self.pred_data_array[self.current_frame_idx:, 0, :].copy()
             self.selected_box = None
+            self.is_saved = False # Mark as unsaved
             self.check_instance_count_per_frame()
             self.display_current_frame()
         else:
             if not self.selected_box:
-                QMessageBox.information(self, "Track Not Swapped", "No track is swapped.")
+                QMessageBox.information(self, "Track Not Swapped", "No track is selected for swapping. Please select one of the track.")
                 return
+            QMessageBox.information(self, "Not Implemented", "Swapping for more than 2 instances is not yet implemented.")
             raise NotImplementedError
 
     def interpolate_track(self):
-        if self.pred_data_array is None:
+        if not self._you_shall_not_pass():
             return
         current_frame_inst = self.get_current_frame_inst()
         if len(current_frame_inst) > 1 and not self.selected_box:
@@ -752,32 +825,53 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 return
         if frames_to_interpolate:
             frames_to_interpolate.sort()
-            start_kp = self.pred_data_array[frames_to_interpolate[0]-1, instance_for_track_interpolate, :]
-            end_kp = self.pred_data_array[frames_to_interpolate[-1]+1, instance_for_track_interpolate, :]
-            if np.all(np.isnan(start_kp)) or np.all(np.isnan(end_kp)):
-                QMessageBox.information(self, "Instance not found", "Selected keypoint not found in the current frame or the next ROI frame.")
+            start_frame_for_interpol = frames_to_interpolate[0] - 1
+            end_frame_for_interpol = frames_to_interpolate[-1] + 1
+
+            start_kp_data = self.pred_data_array[start_frame_for_interpol, instance_for_track_interpolate, :]
+            end_kp_data = self.pred_data_array[end_frame_for_interpol, instance_for_track_interpolate, :]
+            
+            if np.all(np.isnan(start_kp_data)) or np.all(np.isnan(end_kp_data)):
+                QMessageBox.information(self, "Instance not found", "Selected keypoint not found in the start or end frame for interpolation.")
                 return
-            self.pred_data_array[frames_to_interpolate[0]-1:frames_to_interpolate[-1]+2, instance_for_track_interpolate, :]\
-                = np.linspace(start_kp, end_kp, num=len(frames_to_interpolate)+2, axis=0)
+
+            # Interpolate all 3 values (x, y, confidence)
+            interpolated_values = np.linspace(start_kp_data, end_kp_data, num=len(frames_to_interpolate)+2, axis=0)
+            
+            # Apply interpolation
+            self.pred_data_array[start_frame_for_interpol : end_frame_for_interpol + 1, instance_for_track_interpolate, :] = interpolated_values
+            
             self.selected_box = None
+            self.is_saved = False # Mark as unsaved
             self.check_instance_count_per_frame()
             self.display_current_frame()
+        else:
+            QMessageBox.information(self, "Interpolation Info", "No gaps found to interpolate for the selected instance.")
 
     def fill_track(self): # Retroactively fill frame from the last vaid kp from previous frames
-        if self.pred_data_array is None:
+        if not self._you_shall_not_pass():
             return
         self._save_state_for_undo() # Save state before modification
         current_frame_inst = set(self.get_current_frame_inst())
-        instance_for_track_fill = set([ inst for inst in range(self.instance_count) ]) - current_frame_inst
-        if len(instance_for_track_fill) > 1: # Multiple empty instance
+        
+        # Find instances that are missing in the current frame
+        missing_instances = [inst for inst in range(self.instance_count) if inst not in current_frame_inst]
+        
+        if not missing_instances:
+            QMessageBox.information(self, "No Missing Instances", "No missing instances found in the current frame to fill.")
+            return
+        
+        instance_for_track_fill = None
+
+        if len(missing_instances) > 1: # Multiple empty instances
             # Construct the question message and buttons dynamically
-            question_text = "Multiple missing instances on the current frame. Which instance would you like to duplicate from the previous ROI frame?"
+            question_text = "Multiple missing instances on the current frame. Which instance would you like to duplicate from the previous valid frame?"
             msg_box = QMessageBox(self)
             msg_box.setWindowTitle("Multiple Instance")
             msg_box.setText(question_text)
             msg_box.setIcon(QMessageBox.Icon.Question)
             buttons = []
-            for inst_id in instance_for_track_fill:
+            for inst_id in missing_instances:
                 button_text = f"Instance {self.individuals[inst_id]}" if self.individuals else f"Instance {inst_id}"
                 button = msg_box.addButton(button_text, QMessageBox.ButtonRole.ActionRole)
                 buttons.append((button, inst_id))
@@ -785,37 +879,60 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             msg_box.setDefaultButton(cancel_button)
             msg_box.exec()
             clicked_button = msg_box.clickedButton()
-            selected_instance = None
+            
             for button, inst_id in buttons:
                 if clicked_button == button:
-                    selected_instance = inst_id
+                    instance_for_track_fill = inst_id
                     break
-            if selected_instance is not None:
-                instance_for_track_fill = selected_instance
-            else:
+            if instance_for_track_fill is None:
                 QMessageBox.information(self, "Selection Cancelled", "No instance was selected. Operation cancelled.")
                 return # Exit the function if no instance is selected or cancelled
-        else:
-            instance_for_track_fill = list(instance_for_track_fill)[0]
-        # Find the last non-empty frame for inst, the copy the kp of that frame to all the empty frames in between and the current one
-        iter_frame_idx = self.current_frame_idx
-        frames_to_fill = []
-        while np.all(np.isnan(self.pred_data_array[iter_frame_idx, instance_for_track_fill, :])):
-            frames_to_fill.append(iter_frame_idx)
-            iter_frame_idx -= 1
-            if iter_frame_idx < 0:
-                QMessageBox.information(self, "No Previous Data", "No valid previous keypoint data found for this instance.")
-                return
+        else: # Only one missing instance
+            instance_for_track_fill = missing_instances[0]
+
+        # Find the last non-empty frame for the selected instance
+        iter_frame_idx = self.current_frame_idx - 1
+        frames_to_fill = [self.current_frame_idx] # Start by including the current frame
+        
+        found_previous_data = False
+        while iter_frame_idx >= 0:
+            if np.all(np.isnan(self.pred_data_array[iter_frame_idx, instance_for_track_fill, :])):
+                frames_to_fill.append(iter_frame_idx)
+                iter_frame_idx -= 1
+            else:
+                found_previous_data = True
+                break
+        
+        if not found_previous_data:
+            QMessageBox.information(self, "No Previous Data", "No valid previous keypoint data found for this instance.")
+            return
+            
+        # The keypoint data to copy from
+        source_kp_data = self.pred_data_array[iter_frame_idx, instance_for_track_fill, :].copy()
+
         if frames_to_fill:
-            frames_to_fill.sort()
-            self.pred_data_array[frames_to_fill[0]:frames_to_fill[-1]+1, instance_for_track_fill, :]\
-                    = self.pred_data_array[iter_frame_idx, instance_for_track_fill, :].copy()
+            frames_to_fill.sort() # Ensure frames are in ascending order
+            for frame_idx_to_fill in frames_to_fill:
+                self.pred_data_array[frame_idx_to_fill, instance_for_track_fill, :] = source_kp_data
+            
             self.selected_box = None
+            self.is_saved = False # Mark as unsaved
             self.check_instance_count_per_frame()
             self.display_current_frame()
-            
+        else:
+            QMessageBox.information(self, "Fill Info", "No frames found to fill for the selected instance.")
+
 
     ###################################################################################################################################################
+
+    def _you_shall_not_pass(self):
+        if self.pred_data_array is None:
+            QMessageBox.warning(self, "Error", "Prediction data not loaded. Please load a prediction file first.")
+            return False
+        if self.is_kp_edit:
+            QMessageBox.warning(self, "Not Allowed", "Please finish editing keypoints before using this function.")
+            return False
+        return True
 
     def get_current_frame_inst(self):
         current_frame_inst = []
@@ -825,6 +942,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         return current_frame_inst
 
     def handle_box_selection(self, clicked_box):
+        if self.is_kp_edit: # no box select to prevent interference
+            self.selected_box = None
+            return
         if self.selected_box and self.selected_box != clicked_box and self.selected_box.scene() is not None:
             self.selected_box.toggle_selection() # Deselect previously selected box
         clicked_box.toggle_selection() # Toggle selection of the clicked box
@@ -844,10 +964,15 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             self.current_rect_item.setPen(QPen(QColor(255, 0, 0), 2)) # Red pen for drawing
             self.graphics_scene.addItem(self.current_rect_item)
         else:
+            # If not in drawing zone mode, allow default behavior for item selection/dragging
             item = self.graphics_view.itemAt(event.position().toPoint())
-            if item and isinstance(item, Selectable_Instance):
+            
+            # Check if the clicked item is a draggable keypoint or selectable instance and we are in edit mode
+            if (isinstance(item, Draggable_Keypoint) or isinstance(item, Selectable_Instance)) and self.is_kp_edit:
+                pass # Let the item's own mousePressEvent handle it
+            elif isinstance(item, Selectable_Instance): # Allow box selection even outside of direct keypoint edit mode
                 pass
-            else: # If no item was clicked, deselect any currently selected box
+            else: # If no interactive item was clicked, deselect any currently selected box
                 if self.selected_box:
                     self.selected_box.toggle_selection()
                     self.selected_box = None
@@ -974,6 +1099,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             else:
                 print("No data to save. Skipping HDF5 write.")
                 return
+            
             with h5py.File(pred_file_to_save_path, "a") as pred_file_to_save: # Open the copied HDF5 file in write mode
                 if 'tracks/table' in pred_file_to_save:
                     pred_file_to_save['tracks/table'][...] = new_data
@@ -984,10 +1110,12 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             QMessageBox.information(self, "Save Successful", f"Successfully saved modified prediction to: {self.prediction}")
             self.prediction_saved.emit(self.prediction) # Emit the signal with the saved file path
         except Exception as e:
+            QMessageBox.critical(self, "Saving Error", f"An error occurred during HDF5 saving: {e}")
             print(f"An error occurred during HDF5 saving: {e}")
 
+
     def save_prediction_as_csv(self):
-        QMessageBox.information(self, "Not Implemented", "Sorry! This method is yet to be implemented, DM my email if you need it real bad. :D")
+        QMessageBox.information(self, "Not Implemented", "Sorry! This method is yet to be implemented, DM me if you need it real bad. :D")
 
     def reset_state(self):
         self.original_vid, self.prediction, self.dlc_config, self.video_name = None, None, None, None
@@ -1014,10 +1142,14 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.is_drawing_zone = False
         self.start_point = None
         self.current_rect_item = None
+
+        self.is_kp_edit = False # Default state: keypoint editing is off
+        self.dragged_keypoint = None
+        self.dragged_bounding_box = None
         
         self.undo_stack = []
         self.redo_stack = []
-        self.max_undo_stack_size = 10
+        self.max_undo_stack_size = 50
         self.is_initialize = True
         self.is_saved = True
 
@@ -1039,6 +1171,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             
             if clicked_button == save_btn:
                 self.save_prediction()
+                if self.is_saved: # Only accept if save was successful
+                    event.accept()
+                else: # If save failed or was cancelled by user from within save_prediction
+                    event.ignore()
             elif clicked_button == discard_btn:
                 event.accept()
             else:
@@ -1119,8 +1255,57 @@ class Slider_With_Marks(QtWidgets.QSlider):
 
 #######################################################################################################################################################
 
+class Draggable_Keypoint(QtCore.QObject, QGraphicsEllipseItem):
+    # Signal to emit when the keypoint is moved
+    keypoint_moved = Signal(int, int, float, float) # instance_id, keypoint_id, new_x, new_y
+
+    def __init__(self, x, y, width, height, instance_id, keypoint_id, default_color_rgb, parent=None):
+        QtCore.QObject.__init__(self, None)
+        QGraphicsEllipseItem.__init__(self, x, y, width, height, parent)
+        self.instance_id = instance_id
+        self.keypoint_id = keypoint_id
+        self.default_color_rgb = default_color_rgb
+        self.setBrush(QtGui.QBrush(QtGui.QColor(*default_color_rgb)))
+        self.setPen(QtGui.QPen(QtGui.QColor(*default_color_rgb), 1))
+        self.setFlag(QGraphicsEllipseItem.ItemIsMovable, False) # Initially not movable, enabled by direct_keypoint_edit
+        self.setFlag(QGraphicsEllipseItem.ItemSendsGeometryChanges, True)
+        self.setAcceptHoverEvents(True)
+        self.original_pos = self.pos() # Store initial position on press
+
+    def hoverEnterEvent(self, event):
+        self.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 0))) # Yellow on hover
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self.setBrush(QtGui.QBrush(QtGui.QColor(*self.default_color_rgb))) # Revert to default
+        super().hoverLeaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self.flags() & QGraphicsEllipseItem.ItemIsMovable:
+            self.original_pos = self.pos() # Store position at the start of the drag
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self.flags() & QGraphicsEllipseItem.ItemIsMovable:
+            new_pos = self.pos()
+            if new_pos != self.original_pos:
+                # Calculate the center of the ellipse for accurate keypoint position
+                # The ellipse is drawn from top-left, so (x + width/2, y + height/2) is the center
+                center_x = new_pos.x() + self.rect().width() / 2
+                center_y = new_pos.y() + self.rect().height() / 2
+                self.keypoint_moved.emit(self.instance_id, self.keypoint_id, center_x, center_y)
+        super().mouseReleaseEvent(event)
+
+    def itemChange(self, change, value):
+        if change == QGraphicsEllipseItem.ItemPositionChange and self.scene():
+            # The actual data array update will happen on mouse release
+            return value
+        return super().itemChange(change, value)
+
 class Selectable_Instance(QtCore.QObject, QGraphicsRectItem):
     clicked = Signal(object) # Signal to emit when this box is clicked
+    # Signal to emit when the bounding box is moved
+    bounding_box_moved = Signal(int, float, float) # instance_id, dx, dy
 
     def __init__(self, x, y, width, height, instance_id, default_color_rgb, parent=None):
         QtCore.QObject.__init__(self, parent)
@@ -1128,6 +1313,7 @@ class Selectable_Instance(QtCore.QObject, QGraphicsRectItem):
         self.instance_id = instance_id
         self.setFlag(QGraphicsRectItem.ItemIsSelectable, True)
         self.setFlag(QGraphicsRectItem.ItemSendsGeometryChanges, True)
+        self.setFlag(QGraphicsRectItem.ItemIsMovable, False) # Initially not movable, enabled by direct_keypoint_edit
         self.setAcceptHoverEvents(True)
 
         self.default_pen = QPen(QColor(*default_color_rgb), 1) # Use passed color
@@ -1136,12 +1322,44 @@ class Selectable_Instance(QtCore.QObject, QGraphicsRectItem):
 
         self.setPen(self.default_pen)
         self.is_selected = False
+        self.last_mouse_pos = None # To track mouse movement for dragging
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            self.clicked.emit(self) # Emit the signal
-            event.accept()
+            self.clicked.emit(self) # Emit the signal for selection
+            if self.flags() & QGraphicsRectItem.ItemIsMovable:
+                self.last_mouse_pos = event.scenePos() # Store the initial mouse position for dragging
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self.flags() & QGraphicsRectItem.ItemIsMovable and self.last_mouse_pos is not None:
+            current_pos = event.scenePos()
+            dx = current_pos.x() - self.last_mouse_pos.x()
+            dy = current_pos.y() - self.last_mouse_pos.y()
+            
+            self.setPos(self.pos().x() + dx, self.pos().y() + dy)
+            self.last_mouse_pos = current_pos # Update last position for next move event
+
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self.flags() & QGraphicsRectItem.ItemIsMovable and self.last_mouse_pos is not None:
+
+            if hasattr(self, 'initial_pos_on_press'):
+                dx = self.pos().x() - self.initial_pos_on_press.x()
+                dy = self.pos().y() - self.initial_pos_on_press.y()
+                if dx != 0 or dy != 0:
+                    self.bounding_box_moved.emit(self.instance_id, dx, dy)
+                del self.initial_pos_on_press # Clean up
+            
+            self.last_mouse_pos = None # Reset
+        super().mouseReleaseEvent(event)
+
+    def itemChange(self, change, value):
+        if change == QGraphicsRectItem.ItemPositionChange and self.flags() & QGraphicsRectItem.ItemIsMovable:
+            if not hasattr(self, 'initial_pos_on_press'):
+                self.initial_pos_on_press = self.pos()
+        return super().itemChange(change, value)
 
     def hoverEnterEvent(self, event):
         if not self.is_selected:
