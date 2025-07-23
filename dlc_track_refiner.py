@@ -36,7 +36,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.setCentralWidget(self.central_widget)
         self.layout = QtWidgets.QVBoxLayout(self.central_widget)
 
-        self.is_debug = True
+        self.is_debug = False
         if self.is_debug:
             self.setWindowTitle("DLC Track Refiner ----- DEBUG MODE")
 
@@ -580,6 +580,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
     def toggle_zoom_mode(self):
         self.is_zoom_mode = not self.is_zoom_mode
+        if self.is_kp_edit:
+            self.is_kp_edit = False
         if self.is_zoom_mode:
             self.graphics_view.setDragMode(QGraphicsView.ScrollHandDrag)
             self.graphics_view.wheelEvent = self.graphics_view_mouse_wheel_event
@@ -831,6 +833,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             return
         
         self.is_kp_edit = not self.is_kp_edit # Toggle the mode
+        if self.is_zoom_mode: # Cancel the zoom mode when editing
+            self.graphics_view.setDragMode(QGraphicsView.NoDrag)
+            self.graphics_view.wheelEvent = super(QGraphicsView, self.graphics_view).wheelEvent
         self.navigation_box_title_controller() # Update title to reflect mode
         
         # Enable/disable draggable property of items based on self.is_kp_edit
