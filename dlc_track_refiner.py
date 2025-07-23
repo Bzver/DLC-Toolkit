@@ -397,7 +397,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 if pd.isna(kp[0]):
                     continue
                 x, y, conf = kp[0], kp[1], kp[2]
-                keypoint_coords[kp_idx] = (int(x),int(y),float(conf))
+                keypoint_coords[kp_idx] = (float(x),float(y),float(conf))
                 # Draw the dot representing the keypoints
                 keypoint_item = Draggable_Keypoint(x - 3, y - 3, 6, 6, inst, kp_idx, default_color_rgb=color)
 
