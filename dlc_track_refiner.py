@@ -11,7 +11,7 @@ import bisect
 import cv2
 
 from PySide6 import QtWidgets, QtGui, QtCore
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, QEvent, Signal
 from PySide6.QtGui import QShortcut, QKeySequence, QPainter, QColor, QPen, QCloseEvent
 from PySide6.QtWidgets import QMessageBox, QPushButton, QGraphicsView, QGraphicsRectItem, QMenu, QToolButton, QGraphicsEllipseItem
 
@@ -36,7 +36,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.setCentralWidget(self.central_widget)
         self.layout = QtWidgets.QVBoxLayout(self.central_widget)
 
-        self.is_debug = False
+        self.is_debug = True
         if self.is_debug:
             self.setWindowTitle("DLC Track Refiner ----- DEBUG MODE")
 
@@ -89,9 +89,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.graphics_view.setFrameShape(QtWidgets.QFrame.NoFrame)
         self.graphics_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.graphics_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.graphics_view.setMouseTracking(True) # Enable mouse tracking for hover effects
+        self.graphics_view.setMouseTracking(True)
         self.graphics_view.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
-        self.graphics_view.setStyleSheet("background-color: black;") # Set background for empty view
+        self.graphics_view.setStyleSheet("background-color: black;")
         self.layout.addWidget(self.graphics_view, 1)
 
         # Progress bar
@@ -101,10 +101,13 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.visibility_button = QPushButton("👁")
         self.visibility_button.setToolTip("Set keypoint label text visibility (V)")
         self.visibility_button.setFixedWidth(20)
-        self.undo_button = QPushButton("⮌")
+        self.magnifier_button = QPushButton("🔍︎")
+        self.magnifier_button.setToolTip("Toggle zoom mode (Z)")
+        self.magnifier_button.setFixedWidth(20)
+        self.undo_button = QPushButton("↻")
         self.undo_button.setToolTip("Undo (Ctrl + Z)")
         self.undo_button.setFixedWidth(20)
-        self.redo_button = QPushButton("⮎")
+        self.redo_button = QPushButton("↺")
         self.redo_button.setToolTip("Redo (Ctrl + Y)")
         self.redo_button.setFixedWidth(20)
         self.progress_slider = Slider_With_Marks(Qt.Horizontal)
@@ -113,6 +116,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.progress_layout.addWidget(self.play_button)
         self.progress_layout.addWidget(self.progress_slider)
         self.progress_layout.addWidget(self.visibility_button)
+        self.progress_layout.addWidget(self.magnifier_button)
         self.progress_layout.addWidget(self.undo_button)
         self.progress_layout.addWidget(self.redo_button)
         self.playback_timer = QTimer()
@@ -177,6 +181,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.undo_button.clicked.connect(self.undo_changes)
         self.redo_button.clicked.connect(self.redo_changes)
         self.visibility_button.clicked.connect(self.adjust_text_opacity)
+        self.magnifier_button.clicked.connect(self.toggle_zoom_mode)
 
         self.prev_10_frames_button.clicked.connect(lambda: self.change_frame(-10))
         self.prev_frame_button.clicked.connect(lambda: self.change_frame(-1))
@@ -211,6 +216,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_Y | Qt.ControlModifier), self).activated.connect(self.redo_changes)
         QShortcut(QKeySequence(Qt.Key_V), self).activated.connect(self.adjust_text_opacity)
         QShortcut(QKeySequence(Qt.Key_S | Qt.ControlModifier), self).activated.connect(self.save_prediction)
+        QShortcut(QKeySequence(Qt.Key_Z), self).activated.connect(self.toggle_zoom_mode)
         
         self.graphics_view.mousePressEvent = self.graphics_view_mouse_press_event
         self.graphics_view.mouseMoveEvent = self.graphics_view_mouse_move_event
@@ -238,7 +244,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.progress_slider.setRange(0, 0)
         self.navigation_group_box.hide()
         self.refiner_group_box.hide()
-        self.text_label_opacity = 1.0 # Default to fully opaque
+        self.text_label_opacity = 1.0
 
         self.selected_box = None
 
@@ -252,6 +258,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.max_undo_stack_size = 50
         self.is_initialize = True
         self.is_saved = True
+
+        self.is_zoom_mode = False
+        self.zoom_factor = 1.0
 
     def load_video(self):
         if self.is_debug:
@@ -281,6 +290,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.current_frame_idx = 0
         self.progress_slider.setRange(0, self.total_frames - 1) # Initialize slider range
         self.display_current_frame()
+        self.reset_zoom()
         self.navigation_box_title_controller()
         print(f"Video loaded: {self.video_file}")
 
@@ -338,6 +348,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 QMessageBox.warning(self, "Error: Frame Mismatch", "Total frames in video and in prediction do not match!")
                 print(f"Frames in config: {self.total_frames} \n Frames in prediction: {pred_frame_count}")
             self.display_current_frame()
+            self.reset_zoom()
 
     ###################################################################################################################################################
 
@@ -364,6 +375,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 self.graphics_scene.setSceneRect(0, 0, w, h)
                 self.graphics_view.fitInView(self.graphics_scene.sceneRect(), Qt.KeepAspectRatio)
                 
+                new_transform = QtGui.QTransform()
+                new_transform.scale(self.zoom_factor, self.zoom_factor)
+                self.graphics_view.setTransform(new_transform)
+
                 # Plot predictions (keypoints, bounding boxes, skeleton)
                 if self.pred_data is not None:
                     self.plot_predictions(frame.copy())
@@ -376,11 +391,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 error_text_item = self.graphics_scene.addText("Error: Could not read frame")
                 error_text_item.setDefaultTextColor(QColor(255, 255, 255)) # White text
                 self.graphics_view.fitInView(error_text_item.boundingRect(), Qt.KeepAspectRatio)
-        else: # If no video loaded, clear scene and display message
-            self.graphics_scene.clear()
-            no_video_text_item = self.graphics_scene.addText("No video loaded")
-            no_video_text_item.setDefaultTextColor(QColor(255, 255, 255)) # White text
-            self.graphics_view.fitInView(no_video_text_item.boundingRect(), Qt.KeepAspectRatio)
 
     def plot_predictions(self, frame):
         self.current_selectable_boxes = [] # Store selectable boxes for the current frame
@@ -406,10 +416,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
                 self.graphics_scene.addItem(keypoint_item)
                 keypoint_item.setZValue(1) # Ensure keypoints are on top of the video frame
-                # Connect the keypoint_moved signal to the update method in DLC_Track_Refiner
                 keypoint_item.keypoint_moved.connect(self.update_keypoint_position)
-                # Connect the keypoint_drag_started signal to update dragged_keypoint in DLC_Track_Refiner
                 keypoint_item.keypoint_drag_started.connect(self.set_dragged_keypoint)
+
+            self.plot_keypoint_label(keypoint_coords, frame, color)
 
             if self.individuals is not None and len(keypoint_coords) >= 2:
                 self.plot_bounding_box(keypoint_coords, frame, color, inst)
@@ -457,28 +467,14 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         text_item_inst.setPos(min_x, min_y - 20) # Adjust position to be above the bounding box
         text_item_inst.setDefaultTextColor(QtGui.QColor(*color))
         text_item_inst.setOpacity(self.text_label_opacity)
+        text_item_inst.setFlag(QtWidgets.QGraphicsTextItem.ItemIgnoresTransformations) # Keep text size constant
         self.graphics_scene.addItem(text_item_inst)
 
+    def plot_keypoint_label(self, keypoint_coords, frame, color):
         # Plot keypoint labels
         for kp_idx, (x, y, conf) in keypoint_coords.items():
             keypoint_label = self.keypoints[kp_idx]
-            
-            # Calculate vector from mouse center to keypoint
-            vec_x = x - mouse_center[0]
-            vec_y = y - mouse_center[1]
-            
-            # Normalize vector
-            norm = (vec_x**2 + vec_y**2)**0.5
-            if norm == 0: # Avoid division by zero if keypoint is at the center
-                norm = 1
-            unit_vec_x = vec_x / norm
-            unit_vec_y = vec_y / norm
 
-            # Position text label away from keypoint and center
-            offset_distance = 25 # Distance from keypoint to text label
-            text_x = x + unit_vec_x * offset_distance
-            text_y = y + unit_vec_y * offset_distance 
-            
             text_item = QtWidgets.QGraphicsTextItem(f"{keypoint_label}")
 
             font = text_item.font() # Get the default font of the QGraphicsTextItem
@@ -488,12 +484,13 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             text_width = text_rect.width()
             text_height = text_rect.height()
 
-            text_x -= text_width / 2
-            text_y -= text_height / 2
+            text_x = x - text_width / 2 + 5
+            text_y = y - text_height / 2 + 5
 
             text_item.setPos(text_x, text_y)
             text_item.setDefaultTextColor(QtGui.QColor(*color))
             text_item.setOpacity(self.text_label_opacity)
+            text_item.setFlag(QtWidgets.QGraphicsTextItem.ItemIgnoresTransformations) # Keep text size constant
             self.graphics_scene.addItem(text_item)
 
         return frame
@@ -518,12 +515,14 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             if 0 <= new_frame_idx < self.total_frames:
                 self.current_frame_idx = new_frame_idx
                 self.display_current_frame()
+                self.reset_zoom()
                 self.navigation_box_title_controller()
 
     def set_frame_from_slider(self, value):
         if self.cap and self.cap.isOpened():
             self.current_frame_idx = value
             self.display_current_frame()
+            self.reset_zoom()
             self.navigation_box_title_controller()
 
     def autoplay_video(self):
@@ -531,6 +530,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             if self.current_frame_idx < self.total_frames - 1:
                 self.current_frame_idx += 1
                 self.display_current_frame()
+                self.reset_zoom()
                 self.navigation_box_title_controller()
             else:
                 self.playback_timer.stop()
@@ -578,6 +578,19 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.text_label_opacity = value / 100.0
         self.display_current_frame()
 
+    def toggle_zoom_mode(self):
+        self.is_zoom_mode = not self.is_zoom_mode
+        if self.is_zoom_mode:
+            self.graphics_view.setDragMode(QGraphicsView.ScrollHandDrag)
+            self.graphics_view.wheelEvent = self.graphics_view_mouse_wheel_event
+        else:
+            self.graphics_view.setDragMode(QGraphicsView.NoDrag)
+            self.graphics_view.wheelEvent = super(QGraphicsView, self.graphics_view).wheelEvent
+
+    def reset_zoom(self):
+        self.zoom_factor = 1.0
+        self.graphics_view.fitInView(self.graphics_scene.sceneRect(), Qt.KeepAspectRatio)
+
     ###################################################################################################################################################
 
     def check_instance_count_per_frame(self):
@@ -586,11 +599,11 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         # Convert the boolean mask to numerical (0 for empty, 1 for non-empty) and sum per frame
         non_empty_instance_numerical = (~empty_instance) * 1
         self.instance_count_per_frame = non_empty_instance_numerical.sum(axis=1)
-        if self.marked_roi_frame_list is None:
+        if self.marked_roi_frame_list:
+            self.roi_frame_list = list(self.marked_roi_frame_list)
+        else:
             roi_frames = np.where(np.diff(self.instance_count_per_frame)!=0)[0]+1
             self.roi_frame_list = list(roi_frames)
-        else:
-            self.roi_frame_list = list(self.marked_roi_frame_list)
         self.progress_slider.set_roi_frames(self.roi_frame_list) # Update ROI frames
 
         if self.is_debug:
@@ -624,7 +637,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         if not self.roi_frame_list:
             QMessageBox.information(self, "No Instance Change", "No ROI frames to navigate.")
             return
-        
         self.roi_frame_list.sort()
         try:
             current_idx_in_roi = self.roi_frame_list.index(self.current_frame_idx) - 1
@@ -637,6 +649,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             else:
                 self.current_frame_idx = self.roi_frame_list[current_idx_in_roi]
             self.display_current_frame()
+            self.reset_zoom()
             self.navigation_box_title_controller()
         else:
             QMessageBox.information(self, "Navigation", "No previous ROI frame found.")
@@ -645,7 +658,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         if not self.roi_frame_list:
             QMessageBox.information(self, "No Instance Change", "No frames with ROI frames to navigate.")
             return
-        
         self.roi_frame_list.sort()
         try:
             current_idx_in_roi = self.roi_frame_list.index(self.current_frame_idx) + 1
@@ -658,6 +670,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             else:
                 self.current_frame_idx = self.roi_frame_list[current_idx_in_roi]
             self.display_current_frame()
+            self.reset_zoom()
             self.navigation_box_title_controller()
         else:
             QMessageBox.information(self, "Navigation", "No next ROI frame found.")
@@ -687,6 +700,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 self.pred_data_array[f_idx, i_idx, :] = np.nan
                 self.is_saved = False # Mark as unsaved
                 self.display_current_frame()
+                self.reset_zoom()
                 self.check_instance_count_per_frame()
             else:
                 QMessageBox.information(self, "Deletion Cancelled", "Deletion cancelled by user.")
@@ -729,6 +743,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.selected_box = None
         self.check_instance_count_per_frame()
         self.display_current_frame()
+        self.reset_zoom()
         QMessageBox.information(self, "Interpolation Complete", f"All frames interpolated for instance {self.individuals[instance_to_interpolate]}.")
     
     def designate_no_mice_zone(self):
@@ -808,6 +823,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.is_saved = False
         self.check_instance_count_per_frame()
         self.display_current_frame()
+        self.reset_zoom()
 
     def direct_keypoint_edit(self):
         if self.pred_data_array is None:
@@ -1082,6 +1098,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             print("No instance selected.")
 
     def graphics_view_mouse_press_event(self, event):
+        if self.is_zoom_mode:
+            QtWidgets.QGraphicsView.mousePressEvent(self.graphics_view, event)
+            return
         if self.is_drawing_zone:
             self.start_point = self.graphics_view.mapToScene(event.position().toPoint())
             if self.current_rect_item:
@@ -1106,6 +1125,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             QtWidgets.QGraphicsView.mousePressEvent(self.graphics_view, event)
 
     def graphics_view_mouse_move_event(self, event):
+        if self.is_zoom_mode:
+            QtWidgets.QGraphicsView.mouseMoveEvent(self.graphics_view, event)
+            return
         if self.is_drawing_zone and self.start_point:
             current_point = self.graphics_view.mapToScene(event.position().toPoint())
             rect = QtCore.QRectF(self.start_point, current_point).normalized()
@@ -1125,20 +1147,16 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             # Convert scene coordinates to image coordinates
             x1, y1, x2, y2 = int(rect.left()), int(rect.top()), int(rect.right()), int(rect.bottom())
 
-            self._save_state_for_undo() # Save state before modification
-            
+            self._save_state_for_undo()
             self._clean_inconsistent_nans() # Cleanup ghost points (NaN for x,y yet non-nan in confidence)
 
-            # Set keypoints within the zone to NaN
             all_x_kps = self.pred_data_array[:,:,0::3]
             all_y_kps = self.pred_data_array[:,:,1::3]
 
-            # Create boolean masks for bounding box conditions
             x_in_range = (all_x_kps >= x1) & (all_x_kps <= x2)
             y_in_range = (all_y_kps >= y1) & (all_y_kps <= y2)
             points_in_bbox_mask = x_in_range & y_in_range
 
-            # Apply the mask to set keypoint data to NaN
             self.pred_data_array[np.repeat(points_in_bbox_mask, 3, axis=-1)] = np.nan
             
             self.is_saved = False
@@ -1146,7 +1164,36 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             self.display_current_frame()
             QMessageBox.information(self, "No Mice Zone Applied", "Keypoints within the selected zone have been set to NaN.")
         
+    def graphics_view_mouse_release_event(self, event):
+        if self.is_zoom_mode: # Allow panning, but prevent other interactions
+            QtWidgets.QGraphicsView.mouseReleaseEvent(self.graphics_view, event)
+            return
         QtWidgets.QGraphicsView.mouseReleaseEvent(self.graphics_view, event)
+
+    def graphics_view_mouse_wheel_event(self, event):
+        if self.is_zoom_mode:
+            zoom_in_factor = 1.15
+            zoom_out_factor = 1 / zoom_in_factor
+
+            mouse_pos_view = event.position()
+            mouse_pos_scene = self.graphics_view.mapToScene(QtCore.QPoint(int(mouse_pos_view.x()), int(mouse_pos_view.y())))
+
+            transform = self.graphics_view.transform()
+
+            if event.angleDelta().y() > 0: # Zoom in
+                self.zoom_factor *= zoom_in_factor
+            else: # Zoom out
+                self.zoom_factor *= zoom_out_factor
+            
+            self.zoom_factor = max(0.1, min(self.zoom_factor, 10.0)) # Limit zoom to prevent extreme values
+
+            new_transform = QtGui.QTransform()
+            new_transform.scale(self.zoom_factor, self.zoom_factor)
+            self.graphics_view.setTransform(new_transform)
+
+            self.graphics_view.centerOn(mouse_pos_scene)
+        else:
+            super(QGraphicsView, self.graphics_view).wheelEvent(event)
 
     ###################################################################################################################################################
 
@@ -1241,6 +1288,11 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
     def save_prediction_as_csv(self):
         QMessageBox.information(self, "Not Implemented", "Sorry! This method is yet to be implemented, DM me if you need it real bad. :D")
+
+    def changeEvent(self, event):
+        if event.type() == QEvent.Type.WindowStateChange:
+            self.reset_zoom()
+        super().changeEvent(event)
 
     def closeEvent(self, event: QCloseEvent):
         if not self.is_debug and self.prediction is not None and not self.is_saved:
