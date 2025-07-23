@@ -20,8 +20,7 @@ VIDEO_FILE_DEBUG = "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-conv.mp4"
 PRED_FILE_DEBUG = "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-convDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_090_snapshot_080_el_tr.h5"
 
 # Todo:
-# 1. Add delete keypionts in keypoint edit mode
-# 2. Add instance generation in keypoint edit mode
+# 1. Add instance generation in keypoint edit mode
 
 class DLC_Track_Refiner(QtWidgets.QMainWindow):
     prediction_saved = Signal(str) # Signal to emit the path of the saved prediction file
@@ -35,7 +34,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.setCentralWidget(self.central_widget)
         self.layout = QtWidgets.QVBoxLayout(self.central_widget)
 
-        self.is_debug = False
+        self.is_debug = True
         if self.is_debug:
             self.setWindowTitle("DLC Track Refiner ----- DEBUG MODE")
 
@@ -111,6 +110,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         self.progress_layout.addWidget(self.play_button)
         self.progress_layout.addWidget(self.progress_slider)
+        self.progress_layout.addWidget(self.visibility_button)
         self.progress_layout.addWidget(self.undo_button)
         self.progress_layout.addWidget(self.redo_button)
         self.playback_timer = QTimer()
@@ -174,7 +174,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.play_button.clicked.connect(self.toggle_playback)
         self.undo_button.clicked.connect(self.undo_changes)
         self.redo_button.clicked.connect(self.redo_changes)
-        self.visibility_button.clicked.connect(self.toggle_text_visibility)
+        self.visibility_button.clicked.connect(self.adjust_text_opacity)
 
         self.prev_10_frames_button.clicked.connect(lambda: self.change_frame(-10))
         self.prev_frame_button.clicked.connect(lambda: self.change_frame(-1))
@@ -203,10 +203,11 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_T), self).activated.connect(self.interpolate_track)
         QShortcut(QKeySequence(Qt.Key_F), self).activated.connect(self.fill_track)
         QShortcut(QKeySequence(Qt.Key_Q), self).activated.connect(self.direct_keypoint_edit)
+        QShortcut(QKeySequence(Qt.Key_Backspace), self).activated.connect(self.delete_dragged_keypoint)
 
         QShortcut(QKeySequence(Qt.Key_Z | Qt.ControlModifier), self).activated.connect(self.undo_changes)
         QShortcut(QKeySequence(Qt.Key_Y | Qt.ControlModifier), self).activated.connect(self.redo_changes)
-        QShortcut(QKeySequence(Qt.Key_V), self).activated.connect(self.toggle_text_visibility)
+        QShortcut(QKeySequence(Qt.Key_V), self).activated.connect(self.adjust_text_opacity)
         QShortcut(QKeySequence(Qt.Key_S | Qt.ControlModifier), self).activated.connect(self.save_prediction)
         
         self.graphics_view.mousePressEvent = self.graphics_view_mouse_press_event
@@ -235,7 +236,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.progress_slider.setRange(0, 0)
         self.navigation_group_box.hide()
         self.refiner_group_box.hide()
-        self.show_keypoint_labels = True
+        self.text_label_opacity = 1.0 # Default to fully opaque
 
         self.selected_box = None # To keep track of the currently selected box
 
@@ -404,12 +405,14 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
                 if isinstance(keypoint_item, Draggable_Keypoint):
                     keypoint_item.setFlag(QGraphicsEllipseItem.ItemIsMovable, self.is_kp_edit)
-                    keypoint_item.text_item.setVisible(self.show_keypoint_labels) # Set initial visibility
+                    keypoint_item.text_item.setOpacity(self.text_label_opacity) # Set opacity
 
                 self.graphics_scene.addItem(keypoint_item)
                 keypoint_item.setZValue(1) # Ensure keypoints are on top of the video frame
                 # Connect the keypoint_moved signal to the update method in DLC_Track_Refiner
                 keypoint_item.keypoint_moved.connect(self.update_keypoint_position)
+                # Connect the keypoint_drag_started signal to update dragged_keypoint in DLC_Track_Refiner
+                keypoint_item.keypoint_drag_started.connect(self.set_dragged_keypoint)
 
             if self.individuals is not None and len(keypoint_coords) >= 2:
                 self.plot_bounding_box(keypoint_coords, frame, color, inst)
@@ -516,13 +519,23 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         else:
             self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: black;}""")
 
+    def adjust_text_opacity(self):
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Keypoint Label Visibility")
+        dialog.setModal(True)
+        layout = QtWidgets.QVBoxLayout(dialog)
+        slider = QtWidgets.QSlider(Qt.Horizontal)
+        slider.setRange(0, 100) # Scale 0.00 to 1.00 to 0 to 100
+        slider.setValue(int(self.text_label_opacity * 100))
+        slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
+        slider.setTickInterval(10)
+        layout.addWidget(slider)
+        slider.valueChanged.connect(self._update_text_opacity) # Connect slider to update opacity and redraw
+        dialog.exec()
 
-    def toggle_text_visibility(self):
-        self.show_keypoint_labels = not self.show_keypoint_labels
-        for item in self.graphics_scene.items():
-            if isinstance(item, Draggable_Keypoint):
-                item.text_item.setVisible(self.show_keypoint_labels)
-        self.graphics_view.update()
+    def _update_text_opacity(self, value):
+        self.text_label_opacity = value / 100.0
+        self.display_current_frame()
 
     ###################################################################################################################################################
 
@@ -768,7 +781,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 item.setFlag(QGraphicsRectItem.ItemIsMovable, self.is_kp_edit)
         
         if self.is_kp_edit:
-            QMessageBox.information(self, "Keypoint Editing Mode", "Keypoint editing mode is ON. You can now drag keypoints and bounding boxes to adjust positions.")
+            QMessageBox.information(self, "Keypoint Editing Mode", 
+                    "Keypoint editing mode is ON.\n" 
+                    "You can now drag keypoints and bounding boxes to adjust positions.\n"
+                    "If you want to delete a keypoint, simply press Backspace when holding it.")
         else:
             QMessageBox.information(self, "Keypoint Editing Mode", "Keypoint editing mode is OFF.")
 
@@ -781,7 +797,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         # Ensure confidence is not NaN if x,y are valid
         if pd.isna(current_conf) and not (pd.isna(new_x) or pd.isna(new_y)):
             self.pred_data_array[self.current_frame_idx, instance_id, keypoint_id*3+2] = 1.0 # Default confidence
-        print(f"Keypoint {keypoint_id} of instance {instance_id} moved by ({new_x}, {new_y})")
+        print(f"{self.keypoints[keypoint_id]} of instance {instance_id} moved by ({new_x}, {new_y})")
         self.is_saved = False
         QtCore.QTimer.singleShot(0, self.display_current_frame)
 
@@ -789,6 +805,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self._save_state_for_undo()
         # Update all keypoints for the given instance in the current frame
         for kp_idx in range(self.num_keypoints):
+
             x_coord_idx = kp_idx * 3
             y_coord_idx = kp_idx * 3 + 1
             
@@ -801,6 +818,20 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         print(f"Instance {instance_id} moved by ({dx}, {dy})")
         self.is_saved = False
         QtCore.QTimer.singleShot(0, self.display_current_frame)
+
+    def delete_dragged_keypoint(self):
+        if self.is_kp_edit and self.dragged_keypoint:
+            self._save_state_for_undo()
+            instance_id = self.dragged_keypoint.instance_id
+            keypoint_id = self.dragged_keypoint.keypoint_id
+            # Set the keypoint coordinates and confidence to NaN
+            self.pred_data_array[self.current_frame_idx, instance_id, keypoint_id*3:keypoint_id*3+3] = np.nan
+            print(f"{self.keypoints[keypoint_id]} of instance {instance_id} deleted.")
+            self.dragged_keypoint = None # Clear the dragged keypoint
+            self.display_current_frame()
+
+    def set_dragged_keypoint(self, keypoint_item):
+        self.dragged_keypoint = keypoint_item
 
     ###################################################################################################################################################
 
@@ -1272,6 +1303,7 @@ class Slider_With_Marks(QtWidgets.QSlider):
 class Draggable_Keypoint(QtCore.QObject, QGraphicsEllipseItem):
     # Signal to emit when the keypoint is moved
     keypoint_moved = Signal(int, int, float, float) # instance_id, keypoint_id, new_x, new_y
+    keypoint_drag_started = Signal(object) # Emits the Draggable_Keypoint object itself
 
     def __init__(self, x, y, width, height, instance_id, keypoint_id, keypoint_label, default_color_rgb, parent=None):
         QtCore.QObject.__init__(self, None)
@@ -1292,6 +1324,8 @@ class Draggable_Keypoint(QtCore.QObject, QGraphicsEllipseItem):
         self.text_item.setDefaultTextColor(QtGui.QColor(*default_color_rgb))
         self.text_item.setPos(x + width, y - height / 2) # Position text next to the keypoint
         self.text_item.setZValue(2) # Ensure text is on top of keypoint and video
+        self.text_item.setAcceptedMouseButtons(Qt.NoButton) # Ignore mouse clicks
+        self.text_item.setAcceptHoverEvents(False) # Ignore hover events
 
     def hoverEnterEvent(self, event):
         self.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 0))) # Yellow on hover
@@ -1303,6 +1337,7 @@ class Draggable_Keypoint(QtCore.QObject, QGraphicsEllipseItem):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton and self.flags() & QGraphicsEllipseItem.ItemIsMovable:
+            self.keypoint_drag_started.emit(self)
             self.original_pos = self.pos() # Store position at the start of the drag
         super().mousePressEvent(event)
 
