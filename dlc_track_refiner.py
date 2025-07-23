@@ -20,9 +20,8 @@ VIDEO_FILE_DEBUG = "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-conv.mp4"
 PRED_FILE_DEBUG = "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-convDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_090_snapshot_080_el_tr.h5"
 
 # Todo:
-# 1. Toggleable keypoints label
-# 2. Add delete keypints in keypoint edit mode
-# 3. Add instance generation in keypoint edit mode
+# 1. Add delete keypionts in keypoint edit mode
+# 2. Add instance generation in keypoint edit mode
 
 class DLC_Track_Refiner(QtWidgets.QMainWindow):
     prediction_saved = Signal(str) # Signal to emit the path of the saved prediction file
@@ -36,7 +35,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.setCentralWidget(self.central_widget)
         self.layout = QtWidgets.QVBoxLayout(self.central_widget)
 
-        self.is_debug = True
+        self.is_debug = False
         if self.is_debug:
             self.setWindowTitle("DLC Track Refiner ----- DEBUG MODE")
 
@@ -98,6 +97,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.progress_layout = QtWidgets.QHBoxLayout()
         self.play_button = QPushButton("▶")
         self.play_button.setFixedWidth(20)
+        self.visibility_button = QPushButton("👁")
+        self.visibility_button.setToolTip("Set keypoint label text visibility (V)")
+        self.visibility_button.setFixedWidth(20)
         self.undo_button = QPushButton("⮌")
         self.undo_button.setToolTip("Undo (Ctrl + Z)")
         self.undo_button.setFixedWidth(20)
@@ -172,6 +174,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.play_button.clicked.connect(self.toggle_playback)
         self.undo_button.clicked.connect(self.undo_changes)
         self.redo_button.clicked.connect(self.redo_changes)
+        self.visibility_button.clicked.connect(self.toggle_text_visibility)
 
         self.prev_10_frames_button.clicked.connect(lambda: self.change_frame(-10))
         self.prev_frame_button.clicked.connect(lambda: self.change_frame(-1))
@@ -203,6 +206,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         QShortcut(QKeySequence(Qt.Key_Z | Qt.ControlModifier), self).activated.connect(self.undo_changes)
         QShortcut(QKeySequence(Qt.Key_Y | Qt.ControlModifier), self).activated.connect(self.redo_changes)
+        QShortcut(QKeySequence(Qt.Key_V), self).activated.connect(self.toggle_text_visibility)
         QShortcut(QKeySequence(Qt.Key_S | Qt.ControlModifier), self).activated.connect(self.save_prediction)
         
         self.graphics_view.mousePressEvent = self.graphics_view_mouse_press_event
@@ -211,6 +215,43 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.graphics_scene.parent = lambda: self # Allow items to access the main window
 
         self.reset_state()
+
+    def reset_state(self):
+        self.original_vid, self.prediction, self.dlc_config, self.video_name = None, None, None, None
+        self.keypoints, self.skeleton, self.individuals, self.num_keypoints = None, None, None, None
+        self.keypoint_to_idx = None
+
+        self.instance_count = 1
+        self.instance_count_per_frame = None
+        self.multi_animal = False
+        self.pred_data, self.pred_data_array = None, None
+
+        self.roi_frame_list = []
+
+        self.cap, self.current_frame = None, None
+
+        self.is_playing = False
+
+        self.progress_slider.setRange(0, 0)
+        self.navigation_group_box.hide()
+        self.refiner_group_box.hide()
+        self.show_keypoint_labels = True
+
+        self.selected_box = None # To keep track of the currently selected box
+
+        self.is_drawing_zone = False
+        self.start_point = None
+        self.current_rect_item = None
+
+        self.is_kp_edit = False
+        self.dragged_keypoint = None
+        self.dragged_bounding_box = None
+        
+        self.undo_stack = []
+        self.redo_stack = []
+        self.max_undo_stack_size = 50
+        self.is_initialize = True
+        self.is_saved = True
 
     def load_video(self):
         if self.is_debug:
@@ -358,10 +399,12 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 x, y, conf = kp[0], kp[1], kp[2]
                 keypoint_coords[kp_idx] = (int(x),int(y),float(conf))
                 # Draw the dot representing the keypoints
-                keypoint_item = Draggable_Keypoint(x - 3, y - 3, 6, 6, inst, kp_idx, default_color_rgb=color)
+                keypoint_label = self.keypoints[kp_idx] # Get keypoint label
+                keypoint_item = Draggable_Keypoint(x - 3, y - 3, 6, 6, inst, kp_idx, keypoint_label, default_color_rgb=color)
 
                 if isinstance(keypoint_item, Draggable_Keypoint):
                     keypoint_item.setFlag(QGraphicsEllipseItem.ItemIsMovable, self.is_kp_edit)
+                    keypoint_item.text_item.setVisible(self.show_keypoint_labels) # Set initial visibility
 
                 self.graphics_scene.addItem(keypoint_item)
                 keypoint_item.setZValue(1) # Ensure keypoints are on top of the video frame
@@ -473,6 +516,14 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         else:
             self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: black;}""")
 
+
+    def toggle_text_visibility(self):
+        self.show_keypoint_labels = not self.show_keypoint_labels
+        for item in self.graphics_scene.items():
+            if isinstance(item, Draggable_Keypoint):
+                item.text_item.setVisible(self.show_keypoint_labels)
+        self.graphics_view.update()
+
     ###################################################################################################################################################
 
     def check_instance_count_per_frame(self):
@@ -503,11 +554,11 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                     for k_idx in range(self.num_keypoints): # Iterate through individual keypoints
                         # If NOT all 3 values (x, y, conf) for this keypoint are NaN, then it's contributing
                         if not np.all(instance_nan_status[k_idx, :]):
-                            # Try to get keypoint name, fall back to index if not available
-                            keypoint_name = (self.keypoints[k_idx] # Changed from self.keypoint_names
+                            # Try to get keypoint label, fall back to index if not available
+                            keypoint_label = (self.keypoints[k_idx] # Changed from self.keypoint_labels
                                             if hasattr(self, 'keypoints') and k_idx < len(self.keypoints) 
                                             else f"Keypoint_{k_idx}")
-                            non_nan_keypoints_found.append(keypoint_name)
+                            non_nan_keypoints_found.append(keypoint_label)
                     
                     print(f"  Instance {i_idx} is counted because it has non-NaN keypoints: {', '.join(non_nan_keypoints_found)}")
             print("-----------------------------------\n")
@@ -1113,45 +1164,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             QMessageBox.critical(self, "Saving Error", f"An error occurred during HDF5 saving: {e}")
             print(f"An error occurred during HDF5 saving: {e}")
 
-
     def save_prediction_as_csv(self):
         QMessageBox.information(self, "Not Implemented", "Sorry! This method is yet to be implemented, DM me if you need it real bad. :D")
-
-    def reset_state(self):
-        self.original_vid, self.prediction, self.dlc_config, self.video_name = None, None, None, None
-        self.keypoints, self.skeleton, self.individuals, self.num_keypoints = None, None, None, None
-        self.keypoint_to_idx = None
-
-        self.instance_count = 1
-        self.instance_count_per_frame = None
-        self.multi_animal = False
-        self.pred_data, self.pred_data_array = None, None
-
-        self.roi_frame_list = []
-
-        self.cap, self.current_frame = None, None
-
-        self.is_playing = False
-
-        self.progress_slider.setRange(0, 0)
-        self.navigation_group_box.hide()
-        self.refiner_group_box.hide()
-
-        self.selected_box = None # To keep track of the currently selected box
-
-        self.is_drawing_zone = False
-        self.start_point = None
-        self.current_rect_item = None
-
-        self.is_kp_edit = False # Default state: keypoint editing is off
-        self.dragged_keypoint = None
-        self.dragged_bounding_box = None
-        
-        self.undo_stack = []
-        self.redo_stack = []
-        self.max_undo_stack_size = 50
-        self.is_initialize = True
-        self.is_saved = True
 
     def closeEvent(self, event: QCloseEvent):
         if not self.is_debug and self.prediction is not None and not self.is_saved:
@@ -1259,11 +1273,12 @@ class Draggable_Keypoint(QtCore.QObject, QGraphicsEllipseItem):
     # Signal to emit when the keypoint is moved
     keypoint_moved = Signal(int, int, float, float) # instance_id, keypoint_id, new_x, new_y
 
-    def __init__(self, x, y, width, height, instance_id, keypoint_id, default_color_rgb, parent=None):
+    def __init__(self, x, y, width, height, instance_id, keypoint_id, keypoint_label, default_color_rgb, parent=None):
         QtCore.QObject.__init__(self, None)
         QGraphicsEllipseItem.__init__(self, x, y, width, height, parent)
         self.instance_id = instance_id
         self.keypoint_id = keypoint_id
+        self.keypoint_label = keypoint_label
         self.default_color_rgb = default_color_rgb
         self.setBrush(QtGui.QBrush(QtGui.QColor(*default_color_rgb)))
         self.setPen(QtGui.QPen(QtGui.QColor(*default_color_rgb), 1))
@@ -1271,6 +1286,12 @@ class Draggable_Keypoint(QtCore.QObject, QGraphicsEllipseItem):
         self.setFlag(QGraphicsEllipseItem.ItemSendsGeometryChanges, True)
         self.setAcceptHoverEvents(True)
         self.original_pos = self.pos() # Store initial position on press
+
+        # Create and attach text item for keypoint label
+        self.text_item = QtWidgets.QGraphicsTextItem(self.keypoint_label, self)
+        self.text_item.setDefaultTextColor(QtGui.QColor(*default_color_rgb))
+        self.text_item.setPos(x + width, y - height / 2) # Position text next to the keypoint
+        self.text_item.setZValue(2) # Ensure text is on top of keypoint and video
 
     def hoverEnterEvent(self, event):
         self.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 0))) # Yellow on hover
@@ -1289,8 +1310,7 @@ class Draggable_Keypoint(QtCore.QObject, QGraphicsEllipseItem):
         if event.button() == Qt.LeftButton and self.flags() & QGraphicsEllipseItem.ItemIsMovable:
             new_pos = self.pos()
             if new_pos != self.original_pos:
-                # Calculate the center of the ellipse for accurate keypoint position
-                # The ellipse is drawn from top-left, so (x + width/2, y + height/2) is the center
+
                 center_x = new_pos.x() + self.rect().width() / 2
                 center_y = new_pos.y() + self.rect().height() / 2
                 self.keypoint_moved.emit(self.instance_id, self.keypoint_id, center_x, center_y)
@@ -1298,6 +1318,8 @@ class Draggable_Keypoint(QtCore.QObject, QGraphicsEllipseItem):
 
     def itemChange(self, change, value):
         if change == QGraphicsEllipseItem.ItemPositionChange and self.scene():
+            # Update text item position along with the keypoint
+            self.text_item.setPos(value.x() + self.rect().width(), value.y() - self.rect().height() / 2)
             # The actual data array update will happen on mouse release
             return value
         return super().itemChange(change, value)
