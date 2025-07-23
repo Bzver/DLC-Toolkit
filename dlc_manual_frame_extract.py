@@ -10,7 +10,7 @@ import bisect
 import cv2
 
 from PySide6 import QtWidgets, QtGui, QtCore
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QEvent
 from PySide6.QtGui import QShortcut, QKeySequence, QCloseEvent
 from PySide6.QtWidgets import QMessageBox, QPushButton, QMenu, QToolButton
 
@@ -657,6 +657,11 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
                 f"An error occurred while saving to DLC:\n{str(e)}"
             )
             return False
+
+    def changeEvent(self, event):
+        if event.type() == QEvent.Type.WindowStateChange:
+            self.display_current_frame()
+        super().changeEvent(event)
 
     def closeEvent(self, event: QCloseEvent):
         if not self.is_saved:
