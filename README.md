@@ -7,17 +7,20 @@ DeepLabCut, alongside its napari integration, offers powerful pose estimation. H
 ## Important Note on Development ⚠️
 This project is currently in active development, which means you might encounter changes or unexpected bugs. I strongly recommend backing up your original DeepLabCut project files and data before using these tools. If you unfortunately encounter one of these bugs, please open an issue here so that your insights can help refine this toolkit for everyone!
 
+
 **Table of Contents**
 
-- [dlc_3D_skeleton_plotter.py](#dlc_3d_skeleton_plotterpy)
-- [dlc_dataset_augumenter.py](#dlc_dataset_augumenterpy)
-
-- [dlc_manual_frame_extract.py](#dlc_manual_frame_extractpy)
-- [dlc_obsolete_train_img_trimmer.py](#dlc_obsolete_train_img_trimmerpy)
 - [dlc_track_refiner.py](#dlc_track_refinerpy)
+- [dlc_3D_skeleton_plotter.py](#dlc_3d_skeleton_plotterpy)
+- [dlc_manual_frame_extract.py](#dlc_manual_frame_extractpy)
+
+- [dlc_dataset_augumenter.py](#dlc_dataset_augumenterpy)
+- [dlc_obsolete_train_img_trimmer.py](#dlc_obsolete_train_img_trimmerpy)
+
 - [sleap_keypoint_fill.py](#sleap_keypoint_fillpy)
 - [sleap_viewer.ipynb](#sleap_vieweripynb)
 - [dlc_h5_to_csv.py](#dlc_h5_to_csvpy)
+
 - [dlc_track_to_annot_prep.py](#dlc_track_to_annot_preppy)
 
 
@@ -62,7 +65,7 @@ your_dlc_project/
         ├── img0000.png
         ├── img0001.png
         └── ...
-        └── CollectedData_YourName.h5 (or .csv)
+        └── CollectedData_scorer.h5 (or .csv)
 
 your_reference_folder/
 └── frame_0000.png
@@ -80,35 +83,45 @@ your_reference_folder/
 ### dlc_manual_frame_extract.py
 
 #### Functionality
-A GUI application for manually extracting and marking frames from a video, primarily for DLC labeling purposes. It allows users to:
-- **Load videos and DLC predictions:** Visualize predictions overlaid on video frames.
-- **Mark/unmark frames:** Easily select frames for further labeling or analysis.
-- **Navigate frames:** Step through frames, jump to marked frames, and autoplays through the frames.
-- **Adjust confidence cutoff:** Filter out low-confidence keypoints from prediction view.
-- **Save marked frames:** Export a list of marked frames to a YAML file.
-- **Save to DLC format:** Extract marked frames as images and convert prediction data to a DLC-compatible HDF5 format for labeling.
+A GUI application for manually extracting and marking frames from a video, primarily for DLC labeling purposes. Key features include:
+
+- **Video Loading & Display:** Supports common video formats (`.mp4`, `.avi`, `.mov`, `.mkv`). Displays video frames with real-time updates and a progress slider.
+- **DeepLabCut Integration:**
+    - **Load DLC Predictions (`.h5`):** Overlays pose estimations (keypoints, bounding boxes, skeletons) directly onto video frames.
+    - **Load DLC Config (`config.yaml`):** Utilizes the project configuration to correctly display body parts, skeleton connections, and individual animal identities (for multi-animal projects).
+- **Interactive Frame Navigation:**
+    - **Precise Control:** Navigate frame-by-frame or jump by 10 frames using dedicated buttons or keyboard shortcuts (←, →, Shift+←, Shift+→).
+    - **Marking System:** Mark/unmark frames for later review or export. Marked frames are visually indicated on the progress slider.
+    - **Jump to Marked Frames:** Quickly navigate to previous or next marked frames (↑, ↓ shortcuts).
+    - **Autoplay:** Play/pause video playback for continuous review (Spacebar shortcut).
+- **Prediction Visualization Control:**
+    - **Adjust Confidence Cutoff:** Filter out low-confidence keypoints from prediction view.
+- **Workspace Management & Export:**
+    - **Save Workspace:** Save the current session's state (loaded video, prediction, config, marked frames) to a `.yaml` file for later resumption.
+    - **Export to DLC:** Extracts all marked frames as `.png` images and generates a DLC-compatible `CollectedData_*.h5` file containing prediction data for these frames, ready for manual labeling in DeepLabCut.
+    - **Export to Refiner:** Seamlessly integrates with `dlc_track_refiner.py` by exporting the current video and prediction for further track refinement and keypoint correction.
 
 #### Required Folder Structure
-For saving marked frames and predictions in a DLC-compatible format, the script interacts with the standard DLC project structure.
+If the chosen video has previous label data in DLC, the script can work with the standard DLC project structure and read & mark the existing ( already labeled ) frames' idx in the progress bar in a different color.
 
 ```
 your_dlc_project/
 └── labeled-data/
     └── your_video_name/
-        ├── img0000.png (extracted frames)
-        └── CollectedData_YourName.h5 (generated prediction data for labeling)
+        ├── img0000.png (existing frames)
+        └── CollectedData_scorer.h5 (generated prediction data for labeling)
 ```
 
 **Inputs:**
-- **Video File:** The video file from which frames will be extracted.
-- **Prediction File (`.h5`):** (Optional) A DeepLabCut prediction `.h5` file to overlay pose estimations on the video.
-- **DLC Config File (`config.yaml`):** (Optional) A DeepLabCut project configuration file to display keypoint labels and skeletons.
-- **Marked Frames File (`.yaml`):** (Optional) A YAML file containing a previously saved list of marked frames.
+- **Video File:** The primary video file (`.mp4`, `.avi`, `.mov`, `.mkv`) from which frames will be extracted and reviewed.
+- **Prediction File (`.h5`):** (Optional) A DeepLabCut prediction `.h5` file. When loaded, pose estimations are overlaid on the video frames.
+- **DLC Config File (`config.yaml`):** (Optional) A DeepLabCut project configuration file. Used to define body parts, skeleton connections, and multi-animal settings for accurate visualization of predictions.
+- **Status File (`.yaml`):** (Optional) A previously saved workspace file from `dlc_manual_frame_extract.py`. This file contains the video path, DLC config path, prediction path, and the list of marked frames, allowing users to resume a previous session.
 
 **Outputs:**
-- **Marked Frames File (`_frame_list.yaml`):** A YAML file containing the list of manually marked frame indices. ( When using Ctrl+S for manual saving)
-- **Extracted Images:** If "Save to DLC" is used, selected frames are extracted as `.png` images into the `labeled-data/your_video_name/` directory within the specified DLC project.
-- **DLC-compatible HDF5:** If "Save to DLC" is used, a `CollectedData_*.h5` file is generated in the `labeled-data/your_video_name/` directory, containing the prediction data for the extracted frames, ready for DLC labeling.
+- **Workspace Status File (`_extractor_status.yaml`):** A YAML file generated when "Save the Current Workspace" is selected (or Ctrl+S is pressed). It stores the paths to the loaded video, DLC config, prediction file, and the list of marked frames, enabling seamless session resumption.
+- **Extracted Images:** When "Export to DLC" is used, marked frames are extracted as individual `.png` images and saved into the `labeled-data/your_video_name/` directory within your DLC project.
+- **DLC-compatible HDF5:** When "Export to DLC" is used, a `CollectedData_*.h5` file is generated in the `labeled-data/your_video_name/` directory. This file contains the prediction data corresponding to the extracted frames, formatted for direct use in DeepLabCut's labeling interface.
 
 ### dlc_obsolete_train_img_trimmer.py
 
@@ -125,7 +138,7 @@ your_dlc_project/
         ├── img0000.png
         ├── img0001.png
         └── ...
-        └── CollectedData_YourName.csv
+        └── CollectedData_scorer.csv
 ```
 
 **Inputs:**
@@ -197,4 +210,4 @@ A simple utility script borrowed from DLC repo that converts DLC prediction `.h5
 
 ### dlc_track_to_annot_prep.py
 
-WIP
+WIP script to generate a basic annotation for Pytor Toolbox or Bannotator from DLC prediction. Currently not functional.
