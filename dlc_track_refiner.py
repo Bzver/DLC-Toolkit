@@ -34,7 +34,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.setCentralWidget(self.central_widget)
         self.layout = QtWidgets.QVBoxLayout(self.central_widget)
 
-        self.is_debug = True
+        self.is_debug = False
         if self.is_debug:
             self.setWindowTitle("DLC Track Refiner ----- DEBUG MODE")
 
@@ -400,12 +400,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 x, y, conf = kp[0], kp[1], kp[2]
                 keypoint_coords[kp_idx] = (int(x),int(y),float(conf))
                 # Draw the dot representing the keypoints
-                keypoint_label = self.keypoints[kp_idx] # Get keypoint label
-                keypoint_item = Draggable_Keypoint(x - 3, y - 3, 6, 6, inst, kp_idx, keypoint_label, default_color_rgb=color)
+                keypoint_item = Draggable_Keypoint(x - 3, y - 3, 6, 6, inst, kp_idx, default_color_rgb=color)
 
                 if isinstance(keypoint_item, Draggable_Keypoint):
                     keypoint_item.setFlag(QGraphicsEllipseItem.ItemIsMovable, self.is_kp_edit)
-                    keypoint_item.text_item.setOpacity(self.text_label_opacity) # Set opacity
 
                 self.graphics_scene.addItem(keypoint_item)
                 keypoint_item.setZValue(1) # Ensure keypoints are on top of the video frame
@@ -440,6 +438,11 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         max_x = min(frame.shape[1] - 1, max_x + padding)
         max_y = min(frame.shape[0] - 1, max_y + padding)
 
+        # Calculate mouse center
+        mouse_center_x = (min_x + max_x) / 2
+        mouse_center_y = (min_y + max_y) / 2
+        mouse_center = (mouse_center_x, mouse_center_y)
+
         # Draw bounding box using QGraphicsRectItem
         rect_item = Selectable_Instance(min_x, min_y, max_x - min_x, max_y - min_y, inst, default_color_rgb=color)
         if isinstance(rect_item, Selectable_Instance):
@@ -450,11 +453,50 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         # Connect the bounding_box_moved signal to the update method in DLC_Track_Refiner
         rect_item.bounding_box_moved.connect(self.update_instance_position)
 
-        # Add individual label
-        text_item = QtWidgets.QGraphicsTextItem(f"Inst: {self.individuals[inst]} | Conf:{kp_inst_mean:.4f}")
-        text_item.setPos(min_x, min_y - 20) # Adjust position to be above the bounding box
-        text_item.setDefaultTextColor(QtGui.QColor(*color))
-        self.graphics_scene.addItem(text_item)
+        # Add individual label and keypoint labels
+        text_item_inst = QtWidgets.QGraphicsTextItem(f"Inst: {self.individuals[inst]} | Conf:{kp_inst_mean:.4f}")
+        text_item_inst.setPos(min_x, min_y - 20) # Adjust position to be above the bounding box
+        text_item_inst.setDefaultTextColor(QtGui.QColor(*color))
+        text_item_inst.setOpacity(self.text_label_opacity)
+        self.graphics_scene.addItem(text_item_inst)
+
+        # Plot keypoint labels
+        for kp_idx, (x, y, conf) in keypoint_coords.items():
+            keypoint_label = self.keypoints[kp_idx]
+            
+            # Calculate vector from mouse center to keypoint
+            vec_x = x - mouse_center[0]
+            vec_y = y - mouse_center[1]
+            
+            # Normalize vector
+            norm = (vec_x**2 + vec_y**2)**0.5
+            if norm == 0: # Avoid division by zero if keypoint is at the center
+                norm = 1
+            unit_vec_x = vec_x / norm
+            unit_vec_y = vec_y / norm
+
+            # Position text label away from keypoint and center
+            offset_distance = 25 # Distance from keypoint to text label
+            text_x = x + unit_vec_x * offset_distance
+            text_y = y + unit_vec_y * offset_distance 
+            
+            text_item = QtWidgets.QGraphicsTextItem(f"{keypoint_label}")
+
+            font = text_item.font() # Get the default font of the QGraphicsTextItem
+            fm = QtGui.QFontMetrics(font)
+            text_rect = fm.boundingRect(keypoint_label)
+            
+            text_width = text_rect.width()
+            text_height = text_rect.height()
+
+            text_x -= text_width / 2
+            text_y -= text_height / 2
+
+            text_item.setPos(text_x, text_y)
+            text_item.setDefaultTextColor(QtGui.QColor(*color))
+            text_item.setOpacity(self.text_label_opacity)
+            self.graphics_scene.addItem(text_item)
+
         return frame
     
     def plot_skeleton(self, keypoint_coords, frame, color):
@@ -1305,12 +1347,11 @@ class Draggable_Keypoint(QtCore.QObject, QGraphicsEllipseItem):
     keypoint_moved = Signal(int, int, float, float) # instance_id, keypoint_id, new_x, new_y
     keypoint_drag_started = Signal(object) # Emits the Draggable_Keypoint object itself
 
-    def __init__(self, x, y, width, height, instance_id, keypoint_id, keypoint_label, default_color_rgb, parent=None):
+    def __init__(self, x, y, width, height, instance_id, keypoint_id, default_color_rgb, parent=None):
         QtCore.QObject.__init__(self, None)
         QGraphicsEllipseItem.__init__(self, x, y, width, height, parent)
         self.instance_id = instance_id
         self.keypoint_id = keypoint_id
-        self.keypoint_label = keypoint_label
         self.default_color_rgb = default_color_rgb
         self.setBrush(QtGui.QBrush(QtGui.QColor(*default_color_rgb)))
         self.setPen(QtGui.QPen(QtGui.QColor(*default_color_rgb), 1))
@@ -1318,14 +1359,6 @@ class Draggable_Keypoint(QtCore.QObject, QGraphicsEllipseItem):
         self.setFlag(QGraphicsEllipseItem.ItemSendsGeometryChanges, True)
         self.setAcceptHoverEvents(True)
         self.original_pos = self.pos() # Store initial position on press
-
-        # Create and attach text item for keypoint label
-        self.text_item = QtWidgets.QGraphicsTextItem(self.keypoint_label, self)
-        self.text_item.setDefaultTextColor(QtGui.QColor(*default_color_rgb))
-        self.text_item.setPos(x + width, y - height / 2) # Position text next to the keypoint
-        self.text_item.setZValue(2) # Ensure text is on top of keypoint and video
-        self.text_item.setAcceptedMouseButtons(Qt.NoButton) # Ignore mouse clicks
-        self.text_item.setAcceptHoverEvents(False) # Ignore hover events
 
     def hoverEnterEvent(self, event):
         self.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 0))) # Yellow on hover
@@ -1345,7 +1378,6 @@ class Draggable_Keypoint(QtCore.QObject, QGraphicsEllipseItem):
         if event.button() == Qt.LeftButton and self.flags() & QGraphicsEllipseItem.ItemIsMovable:
             new_pos = self.pos()
             if new_pos != self.original_pos:
-
                 center_x = new_pos.x() + self.rect().width() / 2
                 center_y = new_pos.y() + self.rect().height() / 2
                 self.keypoint_moved.emit(self.instance_id, self.keypoint_id, center_x, center_y)
@@ -1353,8 +1385,6 @@ class Draggable_Keypoint(QtCore.QObject, QGraphicsEllipseItem):
 
     def itemChange(self, change, value):
         if change == QGraphicsEllipseItem.ItemPositionChange and self.scene():
-            # Update text item position along with the keypoint
-            self.text_item.setPos(value.x() + self.rect().width(), value.y() - self.rect().height() / 2)
             # The actual data array update will happen on mouse release
             return value
         return super().itemChange(change, value)
