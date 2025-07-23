@@ -1,10 +1,57 @@
-
 import os
 
+import h5py
+import yaml
+
+import numpy as np
 import pandas as pd
 from itertools import islice
 
 import cv2
+
+from PySide6.QtWidgets import QMessageBox
+
+class DLC_Data_Loader:
+    def __init__(self, parent, dlc_config_filepath, prediction_filepath, initialize_status=False):
+        self.gui = parent
+        self.dlc_config_filepath = dlc_config_filepath
+        self.prediction_filepath = prediction_filepath
+        self.is_initialize = initialize_status
+        self.multi_animal = False
+        self.keypoints, self.skeleton, self.individuals, = None, None, None
+        self.num_keypoint, self.instance_count, self.dlc_dir = None, None, None
+        self.prediction_raw, self.pred_frame_count, self.pred_data_array = None, None, None
+
+    def dlc_config_loader(self):
+        if not os.path.isfile(self.dlc_config_filepath):
+            QMessageBox.warning(self.gui, "DLC Config Not Found", f"DLC config cannot be fetched from given path: {self.dlc_config_filepath}")
+            return False
+        with open(self.dlc_config_filepath, "r") as conf:
+            cfg = yaml.safe_load(conf)
+        self.multi_animal = cfg["multianimalproject"]
+        self.keypoints = cfg["bodyparts"] if not self.multi_animal else cfg["multianimalbodyparts"]
+        self.skeleton = cfg["skeleton"]
+        self.individuals = cfg["individuals"]
+        self.instance_count = len(self.individuals) if self.individuals is not None else 1
+        self.dlc_dir = os.path.dirname(self.dlc_config_filepath)
+        self.num_keypoint = len(self.keypoints)
+        return True
+
+    def prediction_loader(self):
+        with h5py.File(self.prediction_filepath, "r") as pred_file:
+            if not "tracks" in pred_file.keys():
+                print("Error: Prediction file not valid, no 'tracks' key found in prediction file.")
+                return False
+            if self.is_initialize:
+                QMessageBox.information(self.gui, "Loading Prediction","Loading and parsing prediction file, this could take a few seconds, please wait...")
+                self.is_initialize = False
+            self.prediction_raw = pred_file["tracks"]["table"]
+            pred_data_values = np.array([item[1] for item in self.prediction_raw])
+            self.pred_frame_count = self.prediction_raw.size
+            self.pred_data_array = np.full((self.pred_frame_count, self.instance_count, self.num_keypoint*3),np.nan)
+            for inst_idx in range(self.instance_count): # Sort inst out
+                self.pred_data_array[:,inst_idx,:] = pred_data_values[:, inst_idx*self.num_keypoint*3:(inst_idx+1)*self.num_keypoint*3]
+            return True
 
 class DLC_Frame_Extractor:  # Backend for extracting frames for labeling in DLC
     def __init__(self, video_file, prediction, frame_list, dlc_dir, project_dir, video_name, pred_data, keypoints, individuals, multi_animal=False):

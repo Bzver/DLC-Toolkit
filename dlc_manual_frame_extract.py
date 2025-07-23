@@ -4,6 +4,7 @@ import h5py
 import yaml
 
 import pandas as pd
+
 import bisect
 
 import cv2
@@ -14,7 +15,7 @@ from PySide6.QtGui import QShortcut, QKeySequence, QCloseEvent
 from PySide6.QtWidgets import QMessageBox, QPushButton, QMenu, QToolButton
 
 from toolkit_utils.dtu_ui import Slider_With_Marks
-from toolkit_utils.dtu_io import DLC_Frame_Extractor
+from toolkit_utils.dtu_io import DLC_Data_Loader, DLC_Frame_Extractor
 
 class DLC_Frame_Finder(QtWidgets.QMainWindow):
     def __init__(self):
@@ -162,6 +163,8 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
 
         self.refiner_window = None
 
+        self.data_loader = DLC_Data_Loader(self, None, None, initialize_status=False)
+
     def load_video(self):
         self.reset_state()
         file_dialog = QtWidgets.QFileDialog(self)
@@ -174,11 +177,13 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
     def initialize_loaded_video(self):
         self.video_name = os.path.basename(self.video_file).split(".")[0]
         self.cap = cv2.VideoCapture(self.video_file)
+
         if not self.cap.isOpened():
             print(f"Error: Could not open video {self.video_file}")
             self.video_label.setText("Error: Could not open video")
             self.cap = None
             return
+        
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.current_frame_idx = 0
         self.progress_slider.setRange(0, self.total_frames - 1)
@@ -189,91 +194,115 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         print(f"Video loaded: {self.video_file}")
 
     def load_prediction(self):
+
         if self.current_frame is None:
             QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
             return
+        
+        if self.dlc_config is None:
+            QMessageBox.information(self, "No DLC Config", "No dlc config has been loaded, please load it first.")
+            return
+        
         file_dialog = QtWidgets.QFileDialog(self)
         prediction_path, _ = file_dialog.getOpenFileName(self, "Load Prediction", "", "HDF5 Files (*.h5);;All Files (*)")
+        
         if prediction_path:
             self.prediction = prediction_path
-            self.prediction_loader()
-
-    def prediction_loader(self):
-        print(f"Prediction loaded: {self.prediction}")
-        with h5py.File(self.prediction, "r") as pred_file:
-            if not "tracks" in pred_file.keys():
-                print("Error: Prediction file not valid, no 'tracks' key found in prediction file.")
-                return False
-            self.pred_data = pred_file["tracks"]["table"][:]
-            pred_frame_count = self.pred_data.size
-            if pred_frame_count != self.total_frames:
-                QMessageBox.warning(self, "Error: Frame Mismatch", "Total frames in video and in prediction do not match!")
-                print(f"Frames in config: {self.total_frames} \n Frames in prediction: {pred_frame_count}")
-            self.display_current_frame()
-
+            self.data_loader.prediction_filepath = prediction_path
+            
+            if not self.data_loader.prediction_loader():
+                QMessageBox.critical(self, "Prediction Error", "Failed to load prediction data. Check console for details.")
+                return
+            
+            QMessageBox.information(self, "Prediction Loaded", "Prediction data loaded successfully!")
+            self.prediction_raw = self.data_loader.prediction_raw
+            self.pred_frame_count = self.data_loader.pred_frame_count
+            self.pred_data_array = self.data_loader.pred_data_array
+                
     def load_dlc_config(self):
+
         if self.current_frame is None:
             QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
             return
+        
         file_dialog = QtWidgets.QFileDialog(self)
         dlc_config, _ = file_dialog.getOpenFileName(self, "Load DLC Config", "", "YAML Files (config.yaml);;All Files (*)")
         if dlc_config:
             self.dlc_config = dlc_config
-            self.dlc_loader()
+            self.data_loader.dlc_config_filepath = dlc_config
 
-    def dlc_loader(self):
-        self.dlc_dir = os.path.dirname(self.dlc_config)
-        with open(self.dlc_config, "r") as conf:
-            cfg = yaml.safe_load(conf)
-        self.multi_animal = cfg["multianimalproject"]
-        self.keypoints = cfg["bodyparts"] if not self.multi_animal else cfg["multianimalbodyparts"]
-        self.skeleton = cfg["skeleton"]
-        self.individuals = cfg["individuals"]
-        self.instance_count = len(self.individuals) if self.individuals is not None else 1
-        self.project_dir = os.path.join(self.dlc_dir,"labeled-data", self.video_name)
-        self.display_current_frame()
-        if not os.path.isdir(self.project_dir):
-            self.labeled_frame_list = []
-            return
-        label_data_files = [ f for f in os.listdir(self.project_dir) if f.startswith("CollectedData_") and f.endswith(".h5") ]
-        if not label_data_files:
-            return
-        label_frame_list = []
-        for label_data_file in label_data_files:
-            with h5py.File(os.path.join(self.project_dir, label_data_file), "r") as lbf:
-                label_frame_list.extend(lbf["df_with_missing"]["axis1_level2"].asstr()[()])
-            continue
-        self.labeled_frame_list = [ int(f.split("img")[1].split(".")[0]) for f in label_frame_list ]
-        self.progress_slider.set_labeled_frames(self.labeled_frame_list)
+            if not self.data_loader.dlc_config_loader():
+                QMessageBox.critical(self, "DLC Config Error", "Failed to load DLC configuration. Check console for details.")
+                return
+            
+            QMessageBox.information(self, "DLC Config Loaded", "DLC configuration loaded successfully!")
+            self.multi_animal = self.data_loader.multi_animal
+            self.keypoints = self.data_loader.keypoints
+            self.skeleton = self.data_loader.skeleton
+            self.individuals = self.data_loader.individuals
+            self.num_keypoint = self.data_loader.num_keypoint
+            self.instance_count = self.data_loader.instance_count
+            self.dlc_dir = self.data_loader.dlc_dir
+            self.project_dir = os.path.join(self.dlc_dir,"labeled-data", self.video_name)
+
+        self.load_and_plot_labeled_frame()
         self.display_current_frame()
 
     def load_status(self):
         file_dialog = QtWidgets.QFileDialog(self)
         marked_frame_path, _ = file_dialog.getOpenFileName(self, "Load Status", "", "YAML Files (*.yaml);;All Files (*)")
+
         if marked_frame_path:
             with open(marked_frame_path, "r") as fmkf:
                 fmk = yaml.safe_load(fmkf)
+
             if not "frame_list" in fmk.keys():
                 QMessageBox.warning(self, "File Error", "Not a extractor status file, make sure to load the correct file.")
                 return
+            
             video_file = fmk["video_path"]
+
             if not os.path.isfile(video_file):
                 QMessageBox.warning(self, "Warning", "Video path in file is not valid, has the video been moved?")
                 return
+            
             self.video_file = video_file
             self.initialize_loaded_video()
             self.frame_list = fmk["frame_list"]
             print(f"Marked frames loaded: {self.frame_list}")
+
             dlc_config = fmk["dlc_config"]
             if os.path.isfile(dlc_config):
                 self.dlc_config = dlc_config
-                self.dlc_loader()
+                self.data_loader.dlc_config_filepath = dlc_config
+                self.data_loader.dlc_config_loader()
+
             prediction = fmk["prediction"]
             if os.path.isfile(prediction):
                 self.prediction = prediction
-                self.prediction_loader()
-            self.progress_slider.set_marked_frames(self.frame_list)
+                self.data_loader.prediction_filepath = prediction
+                self.data_loader.prediction_loader()
+                
+            self.progress_slider.set_frame_category("marked_frames", self.frame_list, "#E28F13")
             self.determine_save_status()
+
+    def load_and_plot_labeled_frame(self):
+        if not os.path.isdir(self.project_dir):
+            self.labeled_frame_list = []
+            return
+        
+        label_data_files = [ f for f in os.listdir(self.project_dir) if f.startswith("CollectedData_") and f.endswith(".h5") ]
+        if not label_data_files:
+            return
+        
+        label_frame_list = []
+        for label_data_file in label_data_files:
+            with h5py.File(os.path.join(self.project_dir, label_data_file), "r") as lbf:
+                label_frame_list.extend(lbf["df_with_missing"]["axis1_level2"].asstr()[()])
+            continue
+
+        self.labeled_frame_list = [ int(f.split("img")[1].split(".")[0]) for f in label_frame_list ]
+        self.progress_slider.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7")
 
     ###################################################################################################################################################
 
@@ -309,9 +338,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             print(f"Frame index {self.current_frame_idx} out of bounds for prediction data.")
             return frame
         colors_rgb = [(0, 165, 255), (51, 255, 51), (255, 153, 51), (51, 51, 255), (102, 255, 255)]
-        if self.keypoints is None: 
-            num_keypoints = current_frame_data.size // self.instance_count // 3 # Consider the confidence col
-        elif len(self.keypoints) != current_frame_data.size // self.instance_count // 3:
+        if len(self.keypoints) != current_frame_data.size // self.instance_count // 3:
             QMessageBox.warning(self, "Error: Keypoint Mismatch", "Keypoints in config and in prediction do not match! Falling back to prediction parameters!")
             print(f"Keypoints in config: {len(self.keypoints)} \n Keypoints in prediction: {current_frame_data.size // self.instance_count * 2 // 3}")
             self.keypoints = None   # Falling back to prediction parameters
@@ -472,7 +499,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         else: # Remove the mark status if already marked
             self.frame_list.remove(self.current_frame_idx)
         self.determine_save_status()
-        self.progress_slider.set_marked_frames(self.frame_list)
+        self.progress_slider.set_frame_category("marked_frames", self.frame_list, "#E28F13")
         self.navigation_box_title_controller()
 
     def adjust_confidence_cutoff(self):
