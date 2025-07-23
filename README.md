@@ -3,7 +3,16 @@ GUI tools to view and manually correct DeepLabCut pose estimation, among other t
 
 **Table of Contents**
 
-[TOC]
+- [dlc_3D_skeleton_plotter.py](#dlc_3d_skeleton_plotterpy)
+- [dlc_dataset_augumenter.py](#dlc_dataset_augumenterpy)
+- [dlc_h5_to_csv.py](#dlc_h5_to_csvpy)
+- [dlc_manual_frame_extract.py](#dlc_manual_frame_extractpy)
+- [dlc_obsolete_train_img_trimmer.py](#dlc_obsolete_train_img_trimmerpy)
+- [dlc_track_refiner.py](#dlc_track_refinerpy)
+- [sleap_keypoint_fill.py](#sleap_keypoint_fillpy)
+- [sleap_viewer.ipynb](#sleap_vieweripynb)
+- [dlc_track_to_annot_prep.py](#dlc_track_to_annot_preppy)
+
 
 ### dlc_3D_skeleton_plotter.py
 
@@ -60,10 +69,6 @@ your_reference_folder/
 
 **Outputs:**
 - **Augmented Images:** A new folder named `your_video_name_augmented` will be created alongside the original `your_video_name` folder, containing the tone-adjusted images.
-
-### dlc_h5_to_csv.py
-
-A simple utility script borrowed from DLC repo that converts DLC prediction `.h5` files to `.csv` format leveraging the `analyze_videos_converth5_to_csv` function within deeplabcut.
 
 ### dlc_manual_frame_extract.py
 
@@ -177,6 +182,11 @@ A basic viewer to load and inspect data from a SLEAP HDF5 file (`.slp`).
 - Access and parse the `tracks_json` dataset to understand the mapping between internal track indices and user-defined track identifiers.
 - Load the `points` dataset and map individual keypoint instances to their respective tracks and frames.
 - Print an example of tracked points by identity and frame, showing how to retrieve specific keypoint coordinates.
+
+### dlc_h5_to_csv.py
+
+A simple utility script borrowed from DLC repo that converts DLC prediction `.h5` files to `.csv` format leveraging the `analyze_videos_converth5_to_csv` function within deeplabcut.
+
 
 ### dlc_track_to_annot_prep.py
 
