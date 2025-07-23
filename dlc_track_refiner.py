@@ -36,7 +36,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.setCentralWidget(self.central_widget)
         self.layout = QtWidgets.QVBoxLayout(self.central_widget)
 
-        self.is_debug = False
+        self.is_debug = True
         if self.is_debug:
             self.setWindowTitle("DLC Track Refiner ----- DEBUG MODE")
 
@@ -373,7 +373,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 pixmap_item.setZValue(-1)
 
                 self.graphics_scene.setSceneRect(0, 0, w, h)
-                self.graphics_view.fitInView(self.graphics_scene.sceneRect(), Qt.KeepAspectRatio)
                 
                 new_transform = QtGui.QTransform()
                 new_transform.scale(self.zoom_factor, self.zoom_factor)
