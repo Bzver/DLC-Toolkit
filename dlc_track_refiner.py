@@ -13,14 +13,16 @@ import cv2
 from PySide6 import QtWidgets, QtGui, QtCore
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QShortcut, QKeySequence, QPainter, QColor, QPen, QCloseEvent
-from PySide6.QtWidgets import QMessageBox, QPushButton, QGraphicsScene, QGraphicsView, QGraphicsRectItem, QMenu, QToolButton, QGraphicsEllipseItem
+from PySide6.QtWidgets import QMessageBox, QPushButton, QGraphicsView, QGraphicsRectItem, QMenu, QToolButton, QGraphicsEllipseItem
 
 DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/NTD/config.yaml"
 VIDEO_FILE_DEBUG = "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-conv.mp4"
 PRED_FILE_DEBUG = "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-convDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_090_snapshot_080_el_tr.h5"
 
 # Todo:
-# 1. Add instance generation in keypoint edit mode
+#   Add instance generation in keypoint edit mode
+#   Add support to export to csv
+#   Add support for scenario where individual counts exceed 2
 
 class DLC_Track_Refiner(QtWidgets.QMainWindow):
     prediction_saved = Signal(str) # Signal to emit the path of the saved prediction file
@@ -40,20 +42,20 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         # Menu bars
         self.menu_layout = QtWidgets.QHBoxLayout()
-        self.laod_menu = QMenu("File", self)
+        self.load_menu = QMenu("File", self)
 
-        self.load_video_action = self.laod_menu.addAction("Load Video")
-        self.load_dlc_config_action = self.laod_menu.addAction("Load DLC Config")
-        self.load_prediction_action = self.laod_menu.addAction("Load Prediction")
+        self.load_video_action = self.load_menu.addAction("Load Video")
+        self.load_dlc_config_action = self.load_menu.addAction("Load DLC Config")
+        self.load_prediction_action = self.load_menu.addAction("Load Prediction")
 
         self.load_button = QToolButton()
         self.load_button.setText("File")
-        self.load_button.setMenu(self.laod_menu)
+        self.load_button.setMenu(self.load_menu)
         self.load_button.setPopupMode(QToolButton.InstantPopup)
 
         self.refiner_menu = QMenu("Adv. Refine", self)
 
-        self.direct_keypoint_edit_action = self.refiner_menu.addAction("Direct Keypoint Edit (Q) [ EXPERIMENTAL ]")
+        self.direct_keypoint_edit_action = self.refiner_menu.addAction("Direct Keypoint Edit (Q)")
         self.purge_inst_by_conf_action = self.refiner_menu.addAction("Delete All Track Below Set Confidence")
         self.interpolate_all_action = self.refiner_menu.addAction("Interpolate All Frames for One Inst")
         self.designate_no_mice_zone_action = self.refiner_menu.addAction("Remove All Prediction Inside Area")
@@ -81,7 +83,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.layout.addLayout(self.menu_layout)
 
         # Graphics view for interactive elements and video display
-        self.graphics_scene = QGraphicsScene(self)
+        self.graphics_scene = QtWidgets.QGraphicsScene(self)
         self.graphics_view = QGraphicsView(self.graphics_scene)
         self.graphics_view.setRenderHint(QPainter.Antialiasing)
         self.graphics_view.setFrameShape(QtWidgets.QFrame.NoFrame)
@@ -127,15 +129,15 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.next_10_frames_button = QPushButton("Next 10 Frames (Shift + →)")
         self.prev_frame_button = QPushButton("Prev Frame (←)")
         self.next_frame_button = QPushButton("Next Frame (→)")
-        self.prev_instance_change_button = QPushButton("◄ Prev ROI (↑)")
-        self.next_instance_change_button = QPushButton("► Next ROI (↓)")
+        self.prev_roi_frame_button = QPushButton("◄ Prev ROI (↑)")
+        self.next_roi_frame_button = QPushButton("► Next ROI (↓)")
 
         self.navigation_layout.addWidget(self.prev_10_frames_button, 0, 0)
         self.navigation_layout.addWidget(self.next_10_frames_button, 1, 0)
         self.navigation_layout.addWidget(self.prev_frame_button, 0, 1)
         self.navigation_layout.addWidget(self.next_frame_button, 1, 1)
-        self.navigation_layout.addWidget(self.prev_instance_change_button, 0, 2)
-        self.navigation_layout.addWidget(self.next_instance_change_button, 1, 2)
+        self.navigation_layout.addWidget(self.prev_roi_frame_button, 0, 2)
+        self.navigation_layout.addWidget(self.next_roi_frame_button, 1, 2)
 
         self.refiner_group_box = QtWidgets.QGroupBox("Track Refiner")
         self.refiner_layout = QtWidgets.QGridLayout(self.refiner_group_box)
@@ -181,8 +183,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.next_frame_button.clicked.connect(lambda: self.change_frame(1))
         self.next_10_frames_button.clicked.connect(lambda: self.change_frame(10))
 
-        self.prev_instance_change_button.clicked.connect(lambda:self.prev_instance_change("frame"))
-        self.next_instance_change_button.clicked.connect(lambda:self.next_instance_change("frame"))
+        self.prev_roi_frame_button.clicked.connect(lambda:self.prev_roi_frame("frame"))
+        self.next_roi_frame_button.clicked.connect(lambda:self.next_roi_frame("frame"))
         self.swap_track_button.clicked.connect(lambda:self.swap_track("point"))
         self.delete_track_button.clicked.connect(lambda:self.delete_track("point"))
         self.interpolate_track_button.clicked.connect(self.interpolate_track)
@@ -192,8 +194,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_Left), self).activated.connect(lambda: self.change_frame(-1))
         QShortcut(QKeySequence(Qt.Key_Right), self).activated.connect(lambda: self.change_frame(1))
         QShortcut(QKeySequence(Qt.Key_Right | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(10))
-        QShortcut(QKeySequence(Qt.Key_Up), self).activated.connect(self.prev_instance_change)
-        QShortcut(QKeySequence(Qt.Key_Down), self).activated.connect(self.next_instance_change)
+        QShortcut(QKeySequence(Qt.Key_Up), self).activated.connect(self.prev_roi_frame)
+        QShortcut(QKeySequence(Qt.Key_Down), self).activated.connect(self.next_roi_frame)
         QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.toggle_playback)
 
         QShortcut(QKeySequence(Qt.Key_W), self).activated.connect(lambda:self.swap_track("point"))
@@ -218,7 +220,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.reset_state()
 
     def reset_state(self):
-        self.original_vid, self.prediction, self.dlc_config, self.video_name = None, None, None, None
+        self.video_file, self.prediction, self.dlc_config, self.video_name = None, None, None, None
         self.keypoints, self.skeleton, self.individuals, self.num_keypoints = None, None, None, None
         self.keypoint_to_idx = None
 
@@ -227,7 +229,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.multi_animal = False
         self.pred_data, self.pred_data_array = None, None
 
-        self.roi_frame_list = []
+        self.roi_frame_list, self.marked_roi_frame_list = [], []
 
         self.cap, self.current_frame = None, None
 
@@ -238,27 +240,24 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.refiner_group_box.hide()
         self.text_label_opacity = 1.0 # Default to fully opaque
 
-        self.selected_box = None # To keep track of the currently selected box
+        self.selected_box = None
 
         self.is_drawing_zone = False
-        self.start_point = None
-        self.current_rect_item = None
+        self.start_point, self.current_rect_item = None, None
 
         self.is_kp_edit = False
-        self.dragged_keypoint = None
-        self.dragged_bounding_box = None
+        self.dragged_keypoint, self.dragged_bounding_box = None, None
         
-        self.undo_stack = []
-        self.redo_stack = []
+        self.undo_stack, self.redo_stack = [], []
         self.max_undo_stack_size = 50
         self.is_initialize = True
         self.is_saved = True
 
     def load_video(self):
         if self.is_debug:
-            self.original_vid = VIDEO_FILE_DEBUG
+            self.video_file = VIDEO_FILE_DEBUG
             self.initialize_loaded_video()
-            self.config_loader_DLC(DLC_CONFIG_DEBUG)
+            self.config_loader_dlc(DLC_CONFIG_DEBUG)
             self.prediction = PRED_FILE_DEBUG
             self.prediction_loader()
             return
@@ -266,16 +265,16 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         file_dialog = QtWidgets.QFileDialog(self)
         video_path, _ = file_dialog.getOpenFileName(self, "Load Video", "", "Video Files (*.mp4 *.avi *.mov *.mkv);;All Files (*)")
         if video_path:
-            self.original_vid = video_path
+            self.video_file = video_path
             self.initialize_loaded_video()
             
     def initialize_loaded_video(self):
         self.navigation_group_box.show()
         self.refiner_group_box.show()
-        self.video_name = os.path.basename(self.original_vid).split(".")[0]
-        self.cap = cv2.VideoCapture(self.original_vid)
+        self.video_name = os.path.basename(self.video_file).split(".")[0]
+        self.cap = cv2.VideoCapture(self.video_file)
         if not self.cap.isOpened():
-            QMessageBox.warning(self, "Error Open Video", f"Error: Could not open video {self.original_vid}")
+            QMessageBox.warning(self, "Error Open Video", f"Error: Could not open video {self.video_file}")
             self.cap = None
             return
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -283,14 +282,14 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.progress_slider.setRange(0, self.total_frames - 1) # Initialize slider range
         self.display_current_frame()
         self.navigation_box_title_controller()
-        print(f"Video loaded: {self.original_vid}")
+        print(f"Video loaded: {self.video_file}")
 
     def load_DLC_config(self):
         file_dialog = QtWidgets.QFileDialog(self)
         dlc_config, _ = file_dialog.getOpenFileName(self, "Load DLC Config", "", "YAML Files (config.yaml);;All Files (*)")
-        self.config_loader_DLC(dlc_config)
+        self.config_loader_dlc(dlc_config)
 
-    def config_loader_DLC(self, dlc_file):
+    def config_loader_dlc(self, dlc_file):
         try:
             with open(dlc_file, "r") as conf:
                 cfg = yaml.safe_load(conf)
@@ -587,9 +586,12 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         # Convert the boolean mask to numerical (0 for empty, 1 for non-empty) and sum per frame
         non_empty_instance_numerical = (~empty_instance) * 1
         self.instance_count_per_frame = non_empty_instance_numerical.sum(axis=1)
-        roi_frames = np.where(np.diff(self.instance_count_per_frame)!=0)[0]+1
-        self.roi_frame_list = list(roi_frames)
-        self.progress_slider.set_marked_frames(self.roi_frame_list) # Update ROI frames
+        if self.marked_roi_frame_list is None:
+            roi_frames = np.where(np.diff(self.instance_count_per_frame)!=0)[0]+1
+            self.roi_frame_list = list(roi_frames)
+        else:
+            self.roi_frame_list = list(self.marked_roi_frame_list)
+        self.progress_slider.set_roi_frames(self.roi_frame_list) # Update ROI frames
 
         if self.is_debug:
             print("\n--- Instance Counting Details ---")
@@ -618,16 +620,16 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                     print(f"  Instance {i_idx} is counted because it has non-NaN keypoints: {', '.join(non_nan_keypoints_found)}")
             print("-----------------------------------\n")
 
-    def prev_instance_change(self, mode="frame"):
+    def prev_roi_frame(self, mode="frame"):
         if not self.roi_frame_list:
-            QMessageBox.information(self, "No Instance Change", "No frames with instance count change to navigate.")
+            QMessageBox.information(self, "No Instance Change", "No ROI frames to navigate.")
             return
         
         self.roi_frame_list.sort()
         try:
             current_idx_in_roi = self.roi_frame_list.index(self.current_frame_idx) - 1
         except ValueError:
-            current_idx_in_roi = bisect.bisect_left(self.roi_frame_list, self.current_frame_idx) - 1
+            current_idx_in_roi = bisect.bisect_left(self.roi_frame_list, self.current_frame_idx)
 
         if current_idx_in_roi >= 0:
             if mode == "idx":
@@ -639,9 +641,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         else:
             QMessageBox.information(self, "Navigation", "No previous ROI frame found.")
 
-    def next_instance_change(self, mode="frame"):
+    def next_roi_frame(self, mode="frame"):
         if not self.roi_frame_list:
-            QMessageBox.information(self, "No Instance Change", "No frames with instance count change to navigate.")
+            QMessageBox.information(self, "No Instance Change", "No frames with ROI frames to navigate.")
             return
         
         self.roi_frame_list.sort()
@@ -892,7 +894,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         if mode == "point": # Only removing the current frame
             self.pred_data_array[self.current_frame_idx, instance_for_track_deletion, :] = np.nan
         else:
-            next_roi_frame_idx = self.next_instance_change("idx")
+            next_roi_frame_idx = self.next_roi_frame("idx")
             if next_roi_frame_idx:
                 self.pred_data_array[self.current_frame_idx:next_roi_frame_idx, instance_for_track_deletion, :] = np.nan
             else: # If no next ROI, delete till end of video
@@ -1146,6 +1148,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         
         QtWidgets.QGraphicsView.mouseReleaseEvent(self.graphics_view, event)
 
+    ###################################################################################################################################################
+
     def _clean_inconsistent_nans(self):
         print("Performing Operation Clean Sweep to inconsistent NaN keypoints...")
         nan_mask = np.isnan(self.pred_data_array)
@@ -1155,8 +1159,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         full_nan_sweep_mask = np.repeat(keypoints_to_fully_nan, 3, axis=-1)
         self.pred_data_array[full_nan_sweep_mask] = np.nan
         print("Inconsistent NaN sweep completed.")
-
-    ###################################################################################################################################################
 
     def undo_changes(self):
         if self.undo_stack:
@@ -1274,7 +1276,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 class Slider_With_Marks(QtWidgets.QSlider):
     def __init__(self, orientation):
         super().__init__(orientation)
-        self.marked_frames = set()
+        self.roi_frames = set()
         self.setStyleSheet("""
             QSlider::groove:horizontal {
                 border: 1px solid #999999;
@@ -1292,15 +1294,15 @@ class Slider_With_Marks(QtWidgets.QSlider):
             }
         """)
 
-    def set_marked_frames(self, marked_frames):
-        self.marked_frames = set(marked_frames)
+    def set_roi_frames(self, roi_frames):
+        self.roi_frames = set(roi_frames)
         self.update()
 
     def paintEvent(self, event):
         super().paintEvent(event)
-        if not self.marked_frames:
+        if not self.roi_frames:
             return
-        self.paintEvent_painter(self.marked_frames,"#F04C4C")
+        self.paintEvent_painter(self.roi_frames,"#F04C4C")
         
     def paintEvent_painter(self, frames, color):
         painter = QtGui.QPainter(self)

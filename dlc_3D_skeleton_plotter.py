@@ -15,12 +15,9 @@ from PySide6.QtGui import QShortcut, QKeySequence, QCloseEvent
 from PySide6.QtWidgets import QMessageBox, QPushButton
 from PySide6.QtCore import Signal
 
-from dlc_track_refiner import DLC_Track_Refiner
-
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
-#################   W   ##################   I   ##################   P   ##################   
 # Todo: Add support fot sleap-anipose / anipose toml calibration file
 
 DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/COM3D/config.yaml"
@@ -306,7 +303,10 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
     ###################################################################################################################################################
 
-    def call_track_refiner(self):
+    def call_track_refiner(self):    
+        
+        from dlc_track_refiner import DLC_Track_Refiner
+
         if not hasattr(self, "video_list") or not hasattr(self, "prediction_list") or not hasattr(self, "dlc_config_path"):
             QMessageBox.warning(self, "Warning", "Predictions are not loaded, load predictions first!")
             return
@@ -318,9 +318,9 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         
         selected_value = self.selected_cam_idx 
         self.refiner_window = DLC_Track_Refiner()
-        self.refiner_window.original_vid = self.video_list[selected_value]
+        self.refiner_window.video_file = self.video_list[selected_value]
         self.refiner_window.initialize_loaded_video()
-        self.refiner_window.config_loader_DLC(self.dlc_config_path)
+        self.refiner_window.config_loader_dlc(self.dlc_config_path)
         self.refiner_window.prediction = self.prediction_list[selected_value]
         self.refiner_window.prediction_loader()
         self.refiner_window.current_frame_idx = self.current_frame_idx # Pass current frame index
