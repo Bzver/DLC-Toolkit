@@ -629,13 +629,13 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         try:
             current_idx_in_roi = self.roi_frame_list.index(self.current_frame_idx) - 1
         except ValueError:
-            current_idx_in_roi = bisect.bisect_left(self.roi_frame_list, self.current_frame_idx)
+            current_idx_in_roi = bisect.bisect_left(self.roi_frame_list, self.current_frame_idx) - 1
 
         if current_idx_in_roi >= 0:
             if mode == "idx":
                 return self.roi_frame_list[current_idx_in_roi]
             else:
-                self.current_frame_idx = self.roi_frame_list[current_idx_in_roi] - 1
+                self.current_frame_idx = self.roi_frame_list[current_idx_in_roi]
             self.display_current_frame()
             self.navigation_box_title_controller()
         else:
