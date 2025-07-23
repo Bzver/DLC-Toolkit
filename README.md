@@ -1,4 +1,4 @@
-# DLC-Toolkits
+# DLC-Toolkit
 GUI tools to view and manually correct DeepLabCut pose estimation, among other things.
 
 ## Why This Toolkit? 🤔
