@@ -4,7 +4,6 @@ import h5py
 import yaml
 
 import pandas as pd
-
 import bisect
 
 import cv2
@@ -12,10 +11,12 @@ import cv2
 from PySide6 import QtWidgets, QtGui
 from PySide6.QtCore import Qt, QTimer, QEvent
 from PySide6.QtGui import QShortcut, QKeySequence, QCloseEvent
-from PySide6.QtWidgets import QMessageBox, QPushButton, QMenu, QToolButton
+from PySide6.QtWidgets import QMessageBox, QPushButton, QMenu, QToolButton, QFileDialog
 
 from utils.dtu_ui import Slider_With_Marks
-from utils.dtu_io import DLC_Data_Loader, DLC_Frame_Extractor
+from utils.dtu_io import DLC_Data_Loader, DLC_Exporter
+
+import traceback
 
 class DLC_Frame_Finder(QtWidgets.QMainWindow):
     def __init__(self):
@@ -32,7 +33,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
 
         self.load_menu = QMenu("File", self)
         self.load_video_action = self.load_menu.addAction("Load Video")
-        self.load_prediction_action = self.load_menu.addAction("Load DLC Config & Prediction")
+        self.load_prediction_action = self.load_menu.addAction("Load DLC Config and Prediction")
         self.load_workplace_action = self.load_menu.addAction("Load Status")
 
         self.load_button = QToolButton()
@@ -159,7 +160,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
 
     def load_video(self):
         self.reset_state()
-        file_dialog = QtWidgets.QFileDialog(self)
+        file_dialog = QFileDialog(self)
         video_path, _ = file_dialog.getOpenFileName(self, "Load Video", "", "Video Files (*.mp4 *.avi *.mov *.mkv);;All Files (*)")
         if video_path:
             self.video_file = video_path
@@ -192,7 +193,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             return
         
         # Loading DLC config first
-        file_dialog = QtWidgets.QFileDialog(self)
+        file_dialog = QFileDialog(self)
         dlc_config, _ = file_dialog.getOpenFileName(self, "Load DLC Config", "", "YAML Files (config.yaml);;All Files (*)")
 
         if dlc_config:
@@ -203,7 +204,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
                 return
 
         # Then prediction data
-        file_dialog = QtWidgets.QFileDialog(self)
+        file_dialog = QFileDialog(self)
         prediction_path, _ = file_dialog.getOpenFileName(self, "Load Prediction", "", "HDF5 Files (*.h5);;All Files (*)")
 
         if prediction_path:
@@ -221,7 +222,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         self.display_current_frame()
 
     def load_workplace(self):
-        file_dialog = QtWidgets.QFileDialog(self)
+        file_dialog = QFileDialog(self)
         marked_frame_path, _ = file_dialog.getOpenFileName(self, "Load Status", "", "YAML Files (*.yaml);;All Files (*)")
 
         if marked_frame_path:
@@ -261,11 +262,12 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
                 
             self.progress_slider.set_frame_category("marked_frames", self.frame_list, "#E28F13")
             self.determine_save_status()
+            self.load_and_plot_labeled_frame()
             self.display_current_frame()
 
     def load_and_plot_labeled_frame(self):
         dlc_dir = os.path.dirname(self.data_loader.dlc_config_filepath)
-        self.project_dir = os.path.join(dlc_dir, "labeled_data", self.video_name)
+        self.project_dir = os.path.join(dlc_dir, "labeled-data", self.video_name)
 
         if not os.path.isdir(self.project_dir):
             self.labeled_frame_list = []
@@ -567,9 +569,9 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         self.last_saved = self.frame_list
         self.is_saved = True
         if self.dlc_data:
-            save_yaml = {'video_path': self.video_file,  'frame_list': self.last_saved, 'dlc_congfig': self.dlc_data.dlc_config_filepath, 'prediction': self.dlc_data.prediction_filepath}
+            save_yaml = {'video_path': self.video_file,  'frame_list': self.last_saved, 'dlc_config': self.dlc_data.dlc_config_filepath, 'prediction': self.dlc_data.prediction_filepath}
         else:
-            save_yaml = {'video_path': self.video_file,  'frame_list': self.last_saved, 'dlc_congfig': None, 'prediction': None}
+            save_yaml = {'video_path': self.video_file,  'frame_list': self.last_saved, 'dlc_config': None, 'prediction': None}
         output_filepath = os.path.join(os.path.dirname(self.video_file), f"{self.video_name}_frame_extractor.yaml")
 
         with open(output_filepath, 'w') as file:
@@ -624,14 +626,6 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         if not self.frame_list:
             QMessageBox.warning(self, "No Marked Frame", "No frame has been marked, please mark some frames first.")
             return False
-        
-        if self.project_dir is None:
-            QMessageBox.warning(self, "No DLC Config", "DLC config is required for saving to DLC.")
-            file_dialog = QtWidgets.QFileDialog(self)
-            dlc_dir, _ = file_dialog.getOpenFileName(self, "Load Video", "", "Video Files (*.mp4 *.avi *.mov *.mkv);;All Files (*)")
-            if dlc_dir is None: # When user close the file selection window
-                return False
-            self.project_dir = os.path.join(dlc_dir, "labeled_data", self.video_name)
 
         if self.dlc_data is None:
             reply = QMessageBox.question(
@@ -642,6 +636,15 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             )
             if reply == QMessageBox.Yes:
                 frame_only_mode = True
+                QMessageBox.information(self, "Frame Only Mode", "Choose the directory of DLC project to save to DLC.")
+                dlc_dir = QFileDialog.getExistingDirectory(
+                            self, "Select Project Folder",
+                            os.path.dirname(self.video_file),
+                            QFileDialog.ShowDirsOnly
+                        )
+                if dlc_dir is None: # When user close the file selection window
+                    return False
+                self.project_dir = os.path.join(dlc_dir, "labeled-data", self.video_name)
             else:
                 self.load_prediction()
                 if self.dlc_data is None:
@@ -651,8 +654,8 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
 
         try:
             # Initialize DLC extractor backend
-            extractor = DLC_Frame_Extractor(
-                self.video_file, self.frame_list, self.dlc_data, self.project_dir, self.video_name
+            extractor = DLC_Exporter(
+                self.video_file, self.video_name, self.frame_list, self.dlc_data, self.project_dir
             )
             # Perform the extraction
             os.makedirs(self.project_dir, exist_ok=True)
@@ -671,6 +674,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
                 return True
             else:
                 QMessageBox.warning(self, "Error", "Failed to save frames to DLC format.")
+                traceback.print_exc() # Add this line to print traceback
                 return False
 
         except Exception as e:

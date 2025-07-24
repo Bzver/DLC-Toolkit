@@ -139,20 +139,16 @@ class DLC_Data_Loader:
             pred_frame_count=self._pred_frame_count
         )
 
-class DLC_Frame_Extractor:  # Backend for extracting frames for labeling in DLC
-    def __init__(self, video_file, prediction, frame_list, dlc_dir, project_dir, video_name, pred_data, keypoints, individuals, multi_animal=False):
+class DLC_Exporter:
+    def __init__(self, video_file, video_name, frame_list, dlc_data, project_dir):
         self.video_file = video_file
-        self.prediction = prediction
-        self.frame_list = frame_list
-        self.dlc_dir = dlc_dir
-        self.project_dir = project_dir
         self.video_name = video_name
-        self.multi_animal = multi_animal
-        self.pred_data = pred_data
-        self.keypoints = keypoints
-        self.individuals = individuals
+        self.frame_list = frame_list
+        self.project_dir = project_dir
 
-        self.data = []
+        self.dlc_data = dlc_data
+        self.prediction = dlc_data.prediction_filepath
+        self.pred_data_array = dlc_data.pred_data_array.copy()
 
     def extract_frame_and_label(self):
         if not os.path.isfile(self.video_file):
@@ -191,81 +187,91 @@ class DLC_Frame_Extractor:  # Backend for extracting frames for labeling in DLC
         return True
 
     def extract_label(self):
-        for frame in self.frame_list:
-            frame_idx = self.pred_data[frame][0]
-            frame_data = self.pred_data[frame][1]
-            filtered_frame_data = [val for i, val in enumerate(frame_data) if (i % 3 != 2)] # Remove likelihood
-            self.data.append([frame_idx] + filtered_frame_data)
-
-        if not self.prediction_to_csv():
+        pred_data_array_filtered = self.pred_data_array[self.frame_list, :, :]
+        
+        if not self.prediction_to_csv(self.dlc_data, pred_data_array_filtered, self.project_dir, marked_frames=self.frame_list, src_video_name=self.video_name):
             print("Error exporting predictions to csv.")
             return False
         else:
             print("Prediction of selected frames successfully exported to csv.")
-        if not self.csv_to_h5():
+        if not self.csv_to_h5(self.project_dir, self.dlc_data.multi_animal):
             print("Error transforming to h5.")
             return False
         else:
             print("Exported csv transformed into h5.")
         return True
 
-    def prediction_to_csv(self): # Adapted from agosztolai's pull request: https://github.com/DeepLabCut/DeepLabCut/pull/2977
-        data_frames = []
+    @staticmethod
+    def prediction_to_csv(dlc_data, pred_data_array, save_path, marked_frames:List=None, src_video_name:str=None, prediction_filename:str=None):
+        # Adapted from agosztolai's pull request: https://github.com/DeepLabCut/DeepLabCut/pull/2977
+        pred_data_flattened = pred_data_array.reshape(pred_data_array.shape[0], -1)
+        if marked_frames is None:
+            frame_list = list(range(pred_data_flattened.shape[0]))
+        else:
+            frame_list = marked_frames
+        frame_col = np.array(frame_list).reshape(-1, 1)
+        pred_data_processed = np.concatenate((frame_col, pred_data_flattened), axis=1)
+
         columns = ["frame"]
         bodyparts_row = ["bodyparts"]
         coords_row = ["coords"]
 
-        num_keypoints = len(self.keypoints)
+        multi_animal = dlc_data.multi_animal
+        keypoints = dlc_data.keypoints
+        num_keypoint = dlc_data.num_keypoint
+        instance_count = dlc_data.instance_count
+        individuals = dlc_data.individuals
 
-        if not self.multi_animal:
-            columns += ([f"{kp}_x" for kp in self.keypoints] + [f"{kp}_y" for kp in self.keypoints])
-            bodyparts_row += [ f"{kp}" for kp in self.keypoints for _ in (0, 1) ]
-            coords_row += (["x", "y"] * self.keypoints)
-            max_instances = 1
+        if not multi_animal:
+            columns += ([f"{kp}_x" for kp in keypoints] + [f"{kp}_y" for kp in keypoints] + [f"{kp}_likelihood" for kp in keypoints])
+            bodyparts_row += [ f"{kp}" for kp in keypoints for _ in (0, 1, 2) ]
+            coords_row += (["x", "y", "likelihood"] * keypoints)
         else:
             individuals_row = ["individuals"]
-            max_instances = len(self.individuals)
-            self.individuals = [str(k) for k in range(1,max_instances+1)]
-            for m in range(max_instances):
-                columns += ([f"{kp}_x" for kp in self.keypoints] + [f"{kp}_y" for kp in self.keypoints])
-                bodyparts_row += [ f"{kp}" for kp in self.keypoints for _ in (0, 1) ]
-                coords_row += (["x", "y"] * num_keypoints)
-                for _ in range(num_keypoints*2):
-                    individuals_row += [self.individuals[m]]
+            if not individuals: # Fallback for the event that individual is empty
+                individuals = [str(k) for k in range(1,instance_count+1)]
+            for m in range(instance_count):
+                columns += ([f"{kp}_x" for kp in keypoints] + [f"{kp}_y" for kp in keypoints] + [f"{kp}_likelihood" for kp in keypoints]    )
+                bodyparts_row += [ f"{kp}" for kp in keypoints for _ in (0, 1, 2) ]
+                coords_row += (["x", "y", "likelihood"] * num_keypoint)
+                for _ in range(num_keypoint * 3):
+                    individuals_row += [individuals[m]]
         scorer_row = ["scorer"] + ["machine-labeled"] * (len(columns) - 1)
 
-        labels_df = pd.DataFrame(self.data, columns=columns)
-        labels_df["frame"] = labels_df["frame"].apply(
-            lambda x: (
-                f"labeled-data/{self.video_name}/"
-                f"img{str(int(x)).zfill(8)}.png"
+        labels_df = pd.DataFrame(pred_data_processed, columns=columns)
+        if marked_frames is not None: # Skip it when called from the refiner <- no marked frames provided
+            labels_df["frame"] = labels_df["frame"].apply(
+                lambda x: (
+                    f"labeled-data/{src_video_name}/"
+                    f"img{str(int(x)).zfill(8)}.png"
+                )
             )
-        )
         labels_df = labels_df.groupby("frame", as_index=False).first()
-        data_frames.append(labels_df)
-        combined_df = pd.concat(data_frames, ignore_index=True)
 
         header_df = pd.DataFrame(
-        [row for row in [scorer_row, individuals_row, bodyparts_row, coords_row] if row != individuals_row or self.multi_animal],
-            columns=combined_df.columns
+        [row for row in [scorer_row, individuals_row, bodyparts_row, coords_row] if row != individuals_row or multi_animal],
+            columns=labels_df.columns
         )
 
-        final_df = pd.concat([header_df, combined_df], ignore_index=True)
+        final_df = pd.concat([header_df, labels_df], ignore_index=True)
         final_df.columns = [None] * len(final_df.columns)
 
-        final_df.to_csv(
-            os.path.join(self.project_dir, f"MachineLabelsRefine.csv"),
-            index=False,
-            header=None,
+        if prediction_filename is None: # when called from frame_extractor_GUI
+            prediction_filename = "MachineLabelsRefine"
+        
+        final_df.to_csv( # when called from refiner
+            os.path.join(save_path, f"{prediction_filename}.csv"),
+            index=False, header=None,
         )
         return True
 
-    def csv_to_h5(self):  # Adapted from deeplabcut.utils.conversioncode
+    @staticmethod
+    def csv_to_h5(project_dir, multi_animal):  # Adapted from deeplabcut.utils.conversioncode
         try:
-            fn = os.path.join(self.project_dir, f"MachineLabelsRefine.csv")
+            fn = os.path.join(project_dir, f"MachineLabelsRefine.csv")
             with open(fn) as datafile:
                 head = list(islice(datafile, 0, 5))
-            if self.multi_animal:
+            if multi_animal:
                 header = list(range(4))
             else:
                 header = list(range(3))
@@ -275,14 +281,15 @@ class DLC_Frame_Extractor:  # Backend for extracting frames for labeling in DLC
                 index_col = 0
             data = pd.read_csv(fn, index_col=index_col, header=header)
             data.columns = data.columns.set_levels(["machine-labeled"], level="scorer")
-            self.guarantee_multiindex_rows(data)
+            DLC_Exporter.guarantee_multiindex_rows(data)
             data.to_hdf(fn.replace(".csv", ".h5"), key="df_with_missing", mode="w")
             data.to_csv(fn)
             return True
         except FileNotFoundError:
-            print("Attention:", self.project_dir, "does not appear to have labeled data!")
+            print("Attention:", project_dir, "does not appear to have labeled data!")
 
-    def guarantee_multiindex_rows(self, df): # Adapted from DeepLabCut
+    @staticmethod
+    def guarantee_multiindex_rows(df): # Adapted from DeepLabCut
         # Make paths platform-agnostic if they are not already
         if not isinstance(df.index, pd.MultiIndex):  # Backwards compatibility
             path = df.index[0]
