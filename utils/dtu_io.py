@@ -11,16 +11,34 @@ import cv2
 
 from PySide6.QtWidgets import QMessageBox
 
+from dataclasses import dataclass, field
+from typing import List, Optional, Tuple, Any
+
+@dataclass
+class LoadedDLCData:
+    # DLC config data
+    multi_animal: bool
+    keypoints: List[str]
+    skeleton: List[List[str]]
+    individuals: Optional[List[str]] # Will be None if not multi_animal, or a list of individual names
+    instance_count: int
+    num_keypoint: int
+    dlc_dir: str
+
+    # Prediction data
+    pred_data_array: np.ndarray # Shape (pred_frame_count, instance_count, num_keypoint * 3)
+    pred_frame_count: int
+
 class DLC_Data_Loader:
     def __init__(self, parent, dlc_config_filepath, prediction_filepath, initialize_status=False):
         self.gui = parent
         self.dlc_config_filepath = dlc_config_filepath
         self.prediction_filepath = prediction_filepath
-        self.is_initialize = initialize_status
-        self.multi_animal = False
-        self.keypoints, self.skeleton, self.individuals, = None, None, None
-        self.num_keypoint, self.instance_count, self.dlc_dir = None, None, None
-        self.prediction_raw, self.pred_frame_count, self.pred_data_array = None, None, None
+        self._is_initialized = initialize_status
+        self._multi_animal = False
+        self._keypoints, self._skeleton, self._individuals, = None, None, None
+        self._num_keypoint, self._instance_count, self._dlc_dir = None, None, None
+        self._prediction_raw, self._pred_frame_count, self._pred_data_array = None, None, None
 
     def dlc_config_loader(self):
         if not os.path.isfile(self.dlc_config_filepath):
@@ -42,9 +60,9 @@ class DLC_Data_Loader:
             if not "tracks" in pred_file.keys():
                 print("Error: Prediction file not valid, no 'tracks' key found in prediction file.")
                 return False
-            if self.is_initialize:
+            if self.is_initialized:
                 QMessageBox.information(self.gui, "Loading Prediction","Loading and parsing prediction file, this could take a few seconds, please wait...")
-                self.is_initialize = False
+                self.is_initialized = False
             self.prediction_raw = pred_file["tracks"]["table"]
             pred_data_values = np.array([item[1] for item in self.prediction_raw])
             self.pred_frame_count = self.prediction_raw.size
