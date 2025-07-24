@@ -207,7 +207,6 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         prediction_path, _ = file_dialog.getOpenFileName(self, "Load Prediction", "", "HDF5 Files (*.h5);;All Files (*)")
 
         if prediction_path:
-            self.prediction = prediction_path
             self.data_loader.prediction_filepath = prediction_path
             
             if not self.data_loader.prediction_loader():
@@ -249,7 +248,6 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             self.data_loader.dlc_config_loader()
 
             prediction = fmk["prediction"]
-            self.prediction = prediction
             self.data_loader.prediction_filepath = prediction
             self.data_loader.prediction_loader()
 
@@ -561,8 +559,9 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             return
         self.last_saved = self.frame_list
         self.is_saved = True
-        save_yaml = {'video_path': self.video_file,  'frame_list': self.last_saved, 'dlc_data': self.dlc_data}
+        save_yaml = {'video_path': self.video_file,  'frame_list': self.last_saved, 'dlc_data': self.dlc_data if self.dlc_data else None}
         output_filepath = os.path.join(os.path.dirname(self.video_file), f"{self.video_name}_frame_extractor.yaml")
+
         with open(output_filepath, 'w') as file:
             yaml.dump(save_yaml, file)
         QMessageBox.information(self, "Success", f"Current workplace files have been saved to {output_filepath}")
@@ -570,8 +569,8 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
     def export_to_refiner(self):
         pass
     #     from dlc_track_refiner import DLC_Track_Refiner
-    #     if not self.prediction or not self.video_file or not self.dlc_data:
-    #         QMessageBox.warning(self, "Warning", "To export to Refiner, you need to load prediction AND dlc config")
+    #     if not self.video_file or not self.dlc_data:
+    #         QMessageBox.warning(self, "Warning", "Driving in my car right after a beer ~ Hey, that bump is shaped like a deer ~")
     #         return
     #     if not self.frame_list:
     #         QMessageBox.information(self, "Nothing to Export", "No frames have been marked yet, mark some frames to export to Refiner.")
@@ -607,12 +606,15 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
 
     def save_to_dlc(self):
         frame_only_mode = False
+
         if self.current_frame is None:
             QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
             return False
+        
         if not self.frame_list:
             QMessageBox.warning(self, "No Marked Frame", "No frame has been marked, please mark some frames first.")
             return False
+        
         if self.project_dir is None:
             QMessageBox.warning(self, "No DLC Config", "DLC config is required for saving to DLC.")
             file_dialog = QtWidgets.QFileDialog(self)
@@ -620,9 +622,8 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             if dlc_dir is None: # When user close the file selection window
                 return False
             self.project_dir = os.path.join(dlc_dir, "labeled_data", self.video_name)
-            if not os.path.isdir(self.project_dir):
-                os.makedirs(self.project_dir)
-        if self.prediction is None:
+
+        if self.dlc_data is None:
             reply = QMessageBox.question(
                 self,
                 "No Prediction Loaded",
@@ -633,8 +634,10 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
                 frame_only_mode = True
             else:
                 self.load_prediction()
-                if self.prediction is None:
+                if self.dlc_data is None:
                     return False
+                
+        self.save_workspace()
 
         try:
             # Initialize DLC extractor backend
@@ -643,11 +646,12 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             )
             # Perform the extraction
             os.makedirs(self.project_dir, exist_ok=True)
+
             if not frame_only_mode:
-                self.save_workspace()
                 success = extractor.extract_frame_and_label()
             else:
-                success = extractor.extract_frame()        
+                success = extractor.extract_frame()
+
             if success:
                 QMessageBox.information(
                     self,"Success",
@@ -658,6 +662,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             else:
                 QMessageBox.warning(self, "Error", "Failed to save frames to DLC format.")
                 return False
+
         except Exception as e:
             QMessageBox.critical(self,"Error",f"An error occurred while saving to DLC:\n{str(e)}")
             return False
