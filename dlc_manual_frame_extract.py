@@ -14,8 +14,8 @@ from PySide6.QtCore import Qt, QTimer, QEvent
 from PySide6.QtGui import QShortcut, QKeySequence, QCloseEvent
 from PySide6.QtWidgets import QMessageBox, QPushButton, QMenu, QToolButton
 
-from toolkit_utils.dtu_ui import Slider_With_Marks
-from toolkit_utils.dtu_io import DLC_Data_Loader, DLC_Frame_Extractor
+from utils.dtu_ui import Slider_With_Marks
+from utils.dtu_io import DLC_Data_Loader, DLC_Frame_Extractor
 
 class DLC_Frame_Finder(QtWidgets.QMainWindow):
     def __init__(self):
@@ -32,8 +32,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
 
         self.load_menu = QMenu("File", self)
         self.load_video_action = self.load_menu.addAction("Load Video")
-        self.load_dlc_config_action = self.load_menu.addAction("Load DLC Config")
-        self.load_prediction_action = self.load_menu.addAction("Load Prediction")
+        self.load_prediction_action = self.load_menu.addAction("Load DLC Config & Prediction")
         self.load_status_action = self.load_menu.addAction("Load Status")
 
         self.load_button = QToolButton()
@@ -107,7 +106,6 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
 
         # Connect events
         self.load_video_action.triggered.connect(self.load_video)
-        self.load_dlc_config_action.triggered.connect(self.load_dlc_config)
         self.load_prediction_action.triggered.connect(self.load_prediction)
         self.load_status_action.triggered.connect(self.load_status)
 
@@ -141,13 +139,9 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         self.reset_state()
 
     def reset_state(self):
-        self.video_file, self.prediction, self.dlc_config = None, None, None
-        self.dlc_dir, self.video_name = None, None
-        self.keypoints, self.skeleton, self.individuals, self.project_dir = None, None, None, None
+        self.video_file, self.video_name, self.project_dir, self.dlc_data = None, None, None, None
 
-        self.instance_count = 1
-        self.multi_animal = False
-        self.pred_data = None
+        self.data_loader = DLC_Data_Loader(self, None, None)
 
         self.labeled_frame_list, self.frame_list = [], []
 
@@ -162,8 +156,6 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         self.navigation_group_box.hide()
 
         self.refiner_window = None
-
-        self.data_loader = DLC_Data_Loader(self, None, None, initialize_status=False)
 
     def load_video(self):
         self.reset_state()
@@ -199,13 +191,21 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
             return
         
-        if self.dlc_config is None:
-            QMessageBox.information(self, "No DLC Config", "No dlc config has been loaded, please load it first.")
-            return
-        
+        # Loading DLC config first
+        file_dialog = QtWidgets.QFileDialog(self)
+        dlc_config, _ = file_dialog.getOpenFileName(self, "Load DLC Config", "", "YAML Files (config.yaml);;All Files (*)")
+
+        if dlc_config:
+            self.data_loader.dlc_config_filepath = dlc_config
+
+            if not self.data_loader.dlc_config_loader():
+                QMessageBox.critical(self, "DLC Config Error", "Failed to load DLC configuration. Check console for details.")
+                return
+
+        # Then prediction data
         file_dialog = QtWidgets.QFileDialog(self)
         prediction_path, _ = file_dialog.getOpenFileName(self, "Load Prediction", "", "HDF5 Files (*.h5);;All Files (*)")
-        
+
         if prediction_path:
             self.prediction = prediction_path
             self.data_loader.prediction_filepath = prediction_path
@@ -214,36 +214,9 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
                 QMessageBox.critical(self, "Prediction Error", "Failed to load prediction data. Check console for details.")
                 return
             
-            QMessageBox.information(self, "Prediction Loaded", "Prediction data loaded successfully!")
-            self.prediction_raw = self.data_loader.prediction_raw
-            self.pred_frame_count = self.data_loader.pred_frame_count
-            self.pred_data_array = self.data_loader.pred_data_array
-                
-    def load_dlc_config(self):
+            QMessageBox.information(self, "Prediction Loaded", "Prediction data and DLC config loaded successfully!")
 
-        if self.current_frame is None:
-            QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
-            return
-        
-        file_dialog = QtWidgets.QFileDialog(self)
-        dlc_config, _ = file_dialog.getOpenFileName(self, "Load DLC Config", "", "YAML Files (config.yaml);;All Files (*)")
-        if dlc_config:
-            self.dlc_config = dlc_config
-            self.data_loader.dlc_config_filepath = dlc_config
-
-            if not self.data_loader.dlc_config_loader():
-                QMessageBox.critical(self, "DLC Config Error", "Failed to load DLC configuration. Check console for details.")
-                return
-            
-            QMessageBox.information(self, "DLC Config Loaded", "DLC configuration loaded successfully!")
-            self.multi_animal = self.data_loader.multi_animal
-            self.keypoints = self.data_loader.keypoints
-            self.skeleton = self.data_loader.skeleton
-            self.individuals = self.data_loader.individuals
-            self.num_keypoint = self.data_loader.num_keypoint
-            self.instance_count = self.data_loader.instance_count
-            self.dlc_dir = self.data_loader.dlc_dir
-            self.project_dir = os.path.join(self.dlc_dir,"labeled-data", self.video_name)
+        self.dlc_data = self.data_loader.get_loaded_dlc_data()
 
         self.load_and_plot_labeled_frame()
         self.display_current_frame()
@@ -272,21 +245,23 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             print(f"Marked frames loaded: {self.frame_list}")
 
             dlc_config = fmk["dlc_config"]
-            if os.path.isfile(dlc_config):
-                self.dlc_config = dlc_config
-                self.data_loader.dlc_config_filepath = dlc_config
-                self.data_loader.dlc_config_loader()
+            self.data_loader.dlc_config_filepath = dlc_config
+            self.data_loader.dlc_config_loader()
 
             prediction = fmk["prediction"]
-            if os.path.isfile(prediction):
-                self.prediction = prediction
-                self.data_loader.prediction_filepath = prediction
-                self.data_loader.prediction_loader()
+            self.prediction = prediction
+            self.data_loader.prediction_filepath = prediction
+            self.data_loader.prediction_loader()
+
+            self.dlc_data = self.data_loader.get_loaded_dlc_data()
                 
             self.progress_slider.set_frame_category("marked_frames", self.frame_list, "#E28F13")
             self.determine_save_status()
 
     def load_and_plot_labeled_frame(self):
+        dlc_dir = os.path.dirname(self.data_loader.dlc_config_filepath)
+        self.project_dir = os.path.join(dlc_dir, "labeled_data", self.video_name)
+
         if not os.path.isdir(self.project_dir):
             self.labeled_frame_list = []
             return
@@ -312,7 +287,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             ret, frame = self.cap.read()
             if ret:
                 self.current_frame = frame
-                frame = self.plot_predictions(frame) if self.pred_data is not None else frame
+                frame = self.plot_predictions(frame) if self.dlc_data is not None else frame
                 # Convert OpenCV image to QPixmap
                 rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 h, w, ch = rgb_image.shape
@@ -330,46 +305,49 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             self.video_label.setText("No video loaded")
 
     def plot_predictions(self, frame):
-        if self.pred_data is None:
+        if self.dlc_data is None:
             return frame
         try:
-            current_frame_data = self.pred_data[self.current_frame_idx][1]
+            current_frame_data = self.dlc_data.pred_data_array[self.current_frame_idx,:,:]
         except IndexError:
             print(f"Frame index {self.current_frame_idx} out of bounds for prediction data.")
             return frame
         colors_rgb = [(0, 165, 255), (51, 255, 51), (255, 153, 51), (51, 51, 255), (102, 255, 255)]
-        if len(self.keypoints) != current_frame_data.size // self.instance_count // 3:
-            QMessageBox.warning(self, "Error: Keypoint Mismatch", "Keypoints in config and in prediction do not match! Falling back to prediction parameters!")
-            print(f"Keypoints in config: {len(self.keypoints)} \n Keypoints in prediction: {current_frame_data.size // self.instance_count * 2 // 3}")
-            self.keypoints = None   # Falling back to prediction parameters
-            self.skeleton = None
-            num_keypoints = current_frame_data.size // self.instance_count // 3
-        else:
-            num_keypoints = len(self.keypoints)
+        num_keypoint = self.dlc_data.num_keypoint
+        num_instance = self.dlc_data.instance_count
 
-        # Iterate over each individual (animal)
-        for inst in range(self.instance_count):
+        if num_keypoint != current_frame_data.size // num_instance // 3:
+            QMessageBox.warning(
+                self, "Error: Keypoint Mismatch",
+                "Keypoints in config and in prediction do not match!\n"
+                f"Keypoints in config: {self.dlc_data.keypoints} \n"
+                f"Keypoints in prediction: {current_frame_data.size // num_instance * 2 // 3}"
+                )
+            return
+        
+        for inst in range(num_instance):
             color = colors_rgb[inst % len(colors_rgb)]
+
             # Initiate an empty dict for storing coordinates
             keypoint_coords = {}
-            for i in range(num_keypoints):
-                x = current_frame_data[inst * num_keypoints * 3 + i * 3] # x, y, confidence triplet
-                y = current_frame_data[inst * num_keypoints * 3 + i * 3 + 1]
-                confidence = current_frame_data[inst * num_keypoints * 3 + i * 3 + 2]
-                if pd.isna(confidence):
-                    confidence = 0 # Set confidence value to 0 for NaN confidence
-                keypoint = i if self.keypoints is None else self.keypoints[i]
+            for i in range(num_keypoint):  # x, y, confidence triplet
+                x = current_frame_data[inst, i * 3]
+                y = current_frame_data[inst, i * 3 + 1]
+                confidence = current_frame_data[inst, i * 3 + 2]
+
+                keypoint = self.dlc_data.keypoints[i]
+
                 if pd.isna(x) or pd.isna(y) or confidence <= self.confidence_cutoff: # Apply confidence cutoff
                     keypoint_coords[keypoint] = None
                     continue # Skip plotting empty coords
                 else:
-                    keypoint_coords[keypoint] = (int(x),int(y))
+                    keypoint_coords[keypoint] = (int(x),int(y)) # int required by cv2
                 
                 cv2.circle(frame, (int(x), int(y)), 3, color, -1) # Draw the dot representing the keypoints
 
-            if self.individuals is not None and len(keypoint_coords) >= 2:
+            if self.dlc_data.individuals is not None and len(keypoint_coords) >= 2:
                 self.plot_bounding_box(keypoint_coords, frame, color, inst)
-            if self.skeleton:
+            if self.dlc_data.skeleton:
                 self.plot_skeleton(keypoint_coords, frame, color)
 
         return frame
@@ -394,7 +372,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         cv2.rectangle(frame, (min_x, min_y), (max_x, max_y), color, 1) # Draw the bounding box
 
         # Add individual label
-        cv2.putText(frame, f"Instance: {self.individuals[inst]}", (min_x, min_y), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1, cv2.LINE_AA)
+        cv2.putText(frame, f"Instance: {self.dlc_data.individuals[inst]}", (min_x, min_y), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1, cv2.LINE_AA)
 
         center_x = min_x + max_x / 2
         center_y = min_y + max_y / 2
@@ -404,7 +382,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         text_color = color
 
         for keypoint in keypoint_coords:
-            if keypoint_coords[keypoint] is None: # Empty keypoint
+            if keypoint_coords[keypoint] is None: # Skip empty keypoint
                 return
 
             (x, y) = keypoint_coords[keypoint]
@@ -431,7 +409,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         return frame
     
     def plot_skeleton(self, keypoint_coords, frame, color):
-        for start_kp, end_kp in self.skeleton:
+        for start_kp, end_kp in self.dlc_data.skeleton:
             start_coord = keypoint_coords.get(start_kp)
             end_coord = keypoint_coords.get(end_kp)
             if start_coord and end_coord:
@@ -583,43 +561,43 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             return
         self.last_saved = self.frame_list
         self.is_saved = True
-        save_yaml = {'video_path': self.video_file, 'frame_list': self.last_saved, 
-                     'dlc_config': os.path.join(self.dlc_dir, "config.yaml"),
-                     'prediction': self.prediction}
+        save_yaml = {'video_path': self.video_file,  'frame_list': self.last_saved, 'dlc_data': self.dlc_data}
         output_filepath = os.path.join(os.path.dirname(self.video_file), f"{self.video_name}_frame_extractor.yaml")
         with open(output_filepath, 'w') as file:
             yaml.dump(save_yaml, file)
         QMessageBox.information(self, "Success", f"Current workplace files have been saved to {output_filepath}")
 
     def export_to_refiner(self):
-        from dlc_track_refiner import DLC_Track_Refiner
-        if not self.prediction or not self.video_file or not self.dlc_config:
-            QMessageBox.warning(self, "Warning", "To export to Refiner, you need to load prediction AND dlc config")
-            return
-        if not self.frame_list:
-            QMessageBox.information(self, "Nothing to Export", "No frames have been marked yet, mark some frames to export to Refiner.")
-            return
-        try:
-            self.refiner_window = DLC_Track_Refiner()
-            self.refiner_window.video_file = self.video_file
-            self.refiner_window.initialize_loaded_video()
-            self.refiner_window.config_loader_dlc(self.dlc_config)
-            self.refiner_window.prediction = self.prediction
-            self.refiner_window.marked_roi_frame_list = self.frame_list
-            self.refiner_window.prediction_loader()
-            self.refiner_window.current_frame_idx = self.current_frame_idx
-            self.refiner_window.display_current_frame()
-            self.refiner_window.navigation_box_title_controller()
-            self.refiner_window.show()
-            self.refiner_window.prediction_saved.connect(self.reload_prediction) # Reload from prediction provided by refiner
-        except Exception as e:
-            QMessageBox.warning(self, "Refiner Failed", f"Refiner failed to initialize. Exception: {e}")
-            return
+        pass
+    #     from dlc_track_refiner import DLC_Track_Refiner
+    #     if not self.prediction or not self.video_file or not self.dlc_data:
+    #         QMessageBox.warning(self, "Warning", "To export to Refiner, you need to load prediction AND dlc config")
+    #         return
+    #     if not self.frame_list:
+    #         QMessageBox.information(self, "Nothing to Export", "No frames have been marked yet, mark some frames to export to Refiner.")
+    #         return
+    #     try:
+    #         self.refiner_window = DLC_Track_Refiner()
+    #         self.refiner_window.video_file = self.video_file
+    #         self.refiner_window.initialize_loaded_video()
+    #         self.refiner_window.config_loader_dlc()
+    #         self.refiner_window.prediction = self.prediction
+    #         self.refiner_window.marked_roi_frame_list = self.frame_list
+    #         self.refiner_window.prediction_loader()
+    #         self.refiner_window.current_frame_idx = self.current_frame_idx
+    #         self.refiner_window.display_current_frame()
+    #         self.refiner_window.navigation_box_title_controller()
+    #         self.refiner_window.show()
+    #         self.refiner_window.prediction_saved.connect(self.reload_prediction) # Reload from prediction provided by refiner
+    #     except Exception as e:
+    #         QMessageBox.warning(self, "Refiner Failed", f"Refiner failed to initialize. Exception: {e}")
+    #         return
 
     def reload_prediction(self, prediction_path):
         """Reload prediction data from file and update visualization"""
-        self.prediction = prediction_path
-        self.prediction_loader()
+        self.data_loader.prediction_filepath = prediction_path
+        self.data_loader.prediction_loader()
+        self.dlc_data = self.data_loader.get_loaded_dlc_data()
         self.display_current_frame()
         QMessageBox.information(self, "Success", "Prediction reloaded successfully!")
 
@@ -635,11 +613,15 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         if not self.frame_list:
             QMessageBox.warning(self, "No Marked Frame", "No frame has been marked, please mark some frames first.")
             return False
-        if self.dlc_dir is None:
+        if self.project_dir is None:
             QMessageBox.warning(self, "No DLC Config", "DLC config is required for saving to DLC.")
-            self.load_dlc_config()
-            if self.dlc_dir is None: # When user close the file selection window
+            file_dialog = QtWidgets.QFileDialog(self)
+            dlc_dir, _ = file_dialog.getOpenFileName(self, "Load Video", "", "Video Files (*.mp4 *.avi *.mov *.mkv);;All Files (*)")
+            if dlc_dir is None: # When user close the file selection window
                 return False
+            self.project_dir = os.path.join(dlc_dir, "labeled_data", self.video_name)
+            if not os.path.isdir(self.project_dir):
+                os.makedirs(self.project_dir)
         if self.prediction is None:
             reply = QMessageBox.question(
                 self,
@@ -653,38 +635,31 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
                 self.load_prediction()
                 if self.prediction is None:
                     return False
-        self.save_workspace()
+
         try:
             # Initialize DLC extractor backend
             extractor = DLC_Frame_Extractor(
-                self.video_file,    self.prediction,    self.frame_list,
-                self.dlc_dir,       self.project_dir,   self.video_name,
-                self.pred_data,     self.keypoints,     self.individuals,
-                multi_animal=self.multi_animal
+                self.video_file, self.frame_list, self.dlc_data, self.project_dir, self.video_name
             )
             # Perform the extraction
             os.makedirs(self.project_dir, exist_ok=True)
             if not frame_only_mode:
+                self.save_workspace()
                 success = extractor.extract_frame_and_label()
             else:
                 success = extractor.extract_frame()        
             if success:
                 QMessageBox.information(
-                    self,
-                    "Success",
+                    self,"Success",
                     f"Successfully saved {len(self.frame_list)} frames to:\n"
-                    f"{os.path.join(self.dlc_dir, 'labeled-data', self.video_name)}"
+                    f"{os.path.join(self.project_dir)}"
                 )
                 return True
             else:
                 QMessageBox.warning(self, "Error", "Failed to save frames to DLC format.")
                 return False
         except Exception as e:
-            QMessageBox.critical(
-                self,
-                "Error",
-                f"An error occurred while saving to DLC:\n{str(e)}"
-            )
+            QMessageBox.critical(self,"Error",f"An error occurred while saving to DLC:\n{str(e)}")
             return False
 
     def changeEvent(self, event):
@@ -696,7 +671,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         if not self.is_saved:
             # Create a dialog to confirm saving
             close_call = QMessageBox(self)
-            close_call.setWindowTitle("Marked Frame Unsaved")
+            close_call.setWindowTitle("Changes Unsaved")
             close_call.setText("Do you want to save your changes before closing?")
             close_call.setIcon(QMessageBox.Icon.Question)
 

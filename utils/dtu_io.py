@@ -11,21 +11,22 @@ import cv2
 
 from PySide6.QtWidgets import QMessageBox
 
-from dataclasses import dataclass, field
-from typing import List, Optional, Tuple, Any
+from dataclasses import dataclass
+from typing import List, Optional
 
 @dataclass
 class LoadedDLCData:
     # DLC config data
+    dlc_config_filepath: str # Full path of dlc_config file
     multi_animal: bool
     keypoints: List[str]
     skeleton: List[List[str]]
     individuals: Optional[List[str]] # Will be None if not multi_animal, or a list of individual names
     instance_count: int
     num_keypoint: int
-    dlc_dir: str
 
     # Prediction data
+    prediction_filepath: str # Full path of prediction file
     pred_data_array: np.ndarray # Shape (pred_frame_count, instance_count, num_keypoint * 3)
     pred_frame_count: int
 
@@ -34,42 +35,105 @@ class DLC_Data_Loader:
         self.gui = parent
         self.dlc_config_filepath = dlc_config_filepath
         self.prediction_filepath = prediction_filepath
-        self._is_initialized = initialize_status
+        self._is_initializing = initialize_status
         self._multi_animal = False
         self._keypoints, self._skeleton, self._individuals, = None, None, None
-        self._num_keypoint, self._instance_count, self._dlc_dir = None, None, None
-        self._prediction_raw, self._pred_frame_count, self._pred_data_array = None, None, None
+        self._num_keypoint, self._instance_count = None, None
+        self._pred_frame_count, self._pred_data_array = None, None
 
-    def dlc_config_loader(self):
+    def dlc_config_loader(self) -> bool:
+        """
+        Internal method to load DLC configuration.
+        Populates internal attributes. Returns True on success, False on failure.
+        """
         if not os.path.isfile(self.dlc_config_filepath):
             QMessageBox.warning(self.gui, "DLC Config Not Found", f"DLC config cannot be fetched from given path: {self.dlc_config_filepath}")
             return False
-        with open(self.dlc_config_filepath, "r") as conf:
-            cfg = yaml.safe_load(conf)
-        self.multi_animal = cfg["multianimalproject"]
-        self.keypoints = cfg["bodyparts"] if not self.multi_animal else cfg["multianimalbodyparts"]
-        self.skeleton = cfg["skeleton"]
-        self.individuals = cfg["individuals"]
-        self.instance_count = len(self.individuals) if self.individuals is not None else 1
-        self.dlc_dir = os.path.dirname(self.dlc_config_filepath)
-        self.num_keypoint = len(self.keypoints)
-        return True
-
-    def prediction_loader(self):
-        with h5py.File(self.prediction_filepath, "r") as pred_file:
-            if not "tracks" in pred_file.keys():
-                print("Error: Prediction file not valid, no 'tracks' key found in prediction file.")
-                return False
-            if self.is_initialized:
-                QMessageBox.information(self.gui, "Loading Prediction","Loading and parsing prediction file, this could take a few seconds, please wait...")
-                self.is_initialized = False
-            self.prediction_raw = pred_file["tracks"]["table"]
-            pred_data_values = np.array([item[1] for item in self.prediction_raw])
-            self.pred_frame_count = self.prediction_raw.size
-            self.pred_data_array = np.full((self.pred_frame_count, self.instance_count, self.num_keypoint*3),np.nan)
-            for inst_idx in range(self.instance_count): # Sort inst out
-                self.pred_data_array[:,inst_idx,:] = pred_data_values[:, inst_idx*self.num_keypoint*3:(inst_idx+1)*self.num_keypoint*3]
+        try:
+            with open(self.dlc_config_filepath, "r") as conf:
+                cfg = yaml.safe_load(conf)
+            self._multi_animal = cfg.get("multianimalproject", False) # Use .get with default
+            self._keypoints = cfg.get("bodyparts", []) if not self._multi_animal else cfg.get("multianimalbodyparts", [])
+            self._skeleton = cfg.get("skeleton", [])
+            self._individuals = cfg.get("individuals") # Can be None if not multi_animal
+            self._instance_count = len(self._individuals) if self._individuals is not None else 1
+            self._num_keypoint = len(self._keypoints)
             return True
+        except Exception as e:
+            QMessageBox.critical(self.gui, "DLC Config Error", f"Error loading DLC config: {e}")
+            return False
+
+    def prediction_loader(self) -> bool:
+        """
+        Internal method to load prediction data from HDF5 file.
+        Populates internal attributes. Returns True on success, False on failure.
+        """
+        if not os.path.isfile(self.prediction_filepath):
+            QMessageBox.warning(self.gui, "Prediction File Not Found", f"Prediction file cannot be fetched from given path: {self.prediction_filepath}")
+            return False
+
+        if not self.dlc_config_filepath:
+            QMessageBox.warning(self.gui, "No DLC Config", "No DLC config has been loaded, please load it first.")
+            return False
+
+        try:
+            with h5py.File(self.prediction_filepath, "r") as pred_file:
+                if "tracks" not in pred_file: # Use 'in' for checking keys
+                    QMessageBox.warning(self.gui, "Prediction File Error", "Error: Prediction file not valid, no 'tracks' key found.")
+                    return False
+
+                if self._is_initializing:
+                    QMessageBox.information(self.gui, "Loading Prediction","Loading and parsing prediction file, this could take a few seconds, please wait...")
+
+                prediction_raw = pred_file["tracks"]["table"]
+                pred_data_values = np.array([item[1] for item in prediction_raw])
+                self._pred_frame_count = prediction_raw.size
+
+                # Validate dimensions before creating array
+                expected_cols = self._instance_count * self._num_keypoint * 3
+                if pred_data_values.shape[1] != expected_cols:
+                    QMessageBox.warning(self.gui, "Prediction Data Mismatch",
+                        f"Prediction data columns ({pred_data_values.shape[1]}) do not match expected ({expected_cols}) based on config. Check config or prediction file."
+                    )
+                    return False
+
+                self._pred_data_array = np.full(
+                    (self._pred_frame_count, self._instance_count, self._num_keypoint * 3), np.nan
+                )
+
+                for inst_idx in range(self._instance_count):
+                    start_col = inst_idx * self._num_keypoint * 3
+                    end_col = (inst_idx + 1) * self._num_keypoint * 3
+                    self._pred_data_array[:, inst_idx, :] = pred_data_values[:, start_col:end_col]
+
+            return True
+        except Exception as e:
+            QMessageBox.critical(self.gui, "Prediction Loading Error", f"Error loading prediction data: {e}")
+            return False
+
+    def get_loaded_dlc_data(self) -> Optional[LoadedDLCData]:
+        """
+        Exports the loaded and processed DLC data as a LoadedDLCData dataclass.
+        Returns None if data could not be loaded or processed.
+        """
+        check_list = [self._keypoints, self._instance_count, self._pred_data_array, self._pred_frame_count]
+        # Check if all necessary internal attributes are populated
+        if all(item is not None for item in check_list):
+            QMessageBox.warning(self.gui, "Data Incomplete", "Internal data is incomplete. Cannot export LoadedDLCData.")
+            return None
+
+        return LoadedDLCData(
+            dlc_config_filepath = self.dlc_config_filepath,
+            multi_animal=self._multi_animal,
+            keypoints=self._keypoints,
+            skeleton=self._skeleton,
+            individuals=self._individuals,
+            instance_count=self._instance_count,
+            num_keypoint=self._num_keypoint,
+            prediction_filepath = self.prediction_filepath,
+            pred_data_array=self._pred_data_array.copy(), # Return a copy of the numpy array
+            pred_frame_count=self._pred_frame_count
+        )
 
 class DLC_Frame_Extractor:  # Backend for extracting frames for labeling in DLC
     def __init__(self, video_file, prediction, frame_list, dlc_dir, project_dir, video_name, pred_data, keypoints, individuals, multi_animal=False):

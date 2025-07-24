@@ -15,7 +15,8 @@ from PySide6.QtCore import Qt, QTimer, QEvent, Signal
 from PySide6.QtGui import QShortcut, QKeySequence, QPainter, QColor, QPen, QCloseEvent
 from PySide6.QtWidgets import QMessageBox, QPushButton, QGraphicsView, QGraphicsRectItem, QMenu, QToolButton
 
-from toolkit_utils.dtu_ui import Slider_With_Marks, Selectable_Instance, Draggable_Keypoint
+from utils.dtu_ui import Slider_With_Marks, Selectable_Instance, Draggable_Keypoint
+from utils.dtu_io import DLC_Data_Loader
 
 DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/NTD/config.yaml"
 VIDEO_FILE_DEBUG = "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-conv.mp4"
