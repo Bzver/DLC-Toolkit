@@ -14,14 +14,16 @@ This project is currently in active development, which means you might encounter
 - [dlc_3D_skeleton_plotter.py](#dlc_3d_skeleton_plotterpy)
 - [dlc_manual_frame_extract.py](#dlc_manual_frame_extractpy)
 
-- [dlc_dataset_augumenter.py](#dlc_dataset_augumenterpy)
-- [dlc_obsolete_train_img_trimmer.py](#dlc_obsolete_train_img_trimmerpy)
 
+### Misc Tools
+- [dlc_obsolete_train_img_trimmer.py](#dlc_obsolete_train_img_trimmerpy)
+- [dlc_track_to_annot_prep.py](#dlc_track_to_annot_preppy)
+- [dlc_dataset_augumenter.py](#dlc_dataset_augumenterpy)
+
+
+### SLEAP Tools
 - [sleap_keypoint_fill.py](#sleap_keypoint_fillpy)
 - [sleap_viewer.ipynb](#sleap_vieweripynb)
-- [dlc_h5_to_csv.py](#dlc_h5_to_csvpy)
-
-- [dlc_track_to_annot_prep.py](#dlc_track_to_annot_preppy)
 
 
 ### dlc_3D_skeleton_plotter.py
@@ -50,35 +52,6 @@ your_video_folder/
 - **Calibration File (`.mat`):** A MATLAB `.mat` file containing camera calibration parameters (e.g., `sync_dannce.mat`) ( produced in Label3D / DANNCE / SDANNCE workflow ). This file should contain camera intrinsic and extrinsic parameters.
 - **Video Folder:** A directory containing subfolders for each camera (e.g., `Camera1`, `Camera2`), where each subfolder contains the video file (`0.mp4`) and its corresponding DLC prediction `.h5` file.
 
-### dlc_dataset_augumenter.py
-
-#### Functionality
-A tool for augmenting DLC datasets by adjusting the tone (brightness, contrast, L/A/B channels) of images to match a reference image or a set of reference images. Features an interactive GUI for manual adjustment and an auto-apply option for batch processing. Useful for improving model robustness when training data comes from different lighting conditions or camera settings.
-
-#### Required Folder Structure
-The script expects the following structure for DLC labeled data and reference images:
-
-```
-your_dlc_project/
-└── labeled-data/
-    └── your_video_name/
-        ├── img0000.png
-        ├── img0001.png
-        └── ...
-        └── CollectedData_scorer.h5 (or .csv)
-
-your_reference_folder/
-└── frame_0000.png
-└── frame_0001.png
-└── ...
-```
-
-**Inputs:**
-- **DLC Dataset Folder:** The `labeled-data` directory within a DLC project, containing subfolders for each video with labeled images (e.g., `imgXXXX.png`) and their corresponding `CollectedData_*.h5` or `.csv` files.
-- **Reference Folder(s):** Directory/directories containing images whose tone you want to match. These images are used as a reference for tone adjustment.
-
-**Outputs:**
-- **Augmented Images:** A new folder named `your_video_name_augmented` will be created alongside the original `your_video_name` folder, containing the tone-adjusted images.
 
 ### dlc_manual_frame_extract.py
 
@@ -123,30 +96,6 @@ your_dlc_project/
 - **Extracted Images:** When "Export to DLC" is used, marked frames are extracted as individual `.png` images and saved into the `labeled-data/your_video_name/` directory within your DLC project.
 - **DLC-compatible HDF5:** When "Export to DLC" is used, a `CollectedData_*.h5` file is generated in the `labeled-data/your_video_name/` directory. This file contains the prediction data corresponding to the extracted frames, formatted for direct use in DeepLabCut's labeling interface.
 
-### dlc_obsolete_train_img_trimmer.py
-
-#### Functionality
-This script helps manage DLC training datasets by removing image files from a `labeled-data` directory that are no longer referenced in the corresponding `CollectedData_*.csv` file. This is useful in synergy with frame_extractor to remove the frames you extracted but don't feel like labeling later.
-
-#### Required Folder Structure
-The script operates directly on the `labeled-data` subfolder within a DLC project.
-
-```
-your_dlc_project/
-└── labeled-data/
-    └── your_video_name/
-        ├── img0000.png
-        ├── img0001.png
-        └── ...
-        └── CollectedData_scorer.csv
-```
-
-**Inputs:**
-- **CSV File (`CollectedData_*.csv`):** The DeepLabCut CSV file that contains the list of currently labeled frames.
-- **Project Directory:** The specific `labeled-data/your_video_name/` directory where the images and CSV file are located.
-
-**Outputs:**
-- **Cleaned Image Directory:** Obsolete `.png` image files (those not listed in the CSV) are deleted from the specified project directory.
 
 ### dlc_track_refiner.py
 
@@ -175,6 +124,64 @@ A comprehensive GUI tool for refining DLC tracking data. It allows users to manu
 **Outputs:**
 - **Refined Prediction File (`_refiner_modified_*.h5`):** A new `.h5` file is generated with the refined tracking data. The original prediction file is preserved.
 
+
+### dlc_dataset_augumenter.py
+
+#### Functionality
+A tool for augmenting DLC datasets by adjusting the tone (brightness, contrast, L/A/B channels) of images to match a reference image or a set of reference images. Features an interactive GUI for manual adjustment and an auto-apply option for batch processing. Useful for improving model robustness when training data comes from different lighting conditions or camera settings.
+
+#### Required Folder Structure
+The script expects the following structure for DLC labeled data and reference images:
+
+```
+your_dlc_project/
+└── labeled-data/
+    └── your_video_name/
+        ├── img0000.png
+        ├── img0001.png
+        └── ...
+        └── CollectedData_scorer.h5 (or .csv)
+
+your_reference_folder/
+└── frame_0000.png
+└── frame_0001.png
+└── ...
+```
+
+**Inputs:**
+- **DLC Dataset Folder:** The `labeled-data` directory within a DLC project, containing subfolders for each video with labeled images (e.g., `imgXXXX.png`) and their corresponding `CollectedData_*.h5` or `.csv` files.
+- **Reference Folder(s):** Directory/directories containing images whose tone you want to match. These images are used as a reference for tone adjustment.
+
+**Outputs:**
+- **Augmented Images:** A new folder named `your_video_name_augmented` will be created alongside the original `your_video_name` folder, containing the tone-adjusted images.
+
+
+### dlc_obsolete_train_img_trimmer.py
+
+#### Functionality
+This script helps manage DLC training datasets by removing image files from a `labeled-data` directory that are no longer referenced in the corresponding `CollectedData_*.csv` file. This is useful in synergy with frame_extractor to remove the frames you extracted but don't feel like labeling later.
+
+#### Required Folder Structure
+The script operates directly on the `labeled-data` subfolder within a DLC project.
+
+```
+your_dlc_project/
+└── labeled-data/
+    └── your_video_name/
+        ├── img0000.png
+        ├── img0001.png
+        └── ...
+        └── CollectedData_scorer.csv
+```
+
+**Inputs:**
+- **CSV File (`CollectedData_*.csv`):** The DeepLabCut CSV file that contains the list of currently labeled frames.
+- **Project Directory:** The specific `labeled-data/your_video_name/` directory where the images and CSV file are located.
+
+**Outputs:**
+- **Cleaned Image Directory:** Obsolete `.png` image files (those not listed in the CSV) are deleted from the specified project directory.
+
+
 ### sleap_keypoint_fill.py
 
 #### Functionality
@@ -202,10 +209,6 @@ A basic viewer to load and inspect data from a SLEAP HDF5 file (`.slp`).
 - Access and parse the `tracks_json` dataset to understand the mapping between internal track indices and user-defined track identifiers.
 - Load the `points` dataset and map individual keypoint instances to their respective tracks and frames.
 - Print an example of tracked points by identity and frame, showing how to retrieve specific keypoint coordinates.
-
-### dlc_h5_to_csv.py
-
-A simple utility script borrowed from DLC repo that converts DLC prediction `.h5` files to `.csv` format leveraging the `analyze_videos_converth5_to_csv` function within deeplabcut.
 
 
 ### dlc_track_to_annot_prep.py
