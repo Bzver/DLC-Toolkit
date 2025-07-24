@@ -33,7 +33,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         self.load_menu = QMenu("File", self)
         self.load_video_action = self.load_menu.addAction("Load Video")
         self.load_prediction_action = self.load_menu.addAction("Load DLC Config & Prediction")
-        self.load_status_action = self.load_menu.addAction("Load Status")
+        self.load_workplace_action = self.load_menu.addAction("Load Status")
 
         self.load_button = QToolButton()
         self.load_button.setText("File")
@@ -107,7 +107,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         # Connect events
         self.load_video_action.triggered.connect(self.load_video)
         self.load_prediction_action.triggered.connect(self.load_prediction)
-        self.load_status_action.triggered.connect(self.load_status)
+        self.load_workplace_action.triggered.connect(self.load_workplace)
 
         self.save_workspace_action.triggered.connect(self.save_workspace)
         self.save_to_dlc_action.triggered.connect(self.save_to_dlc)
@@ -220,7 +220,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         self.load_and_plot_labeled_frame()
         self.display_current_frame()
 
-    def load_status(self):
+    def load_workplace(self):
         file_dialog = QtWidgets.QFileDialog(self)
         marked_frame_path, _ = file_dialog.getOpenFileName(self, "Load Status", "", "YAML Files (*.yaml);;All Files (*)")
 
@@ -244,17 +244,24 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             print(f"Marked frames loaded: {self.frame_list}")
 
             dlc_config = fmk["dlc_config"]
-            self.data_loader.dlc_config_filepath = dlc_config
-            self.data_loader.dlc_config_loader()
-
             prediction = fmk["prediction"]
-            self.data_loader.prediction_filepath = prediction
-            self.data_loader.prediction_loader()
 
-            self.dlc_data = self.data_loader.get_loaded_dlc_data()
+            if dlc_config and prediction:
+                self.data_loader.dlc_config_filepath = dlc_config
+                self.data_loader.prediction_filepath = prediction
+
+                if not self.data_loader.dlc_config_loader():
+                    QMessageBox.critical(self, "DLC Config Error", "Failed to load DLC configuration. Check console for details.")
+                    return
+                if not self.data_loader.prediction_loader():
+                    QMessageBox.critical(self, "Prediction Error", "Failed to load prediction data. Check console for details.")
+                    return
+
+                self.dlc_data = self.data_loader.get_loaded_dlc_data()
                 
             self.progress_slider.set_frame_category("marked_frames", self.frame_list, "#E28F13")
             self.determine_save_status()
+            self.display_current_frame()
 
     def load_and_plot_labeled_frame(self):
         dlc_dir = os.path.dirname(self.data_loader.dlc_config_filepath)
@@ -559,7 +566,10 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             return
         self.last_saved = self.frame_list
         self.is_saved = True
-        save_yaml = {'video_path': self.video_file,  'frame_list': self.last_saved, 'dlc_data': self.dlc_data if self.dlc_data else None}
+        if self.dlc_data:
+            save_yaml = {'video_path': self.video_file,  'frame_list': self.last_saved, 'dlc_congfig': self.dlc_data.dlc_config_filepath, 'prediction': self.dlc_data.prediction_filepath}
+        else:
+            save_yaml = {'video_path': self.video_file,  'frame_list': self.last_saved, 'dlc_congfig': None, 'prediction': None}
         output_filepath = os.path.join(os.path.dirname(self.video_file), f"{self.video_name}_frame_extractor.yaml")
 
         with open(output_filepath, 'w') as file:

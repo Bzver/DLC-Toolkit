@@ -118,8 +118,12 @@ class DLC_Data_Loader:
         """
         check_list = [self._keypoints, self._instance_count, self._pred_data_array, self._pred_frame_count]
         # Check if all necessary internal attributes are populated
-        if all(item is not None for item in check_list):
-            QMessageBox.warning(self.gui, "Data Incomplete", "Internal data is incomplete. Cannot export LoadedDLCData.")
+        if any(item is None for item in check_list):
+            error_msg = "Missing variables:"
+            for item in check_list:
+                if item is None:
+                    error_msg += f" {item}"
+            QMessageBox.warning(self.gui, "Data Incomplete", f"Internal data is incomplete. {error_msg}")
             return None
 
         return LoadedDLCData(
