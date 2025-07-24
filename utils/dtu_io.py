@@ -31,11 +31,10 @@ class LoadedDLCData:
     pred_frame_count: int
 
 class DLC_Data_Loader:
-    def __init__(self, parent, dlc_config_filepath, prediction_filepath, initialize_status=False):
+    def __init__(self, parent, dlc_config_filepath, prediction_filepath):
         self.gui = parent
         self.dlc_config_filepath = dlc_config_filepath
         self.prediction_filepath = prediction_filepath
-        self._is_initializing = initialize_status
         self._multi_animal = False
         self._keypoints, self._skeleton, self._individuals, = None, None, None
         self._num_keypoint, self._instance_count = None, None
@@ -81,9 +80,6 @@ class DLC_Data_Loader:
                 if "tracks" not in pred_file: # Use 'in' for checking keys
                     QMessageBox.warning(self.gui, "Prediction File Error", "Error: Prediction file not valid, no 'tracks' key found.")
                     return False
-
-                if self._is_initializing:
-                    QMessageBox.information(self.gui, "Loading Prediction","Loading and parsing prediction file, this could take a few seconds, please wait...")
 
                 prediction_raw = pred_file["tracks"]["table"]
                 pred_data_values = np.array([item[1] for item in prediction_raw])
@@ -239,7 +235,7 @@ class DLC_Exporter:
         scorer_row = ["scorer"] + ["machine-labeled"] * (len(columns) - 1)
 
         labels_df = pd.DataFrame(pred_data_processed, columns=columns)
-        if marked_frames is not None: # Skip it when called from the refiner <- no marked frames provided
+        if marked_frames and src_video_name: # Skip it when called from the refiner <- no marked frames provided
             labels_df["frame"] = labels_df["frame"].apply(
                 lambda x: (
                     f"labeled-data/{src_video_name}/"

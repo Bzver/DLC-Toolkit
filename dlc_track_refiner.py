@@ -2,7 +2,6 @@ import os
 import shutil
 
 import h5py
-import yaml
 
 import pandas as pd
 import numpy as np
@@ -16,7 +15,7 @@ from PySide6.QtGui import QShortcut, QKeySequence, QPainter, QColor, QPen, QClos
 from PySide6.QtWidgets import QMessageBox, QPushButton, QGraphicsView, QGraphicsRectItem, QMenu, QToolButton
 
 from utils.dtu_ui import Slider_With_Marks, Selectable_Instance, Draggable_Keypoint
-from utils.dtu_io import DLC_Data_Loader
+from utils.dtu_io import DLC_Data_Loader, DLC_Exporter
 
 DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/NTD/config.yaml"
 VIDEO_FILE_DEBUG = "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-conv.mp4"
@@ -24,7 +23,6 @@ PRED_FILE_DEBUG = "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-convDLC_Hr
 
 # Todo:
 #   Add instance generation in keypoint edit mode
-#   Add support to export to csv
 #   Add support for scenario where individual counts exceed 2
 
 class DLC_Track_Refiner(QtWidgets.QMainWindow):
@@ -48,8 +46,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.load_menu = QMenu("File", self)
 
         self.load_video_action = self.load_menu.addAction("Load Video")
-        self.load_dlc_config_action = self.load_menu.addAction("Load DLC Config")
-        self.load_prediction_action = self.load_menu.addAction("Load Prediction")
+        self.load_prediction_action = self.load_menu.addAction("Load Config and Prediction")
 
         self.load_button = QToolButton()
         self.load_button.setText("File")
@@ -167,7 +164,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         
         # Connect QActions to events
         self.load_video_action.triggered.connect(self.load_video)
-        self.load_dlc_config_action.triggered.connect(self.load_DLC_config)
         self.load_prediction_action.triggered.connect(self.load_prediction)
 
         self.purge_inst_by_conf_action.triggered.connect(self.purge_inst_by_conf)
@@ -229,14 +225,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.reset_state()
 
     def reset_state(self):
-        self.video_file, self.prediction, self.dlc_config, self.video_name = None, None, None, None
-        self.keypoints, self.skeleton, self.individuals, self.num_keypoints = None, None, None, None
-        self.keypoint_to_idx = None
-
-        self.instance_count = 1
-        self.instance_count_per_frame = None
-        self.multi_animal = False
-        self.pred_data, self.pred_data_array = None, None
+        self.video_file, self.prediction, self.video_name = None, None, None
+        self.dlc_data, self.keypoint_to_idx = None, None
+        self.instance_count_per_frame, self.pred_data_array = None, None
+        self.data_loader = DLC_Data_Loader(self, None, None)
 
         self.roi_frame_list, self.marked_roi_frame_list = [], []
 
@@ -259,20 +251,12 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         
         self.undo_stack, self.redo_stack = [], []
         self.max_undo_stack_size = 50
-        self.is_initialize = True
         self.is_saved = True
 
         self.is_zoom_mode = False
         self.zoom_factor = 1.0
 
     def load_video(self):
-        if self.is_debug:
-            self.video_file = VIDEO_FILE_DEBUG
-            self.initialize_loaded_video()
-            self.config_loader_dlc(DLC_CONFIG_DEBUG)
-            self.prediction = PRED_FILE_DEBUG
-            self.prediction_loader()
-            return
         self.reset_state()
         file_dialog = QtWidgets.QFileDialog(self)
         video_path, _ = file_dialog.getOpenFileName(self, "Load Video", "", "Video Files (*.mp4 *.avi *.mov *.mkv);;All Files (*)")
@@ -281,14 +265,16 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             self.initialize_loaded_video()
             
     def initialize_loaded_video(self):
+        self.video_name = os.path.basename(self.video_file).split(".")[0]
         self.navigation_group_box.show()
         self.refiner_group_box.show()
-        self.video_name = os.path.basename(self.video_file).split(".")[0]
         self.cap = cv2.VideoCapture(self.video_file)
+        
         if not self.cap.isOpened():
             QMessageBox.warning(self, "Error Open Video", f"Error: Could not open video {self.video_file}")
             self.cap = None
             return
+        
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.current_frame_idx = 0
         self.progress_slider.setRange(0, self.total_frames - 1) # Initialize slider range
@@ -297,61 +283,58 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.navigation_box_title_controller()
         print(f"Video loaded: {self.video_file}")
 
-    def load_DLC_config(self):
-        file_dialog = QtWidgets.QFileDialog(self)
-        dlc_config, _ = file_dialog.getOpenFileName(self, "Load DLC Config", "", "YAML Files (config.yaml);;All Files (*)")
-        self.config_loader_dlc(dlc_config)
-
-    def config_loader_dlc(self, dlc_file):
-        try:
-            with open(dlc_file, "r") as conf:
-                cfg = yaml.safe_load(conf)
-                if cfg:
-                    QMessageBox.information(self, "Success", "DLC Config loaded successfully!")
-            self.multi_animal = cfg["multianimalproject"]
-            self.keypoints = cfg["bodyparts"] if not self.multi_animal else cfg["multianimalbodyparts"]
-            self.skeleton = cfg["skeleton"]
-            self.individuals = cfg["individuals"]
-            self.instance_count = len(self.individuals) if self.individuals is not None else 1
-            self.num_keypoints = len(self.keypoints)
-            self.keypoint_to_idx = {name: idx for idx, name in enumerate(self.keypoints)}
-        except Exception as e:
-            QMessageBox.warning(self, "Loading Failed", f"DLC config is not loaded: {e}")
-            pass
-        
     def load_prediction(self):
-        if self.current_frame is None:
-            QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
-            return
-        if self.keypoints is None:
-            QMessageBox.warning(self, "No DLC Config", "No dlc config has been loaded, please load it first.")
-            return
-        file_dialog = QtWidgets.QFileDialog(self)
-        prediction_path, _ = file_dialog.getOpenFileName(self, "Load Prediction", "", "HDF5 Files (*.h5);;All Files (*)")
-        self.prediction = prediction_path
-        self.prediction_loader()
-        print(f"Prediction loaded: {self.prediction}")
+        if self.is_debug:
+            self.video_file = VIDEO_FILE_DEBUG
+            self.initialize_loaded_video()
+            self.data_loader.dlc_config_filepath = DLC_CONFIG_DEBUG
+            self.data_loader.prediction_filepath = self.prediction = PRED_FILE_DEBUG
+            self.data_loader.dlc_config_loader()
+            self.data_loader.prediction_loader()
+        else:
 
-    def prediction_loader(self):
-        with h5py.File(self.prediction, "r") as pred_file:
-            if not "tracks" in pred_file.keys():
-                print("Error: Prediction file not valid, no 'tracks' key found in prediction file.")
-                return False
-            if self.is_initialize:
-                QMessageBox.information(self, "Loading Prediction","Loading and parsing prediction file, this could take a few seconds, please wait...")
-                self.is_initialize = False
-            self.pred_data = pred_file["tracks"]["table"]
-            pred_data_values = np.array([item[1] for item in self.pred_data])
-            pred_frame_count = self.pred_data.size
-            self.pred_data_array = np.full((pred_frame_count, self.instance_count, self.num_keypoints*3),np.nan)
-            for inst in range(self.instance_count): # Sort inst out
-                    self.pred_data_array[:,inst,:] = pred_data_values[:, inst*self.num_keypoints*3:(inst+1)*self.num_keypoints*3]
-            self.check_instance_count_per_frame()
-            if pred_frame_count != self.total_frames:
-                QMessageBox.warning(self, "Error: Frame Mismatch", "Total frames in video and in prediction do not match!")
-                print(f"Frames in config: {self.total_frames} \n Frames in prediction: {pred_frame_count}")
-            self.display_current_frame()
-            self.reset_zoom()
+            if self.current_frame is None:
+                QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
+                return
+            
+            file_dialog = QtWidgets.QFileDialog(self)
+            dlc_config, _ = file_dialog.getOpenFileName(self, "Load DLC Config", "", "YAML Files (config.yaml);;All Files (*)")
+
+            if dlc_config:
+                self.data_loader.dlc_config_filepath = dlc_config
+
+                if not self.data_loader.dlc_config_loader():
+                    QMessageBox.critical(self, "DLC Config Error", "Failed to load DLC configuration. Check console for details.")
+                    return
+
+            file_dialog = QtWidgets.QFileDialog(self)
+            prediction_path, _ = file_dialog.getOpenFileName(self, "Load Prediction", "", "HDF5 Files (*.h5);;All Files (*)")
+
+            if prediction_path:
+                self.data_loader.prediction_filepath = prediction_path
+                
+                if not self.data_loader.prediction_loader():
+                    QMessageBox.critical(self, "Prediction Error", "Failed to load prediction data. Check console for details.")
+                    return
+                
+                QMessageBox.information(self, "Prediction Loaded", "Prediction data and DLC config loaded successfully!")
+
+        self.dlc_data = self.data_loader.get_loaded_dlc_data()
+        self.initialize_loaded_data()
+
+    def initialize_loaded_data(self):
+        self.prediction = self.dlc_data.prediction_filepath
+        self.pred_data_array = self.dlc_data.pred_data_array
+        self.keypoint_to_idx = {name: idx for idx, name in enumerate(self.dlc_data.keypoints)}
+
+        self.check_instance_count_per_frame()
+
+        if self.dlc_data.pred_frame_count != self.total_frames:
+            QMessageBox.warning(self, "Error: Frame Mismatch", "Total frames in video and in prediction do not match!")
+            print(f"Frames in config: {self.total_frames} \n Frames in prediction: {self.dlc_data.pred_frame_count}")
+
+        self.display_current_frame()
+        self.reset_zoom()
 
     ###################################################################################################################################################
 
@@ -382,7 +365,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 self.graphics_view.setTransform(new_transform)
 
                 # Plot predictions (keypoints, bounding boxes, skeleton)
-                if self.pred_data is not None:
+                if self.pred_data_array is not None:
                     self.plot_predictions(frame.copy())
                 
                 self.progress_slider.setValue(self.current_frame_idx) # Update slider position
@@ -399,12 +382,12 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         color_rgb = [(255, 165, 0), (51, 255, 51), (51, 153, 255), (255, 51, 51), (255, 255, 102)]
 
         # Iterate over each individual (animal)
-        for inst in range(self.instance_count):
+        for inst in range(self.dlc_data.instance_count):
             color = color_rgb[inst % len(color_rgb)]
             
             # Initiate an empty dict for storing coordinates
             keypoint_coords = dict()
-            for kp_idx in range(self.num_keypoints):
+            for kp_idx in range(self.dlc_data.num_keypoint):
                 kp = self.pred_data_array[self.current_frame_idx,inst,kp_idx*3:kp_idx*3+3]
                 if pd.isna(kp[0]):
                     continue
@@ -423,9 +406,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
             self.plot_keypoint_label(keypoint_coords, frame, color)
 
-            if self.individuals is not None and len(keypoint_coords) >= 2:
+            if self.dlc_data.individuals is not None and len(keypoint_coords) >= 2:
                 self.plot_bounding_box(keypoint_coords, frame, color, inst)
-            if self.skeleton:
+            if self.dlc_data.skeleton:
                 self.plot_skeleton(keypoint_coords, frame, color)
 
         return frame
@@ -465,7 +448,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         rect_item.bounding_box_moved.connect(self.update_instance_position)
 
         # Add individual label and keypoint labels
-        text_item_inst = QtWidgets.QGraphicsTextItem(f"Inst: {self.individuals[inst]} | Conf:{kp_inst_mean:.4f}")
+        text_item_inst = QtWidgets.QGraphicsTextItem(f"Inst: {self.dlc_data.individuals[inst]} | Conf:{kp_inst_mean:.4f}")
         text_item_inst.setPos(min_x, min_y - 20) # Adjust position to be above the bounding box
         text_item_inst.setDefaultTextColor(QtGui.QColor(*color))
         text_item_inst.setOpacity(self.text_label_opacity)
@@ -475,7 +458,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
     def plot_keypoint_label(self, keypoint_coords, frame, color):
         # Plot keypoint labels
         for kp_idx, (x, y, conf) in keypoint_coords.items():
-            keypoint_label = self.keypoints[kp_idx]
+            keypoint_label = self.dlc_data.keypoints[kp_idx]
 
             text_item = QtWidgets.QGraphicsTextItem(f"{keypoint_label}")
 
@@ -498,7 +481,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         return frame
     
     def plot_skeleton(self, keypoint_coords, frame, color):
-        for start_kp, end_kp in self.skeleton:
+        for start_kp, end_kp in self.dlc_data.skeleton:
             start_kp_idx = self.keypoint_to_idx[start_kp]
             end_kp_idx = self.keypoint_to_idx[end_kp]
             start_coord = keypoint_coords.get(start_kp_idx)
@@ -614,27 +597,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             print("\n--- Instance Counting Details ---")
             f_idx = self.current_frame_idx
             print(f"Frame {f_idx}: (Expected Count: {self.instance_count_per_frame[f_idx]})")
-            
-            # Get the NaN mask for the current frame's instances
-            current_frame_nan_mask = nan_mask[f_idx, :, :] # Shape: (num_instances, num_keypoints * 3)
-
-            for i_idx in range(self.pred_data_array.shape[1]): # Iterate through instances for the current frame
-                if not empty_instance[f_idx, i_idx]: # If this instance is NOT empty (i.e., it's being counted)
-                    
-                    # Extract the NaN status for this specific instance, then reshape to (num_keypoints, 3)
-                    instance_nan_status = current_frame_nan_mask[i_idx, :].reshape(self.num_keypoints, 3)
-                    
-                    non_nan_keypoints_found = []
-                    for k_idx in range(self.num_keypoints): # Iterate through individual keypoints
-                        # If NOT all 3 values (x, y, conf) for this keypoint are NaN, then it's contributing
-                        if not np.all(instance_nan_status[k_idx, :]):
-                            # Try to get keypoint label, fall back to index if not available
-                            keypoint_label = (self.keypoints[k_idx] # Changed from self.keypoint_labels
-                                            if hasattr(self, 'keypoints') and k_idx < len(self.keypoints) 
-                                            else f"Keypoint_{k_idx}")
-                            non_nan_keypoints_found.append(keypoint_label)
-                    
-                    print(f"  Instance {i_idx} is counted because it has non-NaN keypoints: {', '.join(non_nan_keypoints_found)}")
             print("-----------------------------------\n")
 
     def prev_roi_frame(self, mode="frame"):
@@ -683,7 +645,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
     ###################################################################################################################################################
 
     def purge_inst_by_conf(self):
-        if not self._you_shall_not_pass():
+        if not self._track_mod_blocker():
             return
         confidence_threshold, ok = QtWidgets.QInputDialog.getDouble(
             self,"Set Confidence Threshold","Delete all instances below this confidence:",
@@ -697,7 +659,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             )
             if reply == QMessageBox.Yes:
                 self._save_state_for_undo() # Save state before modification
-                confidence_scores = self.pred_data_array[:, :, 2:self.num_keypoints*3:3]
+                confidence_scores = self.pred_data_array[:, :, 2:self.dlc_data.num_keypoint*3:3]
                 inst_conf_all = np.mean(confidence_scores, axis=2)
                 low_conf_mask = inst_conf_all < confidence_threshold
                 f_idx, i_idx = np.where(low_conf_mask)
@@ -712,7 +674,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             QMessageBox.information(self, "Input Cancelled", "Confidence input cancelled.")
 
     def interpolate_all(self):
-        if not self._you_shall_not_pass():
+        if not self._track_mod_blocker():
             return
         
         if not self.selected_box:
@@ -722,7 +684,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         instance_to_interpolate = self.selected_box.instance_id
         self._save_state_for_undo() # Save state before modification
 
-        for kp_idx in range(self.num_keypoints):
+        for kp_idx in range(self.dlc_data.num_keypoint):
             # Extract x, y, confidence for the current keypoint and instance across all frames
             x_coords = self.pred_data_array[:, instance_to_interpolate, kp_idx*3]
             y_coords = self.pred_data_array[:, instance_to_interpolate, kp_idx*3+1]
@@ -748,10 +710,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.check_instance_count_per_frame()
         self.display_current_frame()
         self.reset_zoom()
-        QMessageBox.information(self, "Interpolation Complete", f"All frames interpolated for instance {self.individuals[instance_to_interpolate]}.")
+        QMessageBox.information(self, "Interpolation Complete", f"All frames interpolated for instance {self.dlc_data.individuals[instance_to_interpolate]}.")
     
     def designate_no_mice_zone(self):
-        if not self._you_shall_not_pass():
+        if not self._track_mod_blocker():
             return
         self.is_drawing_zone = True
         self.graphics_view.setCursor(Qt.CrossCursor)
@@ -766,10 +728,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         """
         )
 
-        if not self._you_shall_not_pass():
+        if not self._track_mod_blocker():
             return
 
-        if self.instance_count < 2: # Need at least two instances for swapping to make sense
+        if self.dlc_data.instance_count < 2: # Need at least two instances for swapping to make sense
             QMessageBox.information(self, "Info", "Less than two instances configured. Segmental auto-correction is not applicable.")
             return
 
@@ -864,14 +826,14 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         # Ensure confidence is not NaN if x,y are valid
         if pd.isna(current_conf) and not (pd.isna(new_x) or pd.isna(new_y)):
             self.pred_data_array[self.current_frame_idx, instance_id, keypoint_id*3+2] = 1.0 # Default confidence
-        print(f"{self.keypoints[keypoint_id]} of instance {instance_id} moved by ({new_x}, {new_y})")
+        print(f"{self.dlc_data.keypoints[keypoint_id]} of instance {instance_id} moved by ({new_x}, {new_y})")
         self.is_saved = False
         QtCore.QTimer.singleShot(0, self.display_current_frame)
 
     def update_instance_position(self, instance_id, dx, dy):
         self._save_state_for_undo()
         # Update all keypoints for the given instance in the current frame
-        for kp_idx in range(self.num_keypoints):
+        for kp_idx in range(self.dlc_data.num_keypoint):
 
             x_coord_idx = kp_idx * 3
             y_coord_idx = kp_idx * 3 + 1
@@ -893,7 +855,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             keypoint_id = self.dragged_keypoint.keypoint_id
             # Set the keypoint coordinates and confidence to NaN
             self.pred_data_array[self.current_frame_idx, instance_id, keypoint_id*3:keypoint_id*3+3] = np.nan
-            print(f"{self.keypoints[keypoint_id]} of instance {instance_id} deleted.")
+            print(f"{self.dlc_data.keypoints[keypoint_id]} of instance {instance_id} deleted.")
             self.dragged_keypoint = None # Clear the dragged keypoint
             self.display_current_frame()
 
@@ -903,7 +865,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
     ###################################################################################################################################################
 
     def delete_track(self, mode="point"):
-        if not self._you_shall_not_pass():
+        if not self._track_mod_blocker():
             return
         current_frame_inst = self.get_current_frame_inst()
         if len(current_frame_inst) > 1 and not self.selected_box:
@@ -929,10 +891,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.display_current_frame()
 
     def swap_track(self, mode="point"):
-        if not self._you_shall_not_pass():
+        if not self._track_mod_blocker():
             return
         self._save_state_for_undo() # Save state before modification
-        if self.instance_count == 2: # 2 instances need no selection
+        if self.dlc_data.instance_count == 2: # 2 instances need no selection
             if mode == "point":
                 self.pred_data_array[self.current_frame_idx, 0, :], self.pred_data_array[self.current_frame_idx, 1, :] = \
                 self.pred_data_array[self.current_frame_idx, 1, :].copy(), self.pred_data_array[self.current_frame_idx, 0, :].copy()
@@ -953,7 +915,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             raise NotImplementedError
 
     def interpolate_track(self):
-        if not self._you_shall_not_pass():
+        if not self._track_mod_blocker():
             return
         current_frame_inst = self.get_current_frame_inst()
         if len(current_frame_inst) > 1 and not self.selected_box:
@@ -998,13 +960,13 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             QMessageBox.information(self, "Interpolation Info", "No gaps found to interpolate for the selected instance.")
 
     def fill_track(self): # Retroactively fill frame from the last vaid kp from previous frames
-        if not self._you_shall_not_pass():
+        if not self._track_mod_blocker():
             return
         self._save_state_for_undo() # Save state before modification
         current_frame_inst = set(self.get_current_frame_inst())
         
         # Find instances that are missing in the current frame
-        missing_instances = [inst for inst in range(self.instance_count) if inst not in current_frame_inst]
+        missing_instances = [inst for inst in range(self.dlc_data.instance_count) if inst not in current_frame_inst]
         
         if not missing_instances:
             QMessageBox.information(self, "No Missing Instances", "No missing instances found in the current frame to fill.")
@@ -1021,7 +983,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             msg_box.setIcon(QMessageBox.Icon.Question)
             buttons = []
             for inst_id in missing_instances:
-                button_text = f"Instance {self.individuals[inst_id]}" if self.individuals else f"Instance {inst_id}"
+                button_text = f"Instance {self.dlc_data.individuals[inst_id]}" if self.dlc_data.individuals else f"Instance {inst_id}"
                 button = msg_box.addButton(button_text, QMessageBox.ButtonRole.ActionRole)
                 buttons.append((button, inst_id))
             cancel_button = msg_box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
@@ -1074,7 +1036,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
     ###################################################################################################################################################
 
-    def _you_shall_not_pass(self):
+    def _track_mod_blocker(self):
         if self.pred_data_array is None:
             QMessageBox.warning(self, "Error", "Prediction data not loaded. Please load a prediction file first.")
             return False
@@ -1085,7 +1047,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
     def get_current_frame_inst(self):
         current_frame_inst = []
-        for inst in [ inst for inst in range(self.instance_count) ]:
+        for inst in [ inst for inst in range(self.dlc_data.instance_count) ]:
             if np.any(~np.isnan(self.pred_data_array[self.current_frame_idx, inst, :])):
                 current_frame_inst.append(inst)
         return current_frame_inst
@@ -1294,7 +1256,15 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             print(f"An error occurred during HDF5 saving: {e}")
 
     def save_prediction_as_csv(self):
-        QMessageBox.information(self, "Not Implemented", "Sorry! This method is yet to be implemented, DM me if you need it real bad. :D")
+        save_path = os.path.dirname(self.prediction)
+        pred_file = os.path.basename(self.prediction).split(".")[0]
+        try:
+            DLC_Exporter.prediction_to_csv(self.dlc_data, self.pred_data_array, save_path, prediction_filename=pred_file)
+            QMessageBox.information(self, "Save Successful",
+                f"Successfully saved modified prediction in csv to: {os.path.join(save_path, pred_file)}.csv")
+        except Exception as e:
+            QMessageBox.critical(self, "Saving Error", f"An error occurred during csv saving: {e}")
+            print(f"An error occurred during csv saving: {e}")
 
     def changeEvent(self, event):
         if event.type() == QEvent.Type.WindowStateChange:
