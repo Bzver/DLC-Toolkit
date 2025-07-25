@@ -29,13 +29,13 @@ This project is currently in active development, which means you might encounter
 ### dlc_3D_skeleton_plotter.py
 
 #### Functionality
-A GUI application for visualizing 3D skeleton plots from multiple DeepLabCut predictions ( currently support 4 views only ), synchronized with corresponding 2D video feeds from multiple cameras. Key features include:
+A GUI application for visualizing 3D skeleton plots from multiple DeepLabCut predictions ( currently support 4 views only ), while displaying the corresponding 2D video feeds from multiple cameras.
 - **Multi-camera 2D video display:** Shows synchronized video frames from up to 4 cameras.
 - **3D skeleton visualization:** Plots the 3D reconstructed skeleton based on 2D predictions and camera calibrations.
 - **Track refinement integration:** Can launch the `DLC_Track_Refiner` tool for selected camera views to correct 2D tracks.
 
 #### Required Folder Structure
-The script expects a specific folder structure for videos and prediction files, especially for multi-camera setups.
+The script expects a specific folder structure for videos and prediction files.
 ```
 your_video_folder/
 ├── Camera1/
@@ -56,7 +56,7 @@ your_video_folder/
 ### dlc_manual_frame_extract.py
 
 #### Functionality
-A GUI application for manually extracting and marking frames from a video, primarily for DLC labeling purposes. Key features include:
+A GUI application for manually extracting and marking frames from a video, primarily for DLC labeling purposes.
 
 - **Video Loading & Display:** Supports common video formats (`.mp4`, `.avi`, `.mov`, `.mkv`). Displays video frames with real-time updates and a progress slider.
 - **DeepLabCut Integration:**
@@ -72,7 +72,7 @@ A GUI application for manually extracting and marking frames from a video, prima
 - **Workspace Management & Export:**
     - **Save Workspace:** Save the current session's state (loaded video, prediction, config, marked frames) to a `.yaml` file for later resumption.
     - **Export to DLC:** Extracts all marked frames as `.png` images and generates a DLC-compatible `CollectedData_*.h5` file containing prediction data for these frames, ready for manual labeling in DeepLabCut.
-    - **Export to Refiner:** Seamlessly integrates with `dlc_track_refiner.py` by exporting the current video and prediction for further track refinement and keypoint correction.
+    - **Export to Refiner:** Integrates with `dlc_track_refiner.py` by exporting the current video and prediction for further track refinement and keypoint correction.
 
 #### Required Folder Structure
 If the chosen video has previous label data in DLC, the script can work with the standard DLC project structure and read & mark the existing ( already labeled ) frames' idx in the progress bar in a different color.
@@ -89,7 +89,7 @@ your_dlc_project/
 - **Video File:** The primary video file (`.mp4`, `.avi`, `.mov`, `.mkv`) from which frames will be extracted and reviewed.
 - **Prediction File (`.h5`):** (Optional) A DeepLabCut prediction `.h5` file. When loaded, pose estimations are overlaid on the video frames.
 - **DLC Config File (`config.yaml`):** (Optional) A DeepLabCut project configuration file. Used to define body parts, skeleton connections, and multi-animal settings for accurate visualization of predictions.
-- **Status File (`.yaml`):** (Optional) A previously saved workspace file from `dlc_manual_frame_extract.py`. This file contains the video path, DLC config path, prediction path, and the list of marked frames, allowing users to resume a previous session.
+- **Status File (`.yaml`):** (Optional) A previously saved workspace file from `dlc_manual_frame_extract.py`. This file contains the video path, DLC config path, prediction path, and the list of marked frames, allowing resumption of a previous session.
 
 **Outputs:**
 - **Workspace Status File (`_extractor_status.yaml`):** A YAML file generated when "Save the Current Workspace" is selected (or Ctrl+S is pressed). It stores the paths to the loaded video, DLC config, prediction file, and the list of marked frames, enabling seamless session resumption.
@@ -100,7 +100,7 @@ your_dlc_project/
 ### dlc_track_refiner.py
 
 #### Functionality
-A comprehensive GUI tool for refining DLC tracking data. It allows users to manually correct, interpolate, delete, and swap tracks for individual instances (animals) across video frames. Key features include:
+A GUI for refining DLC tracking data. It allows for manually correcting, interpolating, deleting, and swapping tracks for individual animals across video frames.
 - **Interactive video and prediction display:** Overlays DLC predictions (keypoints, skeletons, bounding boxes) on video frames.
 - **Manual keypoint and bounding box editing:** Users can drag and drop keypoints and entire bounding boxes to correct mislabeled or inaccurate predictions.
 - **Track manipulation:**
@@ -112,8 +112,8 @@ A comprehensive GUI tool for refining DLC tracking data. It allows users to manu
     - **Purge Instance by Confidence:** Delete all tracks below a set confidence threshold.
     - **Interpolate All Frames for One Instance:** Apply interpolation across all frames for a selected instance.
     - **Remove All Prediction Inside Area:** Define a region of interest to remove all predictions within it.
-    - **Segmental Auto Correct:** (Experimental) Automated correction for segments of tracks in a specific setup.
-- **Undo/Redo functionality:** Allows users to revert or reapply changes.
+    - **Segmental Auto Correct:** Automated correction for segments of tracks in a specific setup.
+- **Undo/Redo functionality:** Allows reverting or reapplying changes.
 - **Save refined predictions:** Save the modified prediction data back to a new `.h5` file.
 
 **Inputs:**
@@ -128,7 +128,7 @@ A comprehensive GUI tool for refining DLC tracking data. It allows users to manu
 ### dlc_dataset_augumenter.py
 
 #### Functionality
-A tool for augmenting DLC datasets by adjusting the tone (brightness, contrast, L/A/B channels) of images to match a reference image or a set of reference images. Features an interactive GUI for manual adjustment and an auto-apply option for batch processing. Useful for improving model robustness when training data comes from different lighting conditions or camera settings.
+A tool for augmenting DLC datasets by adjusting the tone (brightness, contrast, L/A/B channels) of images to match a reference image or a set of reference images. Features a GUI for manual adjustment and an auto-apply option for batch processing.
 
 #### Required Folder Structure
 The script expects the following structure for DLC labeled data and reference images:
@@ -188,8 +188,6 @@ your_dlc_project/
 This script is designed to fill in missing keypoints (NaN values) in SLEAP HDF5 files. It can duplicate and extend keypoints based on two main schemes:
 - **Tail Extension:** Extends keypoints along a body vector (e.g., from head to tail) to fill in missing tail points. If a head-to-tail vector is not provided, it uses a random direction.
 - **Limb Extension:** Extends keypoints from a source point using a small random vector, useful for filling in missing limb points.
-
-This is particularly useful for pre-processing SLEAP data to ensure complete keypoint sets.
 
 **Inputs:**
 - **SLEAP File (`.slp`):** The SLEAP HDF5 file containing the keypoint data to be processed.

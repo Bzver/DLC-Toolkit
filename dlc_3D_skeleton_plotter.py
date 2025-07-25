@@ -10,13 +10,14 @@ import pandas as pd
 import cv2
 
 from PySide6 import QtWidgets, QtGui
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QShortcut, QKeySequence, QCloseEvent
 from PySide6.QtWidgets import QMessageBox, QPushButton
-from PySide6.QtCore import Signal
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+
+from utils.dtu_ui import Clickable_Video_Label, Progress_Bar_Comp
 
 # Todo: Add support fot sleap-anipose / anipose toml calibration file
 
@@ -27,7 +28,7 @@ VIDEO_FOLDER_DEBUG = "D:/Project/SDANNCE-Models/4CAM-250620/SD-20250705-MULTI/Vi
 class DLC_3D_plotter(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        self.is_debug = False
+        self.is_debug = True
         self.setWindowTitle("DLC 3D Plotter - DEBUG MODE") if self.is_debug else self.setWindowTitle("DLC 3D Plotter")
         self.setGeometry(100, 100, 1600, 960)
 
@@ -80,20 +81,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.display_layout.addLayout(self.plot_layout)
         self.layout.addLayout(self.display_layout, 1)
 
-        # Progress bar
-        self.progress_layout = QtWidgets.QHBoxLayout()
-        self.play_button = QPushButton("▶")
-        self.play_button.setFixedWidth(40) # Slightly wider button
-        self.progress_slider = QtWidgets.QSlider(Qt.Horizontal)
-        self.progress_slider.setRange(0, 0) # Will be set dynamically
-        self.progress_slider.setTracking(True)
-
-        self.progress_layout.addWidget(self.play_button)
-        self.progress_layout.addWidget(self.progress_slider)
-        self.playback_timer = QTimer(self) # Pass self to QTimer
-        self.playback_timer.timeout.connect(self.autoplay_video)
-        self.is_playing = False
-        self.layout.addLayout(self.progress_layout)
+        self.progress_bar = Progress_Bar_Comp(self)
 
         # Navigation controls
         self.navigation_group_box = QtWidgets.QGroupBox("Video Navigation")
@@ -118,8 +106,6 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.refine_tracks_button.clicked.connect(self.call_track_refiner)
 
         self.size_slider.sliderMoved.connect(self.set_plot_lim_from_slider)
-        self.progress_slider.sliderMoved.connect(self.set_frame_from_slider)
-        self.play_button.clicked.connect(self.toggle_playback)
 
         self.prev_10_frames_button.clicked.connect(lambda: self.change_frame(-10))
         self.prev_frame_button.clicked.connect(lambda: self.change_frame(-1))
@@ -130,7 +116,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_Left), self).activated.connect(lambda: self.change_frame(-1))
         QShortcut(QKeySequence(Qt.Key_Right), self).activated.connect(lambda: self.change_frame(1))
         QShortcut(QKeySequence(Qt.Key_Right | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(10))
-        QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.toggle_playback)
+        QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.progress_bar.toggle_playback)
 
         self.num_cam = None
 
@@ -261,8 +247,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 self.load_prediction(k, h5_file)
 
         self.current_frame_idx = 0
-        self.progress_slider.setRange(0, self.total_frames - 1)
-        self.progress_slider.setValue(0)
+        self.progress_bar.set_slider_range(self.total_frames)
         self.navigation_group_box.show()
         self.display_current_frame() # Display the first frames
 
@@ -395,7 +380,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             else:
                 self.video_labels[i].setStyleSheet("border: 1px solid gray;")
 
-        self.progress_slider.setValue(self.current_frame_idx) # Update the slider after all frames are displayed
+        self.progress_bar.set_slider_value(self.current_frame_idx)
         self.plot_3d_points()
 
     def plot_2d_points(self, frame, cam_idx):
@@ -699,37 +684,10 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             self.display_current_frame()
             self.navigation_box_title_controller()
 
-    def set_frame_from_slider(self, value):
-        self.selected_cam_idx = None
-        self.current_frame_idx = value
-        self.display_current_frame()
-        self.navigation_box_title_controller()
-
     def set_plot_lim_from_slider(self):
         self.plot_lim = self.size_slider.value()
         self.plot_3d_points()
         self.canvas.draw_idle()
-
-    def autoplay_video(self):
-        if self.current_frame_idx < self.total_frames - 1:
-            self.selected_cam_idx = None
-            self.current_frame_idx += 1
-            self.display_current_frame()
-            self.navigation_box_title_controller()
-        else:
-            self.playback_timer.stop()
-            self.play_button.setText("▶")
-            self.is_playing = False
-
-    def toggle_playback(self):
-        if not self.is_playing:
-            self.playback_timer.start(1000/50) # 50 fps
-            self.play_button.setText("■")
-            self.is_playing = True
-        else:
-            self.playback_timer.stop()
-            self.play_button.setText("▶")
-            self.is_playing = False
 
     def navigation_box_title_controller(self):
         self.navigation_group_box.setTitle(f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1}")
@@ -743,21 +701,6 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 if cap and cap.isOpened():
                     cap.release()
         event.accept()
-
-###################################################################################################################################################
-
-class Clickable_Video_Label(QtWidgets.QLabel):
-    clicked = Signal(int) # Signal to emit cam_idx when clicked
-
-    def __init__(self, cam_idx, parent=None):
-        super().__init__(parent)
-        self.cam_idx = cam_idx
-        self.setMouseTracking(True) # Enable mouse tracking for hover effects if needed
-
-    def mousePressEvent(self, event: QtGui.QMouseEvent):
-        if event.button() == Qt.LeftButton:
-            self.clicked.emit(self.cam_idx)
-        super().mousePressEvent(event)
 
 ###################################################################################################################################################
 
