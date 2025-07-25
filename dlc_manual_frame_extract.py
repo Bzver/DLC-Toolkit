@@ -4,6 +4,7 @@ import h5py
 import yaml
 
 import pandas as pd
+import numpy as np
 import bisect
 
 import cv2
@@ -33,7 +34,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
 
         self.load_menu = QMenu("File", self)
         self.load_video_action = self.load_menu.addAction("Load Video")
-        self.load_prediction_action = self.load_menu.addAction("Load DLC Config and Prediction")
+        self.load_prediction_action = self.load_menu.addAction("Load Config and Prediction")
         self.load_workplace_action = self.load_menu.addAction("Load Status")
 
         self.load_button = QToolButton()
@@ -45,6 +46,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         self.save_workspace_action = self.export_menu.addAction("Save the Current Workspace")
         self.save_to_dlc_action = self.export_menu.addAction("Export to DLC")
         self.export_to_refiner_action = self.export_menu.addAction("Export to Refiner")
+        self.merge_data_action = self.export_menu.addAction("Merge with Existing Data")
 
         self.export_button = QToolButton()
         self.export_button.setText("Save")
@@ -113,6 +115,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         self.save_workspace_action.triggered.connect(self.save_workspace)
         self.save_to_dlc_action.triggered.connect(self.save_to_dlc)
         self.export_to_refiner_action.triggered.connect(self.export_to_refiner)
+        self.merge_data_action.triggered.connect(self.merge_data)
 
         self.progress_slider.sliderMoved.connect(self.set_frame_from_slider)
         self.play_button.clicked.connect(self.toggle_playback)
@@ -145,6 +148,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         self.data_loader = DLC_Data_Loader(self, None, None)
 
         self.labeled_frame_list, self.frame_list = [], []
+        self.label_data_array = None
 
         self.cap, self.current_frame = None, None
         self.confidence_cutoff = 0 # Default confidence cutoff
@@ -277,13 +281,21 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         if not label_data_files:
             return
         
-        label_frame_list = []
+        self.labeled_frame_list = []
+        # Initialize an empty label data array that has same size as pred_data_array
+        self.label_data_array = np.full_like(self.dlc_data.pred_data_array, np.nan)
         for label_data_file in label_data_files:
             with h5py.File(os.path.join(self.project_dir, label_data_file), "r") as lbf:
-                label_frame_list.extend(lbf["df_with_missing"]["axis1_level2"].asstr()[()])
-            continue
+                labeled_frame_list = lbf["df_with_missing"]["axis1_level2"].asstr()[()]
+                labeled_frame_list = [int(f.split("img")[1].split(".")[0]) for f in labeled_frame_list]
+                labeled_frame_list.sort()
+                labeled_data_flattened = lbf["df_with_missing"]["block0_values"]
+                self.labeled_frame_list.extend(labeled_frame_list)
+                labeled_data_with_conf = DLC_Data_Loader.add_mock_confidence_score(labeled_data_flattened)
+                labeled_data_unflattened = DLC_Data_Loader.unflatten_data_array(
+                    labeled_data_with_conf, self.dlc_data.instance_count)
+                self.label_data_array[labeled_frame_list,:,:] = labeled_data_unflattened
 
-        self.labeled_frame_list = [ int(f.split("img")[1].split(".")[0]) for f in label_frame_list ]
         self.progress_slider.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7")
 
     ###################################################################################################################################################
@@ -315,7 +327,10 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         if self.dlc_data is None:
             return frame
         try:
-            current_frame_data = self.dlc_data.pred_data_array[self.current_frame_idx,:,:]
+            if self.current_frame_idx in self.labeled_frame_list: # Use labeled data first
+                current_frame_data = self.label_data_array[self.current_frame_idx,:,:]
+            else:
+                current_frame_data = self.dlc_data.pred_data_array[self.current_frame_idx,:,:]
         except IndexError:
             print(f"Frame index {self.current_frame_idx} out of bounds for prediction data.")
             return frame
@@ -479,10 +494,17 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         if self.current_frame is None:
             QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
             return
+        
+        if self.current_frame_idx in self.labeled_frame_list:
+            QMessageBox.information(self, "Already Labeled", 
+                "The frame is already in the labeled dataset, skipping...")
+            return
+
         if not self.current_frame_idx in self.frame_list:
             self.frame_list.append(self.current_frame_idx)
         else: # Remove the mark status if already marked
             self.frame_list.remove(self.current_frame_idx)
+
         self.determine_save_status()
         self.progress_slider.set_frame_category("marked_frames", self.frame_list, "#E28F13")
         self.navigation_box_title_controller()
@@ -629,7 +651,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             QMessageBox.warning(self, "No Marked Frame", "No frame has been marked, please mark some frames first.")
             return False
 
-        if self.dlc_data is None:
+        if not self.dlc_data:
             reply = QMessageBox.question(
                 self,
                 "No Prediction Loaded",
@@ -644,7 +666,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
                             os.path.dirname(self.video_file),
                             QFileDialog.ShowDirsOnly
                         )
-                if dlc_dir is None: # When user close the file selection window
+                if not dlc_dir: # When user close the file selection window
                     return False
                 self.project_dir = os.path.join(dlc_dir, "labeled-data", self.video_name)
             else:
@@ -656,14 +678,14 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
 
         try:
             # Initialize DLC extractor backend
-            extractor = DLC_Exporter(self.video_file, self.video_name, self.frame_list, self.dlc_data, self.project_dir)
+            exporter = DLC_Exporter(self.video_file, self.video_name, self.frame_list, self.dlc_data, self.project_dir)
             # Perform the extraction
             os.makedirs(self.project_dir, exist_ok=True)
 
             if not frame_only_mode:
-                success = extractor.extract_frame_and_label()
+                success = exporter.extract_frame_and_label()
             else:
-                success = extractor.extract_frame()
+                success = exporter.extract_frame()
 
             if success:
                 QMessageBox.information(
@@ -680,6 +702,60 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         except Exception as e:
             QMessageBox.critical(self,"Error",f"An error occurred while saving to DLC:\n{str(e)}")
             return False
+
+    def merge_data(self):
+        if not self.frame_list:
+            QMessageBox.warning(self, "No Marked Frame", "No frame has been marked, please mark some frames first.")
+            return
+        
+        if not self.dlc_data:
+            QMessageBox.warning(self, "No Pose Estimation", "No pose estimation is loaded.")
+            return
+        
+        if not self.label_data_array:
+            QMessageBox.information(self, "No Previous Label Loaded", "Can't merge when no previous label is loaded.")
+            return
+        
+        reply = QMessageBox.question(
+            self, "Confirm Merge",
+            "This action will merge the selected data into the labeled dataset. "
+            "Please ensure you have reviewed and refined the predictions on the marked frames.",
+            QMessageBox.Yes | QMessageBox.No
+        )
+
+        if reply == QMessageBox.No:
+            return
+        else:
+            self.label_data_array[self.frame_list, :, :] = self.dlc_data.pred_data_array[self.frame_list, :, :]
+            merge_frame_list = list(set(self.labeled_frame_list) + set(self.frame_list))
+            scorer = self.dlc_data.scorer
+            merge_name = f"CollectedData_{scorer}.csv"
+            
+        try:
+            if not DLC_Exporter.extract_frame(self.video_file, merge_frame_list, self.project_dir):
+                QMessageBox.critical(self, "Frame Extraction Failed", "Failed to extract frames. Merge aborted.")
+                return
+
+            # Convert the merged prediction data to CSV
+            if not DLC_Exporter.prediction_to_csv(
+                self.dlc_data,
+                self.label_data_array,
+                self.project_dir,
+                marked_frames=merge_frame_list,
+                src_video_name=self.video_name,
+                prediction_filename=merge_name
+                ):
+                QMessageBox.critical(self, "CSV Export Failed", "Failed to export merged predictions to CSV. Merge aborted.")
+                return
+
+            # Convert the generated CSV back to H5
+            if not DLC_Exporter.csv_to_h5(self.project_dir, self.dlc_data.multi_animal, merge_frame_list):
+                QMessageBox.critical(self, "H5 Conversion Failed", "Failed to convert merged CSV to H5. Merge aborted.")
+                return
+
+        except Exception as e:
+            QMessageBox.critical(self, "Merge Process Error", f"An unexpected error occurred during export/conversion: {e}")
+            return
 
     def changeEvent(self, event):
         if event.type() == QEvent.Type.WindowStateChange:

@@ -1,4 +1,5 @@
 import os
+import shutil
 
 import h5py
 import yaml
@@ -18,6 +19,7 @@ from typing import List, Optional
 class LoadedDLCData:
     # DLC config data
     dlc_config_filepath: str # Full path of dlc_config file
+    scorer: str
     multi_animal: bool
     keypoints: List[str]
     skeleton: List[List[str]]
@@ -37,7 +39,7 @@ class DLC_Data_Loader:
         self.prediction_filepath = prediction_filepath
         self._multi_animal = False
         self._keypoints, self._skeleton, self._individuals, = None, None, None
-        self._num_keypoint, self._instance_count = None, None
+        self._scorer, self._num_keypoint, self._instance_count = None, None, None
         self._pred_frame_count, self._pred_data_array = None, None
 
     def dlc_config_loader(self) -> bool:
@@ -51,7 +53,8 @@ class DLC_Data_Loader:
         try:
             with open(self.dlc_config_filepath, "r") as conf:
                 cfg = yaml.safe_load(conf)
-            self._multi_animal = cfg.get("multianimalproject", False) # Use .get with default
+            self._scorer = cfg.get("scorer", None)
+            self._multi_animal = cfg.get("multianimalproject", False)
             self._keypoints = cfg.get("bodyparts", []) if not self._multi_animal else cfg.get("multianimalbodyparts", [])
             self._skeleton = cfg.get("skeleton", [])
             self._individuals = cfg.get("individuals") # Can be None if not multi_animal
@@ -93,14 +96,7 @@ class DLC_Data_Loader:
                     )
                     return False
 
-                self._pred_data_array = np.full(
-                    (self._pred_frame_count, self._instance_count, self._num_keypoint * 3), np.nan
-                )
-
-                for inst_idx in range(self._instance_count):
-                    start_col = inst_idx * self._num_keypoint * 3
-                    end_col = (inst_idx + 1) * self._num_keypoint * 3
-                    self._pred_data_array[:, inst_idx, :] = pred_data_values[:, start_col:end_col]
+            self._pred_data_array = DLC_Data_Loader.unflatten_data_array(pred_data_values, self._instance_count)
 
             return True
         except Exception as e:
@@ -124,6 +120,7 @@ class DLC_Data_Loader:
 
         return LoadedDLCData(
             dlc_config_filepath = self.dlc_config_filepath,
+            scorer = self._scorer,
             multi_animal=self._multi_animal,
             keypoints=self._keypoints,
             skeleton=self._skeleton,
@@ -134,6 +131,30 @@ class DLC_Data_Loader:
             pred_data_array=self._pred_data_array.copy(), # Return a copy of the numpy array
             pred_frame_count=self._pred_frame_count
         )
+    
+    @staticmethod
+    def add_mock_confidence_score(data_array):
+        rows, cols = data_array.shape
+        new_array = np.full((rows, cols // 2 * 3), np.nan)
+        new_array[:,0::3] = data_array[:,0::2]
+        new_array[:,1::3] = data_array[:,1::2]
+
+        x_nan_mask = np.isnan(new_array[:, 0::3])
+        y_nan_mask = np.isnan(new_array[:, 1::3])
+        xy_not_nan_mask = ~(x_nan_mask | y_nan_mask)
+        new_array[:, 2::3][xy_not_nan_mask] = 1.0
+        return new_array
+    
+    @staticmethod
+    def unflatten_data_array(data_array, inst_count:int):
+        rows, cols = data_array.shape
+        new_array = np.full((rows, inst_count, cols // inst_count), np.nan)
+
+        for inst_idx in range(inst_count):
+            start_col = inst_idx * cols // inst_count
+            end_col = (inst_idx + 1) * cols // inst_count
+            new_array[:, inst_idx, :] = data_array[:, start_col:end_col]
+        return new_array
 
 class DLC_Exporter:
     def __init__(self, video_file, video_name, frame_list, dlc_data, project_dir):
@@ -154,7 +175,7 @@ class DLC_Exporter:
             print(f"Prediction file not found at {self.prediction}")
             return False
         else:
-            frame_extraction = self.extract_frame()
+            frame_extraction = DLC_Exporter.extract_frame(self.video_file, self.frame_list, self.project_dir)
             label_extraction = self.extract_label()
             if frame_extraction and label_extraction:
                 print("Extraction successful.")
@@ -164,44 +185,46 @@ class DLC_Exporter:
                 fail_message += " extract frame" if not frame_extraction else ""
                 fail_message += " extract label" if not label_extraction else ""
                 print(f"Extraction failed. Error:{fail_message}")
+
+    def extract_label(self):
+        pred_data_array_filtered = self.pred_data_array[self.frame_list, :, :]
         
-    def extract_frame(self):
-        cap = cv2.VideoCapture(self.video_file)
+        if not DLC_Exporter.prediction_to_csv(self.dlc_data, pred_data_array_filtered, self.project_dir, marked_frames=self.frame_list, src_video_name=self.video_name):
+            print("Error exporting predictions to csv.")
+            return False
+        else:
+            print("Prediction of selected frames successfully exported to csv.")
+        if not DLC_Exporter.csv_to_h5(self.project_dir, self.dlc_data.multi_animal):
+            print("Error transforming to h5.")
+            return False
+        else:
+            print("Exported csv transformed into h5.")
+        return True
+    
+    @staticmethod
+    def extract_frame(video_file, frame_list, export_dir):
+        cap = cv2.VideoCapture(video_file)
         if not cap.isOpened():
-            print(f"Error: Could not open video {self.video_file}")
+            print(f"Error: Could not open video {video_file}")
             return False
         
-        frames_to_extract = set(self.frame_list)
+        frames_to_extract = set(frame_list)
 
         for frame in frames_to_extract:
             image_path = f"img{str(int(frame)).zfill(8)}.png"
-            image_output_path = os.path.join(self.project_dir,image_path)
+            image_output_path = os.path.join(export_dir, image_path)
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame)
             ret, frame = cap.read()
             if ret:
                 cv2.imwrite(image_output_path, frame)
         return True
 
-    def extract_label(self):
-        pred_data_array_filtered = self.pred_data_array[self.frame_list, :, :]
-        
-        if not self.prediction_to_csv(self.dlc_data, pred_data_array_filtered, self.project_dir, marked_frames=self.frame_list, src_video_name=self.video_name):
-            print("Error exporting predictions to csv.")
-            return False
-        else:
-            print("Prediction of selected frames successfully exported to csv.")
-        if not self.csv_to_h5(self.project_dir, self.dlc_data.multi_animal):
-            print("Error transforming to h5.")
-            return False
-        else:
-            print("Exported csv transformed into h5.")
-        return True
-
     @staticmethod
-    def prediction_to_csv(dlc_data, pred_data_array, save_path, marked_frames:List=None, src_video_name:str=None, prediction_filename:str=None):
+    def prediction_to_csv(dlc_data, pred_data_array, save_path:str, 
+            marked_frames:List=None, src_video_name:str=None, prediction_filename:str="MachineLabelsRefine"):
         # Adapted from agosztolai's pull request: https://github.com/DeepLabCut/DeepLabCut/pull/2977
         pred_data_flattened = pred_data_array.reshape(pred_data_array.shape[0], -1)
-        if marked_frames is None:
+        if not marked_frames:
             frame_list = list(range(pred_data_flattened.shape[0]))
         else:
             frame_list = marked_frames
@@ -252,19 +275,27 @@ class DLC_Exporter:
         final_df = pd.concat([header_df, labels_df], ignore_index=True)
         final_df.columns = [None] * len(final_df.columns)
 
-        if prediction_filename is None: # when called from frame_extractor_GUI
-            prediction_filename = "MachineLabelsRefine"
-        
-        final_df.to_csv( # when called from refiner
-            os.path.join(save_path, f"{prediction_filename}.csv"),
-            index=False, header=None,
-        )
+        save_filepath = os.path.join(save_path, f"{prediction_filename}.csv")
+
+        if os.path.isfile(save_filepath): #Backup the target file if it exists
+            backup_idx = 0
+            backup_dir = os.path.join(save_path, "backup")
+            os.makedirs(backup_dir, exist_ok=True)
+            backup_filepath = os.path.join(backup_dir, f"{prediction_filename}_backup{backup_idx}.csv")
+
+            while os.path.isfile(backup_filepath):
+                backup_idx += 1
+                backup_filepath = os.path.join(backup_dir, f"{prediction_filename}_backup{backup_idx}.csv")
+
+            shutil.copy(save_filepath , backup_filepath)
+
+        final_df.to_csv(save_path, index=False, header=None)
         return True
 
     @staticmethod
-    def csv_to_h5(project_dir, multi_animal):  # Adapted from deeplabcut.utils.conversioncode
+    def csv_to_h5(project_dir, multi_animal, csv_name="MachineLabelsRefine"):  # Adapted from deeplabcut.utils.conversioncode
         try:
-            fn = os.path.join(project_dir, f"MachineLabelsRefine.csv")
+            fn = os.path.join(project_dir, f"{csv_name}.csv")
             with open(fn) as datafile:
                 head = list(islice(datafile, 0, 5))
             if multi_animal:
