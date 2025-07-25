@@ -15,13 +15,13 @@ This project is currently in active development, which means you might encounter
 - [dlc_manual_frame_extract.py](#dlc_manual_frame_extractpy)
 
 
-### Misc Tools
+#### Misc Tools
 - [dlc_obsolete_train_img_trimmer.py](#dlc_obsolete_train_img_trimmerpy)
 - [dlc_track_to_annot_prep.py](#dlc_track_to_annot_preppy)
 - [dlc_dataset_augumenter.py](#dlc_dataset_augumenterpy)
 
 
-### SLEAP Tools
+#### SLEAP Tools
 - [sleap_keypoint_fill.py](#sleap_keypoint_fillpy)
 - [sleap_viewer.ipynb](#sleap_vieweripynb)
 
