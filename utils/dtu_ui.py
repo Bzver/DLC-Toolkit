@@ -1,7 +1,77 @@
 from PySide6 import QtWidgets, QtGui, QtCore
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QColor, QPen
-from PySide6.QtWidgets import QGraphicsEllipseItem, QGraphicsRectItem
+from PySide6.QtWidgets import QGraphicsEllipseItem, QGraphicsRectItem, QPushButton
+
+###################################################################################################################################################
+
+class Progress_Bar_Comp:
+    def __init__(self, parent):
+        self.gui = parent
+        self.progress_layout = QtWidgets.QHBoxLayout()
+        self.play_button = QPushButton("▶")
+        self.play_button.setFixedWidth(40) # Slightly wider button
+        self.progress_slider = QtWidgets.QSlider(Qt.Horizontal)
+        self.progress_slider.setRange(0, 0) # Will be set dynamically
+        self.progress_slider.setTracking(True)
+
+        self.progress_layout.addWidget(self.play_button)
+        self.progress_layout.addWidget(self.progress_slider)
+        self.playback_timer = QTimer(self.gui) # Pass GUI to QTimer
+        self.playback_timer.timeout.connect(self.autoplay_video)
+        self.is_playing = False
+        self.gui.layout.addLayout(self.progress_layout)
+        
+        self.progress_slider.sliderMoved.connect(self.set_frame_from_slider)
+        self.play_button.clicked.connect(self.toggle_playback)
+
+    def set_slider_range(self, total_frames):
+        self.progress_slider.setRange(0, total_frames - 1)
+        self.progress_slider.setValue(0)
+
+    def set_slider_value(self, value):
+        self.progress_slider.setValue(value)
+
+    def set_frame_from_slider(self, value):
+        if hasattr(self.gui, "selected_cam_idx"):
+            self.gui.current_frame_idx = None
+        self.gui.current_frame_idx = value
+        self.gui.display_current_frame()
+        self.gui.navigation_box_title_controller()
+
+    def autoplay_video(self):
+        if not hasattr(self.gui, 'total_frames') or self.gui.total_frames <= 0:
+                    self.playback_timer.stop()
+                    self.play_button.setText("▶")
+                    self.is_playing = False
+                    return
+        
+        if self.gui.current_frame_idx is None:
+            self.gui.current_frame_idx = 0
+
+        if self.gui.current_frame_idx < self.gui.total_frames - 1:
+            if hasattr(self.gui, "selected_cam_idx"):
+                self.gui.selected_cam_idx = None
+            self.gui.current_frame_idx += 1
+            self.gui.display_current_frame()
+            self.gui.navigation_box_title_controller()
+            self.set_slider_value(self.gui.current_frame_idx)
+        else:
+            self.playback_timer.stop()
+            self.play_button.setText("▶")
+            self.is_playing = False
+
+    def toggle_playback(self):
+        if not self.is_playing:
+            self.playback_timer.start(1000/50) # 50 fps
+            self.play_button.setText("■")
+            self.is_playing = True
+        else:
+            self.playback_timer.stop()
+            self.play_button.setText("▶")
+            self.is_playing = False
+
+###################################################################################################################################################
 
 class Slider_With_Marks(QtWidgets.QSlider):
     def __init__(self, orientation):
@@ -209,3 +279,18 @@ class Selectable_Instance(QtCore.QObject, QGraphicsRectItem):
             self.setPen(self.selected_pen)
         else:
             self.setPen(self.default_pen)
+
+###################################################################################################################################################
+
+class Clickable_Video_Label(QtWidgets.QLabel):
+    clicked = Signal(int) # Signal to emit cam_idx when clicked
+
+    def __init__(self, cam_idx, parent=None):
+        super().__init__(parent)
+        self.cam_idx = cam_idx
+        self.setMouseTracking(True) # Enable mouse tracking for hover effects if needed
+
+    def mousePressEvent(self, event: QtGui.QMouseEvent):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(self.cam_idx)
+        super().mousePressEvent(event)
