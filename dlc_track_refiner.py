@@ -565,14 +565,13 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
     def toggle_zoom_mode(self):
         self.is_zoom_mode = not self.is_zoom_mode
-        if self.is_kp_edit:
-            self.is_kp_edit = False
         if self.is_zoom_mode:
             self.graphics_view.setDragMode(QGraphicsView.ScrollHandDrag)
             self.graphics_view.wheelEvent = self.graphics_view_mouse_wheel_event
         else:
             self.graphics_view.setDragMode(QGraphicsView.NoDrag)
             self.graphics_view.wheelEvent = super(QGraphicsView, self.graphics_view).wheelEvent
+        self.navigation_box_title_controller()
 
     def reset_zoom(self):
         self.zoom_factor = 1.0
@@ -797,9 +796,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             return
         
         self.is_kp_edit = not self.is_kp_edit # Toggle the mode
-        if self.is_zoom_mode: # Cancel the zoom mode when editing
-            self.graphics_view.setDragMode(QGraphicsView.NoDrag)
-            self.graphics_view.wheelEvent = super(QGraphicsView, self.graphics_view).wheelEvent
         self.navigation_box_title_controller() # Update title to reflect mode
         
         # Enable/disable draggable property of items based on self.is_kp_edit
@@ -816,6 +812,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                     "If you want to delete a keypoint, simply press Backspace when holding it.")
         else:
             QMessageBox.information(self, "Keypoint Editing Mode", "Keypoint editing mode is OFF.")
+
+        self.navigation_box_title_controller()
 
     def update_keypoint_position(self, instance_id, keypoint_id, new_x, new_y):
         self._save_state_for_undo()

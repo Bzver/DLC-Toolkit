@@ -117,10 +117,10 @@ class Draggable_Keypoint(QtCore.QObject, QGraphicsEllipseItem):
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton and self.flags() & QGraphicsEllipseItem.ItemIsMovable:
             new_pos = self.pos()
-            if new_pos != self.original_pos:
-                center_x = new_pos.x() + self.rect().width() / 2
-                center_y = new_pos.y() + self.rect().height() / 2
-                self.keypoint_moved.emit(self.instance_id, self.keypoint_id, center_x, center_y)
+            if new_pos != self.original_pos: # Calculate the delta from the original position
+                delta_x = new_pos.x() - self.original_pos.x()
+                delta_y = new_pos.y() - self.original_pos.y()
+                self.keypoint_moved.emit(self.instance_id, self.keypoint_id, delta_x, delta_y)
         super().mouseReleaseEvent(event)
 
     def itemChange(self, change, value):

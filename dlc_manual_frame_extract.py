@@ -622,6 +622,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             self.refiner_window.initialize_loaded_data()
             self.refiner_window.display_current_frame()
             self.refiner_window.navigation_box_title_controller()
+            self.refiner_window.is_kp_edit = True
             self.refiner_window.show()
             self.refiner_window.prediction_saved.connect(self.reload_prediction) # Reload from prediction provided by Refiner
         except Exception as e:
