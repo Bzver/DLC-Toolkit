@@ -17,6 +17,8 @@ from PySide6.QtWidgets import QMessageBox, QPushButton, QGraphicsView, QGraphics
 from utils.dtu_ui import Slider_With_Marks, Selectable_Instance, Draggable_Keypoint
 from utils.dtu_io import DLC_Data_Loader, DLC_Exporter
 
+import traceback
+
 DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/NTD/config.yaml"
 VIDEO_FILE_DEBUG = "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-conv.mp4"
 PRED_FILE_DEBUG = "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-convDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_090_snapshot_080_el_tr.h5"
@@ -66,6 +68,16 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.refiner_button.setMenu(self.refiner_menu)
         self.refiner_button.setPopupMode(QToolButton.InstantPopup)
 
+        self.pref_menu = QMenu("Preference", self)
+        
+        self.adjust_point_size_action = self.pref_menu.addAction("Adjust Point Size")
+        self.adjust_plot_visibilty_action = self.pref_menu.addAction("Adjust Plot Visibility")
+
+        self.pref_button = QToolButton()
+        self.pref_button.setText("Preference")
+        self.pref_button.setMenu(self.pref_menu)
+        self.pref_button.setPopupMode(QToolButton.InstantPopup)
+
         self.save_menu = QMenu("Save", self)
 
         self.save_prediction_action = self.save_menu.addAction("Save Prediction")
@@ -78,6 +90,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         self.menu_layout.addWidget(self.load_button, alignment=Qt.AlignLeft)
         self.menu_layout.addWidget(self.refiner_button, alignment=Qt.AlignLeft)
+        self.menu_layout.addWidget(self.pref_button, alignment=Qt.AlignLeft)
         self.menu_layout.addWidget(self.save_button, alignment=Qt.AlignLeft)
         self.menu_layout.addStretch(1)
         self.layout.addLayout(self.menu_layout)
@@ -98,9 +111,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.progress_layout = QtWidgets.QHBoxLayout()
         self.play_button = QPushButton("▶")
         self.play_button.setFixedWidth(20)
-        self.visibility_button = QPushButton("👁")
-        self.visibility_button.setToolTip("Set keypoint label text visibility (V)")
-        self.visibility_button.setFixedWidth(20)
         self.magnifier_button = QPushButton("🔍︎")
         self.magnifier_button.setToolTip("Toggle zoom mode (Z)")
         self.magnifier_button.setFixedWidth(20)
@@ -115,7 +125,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         self.progress_layout.addWidget(self.play_button)
         self.progress_layout.addWidget(self.progress_slider)
-        self.progress_layout.addWidget(self.visibility_button)
         self.progress_layout.addWidget(self.magnifier_button)
         self.progress_layout.addWidget(self.undo_button)
         self.progress_layout.addWidget(self.redo_button)
@@ -171,6 +180,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.segment_auto_correct_action.triggered.connect(self.segment_auto_correct)
         self.designate_no_mice_zone_action.triggered.connect(self.designate_no_mice_zone)
 
+        self.adjust_point_size_action.triggered.connect(self.adjust_point_size)
+        self.adjust_plot_visibilty_action.triggered.connect(self.adjust_plot_opacity)
+
         self.save_prediction_action.triggered.connect(self.save_prediction)
         self.save_prediction_as_csv_action.triggered.connect(self.save_prediction_as_csv)
 
@@ -179,7 +191,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.play_button.clicked.connect(self.toggle_playback)
         self.undo_button.clicked.connect(self.undo_changes)
         self.redo_button.clicked.connect(self.redo_changes)
-        self.visibility_button.clicked.connect(self.adjust_text_opacity)
         self.magnifier_button.clicked.connect(self.toggle_zoom_mode)
 
         self.prev_10_frames_button.clicked.connect(lambda: self.change_frame(-10))
@@ -213,7 +224,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         QShortcut(QKeySequence(Qt.Key_Z | Qt.ControlModifier), self).activated.connect(self.undo_changes)
         QShortcut(QKeySequence(Qt.Key_Y | Qt.ControlModifier), self).activated.connect(self.redo_changes)
-        QShortcut(QKeySequence(Qt.Key_V), self).activated.connect(self.adjust_text_opacity)
         QShortcut(QKeySequence(Qt.Key_S | Qt.ControlModifier), self).activated.connect(self.save_prediction)
         QShortcut(QKeySequence(Qt.Key_Z), self).activated.connect(self.toggle_zoom_mode)
         
@@ -239,7 +249,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.progress_slider.setRange(0, 0)
         self.navigation_group_box.hide()
         self.refiner_group_box.hide()
-        self.text_label_opacity = 1.0
+        self.plot_opacity = 1.0
+        self.point_size = 6
 
         self.selected_box = None
 
@@ -394,13 +405,14 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 x, y, conf = kp[0], kp[1], kp[2]
                 keypoint_coords[kp_idx] = (float(x),float(y),float(conf))
                 # Draw the dot representing the keypoints
-                keypoint_item = Draggable_Keypoint(x - 3, y - 3, 6, 6, inst, kp_idx, default_color_rgb=color)
+                keypoint_item = Draggable_Keypoint(x - self.point_size / 2, y - self.point_size / 2, self.point_size, self.point_size, inst, kp_idx, default_color_rgb=color)
 
                 if isinstance(keypoint_item, Draggable_Keypoint):
                     keypoint_item.setFlag(QtWidgets.QGraphicsEllipseItem.ItemIsMovable, self.is_kp_edit)
 
                 self.graphics_scene.addItem(keypoint_item)
                 keypoint_item.setZValue(1) # Ensure keypoints are on top of the video frame
+                keypoint_item.setOpacity(self.plot_opacity)
                 keypoint_item.keypoint_moved.connect(self.update_keypoint_position)
                 keypoint_item.keypoint_drag_started.connect(self.set_dragged_keypoint)
 
@@ -451,7 +463,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         text_item_inst = QtWidgets.QGraphicsTextItem(f"Inst: {self.dlc_data.individuals[inst]} | Conf:{kp_inst_mean:.4f}")
         text_item_inst.setPos(min_x, min_y - 20) # Adjust position to be above the bounding box
         text_item_inst.setDefaultTextColor(QtGui.QColor(*color))
-        text_item_inst.setOpacity(self.text_label_opacity)
+        text_item_inst.setOpacity(self.plot_opacity)
         text_item_inst.setFlag(QtWidgets.QGraphicsTextItem.ItemIgnoresTransformations) # Keep text size constant
         self.graphics_scene.addItem(text_item_inst)
 
@@ -474,7 +486,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
             text_item.setPos(text_x, text_y)
             text_item.setDefaultTextColor(QtGui.QColor(*color))
-            text_item.setOpacity(self.text_label_opacity)
+            text_item.setOpacity(self.plot_opacity)
             text_item.setFlag(QtWidgets.QGraphicsTextItem.ItemIgnoresTransformations) # Keep text size constant
             self.graphics_scene.addItem(text_item)
 
@@ -488,7 +500,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             end_coord = keypoint_coords.get(end_kp_idx)
             if start_coord and end_coord:
                 line = QtWidgets.QGraphicsLineItem(start_coord[0], start_coord[1], end_coord[0], end_coord[1])
-                line.setPen(QtGui.QPen(QtGui.QColor(*color), 2))
+                line.setPen(QtGui.QPen(QtGui.QColor(*color), self.point_size / 3))
                 self.graphics_scene.addItem(line)
         return frame
 
@@ -545,22 +557,41 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         else:
             self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: black;}""")
 
-    def adjust_text_opacity(self):
+    def adjust_point_size(self):
         dialog = QtWidgets.QDialog(self)
-        dialog.setWindowTitle("Keypoint Label Visibility")
+        dialog.setWindowTitle("Keypoint Size")
+        dialog.setModal(True)
+        layout = QtWidgets.QVBoxLayout(dialog)
+        slider = QtWidgets.QSlider(Qt.Horizontal)
+        slider.setRange(0, 100) # Scale 0.00 to 20.00 to 0 to 100
+        slider.setValue(int(self.plot_opacity * 5))
+        slider.setSingleStep(5)
+        slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
+        slider.setTickInterval(10)
+        layout.addWidget(slider)
+        slider.valueChanged.connect(self._update_point_size) # Connect slider to update opacity and redraw
+        dialog.exec()
+
+    def adjust_plot_opacity(self):
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Keypoint Visibility")
         dialog.setModal(True)
         layout = QtWidgets.QVBoxLayout(dialog)
         slider = QtWidgets.QSlider(Qt.Horizontal)
         slider.setRange(0, 100) # Scale 0.00 to 1.00 to 0 to 100
-        slider.setValue(int(self.text_label_opacity * 100))
+        slider.setValue(int(self.plot_opacity * 100))
         slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
         slider.setTickInterval(10)
         layout.addWidget(slider)
-        slider.valueChanged.connect(self._update_text_opacity) # Connect slider to update opacity and redraw
+        slider.valueChanged.connect(self._update_plot_opacity) # Connect slider to update opacity and redraw
         dialog.exec()
 
-    def _update_text_opacity(self, value):
-        self.text_label_opacity = value / 100.0
+    def _update_point_size(self, value):
+        self.point_size = value / 5
+        self.display_current_frame()
+
+    def _update_plot_opacity(self, value):
+        self.plot_opacity = value / 100.0
         self.display_current_frame()
 
     def toggle_zoom_mode(self):
@@ -614,7 +645,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             else:
                 self.current_frame_idx = self.roi_frame_list[current_idx_in_roi]
             self.display_current_frame()
-            self.reset_zoom()
             self.navigation_box_title_controller()
         else:
             QMessageBox.information(self, "Navigation", "No previous ROI frame found.")
@@ -635,7 +665,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             else:
                 self.current_frame_idx = self.roi_frame_list[current_idx_in_roi]
             self.display_current_frame()
-            self.reset_zoom()
             self.navigation_box_title_controller()
         else:
             QMessageBox.information(self, "Navigation", "No next ROI frame found.")
@@ -1244,14 +1273,18 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 if 'tracks/table' in pred_file_to_save:
                     pred_file_to_save['tracks/table'][...] = new_data
             self.prediction = pred_file_to_save_path
-            self.prediction_loader()
+            self.data_loader.dlc_config_filepath = self.dlc_data.dlc_config_filepath
+            self.data_loader.dlc_config_loader()
+            self.data_loader.prediction_filepath = self.prediction
+            self.data_loader.prediction_loader()
+            self.dlc_data = self.data_loader.get_loaded_dlc_data()
             self.is_saved = True
             
             QMessageBox.information(self, "Save Successful", f"Successfully saved modified prediction to: {self.prediction}")
             self.prediction_saved.emit(self.prediction) # Emit the signal with the saved file path
         except Exception as e:
             QMessageBox.critical(self, "Saving Error", f"An error occurred during HDF5 saving: {e}")
-            print(f"An error occurred during HDF5 saving: {e}")
+            traceback.print_exc()
 
     def save_prediction_as_csv(self):
         save_path = os.path.dirname(self.prediction)

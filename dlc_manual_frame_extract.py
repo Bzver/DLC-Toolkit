@@ -619,10 +619,11 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             self.refiner_window.dlc_data = self.dlc_data
             self.refiner_window.marked_roi_frame_list = self.frame_list
             self.refiner_window.current_frame_idx = self.current_frame_idx
+            self.refiner_window.prediction = self.dlc_data.prediction_filepath
             self.refiner_window.initialize_loaded_data()
             self.refiner_window.display_current_frame()
             self.refiner_window.navigation_box_title_controller()
-            self.refiner_window.is_kp_edit = True
+            self.refiner_window.direct_keypoint_edit()
             self.refiner_window.show()
             self.refiner_window.prediction_saved.connect(self.reload_prediction) # Reload from prediction provided by Refiner
         except Exception as e:

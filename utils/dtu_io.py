@@ -74,7 +74,7 @@ class DLC_Data_Loader:
             QMessageBox.warning(self.gui, "Prediction File Not Found", f"Prediction file cannot be fetched from given path: {self.prediction_filepath}")
             return False
 
-        if not self.dlc_config_filepath:
+        if not self.dlc_config_filepath or not self._num_keypoint or not self._instance_count:
             QMessageBox.warning(self.gui, "No DLC Config", "No DLC config has been loaded, please load it first.")
             return False
 
