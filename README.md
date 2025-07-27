@@ -1,12 +1,5 @@
-# DLC-Toolkit
-GUI tools to view and manually correct DeepLabCut pose estimation, among other things.
-
-## Why This Toolkit? 🤔
-DeepLabCut, alongside its napari integration, offers powerful pose estimation. However, while napari excels as a general image viewer, I've found its performance can crumble when dealing with predictions containing 4000+ frames, leading to frustrating lags and unresponsiveness during tasks like manual frame extraction and track refinement. This isn't a critique of napari or the fantastic DeepLabCut developers, but rather a recognition that highly demanding, specialized workflows require tailored optimization. This toolkit, built with PySide6, hopes to addresses these performance bottlenecks, and to offer a significantly faster, more stable, and smoother user experience for navigating, correcting, and refining large-scale behavioral video data, ensuring that even the most extensive DeepLabCut projects can be managed efficiently without enduring the common pain of performance limitations.
-
-## Important Note on Development ⚠️
-This project is currently in active development, which means you might encounter changes or unexpected bugs. I strongly recommend backing up your original DeepLabCut project files and data before using these tools. If you unfortunately encounter one of these bugs, please open an issue here so that your insights can help refine this toolkit for everyone!
-
+## Purpose of This Toolkit
+DeepLabCut’s napari interface suffers performance issues when the number of frames exceeds a few thousand, making manual frame extraction and track refinement tortuous tasks. This toolkit addresses the problem by handling everything with PySide6 and adding several features absent from the original DeepLabCut implementation.
 
 **Table of Contents**
 
