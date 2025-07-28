@@ -291,10 +291,18 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
                 labeled_frame_list.sort()
                 labeled_data_flattened = lbf["df_with_missing"]["block0_values"]
                 self.labeled_frame_list.extend(labeled_frame_list)
-                labeled_data_with_conf = DLC_Data_Loader.add_mock_confidence_score(labeled_data_flattened)
+                
+                rows, cols = labeled_data_flattened.shape # Check if labeled_data_flattened already have conf or not
+                if cols / self.dlc_data.num_keypoint == 3 * self.dlc_data.instance_count:
+                    labeled_data_with_conf = labeled_data_flattened
+                else:
+                    labeled_data_with_conf = DLC_Data_Loader.add_mock_confidence_score(labeled_data_flattened)
                 labeled_data_unflattened = DLC_Data_Loader.unflatten_data_array(
                     labeled_data_with_conf, self.dlc_data.instance_count)
                 self.label_data_array[labeled_frame_list,:,:] = labeled_data_unflattened
+        
+        self.frame_list = list(set(self.frame_list) - set(self.labeled_frame_list)) # Clean up the already labeled marked frames
+        self.frame_list.sort()
 
         self.progress_slider.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7")
 
@@ -730,10 +738,14 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         else:
             self.label_data_array[self.frame_list, :, :] = self.dlc_data.pred_data_array[self.frame_list, :, :]
             merge_frame_list = list(set(self.labeled_frame_list) | set(self.frame_list))
-            label_data_array_export = self.label_data_array[merge_frame_list, :, :]
+            label_data_array_with_conf = self.label_data_array[merge_frame_list, :, :]
+
+            label_data_array_export = DLC_Data_Loader.remove_mock_confidence_score(label_data_array_with_conf)
             scorer = self.dlc_data.scorer
             merge_name = f"CollectedData_{scorer}"
             
+        self.save_workspace()
+
         try:
             if not DLC_Exporter.extract_frame(self.video_file, merge_frame_list, self.project_dir):
                 QMessageBox.critical(self, "Frame Extraction Failed", "Failed to extract frames. Merge aborted.")
@@ -757,6 +769,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
                 return
             
             QMessageBox.information(self, "Merge Success!", "Data merged and converted into h5.")
+            self.load_and_plot_labeled_frame()
 
         except Exception as e:
             QMessageBox.critical(self, "Merge Process Error", f"An unexpected error occurred during export/conversion: {e}")

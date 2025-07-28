@@ -134,15 +134,29 @@ class DLC_Data_Loader:
     
     @staticmethod
     def add_mock_confidence_score(data_array):
-        rows, cols = data_array.shape
-        new_array = np.full((rows, cols // 2 * 3), np.nan)
-        new_array[:,0::3] = data_array[:,0::2]
-        new_array[:,1::3] = data_array[:,1::2]
+        array_dim = len(data_array.shape) # Always check for dimension first
+        if array_dim == 2:
+            rows, cols = data_array.shape
+            new_array = np.full((rows, cols // 2 * 3), np.nan)
+            new_array[:,0::3] = data_array[:,0::2]
+            new_array[:,1::3] = data_array[:,1::2]
 
-        x_nan_mask = np.isnan(new_array[:, 0::3])
-        y_nan_mask = np.isnan(new_array[:, 1::3])
-        xy_not_nan_mask = ~(x_nan_mask | y_nan_mask)
-        new_array[:, 2::3][xy_not_nan_mask] = 1.0
+            x_nan_mask = np.isnan(new_array[:, 0::3])
+            y_nan_mask = np.isnan(new_array[:, 1::3])
+            xy_not_nan_mask = ~(x_nan_mask | y_nan_mask)
+            new_array[:, 2::3][xy_not_nan_mask] = 1.0
+
+        if array_dim == 3: # Unflattened (frame_idx, instance, bodyparts)
+            dim_1, dim_2, dim_3 = data_array.shape
+            new_array = np.full((dim_1, dim_2, dim_3 // 2 * 3), np.nan)
+            new_array[:,:,0::3] = data_array[:,:,0::2]
+            new_array[:,:,1::3] = data_array[:,:,1::2]
+
+            x_nan_mask = np.isnan(new_array[:, :, 0::3])
+            y_nan_mask = np.isnan(new_array[:, :, 1::3])
+            xy_not_nan_mask = ~(x_nan_mask | y_nan_mask)
+            new_array[:, :, 2::3][xy_not_nan_mask] = 1.0
+
         return new_array
     
     @staticmethod
@@ -154,6 +168,20 @@ class DLC_Data_Loader:
             start_col = inst_idx * cols // inst_count
             end_col = (inst_idx + 1) * cols // inst_count
             new_array[:, inst_idx, :] = data_array[:, start_col:end_col]
+        return new_array
+    
+    def remove_mock_confidence_score(data_array):
+        array_dim = len(data_array.shape) # Always check for dimension first
+        if array_dim == 2:
+            rows, cols = data_array.shape
+            new_array = np.full((rows, cols // 3 * 2), np.nan)
+            new_array[:,0::2] = data_array[:,0::3]
+            new_array[:,1::2] = data_array[:,1::3]
+        if array_dim == 3: # Unflattened (frame_idx, instance, bodyparts)
+            dim_1, dim_2, dim_3 = data_array.shape
+            new_array = np.full((dim_1, dim_2, dim_3 // 3 * 2), np.nan)
+            new_array[:,:,0::2] = data_array[:,:,0::3]
+            new_array[:,:,1::2] = data_array[:,:,1::3]
         return new_array
 
 class DLC_Exporter:
@@ -220,10 +248,19 @@ class DLC_Exporter:
         return True
 
     @staticmethod
-    def prediction_to_csv(dlc_data, pred_data_array, save_path:str, 
-            marked_frames:List=None, src_video_name:str=None, prediction_filename:str="MachineLabelsRefine"):
-        # Adapted from agosztolai's pull request: https://github.com/DeepLabCut/DeepLabCut/pull/2977
+    def prediction_to_csv(dlc_data, pred_data_array, save_path:str, marked_frames:List=None,
+        src_video_name:str=None, prediction_filename:str="MachineLabelsRefine"):
+        
         pred_data_flattened = pred_data_array.reshape(pred_data_array.shape[0], -1)
+
+        if pred_data_flattened.shape[1] // dlc_data.num_keypoint == 3 * dlc_data.instance_count:
+            has_conf = True
+        elif pred_data_flattened.shape[1] // dlc_data.num_keypoint == 2 * dlc_data.instance_count:
+            has_conf = False
+        else:
+            print(f"Pred data has incomplatible shape: {pred_data_array.shape}")
+            return False
+
         if not marked_frames:
             frame_list = list(range(pred_data_flattened.shape[0]))
         else:
@@ -231,31 +268,7 @@ class DLC_Exporter:
         frame_col = np.array(frame_list).reshape(-1, 1)
         pred_data_processed = np.concatenate((frame_col, pred_data_flattened), axis=1)
 
-        columns = ["frame"]
-        bodyparts_row = ["bodyparts"]
-        coords_row = ["coords"]
-
-        multi_animal = dlc_data.multi_animal
-        keypoints = dlc_data.keypoints
-        num_keypoint = dlc_data.num_keypoint
-        instance_count = dlc_data.instance_count
-        individuals = dlc_data.individuals
-
-        if not multi_animal:
-            columns += ([f"{kp}_x" for kp in keypoints] + [f"{kp}_y" for kp in keypoints] + [f"{kp}_likelihood" for kp in keypoints])
-            bodyparts_row += [ f"{kp}" for kp in keypoints for _ in (0, 1, 2) ]
-            coords_row += (["x", "y", "likelihood"] * keypoints)
-        else:
-            individuals_row = ["individuals"]
-            if not individuals: # Fallback for the event that individual is empty
-                individuals = [str(k) for k in range(1,instance_count+1)]
-            for m in range(instance_count):
-                columns += ([f"{kp}_x" for kp in keypoints] + [f"{kp}_y" for kp in keypoints] + [f"{kp}_likelihood" for kp in keypoints]    )
-                bodyparts_row += [ f"{kp}" for kp in keypoints for _ in (0, 1, 2) ]
-                coords_row += (["x", "y", "likelihood"] * num_keypoint)
-                for _ in range(num_keypoint * 3):
-                    individuals_row += [individuals[m]]
-        scorer_row = ["scorer"] + ["machine-labeled"] * (len(columns) - 1)
+        header_df, columns = DLC_Exporter.construct_header_row(dlc_data, has_conf)
 
         labels_df = pd.DataFrame(pred_data_processed, columns=columns)
         if marked_frames and src_video_name: # Skip it when called from the refiner <- no marked frames provided
@@ -266,11 +279,6 @@ class DLC_Exporter:
                 )
             )
         labels_df = labels_df.groupby("frame", as_index=False).first()
-
-        header_df = pd.DataFrame(
-        [row for row in [scorer_row, individuals_row, bodyparts_row, coords_row] if row != individuals_row or multi_animal],
-            columns=labels_df.columns
-        )
 
         final_df = pd.concat([header_df, labels_df], ignore_index=True)
         final_df.columns = [None] * len(final_df.columns)
@@ -314,6 +322,57 @@ class DLC_Exporter:
             return True
         except FileNotFoundError:
             print("Attention:", project_dir, "does not appear to have labeled data!")
+
+    @staticmethod
+    def construct_header_row(dlc_data, has_conf):
+        keypoints = dlc_data.keypoints
+        num_keypoint = dlc_data.num_keypoint
+        instance_count = dlc_data.instance_count
+        individuals = dlc_data.individuals
+
+        columns = ["frame"]
+
+        bodyparts_row = ["bodyparts"]
+        coords_row = ["coords"]
+
+        if has_conf:
+            if not dlc_data.multi_animal:
+                columns += ([f"{kp}_x" for kp in keypoints] + [f"{kp}_y" for kp in keypoints] + [f"{kp}_likelihood" for kp in keypoints])
+                bodyparts_row += [ f"{kp}" for kp in keypoints for _ in (0, 1, 2) ]
+                coords_row += (["x", "y", "likelihood"] * keypoints)
+            else:
+                individuals_row = ["individuals"]
+                if not individuals: # Fallback for the event that individual is empty
+                    individuals = [str(k) for k in range(1,instance_count+1)]
+                for m in range(instance_count):
+                    columns += ([f"{kp}_x" for kp in keypoints] + [f"{kp}_y" for kp in keypoints] + [f"{kp}_likelihood" for kp in keypoints])
+                    bodyparts_row += [ f"{kp}" for kp in keypoints for _ in (0, 1, 2) ]
+                    coords_row += (["x", "y", "likelihood"] * num_keypoint)
+                    for _ in range(num_keypoint * 3):
+                        individuals_row += [individuals[m]]
+        else:
+            if not dlc_data.multi_animal:
+                columns += ([f"{kp}_x" for kp in keypoints] + [f"{kp}_y" for kp in keypoints])
+                bodyparts_row += [ f"{kp}" for kp in keypoints for _ in (0, 1) ]
+                coords_row += (["x", "y",] * keypoints)
+            else:
+                individuals_row = ["individuals"]
+                if not individuals: # Fallback for the event that individual is empty
+                    individuals = [str(k) for k in range(1,instance_count+1)]
+                for m in range(instance_count):
+                    columns += ([f"{kp}_x" for kp in keypoints] + [f"{kp}_y" for kp in keypoints])
+                    bodyparts_row += [ f"{kp}" for kp in keypoints for _ in (0, 1) ]
+                    coords_row += (["x", "y"] * num_keypoint)
+                    for _ in range(num_keypoint * 2):
+                        individuals_row += [individuals[m]]
+
+        scorer_row = ["scorer"] + ["machine-labeled"] * (len(columns) - 1)
+        header_df = pd.DataFrame(
+        [row for row in [scorer_row, individuals_row, bodyparts_row, coords_row] if row != individuals_row or dlc_data.multi_animal],
+            columns=columns
+        )
+        
+        return header_df, columns
 
     @staticmethod
     def guarantee_multiindex_rows(df): # Adapted from DeepLabCut
