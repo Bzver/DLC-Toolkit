@@ -406,13 +406,13 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 keypoint_coords[kp_idx] = (float(x),float(y),float(conf))
                 # Draw the dot representing the keypoints
                 keypoint_item = Draggable_Keypoint(x - self.point_size / 2, y - self.point_size / 2, self.point_size, self.point_size, inst, kp_idx, default_color_rgb=color)
+                keypoint_item.setOpacity(self.plot_opacity)
 
                 if isinstance(keypoint_item, Draggable_Keypoint):
                     keypoint_item.setFlag(QtWidgets.QGraphicsEllipseItem.ItemIsMovable, self.is_kp_edit)
 
                 self.graphics_scene.addItem(keypoint_item)
                 keypoint_item.setZValue(1) # Ensure keypoints are on top of the video frame
-                keypoint_item.setOpacity(self.plot_opacity)
                 keypoint_item.keypoint_moved.connect(self.update_keypoint_position)
                 keypoint_item.keypoint_drag_started.connect(self.set_dragged_keypoint)
 
@@ -451,6 +451,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         # Draw bounding box using QGraphicsRectItem
         rect_item = Selectable_Instance(min_x, min_y, max_x - min_x, max_y - min_y, inst, default_color_rgb=color)
+        rect_item.setOpacity(self.plot_opacity)
         if isinstance(rect_item, Selectable_Instance):
                 rect_item.setFlag(QGraphicsRectItem.ItemIsMovable, self.is_kp_edit)
         self.graphics_scene.addItem(rect_item)
@@ -501,6 +502,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             if start_coord and end_coord:
                 line = QtWidgets.QGraphicsLineItem(start_coord[0], start_coord[1], end_coord[0], end_coord[1])
                 line.setPen(QtGui.QPen(QtGui.QColor(*color), self.point_size / 3))
+                line.setOpacity(self.plot_opacity)
                 self.graphics_scene.addItem(line)
         return frame
 
