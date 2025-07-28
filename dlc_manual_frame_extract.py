@@ -698,7 +698,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
                 return True
             else:
                 QMessageBox.warning(self, "Error", "Failed to save frames to DLC format.")
-                traceback.print_exc() # Add this line to print traceback
+                traceback.print_exc()
                 return False
 
         except Exception as e:
@@ -714,7 +714,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             QMessageBox.warning(self, "No Pose Estimation", "No pose estimation is loaded.")
             return
         
-        if not self.label_data_array:
+        if not self.labeled_frame_list:
             QMessageBox.information(self, "No Previous Label Loaded", "Can't merge when no previous label is loaded.")
             return
         
@@ -729,9 +729,10 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             return
         else:
             self.label_data_array[self.frame_list, :, :] = self.dlc_data.pred_data_array[self.frame_list, :, :]
-            merge_frame_list = list(set(self.labeled_frame_list) + set(self.frame_list))
+            merge_frame_list = list(set(self.labeled_frame_list) | set(self.frame_list))
+            label_data_array_export = self.label_data_array[merge_frame_list, :, :]
             scorer = self.dlc_data.scorer
-            merge_name = f"CollectedData_{scorer}.csv"
+            merge_name = f"CollectedData_{scorer}"
             
         try:
             if not DLC_Exporter.extract_frame(self.video_file, merge_frame_list, self.project_dir):
@@ -741,7 +742,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             # Convert the merged prediction data to CSV
             if not DLC_Exporter.prediction_to_csv(
                 self.dlc_data,
-                self.label_data_array,
+                label_data_array_export,
                 self.project_dir,
                 marked_frames=merge_frame_list,
                 src_video_name=self.video_name,
@@ -751,12 +752,15 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
                 return
 
             # Convert the generated CSV back to H5
-            if not DLC_Exporter.csv_to_h5(self.project_dir, self.dlc_data.multi_animal, merge_frame_list):
+            if not DLC_Exporter.csv_to_h5(self.project_dir, self.dlc_data.multi_animal, csv_name=merge_name):
                 QMessageBox.critical(self, "H5 Conversion Failed", "Failed to convert merged CSV to H5. Merge aborted.")
                 return
+            
+            QMessageBox.information(self, "Merge Success!", "Data merged and converted into h5.")
 
         except Exception as e:
             QMessageBox.critical(self, "Merge Process Error", f"An unexpected error occurred during export/conversion: {e}")
+            traceback.print_exc()
             return
 
     def changeEvent(self, event):

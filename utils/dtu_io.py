@@ -289,7 +289,7 @@ class DLC_Exporter:
 
             shutil.copy(save_filepath , backup_filepath)
 
-        final_df.to_csv(save_path, index=False, header=None)
+        final_df.to_csv(save_filepath, index=False, header=None)
         return True
 
     @staticmethod

@@ -60,7 +60,8 @@ def remove_extra_image(project_dir, data_list):
         print("No extra images found to delete.")
 
 if __name__ == "__main__":
-    csv_file = "D:/Project/DLC-Models/NTD/labeled-data/20250629r-conv/CollectedData_bezver.csv"
-    project_dir = "D:/Project/DLC-Models/NTD/labeled-data/20250629r-conv/"
+    csv_file = "CollectedData_bezver.csv"
+    project_dir = "D:/Project/DLC-Models/NTD/labeled-data/20250626C1-first3h-S"
+    csv_file = os.path.join(project_dir, csv_file)
     data_list = load_deeplabcut_csv(csv_file)
     remove_extra_image(project_dir, data_list)
