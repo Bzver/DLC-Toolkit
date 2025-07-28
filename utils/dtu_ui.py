@@ -77,7 +77,8 @@ class Slider_With_Marks(QtWidgets.QSlider):
     def __init__(self, orientation):
         super().__init__(orientation)
         self.frame_categories = {} # Stores {category_name: set_of_frames}
-        self.category_colors = {}
+        self.category_colors = {} # Stores {category_name: color_string}
+        self.category_priorities = {} # Stores {category_name: priority_int}
         self.setStyleSheet("""
             QSlider::groove:horizontal {
                 border: 1px solid #999999;
@@ -95,24 +96,20 @@ class Slider_With_Marks(QtWidgets.QSlider):
             }
         """)
 
-    def set_frame_category(self, category_name, frames, color=None):
+    def set_frame_category(self, category_name, frames, color=None, priority=5):
         self.frame_categories[category_name] = set(frames)
         if color:
             self.category_colors[category_name] = color
         elif category_name not in self.category_colors:
             self.category_colors[category_name] = "#183539"  # default color if not specified
-        self.update()
+        self.category_priorities[category_name] = priority # Store the priority
+        self.update() # Request a repaint
 
     def paintEvent(self, event):
         super().paintEvent(event)
         if not self.frame_categories:
             return
-        for category_name, frames in self.frame_categories.items():
-            color = self.category_colors.get(category_name)
-            if frames and color:
-                self.paintEvent_painter(frames, color)
         
-    def paintEvent_painter(self, frames, color):
         painter = QtGui.QPainter(self)
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
         # Get slider geometry
@@ -128,10 +125,27 @@ class Slider_With_Marks(QtWidgets.QSlider):
         min_val = self.minimum()
         max_val = self.maximum()
         available_width = groove_rect.width()
+
+        frame_colors_to_plot = {} # {frame: color} Decide which color to use for a frame in multiple category
+
+        sorted_categories = sorted(
+            self.frame_categories.keys(),
+            key=lambda cat_name: self.category_priorities.get(cat_name, float('inf')) # Default high priority for safety
+        )
+        
+        for category_name in sorted_categories:
+            frames = self.frame_categories.get(category_name, set())
+            color = self.category_colors.get(category_name)
+
+            if frames and color:
+                for frame in frames:
+                    if min_val <= frame <= max_val:
+                        frame_colors_to_plot[frame] = color
+
+        painter.setPen(QtCore.Qt.NoPen)
+
         # Draw each frame on slider
-        for frame in frames:
-            if frame < min_val or frame > max_val:
-                continue  
+        for frame, color in frame_colors_to_plot.items():
             pos = QtWidgets.QStyle.sliderPositionFromValue(
                 min_val, 
                 max_val, 
@@ -139,15 +153,15 @@ class Slider_With_Marks(QtWidgets.QSlider):
                 available_width,
                 opt.upsideDown
             ) + groove_rect.left()
-            # Draw marker
-            painter.setPen(QtCore.Qt.NoPen)
+            
             painter.setBrush(QtGui.QColor(color))
             painter.drawRect(
                 int(pos) - 1,  # Center the mark
                 groove_rect.top(),
-                3,  # Width
+                1,             # Width
                 groove_rect.height()
             )
+        
         painter.end()
 
 #######################################################################################################################################################

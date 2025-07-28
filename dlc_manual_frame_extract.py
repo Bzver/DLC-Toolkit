@@ -35,7 +35,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         self.load_menu = QMenu("File", self)
         self.load_video_action = self.load_menu.addAction("Load Video")
         self.load_prediction_action = self.load_menu.addAction("Load Config and Prediction")
-        self.load_workplace_action = self.load_menu.addAction("Load Status")
+        self.load_workplace_action = self.load_menu.addAction("Load Workplace")
 
         self.load_button = QToolButton()
         self.load_button.setText("File")
@@ -147,7 +147,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
 
         self.data_loader = DLC_Data_Loader(self, None, None)
 
-        self.labeled_frame_list, self.frame_list = [], []
+        self.labeled_frame_list, self.frame_list, self.refined_frame_list = [], [], []
         self.label_data_array = None
 
         self.cap, self.current_frame = None, None
@@ -161,6 +161,12 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         self.navigation_group_box.hide()
 
         self.refiner_window = None
+
+    def handle_refined_frames_exported(self, refined_frames):
+        self.refined_frame_list = refined_frames
+        self.progress_slider.set_frame_category("refined_frames", self.refined_frame_list, "#009979", priority=7)
+        self.display_current_frame()
+        self.determine_save_status()
 
     def load_video(self):
         self.reset_state()
@@ -185,6 +191,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         self.current_frame_idx = 0
         self.progress_slider.setRange(0, self.total_frames - 1)
         self.progress_slider.set_frame_category("marked_frames", self.frame_list, "#E28F13")
+        self.progress_slider.set_frame_category("refined_frames", self.refined_frame_list, "#009979", priority=7)
         self.progress_slider.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7")
         self.display_current_frame()
         self.navigation_box_title_controller()
@@ -263,6 +270,9 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
                     return
 
                 self.dlc_data = self.data_loader.get_loaded_dlc_data()
+
+            if "refined_frame_list" in fmk.keys():
+                self.refined_frame_list = fmk["refined_frame_list"]
                 
             self.progress_slider.set_frame_category("marked_frames", self.frame_list, "#E28F13")
             self.determine_save_status()
@@ -491,6 +501,8 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         self.navigation_group_box.setTitle(f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | Video: {self.video_name}")
         if self.current_frame_idx in self.labeled_frame_list:
             self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: #1F32D7;}""")
+        elif self.current_frame_idx in self.refined_frame_list:
+            self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: #009979;}""")
         elif self.current_frame_idx in self.frame_list:
             self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: #E28F13;}""")
         else:
@@ -506,6 +518,17 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         if self.current_frame_idx in self.labeled_frame_list:
             QMessageBox.information(self, "Already Labeled", 
                 "The frame is already in the labeled dataset, skipping...")
+            return
+
+        if self.current_frame_idx in self.refined_frame_list:
+            reply = QMessageBox.question(
+                self, "Confirm Unmarking",
+                "This frame is already refined, do you still want to remove it from the exported lists>",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply == QMessageBox.Yes:
+                self.refined_frame_list.remove(self.current_frame_idx)
+                self.frame_list.remove(self.current_frame_idx)
             return
 
         if not self.current_frame_idx in self.frame_list:
@@ -599,9 +622,11 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         self.last_saved = self.frame_list
         self.is_saved = True
         if self.dlc_data:
-            save_yaml = {'video_path': self.video_file,  'frame_list': self.last_saved, 'dlc_config': self.dlc_data.dlc_config_filepath, 'prediction': self.dlc_data.prediction_filepath}
+            save_yaml = {'video_path': self.video_file,  'frame_list': self.last_saved, 'dlc_config': self.dlc_data.dlc_config_filepath,
+                'prediction': self.dlc_data.prediction_filepath, 'refined_frame_list': self.refined_frame_list}
         else:
-            save_yaml = {'video_path': self.video_file,  'frame_list': self.last_saved, 'dlc_config': None, 'prediction': None}
+            save_yaml = {'video_path': self.video_file,  'frame_list': self.last_saved, 'dlc_config': None,
+                'prediction': None, 'refined_frame_list': self.refined_frame_list}
         output_filepath = os.path.join(os.path.dirname(self.video_file), f"{self.video_name}_frame_extractor.yaml")
 
         with open(output_filepath, 'w') as file:
@@ -609,7 +634,6 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         QMessageBox.information(self, "Success", f"Current workplace files have been saved to {output_filepath}")
 
     def export_to_refiner(self):
-        pass
         from dlc_track_refiner import DLC_Track_Refiner
         if not self.video_file:
             QMessageBox.warning(self, "Video Not Loaded", "No video is loaded, load a video first!")
@@ -626,6 +650,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             self.refiner_window.initialize_loaded_video()
             self.refiner_window.dlc_data = self.dlc_data
             self.refiner_window.marked_roi_frame_list = self.frame_list
+            self.refiner_window.refined_roi_frame_list = self.refined_frame_list
             self.refiner_window.current_frame_idx = self.current_frame_idx
             self.refiner_window.prediction = self.dlc_data.prediction_filepath
             self.refiner_window.initialize_loaded_data()
@@ -634,6 +659,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             self.refiner_window.direct_keypoint_edit()
             self.refiner_window.show()
             self.refiner_window.prediction_saved.connect(self.reload_prediction) # Reload from prediction provided by Refiner
+            self.refiner_window.refined_frames_exported.connect(self.handle_refined_frames_exported)
         except Exception as e:
             QMessageBox.warning(self, "Refiner Failed", f"Refiner failed to initialize. Exception: {e}")
             return
@@ -714,8 +740,8 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             return False
 
     def merge_data(self):
-        if not self.frame_list:
-            QMessageBox.warning(self, "No Marked Frame", "No frame has been marked, please mark some frames first.")
+        if not self.refined_frame_list:
+            QMessageBox.warning(self, "No Refined Frame", "No frame has been refined, please refine some marked frames first.")
             return
         
         if not self.dlc_data:
@@ -736,8 +762,8 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         if reply == QMessageBox.No:
             return
         else:
-            self.label_data_array[self.frame_list, :, :] = self.dlc_data.pred_data_array[self.frame_list, :, :]
-            merge_frame_list = list(set(self.labeled_frame_list) | set(self.frame_list))
+            self.label_data_array[self.refined_frame_list, :, :] = self.dlc_data.pred_data_array[self.refined_frame_list, :, :]
+            merge_frame_list = list(set(self.labeled_frame_list) | set(self.refined_frame_list))
             label_data_array_with_conf = self.label_data_array[merge_frame_list, :, :]
 
             label_data_array_export = DLC_Data_Loader.remove_mock_confidence_score(label_data_array_with_conf)

@@ -29,6 +29,7 @@ PRED_FILE_DEBUG = "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-convDLC_Hr
 
 class DLC_Track_Refiner(QtWidgets.QMainWindow):
     prediction_saved = Signal(str) # Signal to emit the path of the saved prediction file
+    refined_frames_exported = Signal(list) # New signal to emit the refined_roi_frame_list
 
     def __init__(self):
         super().__init__()
@@ -240,7 +241,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.instance_count_per_frame, self.pred_data_array = None, None
         self.data_loader = DLC_Data_Loader(self, None, None)
 
-        self.roi_frame_list, self.marked_roi_frame_list = [], []
+        self.roi_frame_list, self.marked_roi_frame_list, self.refined_roi_frame_list = [], [], []
 
         self.cap, self.current_frame = None, None
 
@@ -554,7 +555,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         if self.is_kp_edit and self.current_frame_idx:
             title += " ----- KEYPOINTS EDITING MODE ----- "
         self.navigation_group_box.setTitle(title)
-        if self.current_frame_idx in self.roi_frame_list:
+        if self.current_frame_idx in self.refined_roi_frame_list:
+            self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: #009979;}""")
+        elif self.current_frame_idx in self.roi_frame_list:
             self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: #F04C4C;}""")
         else:
             self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: black;}""")
@@ -623,7 +626,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         else:
             roi_frames = np.where(np.diff(self.instance_count_per_frame)!=0)[0]+1
             self.roi_frame_list = list(roi_frames)
-        self.progress_slider.set_frame_category("ROI frames", self.roi_frame_list, "#F04C4C") # Update ROI frames
+
+        self._refresh_slider()
 
         if self.is_debug:
             print("\n--- Instance Counting Details ---")
@@ -848,7 +852,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
     def update_keypoint_position(self, instance_id, keypoint_id, new_x, new_y):
         self._save_state_for_undo()
-        # Keep the confidence value as is.
+        if self.current_frame_idx in self.marked_roi_frame_list and self.current_frame_idx not in self.refined_roi_frame_list:
+            self.refined_roi_frame_list.append(self.current_frame_idx)
         current_conf = self.pred_data_array[self.current_frame_idx, instance_id, keypoint_id*3+2]
         self.pred_data_array[self.current_frame_idx, instance_id, keypoint_id*3] += new_x
         self.pred_data_array[self.current_frame_idx, instance_id, keypoint_id*3+1] += new_y
@@ -858,9 +863,13 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         print(f"{self.dlc_data.keypoints[keypoint_id]} of instance {instance_id} moved by ({new_x}, {new_y})")
         self.is_saved = False
         QtCore.QTimer.singleShot(0, self.display_current_frame)
+        self._refresh_slider()
+        self.navigation_box_title_controller()
 
     def update_instance_position(self, instance_id, dx, dy):
         self._save_state_for_undo()
+        if self.current_frame_idx in self.marked_roi_frame_list and self.current_frame_idx not in self.refined_roi_frame_list:
+            self.refined_roi_frame_list.append(self.current_frame_idx)
         # Update all keypoints for the given instance in the current frame
         for kp_idx in range(self.dlc_data.num_keypoint):
 
@@ -876,16 +885,21 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         print(f"Instance {instance_id} moved by ({dx}, {dy})")
         self.is_saved = False
         QtCore.QTimer.singleShot(0, self.display_current_frame)
+        self._refresh_slider()
+        self.navigation_box_title_controller()
 
     def delete_dragged_keypoint(self):
         if self.is_kp_edit and self.dragged_keypoint:
             self._save_state_for_undo()
+            if self.current_frame_idx in self.marked_roi_frame_list and self.current_frame_idx not in self.refined_roi_frame_list:
+                self.refined_roi_frame_list.append(self.current_frame_idx)
             instance_id = self.dragged_keypoint.instance_id
             keypoint_id = self.dragged_keypoint.keypoint_id
             # Set the keypoint coordinates and confidence to NaN
             self.pred_data_array[self.current_frame_idx, instance_id, keypoint_id*3:keypoint_id*3+3] = np.nan
             print(f"{self.dlc_data.keypoints[keypoint_id]} of instance {instance_id} deleted.")
             self.dragged_keypoint = None # Clear the dragged keypoint
+            self._refresh_slider()
             self.display_current_frame()
 
     def set_dragged_keypoint(self, keypoint_item):
@@ -1062,7 +1076,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         else:
             QMessageBox.information(self, "Fill Info", "No frames found to fill for the selected instance.")
 
-
     ###################################################################################################################################################
 
     def _track_mod_blocker(self):
@@ -1073,6 +1086,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             QMessageBox.warning(self, "Not Allowed", "Please finish editing keypoints before using this function.")
             return False
         return True
+
+    def _refresh_slider(self):
+        self.progress_slider.set_frame_category("Refined frames", self.refined_roi_frame_list, "#009979", priority=7)
+        self.progress_slider.set_frame_category("ROI frames", self.roi_frame_list, "#F04C4C") # Update ROI frames
 
     def get_current_frame_inst(self):
         current_frame_inst = []
@@ -1284,6 +1301,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             
             QMessageBox.information(self, "Save Successful", f"Successfully saved modified prediction to: {self.prediction}")
             self.prediction_saved.emit(self.prediction) # Emit the signal with the saved file path
+            self.refined_frames_exported.emit(self.refined_roi_frame_list)
         except Exception as e:
             QMessageBox.critical(self, "Saving Error", f"An error occurred during HDF5 saving: {e}")
             traceback.print_exc()
@@ -1331,7 +1349,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             else:
                 event.ignore()
         else:
-            event.accept() 
+            event.accept()
 
 #######################################################################################################################################################
 
