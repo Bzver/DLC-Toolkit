@@ -312,6 +312,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
                 self.label_data_array[labeled_frame_list,:,:] = labeled_data_unflattened
         
         self.frame_list = list(set(self.frame_list) - set(self.labeled_frame_list)) # Clean up the already labeled marked frames
+        self.refined_frame_list = list(set(self.refined_frame_list) - set(self.labeled_frame_list))
         self.frame_list.sort()
 
         self.progress_slider.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7")
