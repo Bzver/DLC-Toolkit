@@ -301,7 +301,7 @@ class DLC_Exporter:
         return True
 
     @staticmethod
-    def csv_to_h5(project_dir, multi_animal, csv_name="MachineLabelsRefine"):  # Adapted from deeplabcut.utils.conversioncode
+    def csv_to_h5(project_dir:str, multi_animal:bool, scorer="machine-labeled", csv_name="MachineLabelsRefine"):  # Adapted from deeplabcut.utils.conversioncode
         try:
             fn = os.path.join(project_dir, f"{csv_name}.csv")
             with open(fn) as datafile:
@@ -315,7 +315,7 @@ class DLC_Exporter:
             else:
                 index_col = 0
             data = pd.read_csv(fn, index_col=index_col, header=header)
-            data.columns = data.columns.set_levels(["machine-labeled"], level="scorer")
+            data.columns = data.columns.set_levels([f"{scorer}"], level="scorer")
             DLC_Exporter.guarantee_multiindex_rows(data)
             data.to_hdf(fn.replace(".csv", ".h5"), key="df_with_missing", mode="w")
             data.to_csv(fn)
@@ -390,3 +390,9 @@ class DLC_Exporter:
             df.index = df.index.set_levels(df.index.levels[1].astype(str), level=1)
         except AttributeError:
             pass
+
+if __name__ == "__main__":
+    folder = "D:/Project/DLC-Models/NTD/labeled-data/20250626C1-first3h-D"
+    csv_name = "CollectedData_bezver"
+    if DLC_Exporter.csv_to_h5(folder, True, scorer="bezver", csv_name=csv_name):
+        print(f"Successfully transfer {csv_name}.csv into h5.")

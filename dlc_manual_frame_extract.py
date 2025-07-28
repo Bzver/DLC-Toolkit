@@ -790,7 +790,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
                 return
 
             # Convert the generated CSV back to H5
-            if not DLC_Exporter.csv_to_h5(self.project_dir, self.dlc_data.multi_animal, csv_name=merge_name):
+            if not DLC_Exporter.csv_to_h5(self.project_dir, self.dlc_data.multi_animal, scorer=self.dlc_data.scorer, csv_name=merge_name):
                 QMessageBox.critical(self, "H5 Conversion Failed", "Failed to convert merged CSV to H5. Merge aborted.")
                 return
             
