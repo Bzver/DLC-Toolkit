@@ -642,9 +642,6 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         if not self.dlc_data:
             QMessageBox.information(self, "DLC Data Not Loaded", "No DLC data has been loaded, load them to export to Refiner.")
             return
-        if not self.frame_list:
-            QMessageBox.information(self, "Nothing to Export", "No frames have been marked yet, mark some frames to export to Refiner.")
-            return
         try:
             self.refiner_window = DLC_Track_Refiner()
             self.refiner_window.video_file = self.video_file
@@ -657,10 +654,12 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             self.refiner_window.initialize_loaded_data()
             self.refiner_window.display_current_frame()
             self.refiner_window.navigation_box_title_controller()
-            self.refiner_window.direct_keypoint_edit()
+            if self.frame_list:
+                self.refiner_window.direct_keypoint_edit()
+                self.refiner_window.refined_frames_exported.connect(self.handle_refined_frames_exported)
             self.refiner_window.show()
             self.refiner_window.prediction_saved.connect(self.reload_prediction) # Reload from prediction provided by Refiner
-            self.refiner_window.refined_frames_exported.connect(self.handle_refined_frames_exported)
+            
         except Exception as e:
             QMessageBox.warning(self, "Refiner Failed", f"Refiner failed to initialize. Exception: {e}")
             return
