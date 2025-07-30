@@ -715,6 +715,14 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             QMessageBox.information(self, "No Track Selected", "Please select a track to interpolate all frames for one instance.")
             return
 
+        max_nan_length, ok = QtWidgets.QInputDialog.getInt(self, "Interpolation Limit",
+            "Enter the maximum length of consecutive NaNs to interpolate (0 for no limit):",
+            value=50, min=0, step=1)
+        if not ok:  # User cancelled the input dialog
+            return
+        
+        interpolation_limit = None if max_nan_length == 0 else max_nan_length
+
         instance_to_interpolate = self.selected_box.instance_id
         self._save_state_for_undo() # Save state before modification
 
@@ -730,9 +738,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             conf_series = pd.Series(conf_values)
 
             # Interpolate NaNs
-            x_interpolated = x_series.interpolate(method='linear', limit_direction='both').values
-            y_interpolated = y_series.interpolate(method='linear', limit_direction='both').values
-            conf_interpolated = conf_series.interpolate(method='linear', limit_direction='both').values
+            x_interpolated = x_series.interpolate(method='linear', limit_direction='both', limit=interpolation_limit).values
+            y_interpolated = y_series.interpolate(method='linear', limit_direction='both', limit=interpolation_limit).values
+            conf_interpolated = conf_series.interpolate(method='linear', limit_direction='both', limit=interpolation_limit).values
 
             # Update the pred_data_array
             self.pred_data_array[:, instance_to_interpolate, kp_idx*3] = x_interpolated
@@ -754,6 +762,13 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         QMessageBox.information(self, "Designate No Mice Zone", "Click and drag on the video to select a zone. Release to apply.")
 
     def segment_auto_correct(self):
+        if not self._track_mod_blocker():
+            return
+
+        if self.dlc_data.instance_count < 2: # Need at least two instances for swapping to make sense
+            QMessageBox.information(self, "Info", "Less than two instances configured. Segmental auto-correction is not applicable.")
+            return
+
         QMessageBox.information(self, "Segmental Auto Correct",
         """
   This function works for scenarios where only one instance persistently remains in view while another goes in and out.\n
@@ -762,11 +777,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         """
         )
 
-        if not self._track_mod_blocker():
-            return
-
-        if self.dlc_data.instance_count < 2: # Need at least two instances for swapping to make sense
-            QMessageBox.information(self, "Info", "Less than two instances configured. Segmental auto-correction is not applicable.")
+        min_segment_length, ok = QtWidgets.QInputDialog.getInt(self, "Minimum Segment Length",
+            "Enter the minimum number of frames for a segment to be considered:",
+            value=50, min=1, step=1)
+        if not ok:  # User cancelled the input dialog
             return
 
         self.check_instance_count_per_frame()
@@ -774,7 +788,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         segments_to_correct = []
         num_corrections_applied = 0
         current_segment_start = -1
-        min_segment_length = 50
 
         for i in range(len(self.instance_count_per_frame)):
             if self.instance_count_per_frame[i] <= 1:
