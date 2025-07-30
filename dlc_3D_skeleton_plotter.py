@@ -1,8 +1,6 @@
 import os
 import glob
 
-import h5py
-import yaml
 import scipy.io as sio
 
 import numpy as np
@@ -18,6 +16,9 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from utils.dtu_ui import Clickable_Video_Label, Progress_Bar_Comp
+from utils.dtu_io import DLC_Data_Loader
+
+import traceback
 
 # Todo: Add support fot sleap-anipose / anipose toml calibration file
 
@@ -28,7 +29,7 @@ VIDEO_FOLDER_DEBUG = "D:/Project/SDANNCE-Models/4CAM-250620/SD-20250705-MULTI/Vi
 class DLC_3D_plotter(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        self.is_debug = False
+        self.is_debug = True
         self.setWindowTitle("DLC 3D Plotter - DEBUG MODE") if self.is_debug else self.setWindowTitle("DLC 3D Plotter")
         self.setGeometry(100, 100, 1600, 960)
 
@@ -64,14 +65,8 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 self.video_labels.append(label)
                 label.clicked.connect(self.set_selected_camera) # Connect the clicked signal
 
-        #Store plot and a slider for adjust plot size
+        # Store 3D plot
         self.plot_layout = QtWidgets.QVBoxLayout()
-        self.size_slider = QtWidgets.QSlider(Qt.Horizontal)
-        self.size_slider.setRange(1, 301)
-        self.size_slider.setTracking(True)
-        self.plot_layout.addWidget(self.size_slider)
-        self.size_slider.setValue(300)
-        self.size_slider.hide()
         self.figure = plt.figure()
         self.canvas = FigureCanvas(self.figure)
         self.plot_layout.addWidget(self.canvas)
@@ -105,8 +100,6 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.load_calibrations_button.clicked.connect(self.load_calibrations)
         self.refine_tracks_button.clicked.connect(self.call_track_refiner)
 
-        self.size_slider.sliderMoved.connect(self.set_plot_lim_from_slider)
-
         self.prev_10_frames_button.clicked.connect(lambda: self.change_frame(-10))
         self.prev_frame_button.clicked.connect(lambda: self.change_frame(-1))
         self.next_frame_button.clicked.connect(lambda: self.change_frame(1))
@@ -122,8 +115,11 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
         self.confidence_cutoff = 0.6 # Initialize confidence cutoff
 
-        self.multi_animal, self.keypoints, self.skeleton, self.individuals = False, None, None, None
-        self.instance_count = 1
+        self.data_loader = DLC_Data_Loader(self, None, None)
+        self.dlc_data = None
+        self.keypoint_to_idx = {}
+
+        self.pred_data_array = None # Combined prediction data for all cameras
 
         self.num_cam_from_calib = None
 
@@ -142,42 +138,44 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             self.calibration_loader(CALIB_FILE_DEBUG)
             self.load_video_folder(VIDEO_FOLDER_DEBUG)
             return
-        if self.keypoints is None:
+        
+        if self.dlc_data is None: # Check if dlc_data is loaded
             QMessageBox.warning(self, "Warning", "DLC config is not loaded, load DLC config first!")
             print("DLC config is not loaded, load DLC config first!")
             self.load_dlc_config()
-            if self.keypoints is None: # User close DLC loading window
+            if self.dlc_data is None: # User closed DLC loading window or failed to load
                 return
         if self.num_cam_from_calib is None:
             QMessageBox.warning(self, "Warning", "Calibrations are not loaded, load calibrations first!")
             print("Calibrations are not loaded, load calibrations first!")
             self.load_calibrations()
-            if self.num_cam_from_calib is None: # User close calibration loading window
+            if self.num_cam_from_calib is None: # User closed calibration loading window or failed to load
                 return
+        
         folder_path = QtWidgets.QFileDialog.getExistingDirectory(self, "Select Video Folder")
         if folder_path:
             self.load_video_folder(folder_path)
 
     def load_dlc_config(self):
         file_dialog = QtWidgets.QFileDialog(self)
-        dlc_config, _ = file_dialog.getOpenFileName(self, "Load DLC Config", "", "YAML Files (config.yaml);;All Files (*)")
-        if dlc_config:
-            self.dlc_config_loader(dlc_config)
+        dlc_config_filepath, _ = file_dialog.getOpenFileName(self, "Load DLC Config", "", "YAML Files (config.yaml);;All Files (*)")
+        if dlc_config_filepath:
+            self.dlc_config_loader(dlc_config_filepath)
 
-    def dlc_config_loader(self, dlc_config):
-        self.dlc_config_path = dlc_config # Store the path
-        with open(dlc_config, "r") as conf:
-            cfg = yaml.safe_load(conf)
-        if cfg:
-            print(f"DLC Config loaded: {dlc_config}")
-            QMessageBox.information(self, "Success", "DLC Config loaded successfully!")
-        self.multi_animal = cfg["multianimalproject"]
-        self.keypoints = cfg["bodyparts"] if not self.multi_animal else cfg["multianimalbodyparts"]
-        self.skeleton = cfg["skeleton"]
-        self.individuals = cfg["individuals"]
-        self.instance_count = len(self.individuals) if self.individuals is not None else 1
-        self.num_keypoints = len(self.keypoints)
-        self.keypoint_to_idx = {name: idx for idx, name in enumerate(self.keypoints)}
+    def dlc_config_loader(self, dlc_config_filepath: str):
+        """
+        Loads DLC configuration using DLC_Data_Loader.
+        """
+        self.data_loader.dlc_config_filepath = dlc_config_filepath
+        try:
+            self.dlc_data = self.data_loader.dlc_config_loader()
+            print(f"DLC Config loaded: {dlc_config_filepath}")
+            if not self.is_debug:
+                QMessageBox.information(self, "Success", "DLC Config loaded successfully!")
+            
+        except:
+            QMessageBox.critical(self, "Error", "Failed to load DLC config.")
+            traceback.print_exc()
 
     def load_calibrations(self):
         calib_file, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select Calibration File", "", "Calibration Files (*.mat)")
@@ -196,12 +194,17 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             return
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load calibration file: {e}")
+            traceback.print_exc()
             return
         self.camera_params = [{} for _ in range(self.num_cam_from_calib)]
         self.parse_calibration_mat(calib)
         self.plot_camera_geometry()
 
     def load_video_folder(self, folder_path):
+        if self.data_loader.dlc_config_filepath is None:
+            QMessageBox.warning(self, "Warning", "DLC config is not loaded. Please load them first.")
+            return
+
         self.num_cam = len([f for f in os.listdir(folder_path) if f.startswith("Camera")])
         self.video_list = [None] * self.num_cam
         self.cap_list = [None] * self.num_cam
@@ -209,6 +212,9 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.prediction_list = [None] * self.num_cam
 
         print(f"Loading videos from: {folder_path}")
+        
+        # Determine total frames based on the longest video
+        temp_total_frames = 0
         for i in range(self.num_cam):  # Loop through expected camera folders
             folder = os.path.join(folder_path, f"Camera{i+1}")
             video_file = os.path.join(folder, "0.mp4")
@@ -218,21 +224,21 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             if not cap.isOpened():
                 print(f"Warning: Could not open video file: {video_file}")
                 cap = None
-            elif self.total_frames == 0: # Fallback if not loaded frame counts from calibration file
-                # Update max_frames based on the longest video
+            else:
                 num_frame = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                if num_frame > self.total_frames:
-                    self.total_frames = num_frame
-                print(num_frame)
-
+                if num_frame > temp_total_frames:
+                    temp_total_frames = num_frame
             self.cap_list[i] = cap # Add the capture object (or None) to the list
             folder_list[i] = folder
+        
+        self.total_frames = temp_total_frames # Set the global total_frames
 
-        if not self.cap_list:
+        if not any(self.cap_list): # Check if at least one video was loaded
             QMessageBox.warning(self, "Error", "No video files were loaded successfully.")
+            traceback.print_exc()
             return
 
-        self.pred_data_array = np.full((self.total_frames, self.num_cam, self.instance_count, self.num_keypoints*3), np.nan)
+        pred_data_list = [None] * self.num_cam
         for k in range(self.num_cam):
             if folder_list[k] is not None:
                 folder = folder_list[k]
@@ -243,28 +249,40 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 h5_files.sort()
                 h5_file = h5_files[-1] # Take the newest one
                 self.prediction_list[k] = h5_file
-                self.load_prediction(k, h5_file)
+                self.load_prediction(k, h5_file, pred_data_list)
+
+        self.pred_data_array = np.full((self.total_frames, self.num_cam, self.dlc_data.instance_count, self.dlc_data.num_keypoint * 3), np.nan)
+        for k in range(self.num_cam):
+            temp_pred_data_array = pred_data_list[k]
+            self.pred_data_array[:self.total_frames, k, :, :] = temp_pred_data_array[:self.total_frames, :, :]
 
         self.current_frame_idx = 0
         self.progress_bar.set_slider_range(self.total_frames)
         self.navigation_group_box.show()
         self.display_current_frame() # Display the first frames
 
-    def load_prediction(self, cam_idx, h5_file):
-        try:
-            with h5py.File(h5_file, 'r') as pred_file:
-                if "tracks" not in pred_file.keys():
-                    print(f"Error: Prediction file {h5_file} not valid, no 'tracks' key found.")
-                    return False
+    def load_prediction(self, cam_idx: int, prediction_filepath: str, pred_data_list: list):
+        """
+        Loads prediction data for a specific camera using DLC_Data_Loader
+        and populates the main pred_data_array.
+        """
+        self.data_loader.prediction_filepath = prediction_filepath
 
-                pred_data_raw = pred_file["tracks"]["table"][:]
-                pred_data_values = np.array([item[1] for item in pred_data_raw])
-                for inst in range(self.instance_count): # Sort inst out
-                    self.pred_data_array[:,cam_idx,inst,:] = pred_data_values[:, inst*self.num_keypoints*3:(inst+1)*self.num_keypoints*3]
-                
-        except Exception as e:
-            print(f"Error loading H5 file {h5_file}: {e}")
+        if self.data_loader.prediction_loader():
+            temp_dlc_data = self.data_loader.get_loaded_dlc_data()
+            if temp_dlc_data:
+                self.dlc_data = temp_dlc_data
+                if not self.keypoint_to_idx:
+                    self.keypoint_to_idx = {name: idx for idx, name in enumerate(temp_dlc_data.keypoints)}
+                pred_data_list[cam_idx] = temp_dlc_data.pred_data_array
+            else:
+                print(f"Error: Failed to get loaded prediction data for camera {cam_idx+1}.")
+                traceback.print_exc()
+        else:
+            print(f"Error: Failed to load prediction for camera {cam_idx+1} from {prediction_filepath}")
+            traceback.print_exc()
             return False
+        return True
 
     def parse_calibration_mat(self, calib):
         cam_pos = [None] * self.num_cam_from_calib
@@ -283,7 +301,6 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             frame_count[i] = len(calib["sync"][i,0][0,0]["data_sampleID"][0])
         self.cam_pos = np.array(cam_pos)
         self.cam_dir = np.array(cam_dir)
-        self.total_frames = max(frame_count)
 
     ###################################################################################################################################################
 
@@ -291,8 +308,8 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         
         from dlc_track_refiner import DLC_Track_Refiner
 
-        if not hasattr(self, "video_list") or not hasattr(self, "prediction_list") or not hasattr(self, "dlc_config_path"):
-            QMessageBox.warning(self, "Warning", "Predictions are not loaded, load predictions first!")
+        if not hasattr(self, "video_list") or not hasattr(self, "prediction_list") or self.dlc_data is None:
+            QMessageBox.warning(self, "Warning", "Predictions or DLC config are not loaded, load predictions and config first!")
             return
 
         # The cam_idx is now directly passed from the clicked video label
@@ -304,14 +321,15 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.refiner_window = DLC_Track_Refiner()
         self.refiner_window.video_file = self.video_list[selected_value]
         self.refiner_window.initialize_loaded_video()
-        self.refiner_window.config_loader_dlc(self.dlc_config_path)
-        self.refiner_window.prediction = self.prediction_list[selected_value]
-        self.refiner_window.prediction_loader()
-        self.refiner_window.current_frame_idx = self.current_frame_idx # Pass current frame index
-        self.refiner_window.display_current_frame() # Update display to show the correct frame
+        self.dlc_data.pred_data_array = self.pred_data_array[:,selected_value,:,:].copy()
+        self.refiner_window.dlc_data = self.dlc_data
+        self.refiner_window.initialize_loaded_data()
+        self.refiner_window.current_frame_idx = self.current_frame_idx
+        self.refiner_window.prediction = self.dlc_data.prediction_filepath
+        self.refiner_window.display_current_frame()
         self.refiner_window.navigation_box_title_controller()
         self.refiner_window.show()
-        self.refiner_window.prediction_saved.connect(self.reload_prediction) # Reload from prediction provided by refiner
+        self.refiner_window.prediction_saved.connect(self.reload_prediction)
 
     def reload_prediction(self, pred_file_path):
         """Reload prediction data from file and update visualization"""
@@ -324,7 +342,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                     break
             
             if cam_idx is not None:
-                # Load the prediction file
+                # Load the prediction file using the updated load_prediction
                 self.load_prediction(cam_idx, pred_file_path)
 
                 # Update visualization
@@ -349,9 +367,10 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame_idx)
                 ret, frame = cap.read()
                 if ret:
-                    if np.all(np.isnan(self.pred_data_array[self.current_frame_idx,i,:,:])):
-                        return frame
-                    frame = self.plot_2d_points(frame, i) 
+                    # Check if pred_data_array is initialized and has data for the current frame and camera
+                    if self.pred_data_array is not None and \
+                       not np.all(np.isnan(self.pred_data_array[self.current_frame_idx, i, :, :])):
+                        frame = self.plot_2d_points(frame, i) 
 
                     target_width = self.video_labels[i].width() # Get the target size from the QLabel
                     target_height = self.video_labels[i].height()
@@ -383,13 +402,15 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.plot_3d_points()
 
     def plot_2d_points(self, frame, cam_idx):
-        # Iterate over each individual (animal)
-        for inst in range(self.instance_count):
+        if self.dlc_data is None:
+            return frame # Cannot plot if DLC data is not loaded
+
+        for inst in range(self.dlc_data.instance_count):
             color_rgb = self.instance_color[inst % len(self.instance_color)]
             # Convert RGB to BGR for OpenCV
             color_bgr = (color_rgb[2], color_rgb[1], color_rgb[0])
             keypoint_coords = dict()
-            for kp_idx in range(self.num_keypoints):
+            for kp_idx in range(self.dlc_data.num_keypoint):
                 kp = self.pred_data_array[self.current_frame_idx,cam_idx,inst,kp_idx*3:kp_idx*3+3]
                 if pd.isna(kp[0]) or kp[2] < self.confidence_cutoff:
                     continue
@@ -397,9 +418,9 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 keypoint_coords[kp_idx] = (int(x),int(y))
                 cv2.circle(frame, (int(x), int(y)), 3, color_bgr, -1) # Draw the dot representing the keypoints
 
-            if self.individuals is not None and len(keypoint_coords) >= 2: # Only plot bounding box with more than one points
+            if self.dlc_data.individuals is not None and len(keypoint_coords) >= 2: # Only plot bounding box with more than one points
                 self.plot_bounding_box(keypoint_coords, frame, color_bgr, inst)
-            if self.skeleton:
+            if self.dlc_data.skeleton:
                 self.plot_2d_skeleton(keypoint_coords, frame, color_bgr)
         return frame
 
@@ -423,20 +444,32 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         cv2.rectangle(frame, (min_x, min_y), (max_x, max_y), color, 1) # Draw the bounding box
 
         #Add individual label
-        cv2.putText(frame, f"Instance: {self.individuals[inst]}", (min_x, min_y), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1, cv2.LINE_AA)
+        if self.dlc_data.individuals: # Check if individuals list exists
+            cv2.putText(frame, f"Instance: {self.dlc_data.individuals[inst]}", (min_x, min_y), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1, cv2.LINE_AA)
         return frame
     
     def plot_2d_skeleton(self, keypoint_coords, frame, color):
-        for start_kp, end_kp in self.skeleton:
-            start_kp_idx = self.keypoint_to_idx[start_kp]
-            end_kp_idx = self.keypoint_to_idx[end_kp]
-            start_coord = keypoint_coords.get(start_kp_idx)
-            end_coord = keypoint_coords.get(end_kp_idx)
-            if start_coord and end_coord:
-                cv2.line(frame, start_coord, end_coord, color, 2)
+        if self.dlc_data is None:
+            return frame # Cannot plot if DLC data is not loaded
+
+        for start_kp, end_kp in self.dlc_data.skeleton:
+            start_kp_idx = self.keypoint_to_idx.get(start_kp)
+            end_kp_idx = self.keypoint_to_idx.get(end_kp)
+            
+            if start_kp_idx is not None and end_kp_idx is not None:
+                start_coord = keypoint_coords.get(start_kp_idx)
+                end_coord = keypoint_coords.get(end_kp_idx)
+                if start_coord and end_coord:
+                    cv2.line(frame, start_coord, end_coord, color, 2)
         return frame
     
     def plot_3d_points(self):
+        if self.dlc_data is None:
+            self.ax.clear()
+            self.ax.set_title("3D Skeleton Plot - No DLC data loaded")
+            self.canvas.draw_idle()
+            return # Cannot plot if DLC data is not loaded
+
         point_3d_array = self.data_loader_for_3d_plot()
         self.ax.clear()
         self.ax.set_xlabel('X')
@@ -446,32 +479,43 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.ax.set_xlim([-self.plot_lim, self.plot_lim])
         self.ax.set_ylim([-self.plot_lim, self.plot_lim])
         self.ax.set_zlim([-self.plot_lim, self.plot_lim])
-        self.size_slider.show()
 
-        for inst in range(self.instance_count):
+        for inst in range(self.dlc_data.instance_count):
             color = self.instance_color[inst % len(self.instance_color)]
             # Plot 3D keypoints
-            for kp_idx in range(self.num_keypoints):
+            for kp_idx in range(self.dlc_data.num_keypoint):
                 point_3d = point_3d_array[inst, kp_idx, :]
-                if point_3d[0] is not None:
+                if not pd.isna(point_3d[0]): # Check if the point is not NaN
                     self.ax.scatter(point_3d[0], point_3d[1], point_3d[2], color=np.array(color)/255, s=50)
 
             # Plot 3D skeleton
-            if self.skeleton:
-                for start_kp, end_kp in self.skeleton:
-                    start_kp_idx = self.keypoint_to_idx[start_kp]
-                    end_kp_idx = self.keypoint_to_idx[end_kp]
-                    start_point = point_3d_array[inst, start_kp_idx, :]
-                    end_point = point_3d_array[inst, end_kp_idx, :]
-                    if start_point is not None and end_point is not None:
-                        self.ax.plot([start_point[0], end_point[0]],
-                                     [start_point[1], end_point[1]],
-                                     [start_point[2], end_point[2]],
-                                     color=np.array(color)/255)
+            if self.dlc_data.skeleton:
+                for start_kp, end_kp in self.dlc_data.skeleton:
+                    start_kp_idx = self.keypoint_to_idx.get(start_kp)
+                    end_kp_idx = self.keypoint_to_idx.get(end_kp)
+                    
+                    if start_kp_idx is not None and end_kp_idx is not None:
+                        start_point = point_3d_array[inst, start_kp_idx, :]
+                        end_point = point_3d_array[inst, end_kp_idx, :]
+                        if not pd.isna(start_point[0]) and not pd.isna(end_point[0]): # Check if both points are not NaN
+                            self.ax.plot([start_point[0], end_point[0]],
+                                         [start_point[1], end_point[1]],
+                                         [start_point[2], end_point[2]],
+                                         color=np.array(color)/255)
         self.canvas.draw_idle() # Redraw the 3D canvas
 
     def plot_camera_geometry(self):
         """Plots the relative geometry on a given Axes3D object."""
+        # Ensure the plot is cleared before drawing camera geometry
+        self.ax.clear()
+        self.ax.set_xlabel('X')
+        self.ax.set_ylabel('Y')
+        self.ax.set_zlabel('Z')
+        self.ax.set_title(f"3D Camera Geometry - Frame {self.current_frame_idx}")
+        self.ax.set_xlim([-self.plot_lim, self.plot_lim])
+        self.ax.set_ylim([-self.plot_lim, self.plot_lim])
+        self.ax.set_zlim([-self.plot_lim, self.plot_lim])
+
         for i in range(self.num_cam_from_calib):
             self.ax.scatter(*self.cam_pos[i], s=100, label=f"Camera {i+1} Pos")
             self.ax.quiver(*self.cam_pos[i], *self.cam_dir[i], length=100, color='blue', normalize=True)
@@ -486,17 +530,20 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
     ###################################################################################################################################################
 
     def data_loader_for_3d_plot(self, undistorted_images=False):
-        point_3d_array = np.full((self.instance_count, self.num_keypoints, 3), np.nan)
+        if self.dlc_data is None or self.pred_data_array is None:
+            return np.full((1, 1, 3), np.nan) # Return empty array if no data
+
+        point_3d_array = np.full((self.dlc_data.instance_count, self.dlc_data.num_keypoint, 3), np.nan)
 
         # Determine how many instances each camera detects in the current frame
-        if self.instance_count > 1:
+        if self.dlc_data.instance_count > 1:
             instances_detected_per_camera = [0] * self.num_cam
             for cam_idx_check in range(self.num_cam):
                 detected_instances_in_cam = 0
-                for inst_check in range(self.instance_count):
+                for inst_check in range(self.dlc_data.instance_count):
                     has_valid_data = False
-                    for kp_idx_check in range(self.num_keypoints):
-                        if self.pred_data_array[self.current_frame_idx,cam_idx_check, inst_check, kp_idx_check*3] is not None:
+                    for kp_idx_check in range(self.dlc_data.num_keypoint):
+                        if not pd.isna(self.pred_data_array[self.current_frame_idx,cam_idx_check, inst_check, kp_idx_check*3]):
                             has_valid_data = True
                             break
                     if has_valid_data:
@@ -505,16 +552,21 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         else:
             instances_detected_per_camera = [1] * self.num_cam # All cameras valid for the single instance
 
-        for inst in range(self.instance_count):
+        for inst in range(self.dlc_data.instance_count):
             # Dictionary to store per-keypoint data across cameras:
             keypoint_data_for_triangulation = {
                 kp_idx: {'projs': [], '2d_pts': [], 'confs': []}
-                for kp_idx in range(self.num_keypoints)
+                for kp_idx in range(self.dlc_data.num_keypoint)
             }
 
             for cam_idx in range(self.num_cam):
-                if self.instance_count > 1 and instances_detected_per_camera[cam_idx] == 1:
+                if self.dlc_data.instance_count > 1 and instances_detected_per_camera[cam_idx] == 1:
                     continue # Skip if this camera only detected one instance in multi-instance scenario
+
+                # Ensure camera_params are available for the current camera index
+                if cam_idx >= len(self.camera_params) or not self.camera_params[cam_idx]:
+                    print(f"Warning: Camera parameters not available for camera {cam_idx}. Skipping.")
+                    continue
 
                 RDistort = self.camera_params[cam_idx]['RDistort']
                 TDistort = self.camera_params[cam_idx]['TDistort']
@@ -531,7 +583,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 keypoint_data_all_kps_reshaped = keypoint_data_all_kps_flattened.reshape(-1, 3)
 
                 # Iterate through each keypoint's (x,y,conf) for the current camera
-                for kp_idx in range(self.num_keypoints):
+                for kp_idx in range(self.dlc_data.num_keypoint):
                     point_2d = keypoint_data_all_kps_reshaped[kp_idx, :2] # (x, y)
                     confidence = keypoint_data_all_kps_reshaped[kp_idx, 2] # confidence
 
@@ -542,7 +594,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                         keypoint_data_for_triangulation[kp_idx]['confs'].append(confidence)
 
             # iterate through each keypoint to perform triangulation
-            for kp_idx in range(self.num_keypoints):
+            for kp_idx in range(self.dlc_data.num_keypoint):
                 projs = keypoint_data_for_triangulation[kp_idx]['projs']
                 pts_2d = keypoint_data_for_triangulation[kp_idx]['2d_pts']
                 confs = keypoint_data_for_triangulation[kp_idx]['confs']
@@ -683,15 +735,27 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             self.display_current_frame()
             self.navigation_box_title_controller()
 
-    def set_plot_lim_from_slider(self):
-        self.plot_lim = self.size_slider.value()
-        self.plot_3d_points()
         self.canvas.draw_idle()
 
     def navigation_box_title_controller(self):
         self.navigation_group_box.setTitle(f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1}")
 
     ###################################################################################################################################################
+
+    def wheelEvent(self, event):
+        """Handle mouse wheel events to zoom the 3D plot"""
+        # Only zoom if cursor is over the plot area
+        if self.canvas.underMouse():
+            zoom_factor = 1.1  # 10% zoom per wheel step
+            if event.angleDelta().y() > 0:
+                # Zoom in
+                self.plot_lim = max(50, self.plot_lim / zoom_factor)
+            else:
+                # Zoom out
+                self.plot_lim = min(1000, self.plot_lim * zoom_factor)
+            self.plot_3d_points()
+        else:
+            event.ignore()
 
     def closeEvent(self, event: QCloseEvent):
         # Ensure all VideoCapture objects are released when the window closes
