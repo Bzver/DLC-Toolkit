@@ -28,7 +28,7 @@ VIDEO_FOLDER_DEBUG = "D:/Project/SDANNCE-Models/4CAM-250620/SD-20250705-MULTI/Vi
 class DLC_3D_plotter(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        self.is_debug = True
+        self.is_debug = False
         self.setWindowTitle("DLC 3D Plotter - DEBUG MODE") if self.is_debug else self.setWindowTitle("DLC 3D Plotter")
         self.setGeometry(100, 100, 1600, 960)
 
@@ -39,7 +39,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.button_layout = QtWidgets.QHBoxLayout()
         self.load_dlc_config_button = QPushButton("1. Load DLC Configs")
         self.load_calibrations_button = QPushButton("2. Load Calibrations")
-        self.load_video_folder_button = QPushButton("3. Load Videos & Predictions")
+        self.load_video_folder_button = QPushButton("3. Load Videos and Predictions")
         self.refine_tracks_button = QPushButton("4. Refine Tracks")
 
         self.button_layout.addWidget(self.load_dlc_config_button)
@@ -179,12 +179,11 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.num_keypoints = len(self.keypoints)
         self.keypoint_to_idx = {name: idx for idx, name in enumerate(self.keypoints)}
 
-    def load_calibrations(self, calib_file=None):
-        if calib_file is None:
-            calib_file, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select Calibration File", "", "Calibration Files (*.mat)")
-        calibration_file = calib_file
-        print(f"Calibration loaded: {calibration_file}")
-        self.calibration_loader(calibration_file)
+    def load_calibrations(self):
+        calib_file, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select Calibration File", "", "Calibration Files (*.mat)")
+        if calib_file:
+            print(f"Calibration loaded: {calib_file}")
+            self.calibration_loader(calib_file)
 
     def calibration_loader(self, calibration_file):
         try:
