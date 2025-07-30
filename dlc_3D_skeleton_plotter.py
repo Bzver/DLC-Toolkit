@@ -29,7 +29,7 @@ VIDEO_FOLDER_DEBUG = "D:/Project/SDANNCE-Models/4CAM-250620/SD-20250705-MULTI/Vi
 class DLC_3D_plotter(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        self.is_debug = True
+        self.is_debug = False
         self.setWindowTitle("DLC 3D Plotter - DEBUG MODE") if self.is_debug else self.setWindowTitle("DLC 3D Plotter")
         self.setGeometry(100, 100, 1600, 960)
 
