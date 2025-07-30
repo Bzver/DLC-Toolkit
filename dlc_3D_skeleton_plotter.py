@@ -69,6 +69,8 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.plot_layout = QtWidgets.QVBoxLayout()
         self.figure = plt.figure()
         self.canvas = FigureCanvas(self.figure)
+        self.canvas.setFocusPolicy(Qt.StrongFocus)
+        self.canvas.setMouseTracking(True)
         self.plot_layout.addWidget(self.canvas)
         self.ax = self.figure.add_subplot(111, projection='3d')
 
@@ -131,6 +133,10 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.selected_cam_idx = None
 
         self.refiner_window = None
+
+        # Connect matplotlib's scroll_event to your custom handler
+        self.canvas.mpl_connect("scroll_event", self.on_scroll_3d_plot)
+
 
     def open_video_folder_dialog(self):
         if self.is_debug:
@@ -261,7 +267,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.navigation_group_box.show()
         self.display_current_frame() # Display the first frames
 
-    def load_prediction(self, cam_idx: int, prediction_filepath: str, pred_data_list: list):
+    def load_prediction(self, cam_idx: int, prediction_filepath: str, pred_data_list: list = None):
         """
         Loads prediction data for a specific camera using DLC_Data_Loader
         and populates the main pred_data_array.
@@ -271,10 +277,21 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         if self.data_loader.prediction_loader():
             temp_dlc_data = self.data_loader.get_loaded_dlc_data()
             if temp_dlc_data:
-                self.dlc_data = temp_dlc_data
-                if not self.keypoint_to_idx:
+                if not self.keypoint_to_idx: 
+                    self.dlc_data = temp_dlc_data # This line is important to ensure dlc_data attributes are correctly set
                     self.keypoint_to_idx = {name: idx for idx, name in enumerate(temp_dlc_data.keypoints)}
-                pred_data_list[cam_idx] = temp_dlc_data.pred_data_array
+                if pred_data_list is not None:
+                    pred_data_list[cam_idx] = temp_dlc_data.pred_data_array
+                else:
+                    if temp_dlc_data.pred_data_array.shape[0] > self.total_frames:
+                        QMessageBox.warning(self, "Warning", "Reloaded prediction has more frames than total frames. Truncating.")
+                        self.pred_data_array[:, cam_idx, :, :] = temp_dlc_data.pred_data_array[:self.total_frames, :, :]
+                    else:
+                        self.pred_data_array[:temp_dlc_data.pred_data_array.shape[0], cam_idx, :, :] = temp_dlc_data.pred_data_array
+                        # Pad with NaNs if the reloaded prediction is shorter
+                        if temp_dlc_data.pred_data_array.shape[0] < self.total_frames:
+                             self.pred_data_array[temp_dlc_data.pred_data_array.shape[0]:, cam_idx, :, :] = np.nan
+
             else:
                 print(f"Error: Failed to get loaded prediction data for camera {cam_idx+1}.")
                 traceback.print_exc()
@@ -325,7 +342,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.refiner_window.dlc_data = self.dlc_data
         self.refiner_window.initialize_loaded_data()
         self.refiner_window.current_frame_idx = self.current_frame_idx
-        self.refiner_window.prediction = self.dlc_data.prediction_filepath
+        self.refiner_window.prediction = self.prediction_list[selected_value]
         self.refiner_window.display_current_frame()
         self.refiner_window.navigation_box_title_controller()
         self.refiner_window.show()
@@ -342,8 +359,9 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                     break
             
             if cam_idx is not None:
-                # Load the prediction file using the updated load_prediction
                 self.load_prediction(cam_idx, pred_file_path)
+
+                self.prediction_list[cam_idx] = pred_file_path
 
                 # Update visualization
                 self.display_current_frame()
@@ -358,6 +376,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to reload prediction: {str(e)}")
+            traceback.print_exc() # Print full traceback for debugging
 
     ###################################################################################################################################################
 
@@ -742,20 +761,19 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
     ###################################################################################################################################################
 
-    def wheelEvent(self, event):
-        """Handle mouse wheel events to zoom the 3D plot"""
-        # Only zoom if cursor is over the plot area
-        if self.canvas.underMouse():
-            zoom_factor = 1.1  # 10% zoom per wheel step
-            if event.angleDelta().y() > 0:
-                # Zoom in
-                self.plot_lim = max(50, self.plot_lim / zoom_factor)
-            else:
-                # Zoom out
-                self.plot_lim = min(1000, self.plot_lim * zoom_factor)
-            self.plot_3d_points()
-        else:
-            event.ignore()
+    def on_scroll_3d_plot(self, event):
+        """Handle matplotlib scroll events for zooming the 3D plot."""
+        print(f"Matplotlib scroll event received - button: {event.button}, step: {event.step}")
+        
+        zoom_factor = 1.2
+        if event.button == 'up':  # Zoom in (or typically 1 for wheel up)
+            self.plot_lim = max(50, self.plot_lim / zoom_factor)
+        elif event.button == 'down':  # Zoom out (or typically -1 for wheel down)
+            self.plot_lim = min(1000, self.plot_lim * zoom_factor)
+        
+        print(f"Zoom level changed to: {self.plot_lim}")
+        self.plot_3d_points()
+        self.canvas.draw_idle() # Ensure the canvas redraws
 
     def closeEvent(self, event: QCloseEvent):
         # Ensure all VideoCapture objects are released when the window closes
