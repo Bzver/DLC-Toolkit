@@ -214,7 +214,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
                 QMessageBox.critical(self, "DLC Config Error", "Failed to load DLC configuration. Check console for details.")
                 return
 
-        QMessageBox.information(self, "DLC Config Loaded", "Suucessfully loaded DLC Config, now loading prediction.")
+        QMessageBox.information(self, "DLC Config Loaded", "Successfully loaded DLC Config, now loading prediction.")
 
         # Then prediction data
         file_dialog = QFileDialog(self)
