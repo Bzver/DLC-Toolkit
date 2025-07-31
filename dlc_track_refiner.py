@@ -46,6 +46,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             self.setWindowTitle("DLC Track Refiner ----- DEBUG MODE")
 
         self.menu = Menu_Comp(self, "Refiner")
+        self.layout.addWidget(self.menu)
 
         # Graphics view for interactive elements and video display
         self.graphics_scene = QtWidgets.QGraphicsScene(self)

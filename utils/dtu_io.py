@@ -108,15 +108,12 @@ class DLC_Data_Loader:
         Exports the loaded and processed DLC data as a LoadedDLCData dataclass.
         Returns None if data could not be loaded or processed.
         """
-        check_list = [self._keypoints, self._instance_count, self._pred_data_array, self._pred_frame_count]
-        # Check if all necessary internal attributes are populated
-        if any(item is None for item in check_list):
-            error_msg = "Missing variables:"
-            for item in check_list:
-                if item is None:
-                    error_msg += f" {item}"
-            QMessageBox.warning(self.gui, "Data Incomplete", f"Internal data is incomplete. {error_msg}")
+        if not self._keypoints:
+            QMessageBox.warning(self.gui, "Data Incomplete", f"Internal data is incomplete.")
             return None
+
+        if not self._pred_frame_count:
+            print("Pre-emptive export for DLC metadata only.")
 
         return LoadedDLCData(
             dlc_config_filepath = self.dlc_config_filepath,

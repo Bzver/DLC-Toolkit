@@ -31,6 +31,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         self.layout = QtWidgets.QVBoxLayout(self.central_widget)
 
         self.menu = Menu_Comp(self, "Extractor")
+        self.layout.addWidget(self.menu)
 
         # Video display area
         self.video_label = QtWidgets.QLabel("No video loaded")
@@ -199,7 +200,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
 
         self.dlc_data = self.data_loader.get_loaded_dlc_data()
 
-        self.load_and_plot_labeled_frame()
+        self.process_labeled_frame()
         self.display_current_frame()
 
     def load_workplace(self):
@@ -246,10 +247,10 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
                 
             self.progress_slider.set_frame_category("marked_frames", self.frame_list, "#E28F13")
             self.determine_save_status()
-            self.load_and_plot_labeled_frame()
+            self.process_labeled_frame()
             self.display_current_frame()
 
-    def load_and_plot_labeled_frame(self):
+    def process_labeled_frame(self):
         dlc_dir = os.path.dirname(self.data_loader.dlc_config_filepath)
         self.project_dir = os.path.join(dlc_dir, "labeled-data", self.video_name)
 
@@ -765,7 +766,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
                 return
             
             QMessageBox.information(self, "Merge Success!", "Data merged and converted into h5.")
-            self.load_and_plot_labeled_frame()
+            self.process_labeled_frame()
 
         except Exception as e:
             QMessageBox.critical(self, "Merge Process Error", f"An unexpected error occurred during export/conversion: {e}")

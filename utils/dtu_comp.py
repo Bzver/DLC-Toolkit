@@ -1,12 +1,15 @@
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtWidgets import QPushButton, QMenu, QToolButton
+from PySide6.QtWidgets import QPushButton, QMenu, QToolButton, QFileDialog
 
-class Menu_Comp:
-    def __init__(self, parent, host_type:str):
+class Menu_Comp(QtWidgets.QWidget):
+    def __init__(self, parent, host_type="Unknown"):
+        super().__init__()
+
         self.gui = parent
         self.host = host_type
         self.menu_layout = QtWidgets.QHBoxLayout()
+        self.setLayout(self.menu_layout)
 
         self._setup_file_menu()
         if self.host == "Extractor":
@@ -18,7 +21,6 @@ class Menu_Comp:
             self._setup_save_menu()
 
         self.menu_layout.addStretch(1)
-        self.gui.layout.addLayout(self.menu_layout)
 
     def _create_menu_button(self, button_text: str, menu: QMenu, alignment=Qt.AlignLeft):
         button = QToolButton()
