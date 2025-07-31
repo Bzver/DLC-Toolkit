@@ -79,7 +79,10 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.display_layout.addLayout(self.plot_layout)
         self.layout.addLayout(self.display_layout, 1)
 
-        self.progress_bar = Progress_Bar_Comp(self)
+        self.progress_bar = Progress_Bar_Comp()
+        self.layout.addWidget(self.progress_bar)
+        self.progress_bar.frame_changed.connect(self._handle_frame_change_from_comp)
+        self.progress_bar.request_total_frames.connect(self._provide_total_frames)
 
         # Navigation controls
         self.navigation_group_box = QtWidgets.QGroupBox("Video Navigation")
@@ -114,6 +117,8 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_Right | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(10))
         QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.progress_bar.toggle_playback)
 
+        self.canvas.mpl_connect("scroll_event", self.on_scroll_3d_plot)
+
         self.num_cam = None
 
         self.confidence_cutoff = 0.6 # Initialize confidence cutoff
@@ -135,8 +140,6 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
         self.refiner_window = None
 
-        # Connect matplotlib's scroll_event to your custom handler
-        self.canvas.mpl_connect("scroll_event", self.on_scroll_3d_plot)
 
 
     def open_video_folder_dialog(self):
@@ -418,7 +421,6 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             else:
                 self.video_labels[i].setStyleSheet("border: 1px solid gray;")
 
-        self.progress_bar.set_slider_value(self.current_frame_idx)
         self.plot_3d_points()
 
     def plot_2d_points(self, frame, cam_idx):
@@ -625,7 +627,6 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
         return point_3d_array
 
-
     @staticmethod
     def triangulate_point(num_views, projs, pts_2d, confs):
         """
@@ -759,6 +760,18 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
     def navigation_box_title_controller(self):
         self.navigation_group_box.setTitle(f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1}")
+
+    ###################################################################################################################################################
+
+    def _handle_frame_change_from_comp(self, new_frame_idx: int):
+        self.current_frame_idx = new_frame_idx
+        print(f"Main window: Current frame is now {self.current_frame_idx}")
+        self.display_current_frame()
+        self.navigation_box_title_controller()
+
+    def _provide_total_frames(self):
+        self.progress_bar.set_slider_range(self.total_frames)
+        self.progress_bar.set_current_frame(self.current_frame_idx)
 
     ###################################################################################################################################################
 
