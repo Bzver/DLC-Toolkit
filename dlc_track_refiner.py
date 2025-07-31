@@ -318,6 +318,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 if not self.data_loader.dlc_config_loader():
                     QMessageBox.critical(self, "DLC Config Error", "Failed to load DLC configuration. Check console for details.")
                     return
+                
+            QMessageBox.information(self, "DLC Config Loaded", "Suucessfully loaded DLC Config, now loading prediction.")
 
             file_dialog = QtWidgets.QFileDialog(self)
             prediction_path, _ = file_dialog.getOpenFileName(self, "Load Prediction", "", "HDF5 Files (*.h5);;All Files (*)")
@@ -715,14 +717,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             QMessageBox.information(self, "No Track Selected", "Please select a track to interpolate all frames for one instance.")
             return
 
-        max_nan_length, ok = QtWidgets.QInputDialog.getInt(self, "Interpolation Limit",
-            "Enter the maximum length of consecutive NaNs to interpolate (0 for no limit):",
-            value=50, min=0, step=1)
-        if not ok:  # User cancelled the input dialog
-            return
-        
-        interpolation_limit = None if max_nan_length == 0 else max_nan_length
-
         instance_to_interpolate = self.selected_box.instance_id
         self._save_state_for_undo() # Save state before modification
 
@@ -738,9 +732,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             conf_series = pd.Series(conf_values)
 
             # Interpolate NaNs
-            x_interpolated = x_series.interpolate(method='linear', limit_direction='both', limit=interpolation_limit).values
-            y_interpolated = y_series.interpolate(method='linear', limit_direction='both', limit=interpolation_limit).values
-            conf_interpolated = conf_series.interpolate(method='linear', limit_direction='both', limit=interpolation_limit).values
+            x_interpolated = x_series.interpolate(method='linear', limit_direction='both').values
+            y_interpolated = y_series.interpolate(method='linear', limit_direction='both').values
+            conf_interpolated = conf_series.interpolate(method='linear', limit_direction='both').values
 
             # Update the pred_data_array
             self.pred_data_array[:, instance_to_interpolate, kp_idx*3] = x_interpolated
@@ -772,14 +766,14 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         QMessageBox.information(self, "Segmental Auto Correct",
         """
   This function works for scenarios where only one instance persistently remains in view while another goes in and out.\n
-  It will identify segments where only one instance is detected for more than 100 frames.\n
+  It will identify segments where only one instance is detected for more than a set number of frames.\n
   Throughout and proceeding these segments, the track associated with the remaining instance will be swapped to instance 0.\n
         """
         )
 
         min_segment_length, ok = QtWidgets.QInputDialog.getInt(self, "Minimum Segment Length",
             "Enter the minimum number of frames for a segment to be considered:",
-            value=50, min=1, step=1)
+            value=50, minValue=1, step=1)
         if not ok:  # User cancelled the input dialog
             return
 
