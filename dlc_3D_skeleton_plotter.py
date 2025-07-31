@@ -15,8 +15,9 @@ from PySide6.QtWidgets import QMessageBox, QPushButton
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
-from utils.dtu_ui import Clickable_Video_Label, Progress_Bar_Comp
+from utils.dtu_ui import Clickable_Video_Label
 from utils.dtu_io import DLC_Data_Loader
+from utils.dtu_comp import Progress_Bar_Comp
 
 import traceback
 

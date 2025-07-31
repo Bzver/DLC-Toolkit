@@ -12,16 +12,17 @@ import cv2
 from PySide6 import QtWidgets, QtGui, QtCore
 from PySide6.QtCore import Qt, QTimer, QEvent, Signal
 from PySide6.QtGui import QShortcut, QKeySequence, QPainter, QColor, QPen, QCloseEvent
-from PySide6.QtWidgets import QMessageBox, QPushButton, QGraphicsView, QGraphicsRectItem, QMenu, QToolButton
+from PySide6.QtWidgets import QMessageBox, QPushButton, QGraphicsView, QGraphicsRectItem
 
 from utils.dtu_ui import Slider_With_Marks, Selectable_Instance, Draggable_Keypoint
 from utils.dtu_io import DLC_Data_Loader, DLC_Exporter
+from utils.dtu_comp import Menu_Comp
 
 import traceback
 
 DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/NTD/config.yaml"
 VIDEO_FILE_DEBUG = "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-conv.mp4"
-PRED_FILE_DEBUG = "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-convDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_090_snapshot_080_el_tr.h5"
+PRED_FILE_DEBUG = "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-convDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_370_snapshot_150_el.h5"
 
 # Todo:
 #   Add instance generation in keypoint edit mode
@@ -44,57 +45,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         if self.is_debug:
             self.setWindowTitle("DLC Track Refiner ----- DEBUG MODE")
 
-        # Menu bars
-        self.menu_layout = QtWidgets.QHBoxLayout()
-        self.load_menu = QMenu("File", self)
-
-        self.load_video_action = self.load_menu.addAction("Load Video")
-        self.load_prediction_action = self.load_menu.addAction("Load Config and Prediction")
-
-        self.load_button = QToolButton()
-        self.load_button.setText("File")
-        self.load_button.setMenu(self.load_menu)
-        self.load_button.setPopupMode(QToolButton.InstantPopup)
-
-        self.refiner_menu = QMenu("Adv. Refine", self)
-
-        self.direct_keypoint_edit_action = self.refiner_menu.addAction("Direct Keypoint Edit (Q)")
-        self.purge_inst_by_conf_action = self.refiner_menu.addAction("Delete All Track Below Set Confidence")
-        self.interpolate_all_action = self.refiner_menu.addAction("Interpolate All Frames for One Inst")
-        self.designate_no_mice_zone_action = self.refiner_menu.addAction("Remove All Prediction Inside Area")
-        self.segment_auto_correct_action = self.refiner_menu.addAction("Segmental Auto Correct")
-
-        self.refiner_button = QToolButton()
-        self.refiner_button.setText("Adv. Refine")
-        self.refiner_button.setMenu(self.refiner_menu)
-        self.refiner_button.setPopupMode(QToolButton.InstantPopup)
-
-        self.pref_menu = QMenu("Preference", self)
-        
-        self.adjust_point_size_action = self.pref_menu.addAction("Adjust Point Size")
-        self.adjust_plot_visibilty_action = self.pref_menu.addAction("Adjust Plot Visibility")
-
-        self.pref_button = QToolButton()
-        self.pref_button.setText("Preference")
-        self.pref_button.setMenu(self.pref_menu)
-        self.pref_button.setPopupMode(QToolButton.InstantPopup)
-
-        self.save_menu = QMenu("Save", self)
-
-        self.save_prediction_action = self.save_menu.addAction("Save Prediction")
-        self.save_prediction_as_csv_action = self.save_menu.addAction("Save Prediction Into CSV")
-
-        self.save_button = QToolButton()
-        self.save_button.setText("Save")
-        self.save_button.setMenu(self.save_menu)
-        self.save_button.setPopupMode(QToolButton.InstantPopup)
-
-        self.menu_layout.addWidget(self.load_button, alignment=Qt.AlignLeft)
-        self.menu_layout.addWidget(self.refiner_button, alignment=Qt.AlignLeft)
-        self.menu_layout.addWidget(self.pref_button, alignment=Qt.AlignLeft)
-        self.menu_layout.addWidget(self.save_button, alignment=Qt.AlignLeft)
-        self.menu_layout.addStretch(1)
-        self.layout.addLayout(self.menu_layout)
+        self.menu = Menu_Comp(self, "Refiner")
 
         # Graphics view for interactive elements and video display
         self.graphics_scene = QtWidgets.QGraphicsScene(self)
@@ -172,20 +123,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.control_layout.addWidget(self.refiner_group_box)
         self.layout.addLayout(self.control_layout)
         
-        # Connect QActions to events
-        self.load_video_action.triggered.connect(self.load_video)
-        self.load_prediction_action.triggered.connect(self.load_prediction)
 
-        self.purge_inst_by_conf_action.triggered.connect(self.purge_inst_by_conf)
-        self.interpolate_all_action.triggered.connect(self.interpolate_all)
-        self.segment_auto_correct_action.triggered.connect(self.segment_auto_correct)
-        self.designate_no_mice_zone_action.triggered.connect(self.designate_no_mice_zone)
-
-        self.adjust_point_size_action.triggered.connect(self.adjust_point_size)
-        self.adjust_plot_visibilty_action.triggered.connect(self.adjust_plot_opacity)
-
-        self.save_prediction_action.triggered.connect(self.save_prediction)
-        self.save_prediction_as_csv_action.triggered.connect(self.save_prediction_as_csv)
 
         # Connect buttons to events
         self.progress_slider.sliderMoved.connect(self.set_frame_from_slider)

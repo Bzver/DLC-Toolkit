@@ -12,10 +12,11 @@ import cv2
 from PySide6 import QtWidgets, QtGui
 from PySide6.QtCore import Qt, QTimer, QEvent
 from PySide6.QtGui import QShortcut, QKeySequence, QCloseEvent
-from PySide6.QtWidgets import QMessageBox, QPushButton, QMenu, QToolButton, QFileDialog
+from PySide6.QtWidgets import QMessageBox, QPushButton, QFileDialog
 
 from utils.dtu_ui import Slider_With_Marks
 from utils.dtu_io import DLC_Data_Loader, DLC_Exporter
+from utils.dtu_comp import Menu_Comp
 
 import traceback
 
@@ -29,34 +30,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         self.setCentralWidget(self.central_widget)
         self.layout = QtWidgets.QVBoxLayout(self.central_widget)
 
-        # Menus
-        self.menu_layout = QtWidgets.QHBoxLayout()
-
-        self.load_menu = QMenu("File", self)
-        self.load_video_action = self.load_menu.addAction("Load Video")
-        self.load_prediction_action = self.load_menu.addAction("Load Config and Prediction")
-        self.load_workplace_action = self.load_menu.addAction("Load Workplace")
-
-        self.load_button = QToolButton()
-        self.load_button.setText("File")
-        self.load_button.setMenu(self.load_menu)
-        self.load_button.setPopupMode(QToolButton.InstantPopup)
-
-        self.export_menu = QMenu("Export", self)
-        self.save_workspace_action = self.export_menu.addAction("Save the Current Workspace")
-        self.save_to_dlc_action = self.export_menu.addAction("Export to DLC")
-        self.export_to_refiner_action = self.export_menu.addAction("Export to Refiner")
-        self.merge_data_action = self.export_menu.addAction("Merge with Existing Data")
-
-        self.export_button = QToolButton()
-        self.export_button.setText("Save")
-        self.export_button.setMenu(self.export_menu)
-        self.export_button.setPopupMode(QToolButton.InstantPopup)
-
-        self.menu_layout.addWidget(self.load_button, alignment=Qt.AlignLeft)
-        self.menu_layout.addWidget(self.export_button, alignment=Qt.AlignLeft)
-        self.menu_layout.addStretch(1)
-        self.layout.addLayout(self.menu_layout)
+        self.menu = Menu_Comp(self, "Extractor")
 
         # Video display area
         self.video_label = QtWidgets.QLabel("No video loaded")
@@ -106,16 +80,6 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
 
         self.layout.addWidget(self.navigation_group_box)
         self.navigation_group_box.hide()
-
-        # Connect events
-        self.load_video_action.triggered.connect(self.load_video)
-        self.load_prediction_action.triggered.connect(self.load_prediction)
-        self.load_workplace_action.triggered.connect(self.load_workplace)
-
-        self.save_workspace_action.triggered.connect(self.save_workspace)
-        self.save_to_dlc_action.triggered.connect(self.save_to_dlc)
-        self.export_to_refiner_action.triggered.connect(self.export_to_refiner)
-        self.merge_data_action.triggered.connect(self.merge_data)
 
         self.progress_slider.sliderMoved.connect(self.set_frame_from_slider)
         self.play_button.clicked.connect(self.toggle_playback)
@@ -207,12 +171,14 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         file_dialog = QFileDialog(self)
         dlc_config, _ = file_dialog.getOpenFileName(self, "Load DLC Config", "", "YAML Files (config.yaml);;All Files (*)")
 
-        if dlc_config:
-            self.data_loader.dlc_config_filepath = dlc_config
+        if not dlc_config:
+            return
 
-            if not self.data_loader.dlc_config_loader():
-                QMessageBox.critical(self, "DLC Config Error", "Failed to load DLC configuration. Check console for details.")
-                return
+        self.data_loader.dlc_config_filepath = dlc_config
+
+        if not self.data_loader.dlc_config_loader():
+            QMessageBox.critical(self, "DLC Config Error", "Failed to load DLC configuration. Check console for details.")
+            return
 
         QMessageBox.information(self, "DLC Config Loaded", "Successfully loaded DLC Config, now loading prediction.")
 
@@ -220,14 +186,16 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         file_dialog = QFileDialog(self)
         prediction_path, _ = file_dialog.getOpenFileName(self, "Load Prediction", "", "HDF5 Files (*.h5);;All Files (*)")
 
-        if prediction_path:
-            self.data_loader.prediction_filepath = prediction_path
-            
-            if not self.data_loader.prediction_loader():
-                QMessageBox.critical(self, "Prediction Error", "Failed to load prediction data. Check console for details.")
-                return
-            
-            QMessageBox.information(self, "Prediction Loaded", "Prediction data and DLC config loaded successfully!")
+        if not prediction_path:
+            return
+        
+        self.data_loader.prediction_filepath = prediction_path
+
+        if not self.data_loader.prediction_loader():
+            QMessageBox.critical(self, "Prediction Error", "Failed to load prediction data. Check console for details.")
+            return
+        
+        QMessageBox.information(self, "Prediction Loaded", "Prediction data and DLC config loaded successfully!")
 
         self.dlc_data = self.data_loader.get_loaded_dlc_data()
 
