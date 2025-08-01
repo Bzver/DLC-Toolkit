@@ -213,6 +213,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.is_zoom_mode = False
         self.zoom_factor = 1.0
 
+        self._refresh_slider()
+
     def load_video(self):
         self.reset_state()
         file_dialog = QtWidgets.QFileDialog(self)
@@ -610,7 +612,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             if reply == QMessageBox.Yes:
                 self._save_state_for_undo() # Save state before modification
                 confidence_scores = self.pred_data_array[:, :, 2:self.dlc_data.num_keypoint*3:3]
-                inst_conf_all = np.mean(confidence_scores, axis=2)
+                inst_conf_all = np.nanmean(confidence_scores, axis=2)
                 low_conf_mask = inst_conf_all < confidence_threshold
                 f_idx, i_idx = np.where(low_conf_mask)
                 self.pred_data_array[f_idx, i_idx, :] = np.nan
