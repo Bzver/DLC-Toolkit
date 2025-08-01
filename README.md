@@ -4,8 +4,8 @@ DeepLabCut’s napari interface suffers performance issues when the number of fr
 **Table of Contents**
 
 - [dlc_track_refiner.py](#dlc_track_refinerpy)
-- [dlc_3D_skeleton_plotter.py](#dlc_3d_skeleton_plotterpy)
-- [dlc_manual_frame_extract.py](#dlc_manual_frame_extractpy)
+- [dlc_3D_plotter.py](#dlc_3d_plotterpy)
+- [dlc_frame_extract.py](#dlc_frame_extractpy)
 
 
 #### Misc Tools
@@ -19,7 +19,7 @@ DeepLabCut’s napari interface suffers performance issues when the number of fr
 - [sleap_viewer.ipynb](#sleap_vieweripynb)
 
 
-### dlc_3D_skeleton_plotter.py
+### dlc_3D_plotter.py
 
 #### Functionality
 A GUI application for visualizing 3D skeleton plots from multiple DeepLabCut predictions ( currently support 4 views only ), while displaying the corresponding 2D video feeds from multiple cameras.
@@ -46,7 +46,7 @@ your_video_folder/
 - **Video Folder:** A directory containing subfolders for each camera (e.g., `Camera1`, `Camera2`), where each subfolder contains the video file (`0.mp4`) and its corresponding DLC prediction `.h5` file.
 
 
-### dlc_manual_frame_extract.py
+### dlc_frame_extract.py
 
 #### Functionality
 A GUI application for manually extracting and marking frames from a video, primarily for DLC labeling purposes.
@@ -82,7 +82,7 @@ your_dlc_project/
 - **Video File:** The primary video file (`.mp4`, `.avi`, `.mov`, `.mkv`) from which frames will be extracted and reviewed.
 - **Prediction File (`.h5`):** (Optional) A DeepLabCut prediction `.h5` file. When loaded, pose estimations are overlaid on the video frames.
 - **DLC Config File (`config.yaml`):** (Optional) A DeepLabCut project configuration file. Used to define body parts, skeleton connections, and multi-animal settings for accurate visualization of predictions.
-- **Status File (`.yaml`):** (Optional) A previously saved workspace file from `dlc_manual_frame_extract.py`. This file contains the video path, DLC config path, prediction path, and the list of marked frames, allowing resumption of a previous session.
+- **Status File (`.yaml`):** (Optional) A previously saved workspace file from `dlc_frame_extract.py`. This file contains the video path, DLC config path, prediction path, and the list of marked frames, allowing resumption of a previous session.
 
 **Outputs:**
 - **Workspace Status File (`_extractor_status.yaml`):** A YAML file generated when "Save the Current Workspace" is selected (or Ctrl+S is pressed). It stores the paths to the loaded video, DLC config, prediction file, and the list of marked frames, enabling seamless session resumption.
