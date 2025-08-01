@@ -53,6 +53,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             "Refiner": {
                 "display_name": "Adv. Refine",
                 "buttons": [
+                    ("Mark All As Refined", self.mark_all_as_refined),
                     ("Direct Keypoint Edit (Q)", self.direct_keypoint_edit),
                     ("Delete All Track Below Set Confidence", self.purge_inst_by_conf),
                     ("Interpolate All Frames for One Inst", self.interpolate_all),
@@ -1146,6 +1147,21 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         full_nan_sweep_mask = np.repeat(keypoints_to_fully_nan, 3, axis=-1)
         self.pred_data_array[full_nan_sweep_mask] = np.nan
         print("Inconsistent NaN sweep completed.")
+
+    def mark_all_as_refined(self):
+        if not self.marked_roi_frame_list:
+            QMessageBox.information(
+                self,  "Action Not Available", 
+                "To begin **keypoint refinement**, you must first select and designate frames" \
+                " using the **Extractor** tool. The Refiner tool is open, but only for track " \
+                "refinement, which uses the automatically tagged frames to assist with track " \
+                "swapping, interpolation, and other tracking tasks."
+            )
+            return
+
+        self.refined_roi_frame_list = self.marked_roi_frame_list
+        self._refresh_slider()
+        self.navigation_title_controller()
 
     def undo_changes(self):
         if self.undo_stack:
