@@ -45,8 +45,42 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         if self.is_debug:
             self.setWindowTitle("DLC Track Refiner ----- DEBUG MODE")
 
-        self.menu = Menu_Comp(self, "Refiner")
-        self.layout.addWidget(self.menu)
+        self.menu_comp = Menu_Comp(self)
+        refiner_menu_config = {
+            "File": {
+                "display_name": "File",
+                "buttons": [
+                    ("Load Video", self.load_video),
+                    ("Load Config and Prediction", self.load_prediction)
+                ]
+            },
+            "Refiner": {
+                "display_name": "Adv. Refine",
+                "buttons": [
+                    ("Direct Keypoint Edit (Q)", self.direct_keypoint_edit),
+                    ("Delete All Track Below Set Confidence", self.purge_inst_by_conf),
+                    ("Interpolate All Frames for One Inst", self.interpolate_all),
+                    ("Remove All Prediction Inside Area", self.designate_no_mice_zone),
+                    ("Segmental Auto Correct", self.segment_auto_correct)
+                ]
+            },
+            "Preference": {
+                "display_name": "Preference",
+                "buttons": [
+                    ("Adjust Point Size", self.adjust_point_size),
+                    ("Adjust Plot Visibility", self.adjust_plot_opacity)
+                ]
+            },
+            "Save": {
+                "display_name": "Save",
+                "buttons": [
+                    ("Save Prediction", self.save_prediction),
+                    ("Save Prediction Into CSV", self.save_prediction_as_csv)
+                ]
+            }
+        }
+        self.menu_comp.add_menu_from_config(refiner_menu_config)
+        self.layout.addWidget(self.menu_comp)
 
         # Graphics view for interactive elements and video display
         self.graphics_scene = QtWidgets.QGraphicsScene(self)
@@ -123,8 +157,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.control_layout.addWidget(self.navigation_group_box)
         self.control_layout.addWidget(self.refiner_group_box)
         self.layout.addLayout(self.control_layout)
-        
-
 
         # Connect buttons to events
         self.progress_slider.sliderMoved.connect(self.set_frame_from_slider)

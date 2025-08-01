@@ -3,23 +3,39 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import QPushButton, QMenu, QToolButton, QFileDialog
 
 class Menu_Comp(QtWidgets.QWidget):
-    def __init__(self, parent, host_type="Unknown"):
-        super().__init__()
+    def __init__(self, parent):
+        super().__init__(parent)
 
-        self.gui = parent
-        self.host = host_type
         self.menu_layout = QtWidgets.QHBoxLayout()
         self.setLayout(self.menu_layout)
 
-        self._setup_file_menu()
-        if self.host == "Extractor":
-            self._setup_export_menu()
-        
-        if self.host == "Refiner":
-            self._setup_refiner_menu()
-            self._setup_pref_menu()
-            self._setup_save_menu()
-
+    def add_menu_from_config(self, menu_config):
+        """
+        Adds menus and their actions based on a configuration dictionary.
+        Args:
+            menu_config (dict): A dictionary defining the menu structure.
+                                Example:
+                                {
+                                    "File": {
+                                        "display_name": "File",
+                                        "buttons": [
+                                            ("Load Video", load_video_function),
+                                            ("Load Config and Prediction", load_prediction_function),
+                                        ]
+                                    },
+                                    ...
+                                }
+        """
+        for menu_name, config in menu_config.items():
+            display_name = config.get("display_name", menu_name)
+            menu = QMenu(display_name, self)
+            
+            for action_text, action_func in config["buttons"]:
+                action = menu.addAction(action_text)
+                action.triggered.connect(action_func)
+            
+            self._create_menu_button(display_name, menu)
+            
         self.menu_layout.addStretch(1)
 
     def _create_menu_button(self, button_text: str, menu: QMenu, alignment=Qt.AlignLeft):
@@ -28,69 +44,6 @@ class Menu_Comp(QtWidgets.QWidget):
         button.setMenu(menu)
         button.setPopupMode(QToolButton.InstantPopup)
         self.menu_layout.addWidget(button, alignment=alignment)
-    
-    def _setup_file_menu(self):
-        self.load_menu = QMenu("File", self.gui)
-        self.load_video_action = self.load_menu.addAction("Load Video")
-        self.load_prediction_action = self.load_menu.addAction("Load Config and Prediction")
-        if self.host == "Extractor":
-            self.load_workplace_action = self.load_menu.addAction("Load Workplace")
-
-        self._create_menu_button("File", self.load_menu)
-
-        self.load_video_action.triggered.connect(self.gui.load_video)
-        self.load_prediction_action.triggered.connect(self.gui.load_prediction)
-        if self.host == "Extractor":
-            self.load_workplace_action.triggered.connect(self.gui.load_workplace)
-
-    def _setup_export_menu(self):
-        self.export_menu = QMenu("Export", self.gui)
-        self.save_workspace_action = self.export_menu.addAction("Save the Current Workspace")
-        self.save_to_dlc_action = self.export_menu.addAction("Export to DLC")
-        self.export_to_refiner_action = self.export_menu.addAction("Export to Refiner")
-        self.merge_data_action = self.export_menu.addAction("Merge with Existing Data")
-
-        self._create_menu_button("Save", self.export_menu)
-
-        self.save_workspace_action.triggered.connect(self.gui.save_workspace)
-        self.save_to_dlc_action.triggered.connect(self.gui.save_to_dlc)
-        self.export_to_refiner_action.triggered.connect(self.gui.export_to_refiner)
-        self.merge_data_action.triggered.connect(self.gui.merge_data)
-
-    def _setup_refiner_menu(self):
-        self.refiner_menu = QMenu("Adv. Refine", self.gui)
-        self.direct_keypoint_edit_action = self.refiner_menu.addAction("Direct Keypoint Edit (Q)")
-        self.purge_inst_by_conf_action = self.refiner_menu.addAction("Delete All Track Below Set Confidence")
-        self.interpolate_all_action = self.refiner_menu.addAction("Interpolate All Frames for One Inst")
-        self.designate_no_mice_zone_action = self.refiner_menu.addAction("Remove All Prediction Inside Area")
-        self.segment_auto_correct_action = self.refiner_menu.addAction("Segmental Auto Correct")
-
-        self._create_menu_button("Adv. Refine", self.refiner_menu)
-
-        self.purge_inst_by_conf_action.triggered.connect(self.gui.purge_inst_by_conf)
-        self.interpolate_all_action.triggered.connect(self.gui.interpolate_all)
-        self.segment_auto_correct_action.triggered.connect(self.gui.segment_auto_correct)
-        self.designate_no_mice_zone_action.triggered.connect(self.gui.designate_no_mice_zone)
-
-    def _setup_pref_menu(self):
-        self.pref_menu = QMenu("Preference", self.gui)
-        self.adjust_point_size_action = self.pref_menu.addAction("Adjust Point Size")
-        self.adjust_plot_visibilty_action = self.pref_menu.addAction("Adjust Plot Visibility")
-
-        self._create_menu_button("Preference", self.pref_menu)
-
-        self.adjust_point_size_action.triggered.connect(self.gui.adjust_point_size)
-        self.adjust_plot_visibilty_action.triggered.connect(self.gui.adjust_plot_opacity)
-
-    def _setup_save_menu(self):
-        self.save_menu = QMenu("Save", self.gui)
-        self.save_prediction_action = self.save_menu.addAction("Save Prediction")
-        self.save_prediction_as_csv_action = self.save_menu.addAction("Save Prediction Into CSV")
-
-        self._create_menu_button("Save", self.save_menu)
-
-        self.save_prediction_action.triggered.connect(self.gui.save_prediction)
-        self.save_prediction_as_csv_action.triggered.connect(self.gui.save_prediction_as_csv)
 
 ###################################################################################################################################################
 

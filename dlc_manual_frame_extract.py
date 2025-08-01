@@ -30,8 +30,28 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         self.setCentralWidget(self.central_widget)
         self.layout = QtWidgets.QVBoxLayout(self.central_widget)
 
-        self.menu = Menu_Comp(self, "Extractor")
-        self.layout.addWidget(self.menu)
+        self.menu_comp = Menu_Comp(self)
+        extractor_menu_config = {
+            "File": {
+                "display_name": "File",
+                "buttons": [
+                    ("Load Video", self.load_video),
+                    ("Load Config and Prediction", self.load_prediction),
+                    ("Load Workplace", self.load_workplace)
+                ]
+            },
+            "Export": {
+                "display_name": "Save",
+                "buttons": [
+                    ("Save the Current Workspace", self.save_workspace),
+                    ("Export to DLC", self.save_to_dlc),
+                    ("Export to Refiner", self.export_to_refiner),
+                    ("Merge with Existing Data", self.merge_data)
+                ]
+            }
+        }
+        self.menu_comp.add_menu_from_config(extractor_menu_config)
+        self.layout.addWidget(self.menu_comp)
 
         # Video display area
         self.video_label = QtWidgets.QLabel("No video loaded")
