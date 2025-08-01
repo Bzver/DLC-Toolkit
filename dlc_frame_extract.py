@@ -10,13 +10,12 @@ import bisect
 import cv2
 
 from PySide6 import QtWidgets, QtGui
-from PySide6.QtCore import Qt, QTimer, QEvent
+from PySide6.QtCore import Qt, QEvent
 from PySide6.QtGui import QShortcut, QKeySequence, QCloseEvent
 from PySide6.QtWidgets import QMessageBox, QPushButton, QFileDialog
 
-from utils.dtu_ui import Slider_With_Marks
 from utils.dtu_io import DLC_Data_Loader, DLC_Exporter
-from utils.dtu_comp import Menu_Comp
+from utils.dtu_comp import Menu_Comp, Progress_Bar_Comp
 
 import traceback
 
@@ -60,20 +59,9 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         self.video_label.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         self.layout.addWidget(self.video_label, 1)
 
-        # Progress bar
-        self.progress_layout = QtWidgets.QHBoxLayout()
-        self.play_button = QPushButton("▶")
-        self.play_button.setFixedWidth(20)
-        self.progress_slider = Slider_With_Marks(Qt.Horizontal)
-        self.progress_slider.setRange(0, 0) # Will be set dynamically
-        self.progress_slider.setTracking(True)
-
-        self.progress_layout.addWidget(self.play_button)
-        self.progress_layout.addWidget(self.progress_slider)
-        self.playback_timer = QTimer()
-        self.playback_timer.timeout.connect(self.autoplay_video)
-        self.is_playing = False
-        self.layout.addLayout(self.progress_layout)
+        self.progress_bar_comp = Progress_Bar_Comp()
+        self.layout.addWidget(self.progress_bar_comp)
+        self.progress_bar_comp.frame_changed.connect(self._handle_frame_change_from_comp)
 
         # Navigation controls
         self.navigation_group_box = QtWidgets.QGroupBox("Video Navigation")
@@ -102,9 +90,6 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         self.layout.addWidget(self.navigation_group_box)
         self.navigation_group_box.hide()
 
-        self.progress_slider.sliderMoved.connect(self.set_frame_from_slider)
-        self.play_button.clicked.connect(self.toggle_playback)
-
         self.prev_10_frames_button.clicked.connect(lambda: self.change_frame(-10))
         self.prev_frame_button.clicked.connect(lambda: self.change_frame(-1))
         self.next_frame_button.clicked.connect(lambda: self.change_frame(1))
@@ -122,7 +107,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_X), self).activated.connect(self.change_current_frame_status)
         QShortcut(QKeySequence(Qt.Key_Up), self).activated.connect(self.prev_marked_frame)
         QShortcut(QKeySequence(Qt.Key_Down), self).activated.connect(self.next_marked_frame)
-        QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.toggle_playback)
+        QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.progress_bar_comp.toggle_playback)
         QShortcut(QKeySequence(Qt.Key_S | Qt.ControlModifier), self).activated.connect(self.save_workspace)
         
         self.reset_state()
@@ -142,16 +127,20 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         self.is_saved = True
         self.last_saved = []
 
-        self.progress_slider.setRange(0, 0)
         self.navigation_group_box.hide()
 
         self.refiner_window = None
 
-    def handle_refined_frames_exported(self, refined_frames):
+    def _handle_refined_frames_exported(self, refined_frames):
         self.refined_frame_list = refined_frames
-        self.progress_slider.set_frame_category("refined_frames", self.refined_frame_list, "#009979", priority=7)
+        self.progress_bar_comp.set_frame_category("refined_frames", self.refined_frame_list, "#009979", priority=7)
         self.display_current_frame()
         self.determine_save_status()
+
+    def _handle_frame_change_from_comp(self, new_frame_idx: int):
+        self.current_frame_idx = new_frame_idx
+        self.display_current_frame()
+        self.navigation_box_title_controller()
 
     def load_video(self):
         self.reset_state()
@@ -174,10 +163,10 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.current_frame_idx = 0
-        self.progress_slider.setRange(0, self.total_frames - 1)
-        self.progress_slider.set_frame_category("marked_frames", self.frame_list, "#E28F13")
-        self.progress_slider.set_frame_category("refined_frames", self.refined_frame_list, "#009979", priority=7)
-        self.progress_slider.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7")
+        self.progress_bar_comp.set_slider_range(self.total_frames)
+        self.progress_bar_comp.set_frame_category("marked_frames", self.frame_list, "#E28F13")
+        self.progress_bar_comp.set_frame_category("refined_frames", self.refined_frame_list, "#009979", priority=7)
+        self.progress_bar_comp.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7")
         self.display_current_frame()
         self.navigation_box_title_controller()
         print(f"Video loaded: {self.video_file}")
@@ -265,7 +254,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             if "refined_frame_list" in fmk.keys():
                 self.refined_frame_list = fmk["refined_frame_list"]
                 
-            self.progress_slider.set_frame_category("marked_frames", self.frame_list, "#E28F13")
+            self.progress_bar_comp.set_frame_category("marked_frames", self.frame_list, "#E28F13")
             self.determine_save_status()
             self.process_labeled_frame()
             self.display_current_frame()
@@ -306,7 +295,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         self.refined_frame_list = list(set(self.refined_frame_list) - set(self.labeled_frame_list))
         self.frame_list.sort()
 
-        self.progress_slider.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7")
+        self.progress_bar_comp.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7")
 
     ###################################################################################################################################################
 
@@ -326,8 +315,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
                 # Scale pixmap to fit label
                 scaled_pixmap = pixmap.scaled(self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 self.video_label.setPixmap(scaled_pixmap)
-                self.video_label.setText("") # Clear "No video loaded" text
-                self.progress_slider.setValue(self.current_frame_idx) # Update slider position
+                self.video_label.setText("")
             else:
                 self.video_label.setText("Error: Could not read frame")
         else:
@@ -458,36 +446,6 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
                 self.display_current_frame()
                 self.navigation_box_title_controller()
 
-    def set_frame_from_slider(self, value):
-        if self.cap and self.cap.isOpened():
-            self.current_frame_idx = value
-            self.display_current_frame()
-            self.navigation_box_title_controller()
-
-    def autoplay_video(self):
-        if self.cap and self.cap.isOpened():
-            if self.current_frame_idx < self.total_frames - 1:
-                self.current_frame_idx += 1
-                self.display_current_frame()
-                self.navigation_box_title_controller()
-            else:
-                self.playback_timer.stop()
-                self.play_button.setText("▶")
-                self.is_playing = False
-
-    def toggle_playback(self):
-        if self.current_frame is None:
-            QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
-            return
-        if not self.is_playing:
-            self.playback_timer.start(1000/100) # 100 fps
-            self.play_button.setText("■")
-            self.is_playing = True
-        else:
-            self.playback_timer.stop()
-            self.play_button.setText("▶")
-            self.is_playing = False
-
     def navigation_box_title_controller(self):
         self.navigation_group_box.show()
         self.navigation_group_box.setTitle(f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | Video: {self.video_name}")
@@ -529,7 +487,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             self.frame_list.remove(self.current_frame_idx)
 
         self.determine_save_status()
-        self.progress_slider.set_frame_category("marked_frames", self.frame_list, "#E28F13")
+        self.progress_bar_comp.set_frame_category("marked_frames", self.frame_list, "#E28F13")
         self.navigation_box_title_controller()
 
     def adjust_confidence_cutoff(self):
@@ -647,7 +605,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             self.refiner_window.navigation_box_title_controller()
             if self.frame_list:
                 self.refiner_window.direct_keypoint_edit()
-                self.refiner_window.refined_frames_exported.connect(self.handle_refined_frames_exported)
+                self.refiner_window.refined_frames_exported.connect(self._handle_refined_frames_exported)
             self.refiner_window.show()
             self.refiner_window.prediction_saved.connect(self.reload_prediction) # Reload from prediction provided by Refiner
             

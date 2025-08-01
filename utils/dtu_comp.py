@@ -1,8 +1,10 @@
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtWidgets import QPushButton, QMenu, QToolButton, QFileDialog
+from PySide6.QtWidgets import QPushButton, QMenu, QToolButton, QWidget
 
-class Menu_Comp(QtWidgets.QWidget):
+from utils.dtu_ui import Slider_With_Marks
+
+class Menu_Comp(QWidget):
     def __init__(self, parent):
         super().__init__(parent)
 
@@ -47,82 +49,73 @@ class Menu_Comp(QtWidgets.QWidget):
 
 ###################################################################################################################################################
 
-class Progress_Bar_Comp(QtWidgets.QWidget):
+class Progress_Bar_Comp(QWidget):
     frame_changed = Signal(int)
-    request_total_frames = Signal()
 
     def __init__(self):
         super().__init__()
-
-        self.progress_layout = QtWidgets.QHBoxLayout(self)
-        self.setLayout(self.progress_layout)
+        self.total_frames = 0
+        self.current_frame = 0
+        self.is_playing = False
+        
+        self.layout = QtWidgets.QHBoxLayout(self)
 
         self.play_button = QPushButton("▶")
-        self.play_button.setFixedWidth(40)
-        self.progress_slider = QtWidgets.QSlider(Qt.Orientation.Horizontal) # Use Qt.Orientation.Horizontal
+        self.play_button.setFixedWidth(20)
+        self.play_button.clicked.connect(self.toggle_playback)
+
+        self.progress_slider = Slider_With_Marks(Qt.Orientation.Horizontal)
         self.progress_slider.setRange(0, 0)
         self.progress_slider.setTracking(True)
+        self.progress_slider.sliderMoved.connect(self.handle_slider_move)
 
-        self.progress_layout.addWidget(self.play_button)
-        self.progress_layout.addWidget(self.progress_slider)
-        
+        self.layout.addWidget(self.play_button)
+        self.layout.addWidget(self.progress_slider)
+
         self.playback_timer = QTimer(self)
-        self.playback_timer.timeout.connect(self._advance_frame_for_autoplay)
-        
-        self.is_playing = False
-        self._total_frames = 0
+        self.playback_timer.setInterval(int(1000/50)) # ~50 FPS
+        self.playback_timer.timeout.connect(self.advance_frame)
 
-        self.progress_slider.sliderMoved.connect(self._handle_slider_moved)
+    def set_frame_category(self, category_name, frames, color=None, priority=0): # Public API to pass the slider mark properties
+        self.progress_slider.set_frame_category(category_name, frames, color, priority)
 
-        self.request_total_frames.emit()
+    def set_slider_range(self, total_frames):
+        self.total_frames = total_frames
+        self.progress_slider.setRange(0, self.total_frames - 1)
+    
+    def set_current_frame(self, frame_number):
+        self.current_frame = frame_number
+        self.progress_slider.setValue(self.current_frame)
 
-    def set_slider_range(self, total_frames: int):
-        self._total_frames = total_frames
-        self.progress_slider.setRange(0, max(0, total_frames - 1))
-        self.progress_slider.setValue(0)
-
-    def set_current_frame(self, frame_idx: int):
-        if 0 <= frame_idx < self._total_frames:
-            self.progress_slider.setValue(frame_idx)
+    def handle_slider_move(self, value):
+        self.current_frame = value
+        self.frame_changed.emit(self.current_frame)
+    
+    def advance_frame(self):
+        if self.current_frame < self.total_frames - 1:
+            self.current_frame += 1
+            self.set_current_frame(self.current_frame)
+            self.frame_changed.emit(self.current_frame)
         else:
-            if self.is_playing:
-                self.toggle_playback()
-            print(f"Warning: Attempted to set frame {frame_idx} which is out of range [0, {self._total_frames-1}]")
-
-    def _handle_slider_moved(self, value: int):
-        if self.is_playing:
-            self.toggle_playback()
-        self.frame_changed.emit(value)
-
-    def _advance_frame_for_autoplay(self):
-        current_frame = self.progress_slider.value()
-        
-        if current_frame < self._total_frames - 1:
-            next_frame = current_frame + 1
-            self.progress_slider.setValue(next_frame)
-            self.frame_changed.emit(next_frame)
-        else:
-            self.toggle_playback()
-            self.progress_slider.setValue(self._total_frames - 1)
-            self.frame_changed.emit(self._total_frames - 1)
+            self.stop_playback()
 
     def toggle_playback(self):
         if not self.is_playing:
-            if self._total_frames == 0:
-                print("Cannot play, no frames loaded.")
-                return
-            
-            if self.progress_slider.value() >= self._total_frames - 1:
-                self.set_current_frame(0)
-                self.frame_changed.emit(0)
-
-            self.playback_timer.start(int(1000 / 50))
-            self.play_button.setText("■")
-            self.is_playing = True
+            self.start_playback()
         else:
-            self.playback_timer.stop()
-            self.play_button.setText("▶")
+            self.stop_playback()
+    
+    def start_playback(self):
+        if self.playback_timer:
+            self.is_playing = True
+            self.play_button.setText("■")
+            self.playback_timer.start()
+
+    def stop_playback(self):
+        if self.playback_timer:
             self.is_playing = False
+            self.play_button.setText("▶")
+            self.playback_timer.stop()
 
 ###################################################################################################################################################
 

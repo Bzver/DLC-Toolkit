@@ -26,12 +26,12 @@ class Slider_With_Marks(QtWidgets.QSlider):
             }
         """)
 
-    def set_frame_category(self, category_name, frames, color=None, priority=5):
+    def set_frame_category(self, category_name, frames, color, priority):
         self.frame_categories[category_name] = set(frames)
         if color:
             self.category_colors[category_name] = color
         elif category_name not in self.category_colors:
-            self.category_colors[category_name] = "#183539"  # default color if not specified
+            self.category_colors[category_name] = "#183539"  # default color if None
         self.category_priorities[category_name] = priority # Store the priority
         self.update() # Request a repaint
 

@@ -10,13 +10,13 @@ import bisect
 import cv2
 
 from PySide6 import QtWidgets, QtGui, QtCore
-from PySide6.QtCore import Qt, QTimer, QEvent, Signal
+from PySide6.QtCore import Qt, QEvent, Signal
 from PySide6.QtGui import QShortcut, QKeySequence, QPainter, QColor, QPen, QCloseEvent
 from PySide6.QtWidgets import QMessageBox, QPushButton, QGraphicsView, QGraphicsRectItem
 
-from utils.dtu_ui import Slider_With_Marks, Selectable_Instance, Draggable_Keypoint
+from utils.dtu_ui import Selectable_Instance, Draggable_Keypoint
 from utils.dtu_io import DLC_Data_Loader, DLC_Exporter
-from utils.dtu_comp import Menu_Comp
+from utils.dtu_comp import Menu_Comp, Progress_Bar_Comp
 
 import traceback
 
@@ -96,8 +96,11 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         # Progress bar
         self.progress_layout = QtWidgets.QHBoxLayout()
-        self.play_button = QPushButton("▶")
-        self.play_button.setFixedWidth(20)
+
+        self.progress_bar_comp = Progress_Bar_Comp()
+        self.progress_layout.addWidget(self.progress_bar_comp)
+        self.progress_bar_comp.frame_changed.connect(self._handle_frame_change_from_comp)
+
         self.magnifier_button = QPushButton("🔍︎")
         self.magnifier_button.setToolTip("Toggle zoom mode (Z)")
         self.magnifier_button.setFixedWidth(20)
@@ -107,17 +110,11 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.redo_button = QPushButton("↺")
         self.redo_button.setToolTip("Redo (Ctrl + Y)")
         self.redo_button.setFixedWidth(20)
-        self.progress_slider = Slider_With_Marks(Qt.Horizontal)
-        self.progress_slider.setTracking(True)
 
-        self.progress_layout.addWidget(self.play_button)
-        self.progress_layout.addWidget(self.progress_slider)
         self.progress_layout.addWidget(self.magnifier_button)
         self.progress_layout.addWidget(self.undo_button)
         self.progress_layout.addWidget(self.redo_button)
-        self.playback_timer = QTimer()
-        self.playback_timer.timeout.connect(self.autoplay_video)
-        self.is_playing = False
+
         self.layout.addLayout(self.progress_layout)
 
         # Navigation controls and refiner controls
@@ -159,8 +156,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.layout.addLayout(self.control_layout)
 
         # Connect buttons to events
-        self.progress_slider.sliderMoved.connect(self.set_frame_from_slider)
-        self.play_button.clicked.connect(self.toggle_playback)
         self.undo_button.clicked.connect(self.undo_changes)
         self.redo_button.clicked.connect(self.redo_changes)
         self.magnifier_button.clicked.connect(self.toggle_zoom_mode)
@@ -183,7 +178,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_Right | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(10))
         QShortcut(QKeySequence(Qt.Key_Up), self).activated.connect(self.prev_roi_frame)
         QShortcut(QKeySequence(Qt.Key_Down), self).activated.connect(self.next_roi_frame)
-        QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.toggle_playback)
+        QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.progress_bar_comp.toggle_playback)
 
         QShortcut(QKeySequence(Qt.Key_W), self).activated.connect(lambda:self.swap_track("point"))
         QShortcut(QKeySequence(Qt.Key_X), self).activated.connect(lambda:self.delete_track("point"))
@@ -218,7 +213,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         self.is_playing = False
 
-        self.progress_slider.setRange(0, 0)
         self.navigation_group_box.hide()
         self.refiner_group_box.hide()
         self.plot_opacity = 1.0
@@ -260,7 +254,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.current_frame_idx = 0
-        self.progress_slider.setRange(0, self.total_frames - 1) # Initialize slider range
+        self.progress_bar_comp.set_slider_range(self.total_frames) # Initialize slider range
         self.display_current_frame()
         self.reset_zoom()
         self.navigation_box_title_controller()
@@ -352,8 +346,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 # Plot predictions (keypoints, bounding boxes, skeleton)
                 if self.pred_data_array is not None:
                     self.plot_predictions(frame.copy())
-                
-                self.progress_slider.setValue(self.current_frame_idx) # Update slider position
+
                 self.graphics_view.update() # Force update of the graphics view
 
             else: # If video frame cannot be read, clear scene and display error
@@ -430,7 +423,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 rect_item.setFlag(QGraphicsRectItem.ItemIsMovable, self.is_kp_edit)
         self.graphics_scene.addItem(rect_item)
         self.current_selectable_boxes.append(rect_item)
-        rect_item.clicked.connect(self.handle_box_selection) # Connect the signal
+        rect_item.clicked.connect(self._handle_box_selection) # Connect the signal
         # Connect the bounding_box_moved signal to the update method in DLC_Track_Refiner
         rect_item.bounding_box_moved.connect(self.update_instance_position)
 
@@ -490,38 +483,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 self.display_current_frame()
                 self.reset_zoom()
                 self.navigation_box_title_controller()
-
-    def set_frame_from_slider(self, value):
-        if self.cap and self.cap.isOpened():
-            self.current_frame_idx = value
-            self.display_current_frame()
-            self.reset_zoom()
-            self.navigation_box_title_controller()
-
-    def autoplay_video(self):
-        if self.cap and self.cap.isOpened():
-            if self.current_frame_idx < self.total_frames - 1:
-                self.current_frame_idx += 1
-                self.display_current_frame()
-                self.reset_zoom()
-                self.navigation_box_title_controller()
-            else:
-                self.playback_timer.stop()
-                self.play_button.setText("▶")
-                self.is_playing = False
-
-    def toggle_playback(self):
-        if self.current_frame is None:
-            QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
-            return
-        if not self.is_playing:
-            self.playback_timer.start(1000/100) # 100 fps
-            self.play_button.setText("■")
-            self.is_playing = True
-        else:
-            self.playback_timer.stop()
-            self.play_button.setText("▶")
-            self.is_playing = False
 
     def navigation_box_title_controller(self):
         title = f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | Video: {self.video_name}"
@@ -1065,10 +1026,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             return False
         return True
 
-    def _refresh_slider(self):
-        self.progress_slider.set_frame_category("Refined frames", self.refined_roi_frame_list, "#009979", priority=7)
-        self.progress_slider.set_frame_category("ROI frames", self.roi_frame_list, "#F04C4C") # Update ROI frames
-
     def get_current_frame_inst(self):
         current_frame_inst = []
         for inst in [ inst for inst in range(self.dlc_data.instance_count) ]:
@@ -1076,7 +1033,16 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 current_frame_inst.append(inst)
         return current_frame_inst
 
-    def handle_box_selection(self, clicked_box):
+    def _handle_frame_change_from_comp(self, new_frame_idx: int):
+        self.current_frame_idx = new_frame_idx
+        self.display_current_frame()
+        self.navigation_box_title_controller()
+
+    def _refresh_slider(self):
+        self.progress_bar_comp.set_frame_category("Refined frames", self.refined_roi_frame_list, "#009979", priority=7)
+        self.progress_bar_comp.set_frame_category("ROI frames", self.roi_frame_list, "#F04C4C") # Update ROI frames
+
+    def _handle_box_selection(self, clicked_box):
         if self.is_kp_edit: # no box select to prevent interference
             self.selected_box = None
             return

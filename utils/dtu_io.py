@@ -103,7 +103,7 @@ class DLC_Data_Loader:
             QMessageBox.critical(self.gui, "Prediction Loading Error", f"Error loading prediction data: {e}")
             return False
 
-    def get_loaded_dlc_data(self) -> Optional[LoadedDLCData]:
+    def get_loaded_dlc_data(self, metadata_only=False) -> Optional[LoadedDLCData]:
         """
         Exports the loaded and processed DLC data as a LoadedDLCData dataclass.
         Returns None if data could not be loaded or processed.
@@ -125,7 +125,7 @@ class DLC_Data_Loader:
             instance_count=self._instance_count,
             num_keypoint=self._num_keypoint,
             prediction_filepath = self.prediction_filepath,
-            pred_data_array=self._pred_data_array.copy(), # Return a copy of the numpy array
+            pred_data_array=self._pred_data_array.copy() if not metadata_only else None,
             pred_frame_count=self._pred_frame_count
         )
     

@@ -79,10 +79,9 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.display_layout.addLayout(self.plot_layout)
         self.layout.addLayout(self.display_layout, 1)
 
-        self.progress_bar = Progress_Bar_Comp()
-        self.layout.addWidget(self.progress_bar)
-        self.progress_bar.frame_changed.connect(self._handle_frame_change_from_comp)
-        self.progress_bar.request_total_frames.connect(self._provide_total_frames)
+        self.progress_bar_comp = Progress_Bar_Comp()
+        self.layout.addWidget(self.progress_bar_comp)
+        self.progress_bar_comp.frame_changed.connect(self._handle_frame_change_from_comp)
 
         # Navigation controls
         self.navigation_group_box = QtWidgets.QGroupBox("Video Navigation")
@@ -115,7 +114,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_Left), self).activated.connect(lambda: self.change_frame(-1))
         QShortcut(QKeySequence(Qt.Key_Right), self).activated.connect(lambda: self.change_frame(1))
         QShortcut(QKeySequence(Qt.Key_Right | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(10))
-        QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.progress_bar.toggle_playback)
+        QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.progress_bar_comp.toggle_playback)
 
         self.canvas.mpl_connect("scroll_event", self.on_scroll_3d_plot)
 
@@ -139,8 +138,6 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.selected_cam_idx = None
 
         self.refiner_window = None
-
-
 
     def open_video_folder_dialog(self):
         if self.is_debug:
@@ -178,8 +175,10 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         """
         self.data_loader.dlc_config_filepath = dlc_config_filepath
         try:
-            self.dlc_data = self.data_loader.dlc_config_loader()
+            self.data_loader.dlc_config_loader()
             print(f"DLC Config loaded: {dlc_config_filepath}")
+            self.dlc_data = self.data_loader.get_loaded_dlc_data(metadata_only=True)
+            self.keypoint_to_idx = {name: idx for idx, name in enumerate(self.dlc_data.keypoints)}
             if not self.is_debug:
                 QMessageBox.information(self, "Success", "DLC Config loaded successfully!")
             
@@ -242,11 +241,15 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             folder_list[i] = folder
         
         self.total_frames = temp_total_frames # Set the global total_frames
+        self.progress_bar_comp.set_slider_range(self.total_frames)
 
         if not any(self.cap_list): # Check if at least one video was loaded
             QMessageBox.warning(self, "Error", "No video files were loaded successfully.")
             traceback.print_exc()
             return
+
+        # Initialize the pred_data_array to accept all data streams
+        self.pred_data_array = np.full((self.total_frames, self.num_cam, self.dlc_data.instance_count, self.dlc_data.num_keypoint * 3), np.nan)
 
         pred_data_list = [None] * self.num_cam
         for k in range(self.num_cam):
@@ -259,19 +262,14 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 h5_files.sort()
                 h5_file = h5_files[-1] # Take the newest one
                 self.prediction_list[k] = h5_file
-                self.load_prediction(k, h5_file, pred_data_list)
-
-        self.pred_data_array = np.full((self.total_frames, self.num_cam, self.dlc_data.instance_count, self.dlc_data.num_keypoint * 3), np.nan)
-        for k in range(self.num_cam):
-            temp_pred_data_array = pred_data_list[k]
-            self.pred_data_array[:self.total_frames, k, :, :] = temp_pred_data_array[:self.total_frames, :, :]
+                self.load_prediction(k, h5_file)
 
         self.current_frame_idx = 0
-        self.progress_bar.set_slider_range(self.total_frames)
+        self.progress_bar_comp.set_slider_range(self.total_frames)
         self.navigation_group_box.show()
         self.display_current_frame() # Display the first frames
 
-    def load_prediction(self, cam_idx: int, prediction_filepath: str, pred_data_list: list = None):
+    def load_prediction(self, cam_idx: int, prediction_filepath: str):
         """
         Loads prediction data for a specific camera using DLC_Data_Loader
         and populates the main pred_data_array.
@@ -281,20 +279,14 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         if self.data_loader.prediction_loader():
             temp_dlc_data = self.data_loader.get_loaded_dlc_data()
             if temp_dlc_data:
-                if not self.keypoint_to_idx: 
-                    self.dlc_data = temp_dlc_data # This line is important to ensure dlc_data attributes are correctly set
-                    self.keypoint_to_idx = {name: idx for idx, name in enumerate(temp_dlc_data.keypoints)}
-                if pred_data_list is not None:
-                    pred_data_list[cam_idx] = temp_dlc_data.pred_data_array
+                if temp_dlc_data.pred_data_array.shape[0] > self.total_frames:
+                    QMessageBox.warning(self, "Warning", "Reloaded prediction has more frames than total frames. Truncating.")
+                    self.pred_data_array[:, cam_idx, :, :] = temp_dlc_data.pred_data_array[:self.total_frames, :, :]
                 else:
-                    if temp_dlc_data.pred_data_array.shape[0] > self.total_frames:
-                        QMessageBox.warning(self, "Warning", "Reloaded prediction has more frames than total frames. Truncating.")
-                        self.pred_data_array[:, cam_idx, :, :] = temp_dlc_data.pred_data_array[:self.total_frames, :, :]
-                    else:
-                        self.pred_data_array[:temp_dlc_data.pred_data_array.shape[0], cam_idx, :, :] = temp_dlc_data.pred_data_array
-                        # Pad with NaNs if the reloaded prediction is shorter
-                        if temp_dlc_data.pred_data_array.shape[0] < self.total_frames:
-                             self.pred_data_array[temp_dlc_data.pred_data_array.shape[0]:, cam_idx, :, :] = np.nan
+                    self.pred_data_array[:temp_dlc_data.pred_data_array.shape[0], cam_idx, :, :] = temp_dlc_data.pred_data_array
+                    # Pad with NaNs if the reloaded prediction is shorter
+                    if temp_dlc_data.pred_data_array.shape[0] < self.total_frames:
+                            self.pred_data_array[temp_dlc_data.pred_data_array.shape[0]:, cam_idx, :, :] = np.nan
 
             else:
                 print(f"Error: Failed to get loaded prediction data for camera {cam_idx+1}.")
@@ -765,13 +757,8 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
     def _handle_frame_change_from_comp(self, new_frame_idx: int):
         self.current_frame_idx = new_frame_idx
-        print(f"Main window: Current frame is now {self.current_frame_idx}")
         self.display_current_frame()
         self.navigation_box_title_controller()
-
-    def _provide_total_frames(self):
-        self.progress_bar.set_slider_range(self.total_frames)
-        self.progress_bar.set_current_frame(self.current_frame_idx)
 
     ###################################################################################################################################################
 
