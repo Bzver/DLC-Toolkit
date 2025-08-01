@@ -1006,6 +1006,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         if self.is_kp_edit:
             QMessageBox.warning(self, "Not Allowed", "Please finish editing keypoints before using this function.")
             return False
+        if self.is_zoom_mode:
+            QMessageBox.warning(self, "Not Allowed", "Please finish zooming before using this function.")
+            return False
         return True
 
     def get_current_frame_inst(self):
@@ -1077,6 +1080,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
     def graphics_view_mouse_release_event(self, event):
         if self.is_drawing_zone and self.start_point and self.current_rect_item:
+            print("is called")
             self.is_drawing_zone = False
             self.graphics_view.setCursor(Qt.ArrowCursor)
             
@@ -1105,7 +1109,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             self.display_current_frame()
             QMessageBox.information(self, "No Mice Zone Applied", "Keypoints within the selected zone have been set to NaN.")
         
-    def graphics_view_mouse_release_event(self, event):
         if self.is_zoom_mode: # Allow panning, but prevent other interactions
             QtWidgets.QGraphicsView.mouseReleaseEvent(self.graphics_view, event)
             return
