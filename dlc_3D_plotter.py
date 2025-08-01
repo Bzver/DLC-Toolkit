@@ -17,7 +17,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from utils.dtu_ui import Clickable_Video_Label
 from utils.dtu_io import DLC_Data_Loader
-from utils.dtu_comp import Progress_Bar_Comp
+from utils.dtu_comp import Menu_Comp, Progress_Bar_Comp
 
 import traceback
 
@@ -34,21 +34,29 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.setWindowTitle("DLC 3D Plotter - DEBUG MODE") if self.is_debug else self.setWindowTitle("DLC 3D Plotter")
         self.setGeometry(100, 100, 1600, 960)
 
+        self.menu_comp = Menu_Comp(self)
+        self.setMenuBar(self.menu_comp)
+        plotter_3d_menu_config = {
+            "File": {
+                "display_name": "File",
+                "buttons": [
+                    ("Load DLC Configs", self.load_dlc_config),
+                    ("Load Calibrations", self.load_calibrations),
+                    ("Load Videos and Predictions", self.load_prediction)
+                ]
+            },
+            "Export": {
+                "display_name": "Save",
+                "buttons": [
+                    ("Refine Tracks", self.call_track_refiner)
+                ]
+            }
+        }
+        self.menu_comp.add_menu_from_config(plotter_3d_menu_config)
+
         self.central_widget = QtWidgets.QWidget()
         self.setCentralWidget(self.central_widget)
         self.layout = QtWidgets.QVBoxLayout(self.central_widget)
-
-        self.button_layout = QtWidgets.QHBoxLayout()
-        self.load_dlc_config_button = QPushButton("1. Load DLC Configs")
-        self.load_calibrations_button = QPushButton("2. Load Calibrations")
-        self.load_video_folder_button = QPushButton("3. Load Videos and Predictions")
-        self.refine_tracks_button = QPushButton("4. Refine Tracks")
-
-        self.button_layout.addWidget(self.load_dlc_config_button)
-        self.button_layout.addWidget(self.load_calibrations_button)
-        self.button_layout.addWidget(self.load_video_folder_button)
-        self.button_layout.addWidget(self.refine_tracks_button)
-        self.layout.addLayout(self.button_layout)
 
         self.display_layout = QtWidgets.QHBoxLayout()
         self.video_layout = QtWidgets.QGridLayout()
@@ -100,10 +108,6 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.navigation_group_box.hide() # Hide until videos are loaded
 
         # Connect buttons to events
-        self.load_dlc_config_button.clicked.connect(self.load_dlc_config)
-        self.load_video_folder_button.clicked.connect(self.open_video_folder_dialog)
-        self.load_calibrations_button.clicked.connect(self.load_calibrations)
-        self.refine_tracks_button.clicked.connect(self.call_track_refiner)
 
         self.prev_10_frames_button.clicked.connect(lambda: self.change_frame(-10))
         self.prev_frame_button.clicked.connect(lambda: self.change_frame(-1))

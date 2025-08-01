@@ -37,15 +37,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.setWindowTitle("DLC Track Refiner")
         self.setGeometry(100, 100, 1200, 960)
 
-        self.central_widget = QtWidgets.QWidget()
-        self.setCentralWidget(self.central_widget)
-        self.layout = QtWidgets.QVBoxLayout(self.central_widget)
-
-        self.is_debug = False
-        if self.is_debug:
-            self.setWindowTitle("DLC Track Refiner ----- DEBUG MODE")
-
         self.menu_comp = Menu_Comp(self)
+        self.setMenuBar(self.menu_comp)
         refiner_menu_config = {
             "File": {
                 "display_name": "File",
@@ -80,7 +73,14 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             }
         }
         self.menu_comp.add_menu_from_config(refiner_menu_config)
-        self.layout.addWidget(self.menu_comp)
+
+        self.central_widget = QtWidgets.QWidget()
+        self.setCentralWidget(self.central_widget)
+        self.layout = QtWidgets.QVBoxLayout(self.central_widget)
+
+        self.is_debug = False
+        if self.is_debug:
+            self.setWindowTitle("DLC Track Refiner ----- DEBUG MODE")
 
         # Graphics view for interactive elements and video display
         self.graphics_scene = QtWidgets.QGraphicsScene(self)

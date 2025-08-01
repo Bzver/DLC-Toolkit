@@ -4,8 +4,8 @@ from PySide6.QtWidgets import QPushButton, QMenu, QToolButton, QWidget
 
 from utils.dtu_ui import Slider_With_Marks
 
-class Menu_Comp(QWidget):
-    def __init__(self, parent):
+class Menu_Comp(QtWidgets.QMenuBar):
+    def __init__(self, parent=None):
         super().__init__(parent)
 
         self.menu_layout = QtWidgets.QHBoxLayout()
@@ -30,22 +30,11 @@ class Menu_Comp(QWidget):
         """
         for menu_name, config in menu_config.items():
             display_name = config.get("display_name", menu_name)
-            menu = QMenu(display_name, self)
+            menu = self.addMenu(display_name)
             
             for action_text, action_func in config["buttons"]:
                 action = menu.addAction(action_text)
                 action.triggered.connect(action_func)
-            
-            self._create_menu_button(display_name, menu)
-            
-        self.menu_layout.addStretch(1)
-
-    def _create_menu_button(self, button_text: str, menu: QMenu, alignment=Qt.AlignLeft):
-        button = QToolButton()
-        button.setText(button_text)
-        button.setMenu(menu)
-        button.setPopupMode(QToolButton.InstantPopup)
-        self.menu_layout.addWidget(button, alignment=alignment)
 
 ###################################################################################################################################################
 

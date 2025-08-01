@@ -25,11 +25,8 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         self.setWindowTitle("DLC Manual Frame Extractor")
         self.setGeometry(100, 100, 1200, 960)
 
-        self.central_widget = QtWidgets.QWidget()
-        self.setCentralWidget(self.central_widget)
-        self.layout = QtWidgets.QVBoxLayout(self.central_widget)
-
         self.menu_comp = Menu_Comp(self)
+        self.setMenuBar(self.menu_comp)
         extractor_menu_config = {
             "File": {
                 "display_name": "File",
@@ -50,7 +47,10 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             }
         }
         self.menu_comp.add_menu_from_config(extractor_menu_config)
-        self.layout.addWidget(self.menu_comp)
+
+        self.central_widget = QtWidgets.QWidget()
+        self.setCentralWidget(self.central_widget)
+        self.layout = QtWidgets.QVBoxLayout(self.central_widget)
 
         # Video display area
         self.video_label = QtWidgets.QLabel("No video loaded")
