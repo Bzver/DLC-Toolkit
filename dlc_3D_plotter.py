@@ -10,14 +10,15 @@ import cv2
 from PySide6 import QtWidgets, QtGui
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QShortcut, QKeySequence, QCloseEvent
-from PySide6.QtWidgets import QMessageBox, QPushButton
+from PySide6.QtWidgets import QMessageBox
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from utils.dtu_ui import Clickable_Video_Label
 from utils.dtu_io import DLC_Data_Loader
-from utils.dtu_comp import Menu_Comp, Progress_Bar_Comp
+from utils.dtu_comp import Menu_Comp, Progress_Bar_Comp, Nav_Comp
+import utils.dtu_helper as dtuh
 
 import traceback
 
@@ -30,8 +31,9 @@ VIDEO_FOLDER_DEBUG = "D:/Project/SDANNCE-Models/4CAM-250620/SD-20250705-MULTI/Vi
 class DLC_3D_plotter(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
+
         self.is_debug = False
-        self.setWindowTitle("DLC 3D Plotter - DEBUG MODE") if self.is_debug else self.setWindowTitle("DLC 3D Plotter")
+        self.setWindowTitle(dtuh.format_title("DLC 3D Plotter", self.is_debug))
         self.setGeometry(100, 100, 1600, 960)
 
         self.menu_comp = Menu_Comp(self)
@@ -42,12 +44,14 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 "buttons": [
                     ("Load DLC Configs", self.load_dlc_config),
                     ("Load Calibrations", self.load_calibrations),
-                    ("Load Videos and Predictions", self.load_prediction)
+                    ("Load Videos and Predictions", self.open_video_folder_dialog)
                 ]
             },
-            "Export": {
-                "display_name": "Save",
+            "Edit": {
+                "display_name": "Edit",
                 "buttons": [
+                    ("Mark / Unmark Current Frame (X)", self.wip_unimplemented),
+                    ("Adjust Confidence Cutoff", self.wip_unimplemented),
                     ("Refine Tracks", self.call_track_refiner)
                 ]
             }
@@ -92,36 +96,30 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.progress_bar_comp.frame_changed.connect(self._handle_frame_change_from_comp)
 
         # Navigation controls
-        self.navigation_group_box = QtWidgets.QGroupBox("Video Navigation")
-        self.navigation_layout = QtWidgets.QHBoxLayout(self.navigation_group_box)
+        self.nav_comp = Nav_Comp()
+        self.layout.addWidget(self.nav_comp)
+        self.nav_comp.hide()
 
-        self.prev_10_frames_button = QPushButton("Prev 10 Frames (Shift + ←)")
-        self.prev_frame_button = QPushButton("Prev Frame (←)")
-        self.next_frame_button = QPushButton("Next Frame (→)")
-        self.next_10_frames_button = QPushButton("Next 10 Frames (Shift + →)")
-        self.navigation_layout.addWidget(self.prev_10_frames_button)
-        self.navigation_layout.addWidget(self.prev_frame_button)
-        self.navigation_layout.addWidget(self.next_frame_button)
-        self.navigation_layout.addWidget(self.next_10_frames_button)
-
-        self.layout.addWidget(self.navigation_group_box)
-        self.navigation_group_box.hide() # Hide until videos are loaded
-
-        # Connect buttons to events
-
-        self.prev_10_frames_button.clicked.connect(lambda: self.change_frame(-10))
-        self.prev_frame_button.clicked.connect(lambda: self.change_frame(-1))
-        self.next_frame_button.clicked.connect(lambda: self.change_frame(1))
-        self.next_10_frames_button.clicked.connect(lambda: self.change_frame(10))
+        self.nav_comp.frame_changed_sig.connect(self.change_frame)
+        self.nav_comp.prev_marked_frame_sig.connect(self.wip_unimplemented)
+        self.nav_comp.next_marked_frame_sig.connect(self.wip_unimplemented)
 
         QShortcut(QKeySequence(Qt.Key_Left | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(-10))
         QShortcut(QKeySequence(Qt.Key_Left), self).activated.connect(lambda: self.change_frame(-1))
         QShortcut(QKeySequence(Qt.Key_Right), self).activated.connect(lambda: self.change_frame(1))
         QShortcut(QKeySequence(Qt.Key_Right | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(10))
         QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.progress_bar_comp.toggle_playback)
+        QShortcut(QKeySequence(Qt.Key_X), self).activated.connect(self.wip_unimplemented)
 
         self.canvas.mpl_connect("scroll_event", self.on_scroll_3d_plot)
 
+        self.reset_state()
+
+    def wip_unimplemented(self):
+        QMessageBox.information(self, "Unimplemented", "This function has yet to be implemented.")
+        pass
+
+    def reset_state(self):
         self.num_cam = None
 
         self.confidence_cutoff = 0.6 # Initialize confidence cutoff
@@ -137,8 +135,8 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.plot_lim = 300
         self.instance_color = [(255, 165, 0), (51, 255, 51), (51, 153, 255), (255, 51, 51), (255, 255, 102)] # RGB
         
-        self.current_frame_idx = 0      # Single frame index for all synchronized videos
-        self.total_frames = 0      # Max frames across all videos
+        self.current_frame_idx = 0
+        self.total_frames = 0
         self.selected_cam_idx = None
 
         self.refiner_window = None
@@ -255,7 +253,6 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         # Initialize the pred_data_array to accept all data streams
         self.pred_data_array = np.full((self.total_frames, self.num_cam, self.dlc_data.instance_count, self.dlc_data.num_keypoint * 3), np.nan)
 
-        pred_data_list = [None] * self.num_cam
         for k in range(self.num_cam):
             if folder_list[k] is not None:
                 folder = folder_list[k]
@@ -266,14 +263,14 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 h5_files.sort()
                 h5_file = h5_files[-1] # Take the newest one
                 self.prediction_list[k] = h5_file
-                self.load_prediction(k, h5_file)
+                self.load_prediction(cam_idx=k, prediction_filepath=h5_file)
 
         self.current_frame_idx = 0
         self.progress_bar_comp.set_slider_range(self.total_frames)
-        self.navigation_group_box.show()
+        self.nav_comp.show()
         self.display_current_frame() # Display the first frames
 
-    def load_prediction(self, cam_idx: int, prediction_filepath: str):
+    def load_prediction(self, cam_idx:int, prediction_filepath:str):
         """
         Loads prediction data for a specific camera using DLC_Data_Loader
         and populates the main pred_data_array.
@@ -320,9 +317,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.cam_dir = np.array(cam_dir)
 
     ###################################################################################################################################################
-
-    def call_track_refiner(self):    
-        
+    def call_track_refiner(self): 
         from dlc_track_refiner import DLC_Track_Refiner
 
         if not hasattr(self, "video_list") or not hasattr(self, "prediction_list") or self.dlc_data is None:
@@ -344,7 +339,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.refiner_window.current_frame_idx = self.current_frame_idx
         self.refiner_window.prediction = self.prediction_list[selected_value]
         self.refiner_window.display_current_frame()
-        self.refiner_window.navigation_box_title_controller()
+        self.refiner_window.navigation_title_controller()
         self.refiner_window.show()
         self.refiner_window.prediction_saved.connect(self.reload_prediction)
 
@@ -750,21 +745,19 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         if 0 <= new_frame_idx < self.total_frames:
             self.current_frame_idx = new_frame_idx
             self.display_current_frame()
-            self.navigation_box_title_controller()
+            self.navigation_title_controller()
 
         self.canvas.draw_idle()
 
-    def navigation_box_title_controller(self):
-        self.navigation_group_box.setTitle(f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1}")
+    def navigation_title_controller(self):
+        self.nav_comp.setTitle(f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1}")
 
     ###################################################################################################################################################
 
     def _handle_frame_change_from_comp(self, new_frame_idx: int):
         self.current_frame_idx = new_frame_idx
         self.display_current_frame()
-        self.navigation_box_title_controller()
-
-    ###################################################################################################################################################
+        self.navigation_title_controller()
 
     def on_scroll_3d_plot(self, event):
         """Handle matplotlib scroll events for zooming the 3D plot."""

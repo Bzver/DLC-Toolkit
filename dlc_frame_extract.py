@@ -15,7 +15,7 @@ from PySide6.QtGui import QShortcut, QKeySequence, QCloseEvent
 from PySide6.QtWidgets import QMessageBox, QPushButton, QFileDialog
 
 from utils.dtu_io import DLC_Data_Loader, DLC_Exporter
-from utils.dtu_comp import Menu_Comp, Progress_Bar_Comp
+from utils.dtu_comp import Menu_Comp, Progress_Bar_Comp, Nav_Comp
 
 import traceback
 
@@ -36,12 +36,19 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
                     ("Load Workplace", self.load_workplace)
                 ]
             },
+            "Edit": {
+                "display_name": "Edit",
+                "buttons": [
+                    ("Mark / Unmark Current Frame (X)", self.toggle_frame_status),
+                    ("Adjust Confidence Cutoff", self.adjust_confidence_cutoff),
+                    ("Edit in Refiner", self.export_to_refiner)
+                ]
+            },
             "Export": {
                 "display_name": "Save",
                 "buttons": [
                     ("Save the Current Workspace", self.save_workspace),
                     ("Export to DLC", self.save_to_dlc),
-                    ("Export to Refiner", self.export_to_refiner),
                     ("Merge with Existing Data", self.merge_data)
                 ]
             }
@@ -64,47 +71,19 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         self.progress_bar_comp.frame_changed.connect(self._handle_frame_change_from_comp)
 
         # Navigation controls
-        self.navigation_group_box = QtWidgets.QGroupBox("Video Navigation")
-        self.navigation_layout = QtWidgets.QGridLayout(self.navigation_group_box)
+        self.nav_comp = Nav_Comp()
+        self.layout.addWidget(self.nav_comp)
+        self.nav_comp.hide()
 
-        self.prev_10_frames_button = QPushButton("Prev 10 Frames (Shift + ←)")
-        self.prev_frame_button = QPushButton("Prev Frame (←)")
-        self.next_frame_button = QPushButton("Next Frame (→)")
-        self.next_10_frames_button = QPushButton("Next 10 Frames (Shift + →)")
-
-        self.prev_marked_frame_button = QPushButton("◄ Prev Marked (↑)")
-        self.next_marked_frame_button = QPushButton("► Next Marked (↓)")
-        self.mark_frame_button = QPushButton("Mark / Unmark Current Frame (X)")
-        self.adjust_confidence_cutoff_button = QPushButton("Adjust Confidence Cutoff")
-
-        self.navigation_layout.addWidget(self.prev_10_frames_button, 0, 0)
-        self.navigation_layout.addWidget(self.prev_frame_button, 0, 1)
-        self.navigation_layout.addWidget(self.next_frame_button, 0, 2)
-        self.navigation_layout.addWidget(self.next_10_frames_button, 0, 3)
-
-        self.navigation_layout.addWidget(self.mark_frame_button, 1, 0)
-        self.navigation_layout.addWidget(self.prev_marked_frame_button, 1, 1)
-        self.navigation_layout.addWidget(self.next_marked_frame_button, 1, 2)
-        self.navigation_layout.addWidget(self.adjust_confidence_cutoff_button, 1, 3)
-
-        self.layout.addWidget(self.navigation_group_box)
-        self.navigation_group_box.hide()
-
-        self.prev_10_frames_button.clicked.connect(lambda: self.change_frame(-10))
-        self.prev_frame_button.clicked.connect(lambda: self.change_frame(-1))
-        self.next_frame_button.clicked.connect(lambda: self.change_frame(1))
-        self.next_10_frames_button.clicked.connect(lambda: self.change_frame(10))
-
-        self.prev_marked_frame_button.clicked.connect(self.prev_marked_frame)
-        self.next_marked_frame_button.clicked.connect(self.next_marked_frame)
-        self.mark_frame_button.clicked.connect(self.change_current_frame_status)
-        self.adjust_confidence_cutoff_button.clicked.connect(self.adjust_confidence_cutoff)
+        self.nav_comp.frame_changed_sig.connect(self.change_frame)
+        self.nav_comp.prev_marked_frame_sig.connect(self.prev_marked_frame)
+        self.nav_comp.next_marked_frame_sig.connect(self.next_marked_frame)
 
         QShortcut(QKeySequence(Qt.Key_Left | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(-10))
         QShortcut(QKeySequence(Qt.Key_Left), self).activated.connect(lambda: self.change_frame(-1))
         QShortcut(QKeySequence(Qt.Key_Right), self).activated.connect(lambda: self.change_frame(1))
         QShortcut(QKeySequence(Qt.Key_Right | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(10))
-        QShortcut(QKeySequence(Qt.Key_X), self).activated.connect(self.change_current_frame_status)
+        QShortcut(QKeySequence(Qt.Key_X), self).activated.connect(self.toggle_frame_status)
         QShortcut(QKeySequence(Qt.Key_Up), self).activated.connect(self.prev_marked_frame)
         QShortcut(QKeySequence(Qt.Key_Down), self).activated.connect(self.next_marked_frame)
         QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.progress_bar_comp.toggle_playback)
@@ -127,7 +106,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         self.is_saved = True
         self.last_saved = []
 
-        self.navigation_group_box.hide()
+        self.nav_comp.hide()
 
         self.refiner_window = None
 
@@ -140,7 +119,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
     def _handle_frame_change_from_comp(self, new_frame_idx: int):
         self.current_frame_idx = new_frame_idx
         self.display_current_frame()
-        self.navigation_box_title_controller()
+        self.navigation_title_controller()
 
     def load_video(self):
         self.reset_state()
@@ -149,7 +128,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         if video_path:
             self.video_file = video_path
             self.initialize_loaded_video()
-            self.navigation_group_box.show()
+            self.nav_comp.show()
 
     def initialize_loaded_video(self):
         self.video_name = os.path.basename(self.video_file).split(".")[0]
@@ -168,7 +147,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         self.progress_bar_comp.set_frame_category("refined_frames", self.refined_frame_list, "#009979", priority=7)
         self.progress_bar_comp.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7")
         self.display_current_frame()
-        self.navigation_box_title_controller()
+        self.navigation_title_controller()
         print(f"Video loaded: {self.video_file}")
 
     def load_prediction(self):
@@ -444,23 +423,23 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             if 0 <= new_frame_idx < self.total_frames:
                 self.current_frame_idx = new_frame_idx
                 self.display_current_frame()
-                self.navigation_box_title_controller()
+                self.navigation_title_controller()
 
-    def navigation_box_title_controller(self):
-        self.navigation_group_box.show()
-        self.navigation_group_box.setTitle(f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | Video: {self.video_name}")
+    def navigation_title_controller(self):
+        self.nav_comp.show()
+        self.nav_comp.setTitle(f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | Video: {self.video_name}")
         if self.current_frame_idx in self.labeled_frame_list:
-            self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: #1F32D7;}""")
+            self.nav_comp.setStyleSheet("""QGroupBox::title {color: #1F32D7;}""")
         elif self.current_frame_idx in self.refined_frame_list:
-            self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: #009979;}""")
+            self.nav_comp.setStyleSheet("""QGroupBox::title {color: #009979;}""")
         elif self.current_frame_idx in self.frame_list:
-            self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: #E28F13;}""")
+            self.nav_comp.setStyleSheet("""QGroupBox::title {color: #E28F13;}""")
         else:
-            self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: black;}""")
+            self.nav_comp.setStyleSheet("""QGroupBox::title {color: black;}""")
 
     ###################################################################################################################################################
 
-    def change_current_frame_status(self):
+    def toggle_frame_status(self):
         if self.current_frame is None:
             QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
             return
@@ -488,10 +467,18 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
 
         self.determine_save_status()
         self.progress_bar_comp.set_frame_category("marked_frames", self.frame_list, "#E28F13")
-        self.navigation_box_title_controller()
+        self.navigation_title_controller()
 
     def adjust_confidence_cutoff(self):
         """Pops out a menu with a QSlider to adjust self.confidence_cutoff."""
+        if self.current_frame is None:
+            QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
+            return
+        
+        if not self.dlc_data:
+            QMessageBox.warning(self, "No Prediction", "No prediction has been loaded, please load prediction first.")
+            return
+        
         dialog = QtWidgets.QDialog(self)
         dialog.setWindowTitle("Adjust Confidence Cutoff")
         dialog.setModal(True)
@@ -535,7 +522,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         if current_idx_in_marked >= 0:
             self.current_frame_idx = self.frame_list[current_idx_in_marked]
             self.display_current_frame()
-            self.navigation_box_title_controller()
+            self.navigation_title_controller()
         else:
             QMessageBox.information(self, "Navigation", "No previous marked frame found.")
 
@@ -553,7 +540,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         if current_idx_in_marked < len(self.frame_list):
             self.current_frame_idx = self.frame_list[current_idx_in_marked]
             self.display_current_frame()
-            self.navigation_box_title_controller()
+            self.navigation_title_controller()
         else:
             QMessageBox.information(self, "Navigation", "No next marked frame found.")
 
@@ -602,7 +589,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             self.refiner_window.prediction = self.dlc_data.prediction_filepath
             self.refiner_window.initialize_loaded_data()
             self.refiner_window.display_current_frame()
-            self.refiner_window.navigation_box_title_controller()
+            self.refiner_window.navigation_title_controller()
             if self.frame_list:
                 self.refiner_window.direct_keypoint_edit()
                 self.refiner_window.refined_frames_exported.connect(self._handle_refined_frames_exported)

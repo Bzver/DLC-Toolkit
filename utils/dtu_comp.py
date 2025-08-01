@@ -1,6 +1,6 @@
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtWidgets import QPushButton, QMenu, QToolButton, QWidget
+from PySide6.QtWidgets import QPushButton
 
 from utils.dtu_ui import Slider_With_Marks
 
@@ -38,7 +38,7 @@ class Menu_Comp(QtWidgets.QMenuBar):
 
 ###################################################################################################################################################
 
-class Progress_Bar_Comp(QWidget):
+class Progress_Bar_Comp(QtWidgets.QWidget):
     frame_changed = Signal(int)
 
     def __init__(self):
@@ -108,3 +108,40 @@ class Progress_Bar_Comp(QWidget):
 
 ###################################################################################################################################################
 
+class Nav_Comp(QtWidgets.QGroupBox):
+    """A modular widget for video navigation controls."""
+    frame_changed_sig = Signal(int)
+    prev_marked_frame_sig = Signal()
+    next_marked_frame_sig = Signal()
+
+    def __init__(self, mark_name="Marked", parent=None):
+        super().__init__(parent)
+        self.title = "Video Navigation"
+        self.marked_name = mark_name
+        self.navigation_layout = QtWidgets.QGridLayout(self)
+        self._create_buttons()
+
+    def _create_buttons(self):
+        self.prev_10_frames_button = QtWidgets.QPushButton("Prev 10 Frames (Shift + ←)")
+        self.prev_frame_button = QtWidgets.QPushButton("Prev Frame (←)")
+        self.next_frame_button = QtWidgets.QPushButton("Next Frame (→)")
+        self.next_10_frames_button = QtWidgets.QPushButton("Next 10 Frames (Shift + →)")
+        self.prev_marked_frame_button = QtWidgets.QPushButton(f"◄ Prev {self.marked_name} (↑)")
+        self.next_marked_frame_button = QtWidgets.QPushButton(f"► Next {self.marked_name} (↓)")
+
+        self.navigation_layout.addWidget(self.prev_10_frames_button, 0, 0)
+        self.navigation_layout.addWidget(self.next_10_frames_button, 1, 0)
+        self.navigation_layout.addWidget(self.prev_frame_button, 0, 1)
+        self.navigation_layout.addWidget(self.next_frame_button, 1, 1)
+        self.navigation_layout.addWidget(self.prev_marked_frame_button, 0, 2)
+        self.navigation_layout.addWidget(self.next_marked_frame_button, 1, 2)
+
+        # Connect internal button signals to our custom signals
+        self.prev_10_frames_button.clicked.connect(lambda: self.frame_changed_sig.emit(-10))
+        self.prev_frame_button.clicked.connect(lambda: self.frame_changed_sig.emit(-1))
+        self.next_frame_button.clicked.connect(lambda: self.frame_changed_sig.emit(1))
+        self.next_10_frames_button.clicked.connect(lambda: self.frame_changed_sig.emit(10))
+        self.prev_marked_frame_button.clicked.connect(self.prev_marked_frame_sig.emit)
+        self.next_marked_frame_button.clicked.connect(self.next_marked_frame_sig.emit)
+
+###################################################################################################################################################

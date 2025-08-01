@@ -16,7 +16,8 @@ from PySide6.QtWidgets import QMessageBox, QPushButton, QGraphicsView, QGraphics
 
 from utils.dtu_ui import Selectable_Instance, Draggable_Keypoint
 from utils.dtu_io import DLC_Data_Loader, DLC_Exporter
-from utils.dtu_comp import Menu_Comp, Progress_Bar_Comp
+from utils.dtu_comp import Menu_Comp, Progress_Bar_Comp, Nav_Comp
+import utils.dtu_helper as dtuh
 
 import traceback
 
@@ -34,7 +35,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("DLC Track Refiner")
+
+        self.is_debug = False
+        self.setWindowTitle(dtuh.format_title("DLC Track Refiner", self.is_debug))
         self.setGeometry(100, 100, 1200, 960)
 
         self.menu_comp = Menu_Comp(self)
@@ -78,10 +81,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.setCentralWidget(self.central_widget)
         self.layout = QtWidgets.QVBoxLayout(self.central_widget)
 
-        self.is_debug = False
-        if self.is_debug:
-            self.setWindowTitle("DLC Track Refiner ----- DEBUG MODE")
-
         # Graphics view for interactive elements and video display
         self.graphics_scene = QtWidgets.QGraphicsScene(self)
         self.graphics_view = QGraphicsView(self.graphics_scene)
@@ -120,21 +119,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         # Navigation controls and refiner controls
         self.control_layout = QtWidgets.QHBoxLayout()
 
-        self.navigation_group_box = QtWidgets.QGroupBox("Video Navigation")
-        self.navigation_layout = QtWidgets.QGridLayout(self.navigation_group_box)
-        self.prev_10_frames_button = QPushButton("Prev 10 Frames (Shift + ←)")
-        self.next_10_frames_button = QPushButton("Next 10 Frames (Shift + →)")
-        self.prev_frame_button = QPushButton("Prev Frame (←)")
-        self.next_frame_button = QPushButton("Next Frame (→)")
-        self.prev_roi_frame_button = QPushButton("◄ Prev ROI (↑)")
-        self.next_roi_frame_button = QPushButton("► Next ROI (↓)")
-
-        self.navigation_layout.addWidget(self.prev_10_frames_button, 0, 0)
-        self.navigation_layout.addWidget(self.next_10_frames_button, 1, 0)
-        self.navigation_layout.addWidget(self.prev_frame_button, 0, 1)
-        self.navigation_layout.addWidget(self.next_frame_button, 1, 1)
-        self.navigation_layout.addWidget(self.prev_roi_frame_button, 0, 2)
-        self.navigation_layout.addWidget(self.next_roi_frame_button, 1, 2)
+        self.nav_comp = Nav_Comp(mark_name="ROI Frame")
+        self.control_layout.addWidget(self.nav_comp)
+        self.nav_comp.hide()
 
         self.refiner_group_box = QtWidgets.QGroupBox("Track Refiner")
         self.refiner_layout = QtWidgets.QGridLayout(self.refiner_group_box)
@@ -150,9 +137,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.refiner_layout.addWidget(self.delete_track_button, 0, 1)
         self.refiner_layout.addWidget(self.interpolate_track_button, 1, 0)
         self.refiner_layout.addWidget(self.fill_track_button, 1, 1)
-
-        self.control_layout.addWidget(self.navigation_group_box)
         self.control_layout.addWidget(self.refiner_group_box)
+
         self.layout.addLayout(self.control_layout)
 
         # Connect buttons to events
@@ -160,13 +146,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.redo_button.clicked.connect(self.redo_changes)
         self.magnifier_button.clicked.connect(self.toggle_zoom_mode)
 
-        self.prev_10_frames_button.clicked.connect(lambda: self.change_frame(-10))
-        self.prev_frame_button.clicked.connect(lambda: self.change_frame(-1))
-        self.next_frame_button.clicked.connect(lambda: self.change_frame(1))
-        self.next_10_frames_button.clicked.connect(lambda: self.change_frame(10))
-
-        self.prev_roi_frame_button.clicked.connect(lambda:self.prev_roi_frame("frame"))
-        self.next_roi_frame_button.clicked.connect(lambda:self.next_roi_frame("frame"))
         self.swap_track_button.clicked.connect(lambda:self.swap_track("point"))
         self.delete_track_button.clicked.connect(lambda:self.delete_track("point"))
         self.interpolate_track_button.clicked.connect(self.interpolate_track)
@@ -213,7 +192,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         self.is_playing = False
 
-        self.navigation_group_box.hide()
+        self.nav_comp.hide()
         self.refiner_group_box.hide()
         self.plot_opacity = 1.0
         self.point_size = 6
@@ -243,7 +222,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             
     def initialize_loaded_video(self):
         self.video_name = os.path.basename(self.video_file).split(".")[0]
-        self.navigation_group_box.show()
+        self.nav_comp.show()
         self.refiner_group_box.show()
         self.cap = cv2.VideoCapture(self.video_file)
         
@@ -257,7 +236,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.progress_bar_comp.set_slider_range(self.total_frames) # Initialize slider range
         self.display_current_frame()
         self.reset_zoom()
-        self.navigation_box_title_controller()
+        self.navigation_title_controller()
         print(f"Video loaded: {self.video_file}")
 
     def load_prediction(self):
@@ -482,19 +461,19 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 self.current_frame_idx = new_frame_idx
                 self.display_current_frame()
                 self.reset_zoom()
-                self.navigation_box_title_controller()
+                self.navigation_title_controller()
 
-    def navigation_box_title_controller(self):
+    def navigation_title_controller(self):
         title = f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | Video: {self.video_name}"
         if self.is_kp_edit and self.current_frame_idx:
             title += " ----- KEYPOINTS EDITING MODE ----- "
-        self.navigation_group_box.setTitle(title)
+        self.nav_comp.setTitle(title)
         if self.current_frame_idx in self.refined_roi_frame_list:
-            self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: #009979;}""")
+            self.nav_comp.setStyleSheet("""QGroupBox::title {color: #009979;}""")
         elif self.current_frame_idx in self.roi_frame_list:
-            self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: #F04C4C;}""")
+            self.nav_comp.setStyleSheet("""QGroupBox::title {color: #F04C4C;}""")
         else:
-            self.navigation_group_box.setStyleSheet("""QGroupBox::title {color: black;}""")
+            self.nav_comp.setStyleSheet("""QGroupBox::title {color: black;}""")
 
     def adjust_point_size(self):
         dialog = QtWidgets.QDialog(self)
@@ -541,7 +520,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         else:
             self.graphics_view.setDragMode(QGraphicsView.NoDrag)
             self.graphics_view.wheelEvent = super(QGraphicsView, self.graphics_view).wheelEvent
-        self.navigation_box_title_controller()
+        self.navigation_title_controller()
 
     def reset_zoom(self):
         self.zoom_factor = 1.0
@@ -585,7 +564,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             else:
                 self.current_frame_idx = self.roi_frame_list[current_idx_in_roi]
             self.display_current_frame()
-            self.navigation_box_title_controller()
+            self.navigation_title_controller()
         else:
             QMessageBox.information(self, "Navigation", "No previous ROI frame found.")
 
@@ -605,7 +584,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             else:
                 self.current_frame_idx = self.roi_frame_list[current_idx_in_roi]
             self.display_current_frame()
-            self.navigation_box_title_controller()
+            self.navigation_title_controller()
         else:
             QMessageBox.information(self, "Navigation", "No next ROI frame found.")
             return
@@ -770,7 +749,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             return
         
         self.is_kp_edit = not self.is_kp_edit # Toggle the mode
-        self.navigation_box_title_controller() # Update title to reflect mode
+        self.navigation_title_controller() # Update title to reflect mode
         
         # Enable/disable draggable property of items based on self.is_kp_edit
         for item in self.graphics_scene.items():
@@ -787,7 +766,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         else:
             QMessageBox.information(self, "Keypoint Editing Mode", "Keypoint editing mode is OFF.")
 
-        self.navigation_box_title_controller()
+        self.navigation_title_controller()
 
     def update_keypoint_position(self, instance_id, keypoint_id, new_x, new_y):
         self._save_state_for_undo()
@@ -803,7 +782,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.is_saved = False
         QtCore.QTimer.singleShot(0, self.display_current_frame)
         self._refresh_slider()
-        self.navigation_box_title_controller()
+        self.navigation_title_controller()
 
     def update_instance_position(self, instance_id, dx, dy):
         self._save_state_for_undo()
@@ -825,7 +804,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.is_saved = False
         QtCore.QTimer.singleShot(0, self.display_current_frame)
         self._refresh_slider()
-        self.navigation_box_title_controller()
+        self.navigation_title_controller()
 
     def delete_dragged_keypoint(self):
         if self.is_kp_edit and self.dragged_keypoint:
@@ -1036,7 +1015,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
     def _handle_frame_change_from_comp(self, new_frame_idx: int):
         self.current_frame_idx = new_frame_idx
         self.display_current_frame()
-        self.navigation_box_title_controller()
+        self.navigation_title_controller()
 
     def _refresh_slider(self):
         self.progress_bar_comp.set_frame_category("Refined frames", self.refined_roi_frame_list, "#009979", priority=7)
