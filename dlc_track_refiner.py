@@ -328,6 +328,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
                 self.graphics_view.update() # Force update of the graphics view
 
+                self.progress_bar_comp.set_current_frame(self.current_frame_idx) # Update slider handle's position
+
             else: # If video frame cannot be read, clear scene and display error
                 self.graphics_scene.clear()
                 error_text_item = self.graphics_scene.addText("Error: Could not read frame")

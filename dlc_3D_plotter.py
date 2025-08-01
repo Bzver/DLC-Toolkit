@@ -405,6 +405,8 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             else:
                 self.video_labels[i].setText(f"Video {i+1} Not Loaded/Available")
                 self.video_labels[i].setPixmap(QtGui.QPixmap())
+            
+            self.progress_bar_comp.set_current_frame(self.current_frame_idx) # Update slider handle's position
 
             # Update border color based on selection
             if i == self.selected_cam_idx:

@@ -295,6 +295,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
                 scaled_pixmap = pixmap.scaled(self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 self.video_label.setPixmap(scaled_pixmap)
                 self.video_label.setText("")
+                self.progress_bar_comp.set_current_frame(self.current_frame_idx) # Update slider handle's position
             else:
                 self.video_label.setText("Error: Could not read frame")
         else:
