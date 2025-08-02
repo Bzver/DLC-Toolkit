@@ -2,6 +2,7 @@ import os
 import shutil
 
 import h5py
+import yaml
 
 import pandas as pd
 import numpy as np
@@ -47,7 +48,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 "display_name": "File",
                 "buttons": [
                     ("Load Video", self.load_video),
-                    ("Load Config and Prediction", self.load_prediction)
+                    ("Load Config and Prediction", self.load_prediction),
+                    ("Load Batch Commands", self.load_batch_commands)
                 ]
             },
             "Refiner": {
@@ -213,6 +215,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.is_zoom_mode = False
         self.zoom_factor = 1.0
 
+        self.in_batch_mode = False
+
         self._refresh_slider()
 
     def load_video(self):
@@ -251,7 +255,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             self.data_loader.dlc_config_loader()
             self.data_loader.prediction_loader()
         else:
-
             if self.current_frame is None:
                 QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
                 return
@@ -266,7 +269,11 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                     QMessageBox.critical(self, "DLC Config Error", "Failed to load DLC configuration. Check console for details.")
                     return
                 
-            QMessageBox.information(self, "DLC Config Loaded", "Suucessfully loaded DLC Config, now loading prediction.")
+            msg = "Suucessfully loaded DLC Config, now loading prediction."
+            if self.in_batch_mode:
+                print(msg)
+            else:
+                QMessageBox.information(self, "DLC Config Loaded", str(msg))
 
             file_dialog = QtWidgets.QFileDialog(self)
             prediction_path, _ = file_dialog.getOpenFileName(self, "Load Prediction", "", "HDF5 Files (*.h5);;All Files (*)")
@@ -278,7 +285,11 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                     QMessageBox.critical(self, "Prediction Error", "Failed to load prediction data. Check console for details.")
                     return
                 
-                QMessageBox.information(self, "Prediction Loaded", "Prediction data and DLC config loaded successfully!")
+                msg = "Prediction data and DLC config loaded successfully!"
+                if self.in_batch_mode:
+                    print(msg)
+                else:
+                    QMessageBox.information(self, "Prediction Loaded", str(msg))
 
         self.dlc_data = self.data_loader.get_loaded_dlc_data()
         self.initialize_loaded_data()
@@ -296,6 +307,62 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         self.display_current_frame()
         self.reset_zoom()
+
+    def load_batch_commands(self):
+        """Load a YAML file containing a list of commands and execute them in sequence."""
+        file_dialog = QtWidgets.QFileDialog(self)
+        command_filepath, _ = file_dialog.getOpenFileName(
+            self, "Load Batch Commands", "", "YAML Files (*.yaml);;All Files (*)"
+        )
+
+        if not command_filepath:
+            return
+
+        self.in_batch_mode = True
+
+        try:
+            with open(command_filepath, 'r') as file:
+                commands = yaml.safe_load(file)
+                if not isinstance(commands, list):
+                    QMessageBox.critical(self, "Batch Command Error", "Command file must be a list of commands.")
+                    return
+
+            for command_dict in commands:
+                command_name = command_dict.get("command")
+                args = command_dict.get("args", {})
+
+                print(f"Executing command: {command_name} with args: {args}")
+
+                # Execute the command
+                if hasattr(self, command_name):
+                    # Handle specific command logic
+                    if command_name == "load_video":
+                        self.video_file = args.get("path")
+                        if self.video_file:
+                            self.initialize_loaded_video()
+                    elif command_name == "load_prediction":
+                        self.data_loader.dlc_config_filepath = args.get("dlc_config")
+                        self.data_loader.prediction_filepath = args.get("prediction_path")
+                        if self.data_loader.dlc_config_loader() and self.data_loader.prediction_loader():
+                            self.dlc_data = self.data_loader.get_loaded_dlc_data()
+                            self.initialize_loaded_data()
+                    elif command_name == "save_prediction":
+                        self.save_prediction()
+                    elif command_name == "save_prediction_as_csv":
+                        self.save_prediction_as_csv()
+                    else:
+                        QMessageBox.warning(self, "Unknown Command", f"Unknown command: {command_name}. Skipping.")
+                else:
+                    QMessageBox.warning(self, "Unknown Command", f"Method not found for command: {command_name}. Skipping.")
+
+            QMessageBox.information(self, "Batch Commands", "Batch command execution finished.")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Batch Command Error", f"An error occurred while loading or executing commands: {e}")
+            traceback.print_exc()
+                
+        finally:
+            self.in_batch_mode = False
 
     ###################################################################################################################################################
 
@@ -1220,7 +1287,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         pred_file_to_save_path = os.path.join(pred_file_dir,f"{base_name}{trrf_suffix}{save_idx}.h5")
         
         shutil.copy(self.prediction, pred_file_to_save_path)
-        print(f"Copied original prediction to: {pred_file_to_save_path}")
+        print(f"Saved modified prediction to: {pred_file_to_save_path}")
         new_data = []
         num_frames = self.pred_data_array.shape[0]
         for frame_idx in range(num_frames):
@@ -1245,7 +1312,11 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             self.dlc_data = self.data_loader.get_loaded_dlc_data()
             self.is_saved = True
             
-            QMessageBox.information(self, "Save Successful", f"Successfully saved modified prediction to: {self.prediction}")
+            msg = f"Successfully saved modified prediction to: {self.prediction}"
+            if self.in_batch_mode:
+                print(msg)
+            else:
+                QMessageBox.information(self, "Save Successful", str(msg))
             self.prediction_saved.emit(self.prediction) # Emit the signal with the saved file path
             self.refined_frames_exported.emit(self.refined_roi_frame_list)
         except Exception as e:
@@ -1257,8 +1328,11 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         pred_file = os.path.basename(self.prediction).split(".")[0]
         try:
             DLC_Exporter.prediction_to_csv(self.dlc_data, self.pred_data_array, save_path, prediction_filename=pred_file)
-            QMessageBox.information(self, "Save Successful",
-                f"Successfully saved modified prediction in csv to: {os.path.join(save_path, pred_file)}.csv")
+            msg = f"Successfully saved modified prediction in csv to: {os.path.join(save_path, pred_file)}.csv"
+            if self.in_batch_mode:
+                print(msg)
+            else:
+                QMessageBox.information(self, "Save Successful", str(msg))
         except Exception as e:
             QMessageBox.critical(self, "Saving Error", f"An error occurred during csv saving: {e}")
             print(f"An error occurred during csv saving: {e}")

@@ -1,0 +1,83 @@
+# commands.yaml
+- command: load_video
+  args:
+    path: "D:/Project/A-SOID/Data/20250626/20250626C1-first3h-D.mp4"
+
+- command: load_prediction
+  args:
+    dlc_config: "D:/Project/DLC-Models/NTD/config.yaml"
+    prediction_path: "D:/Project/A-SOID/Data/20250626/20250626C1-first3h-DDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_370_snapshot_150_el_track_refiner_modified_0.h5"
+
+- command: save_prediction_as_csv
+  args: {}
+
+
+- command: load_video
+  args:
+    path: "D:/Project/A-SOID/Data/20250626/20250626C1-first3h-S.mp4"
+
+- command: load_prediction
+  args:
+    dlc_config: "D:/Project/DLC-Models/NTD/config.yaml"
+    prediction_path: "D:/Project/A-SOID/Data/20250626/20250626C1-first3h-SDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_370_snapshot_150_el_track_refiner_modified_0.h5"
+
+- command: save_prediction_as_csv
+  args: {}
+
+
+
+- command: load_video
+  args:
+    path: "D:/Project/A-SOID/Data/20250709/20250709-first3h-D-conv.mp4"
+
+- command: load_prediction
+  args:
+    dlc_config: "D:/Project/DLC-Models/NTD/config.yaml"
+    prediction_path: "D:/Project/A-SOID/Data/20250709/20250709-first3h-D-convDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_370_snapshot_150_el_track_refiner_modified_0.h5"
+
+- command: save_prediction_as_csv
+  args: {}
+
+
+
+- command: load_video
+  args:
+    path: "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-conv.mp4"
+
+- command: load_prediction
+  args:
+    dlc_config: "D:/Project/DLC-Models/NTD/config.yaml"
+    prediction_path: "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-convDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_370_snapshot_150_el_track_refiner_modified_0.h5"
+
+- command: save_prediction_as_csv
+  args: {}
+
+
+
+
+- command: load_video
+  args:
+    path: "D:/Project/A-SOID/Data/20250716/2025-07-16-first3h-D-conv.mp4"
+
+- command: load_prediction
+  args:
+    dlc_config: "D:/Project/DLC-Models/NTD/config.yaml"
+    prediction_path: "D:/Project/A-SOID/Data/20250716/2025-07-16-first3h-D-convDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_370_snapshot_150_el_track_refiner_modified_0.h5"
+
+- command: save_prediction_as_csv
+  args: {}
+
+
+
+
+- command: load_video
+  args:
+    path: "D:/Project/A-SOID/Data/20250716/2025-07-16-first3h-S-conv.mp4"
+
+- command: load_prediction
+  args:
+    dlc_config: "D:/Project/DLC-Models/NTD/config.yaml"
+    prediction_path: "D:/Project/A-SOID/Data/20250716/2025-07-16-first3h-S-convDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_370_snapshot_150_el_track_refiner_modified_0.h5"
+
+- command: save_prediction_as_csv
+  args: {}
