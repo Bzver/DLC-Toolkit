@@ -16,9 +16,11 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from utils.dtu_ui import Clickable_Video_Label
-from utils.dtu_io import DLC_Data_Loader
+from utils.dtu_io import DLC_Loader
 from utils.dtu_comp import Menu_Comp, Progress_Bar_Comp, Nav_Comp
-import utils.dtu_helper as dtuh
+import utils.dtu_helper as duh
+import utils.dtu_gui_helper as dugh
+import utils.dtu_triangulation as dutri
 
 import traceback
 
@@ -33,7 +35,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         super().__init__()
 
         self.is_debug = False
-        self.setWindowTitle(dtuh.format_title("DLC 3D Plotter", self.is_debug))
+        self.setWindowTitle(duh.format_title("DLC 3D Plotter", self.is_debug))
         self.setGeometry(100, 100, 1600, 960)
 
         self.menu_comp = Menu_Comp(self)
@@ -124,7 +126,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
         self.confidence_cutoff = 0.6 # Initialize confidence cutoff
 
-        self.data_loader = DLC_Data_Loader(self, None, None)
+        self.data_loader = DLC_Loader(None, None)
         self.dlc_data = None
         self.keypoint_to_idx = {}
 
@@ -177,13 +179,8 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         """
         self.data_loader.dlc_config_filepath = dlc_config_filepath
         try:
-            self.data_loader.dlc_config_loader()
-            print(f"DLC Config loaded: {dlc_config_filepath}")
-            self.dlc_data = self.data_loader.get_loaded_dlc_data(metadata_only=True)
+            self.dlc_data = dugh.load_and_show_message(self, self.data_loader, metadata_only=True)
             self.keypoint_to_idx = {name: idx for idx, name in enumerate(self.dlc_data.keypoints)}
-            if not self.is_debug:
-                QMessageBox.information(self, "Success", "DLC Config loaded successfully!")
-            
         except:
             QMessageBox.critical(self, "Error", "Failed to load DLC config.")
             traceback.print_exc()
@@ -276,27 +273,19 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         and populates the main pred_data_array.
         """
         self.data_loader.prediction_filepath = prediction_filepath
+        temp_dlc_data = dugh.load_and_show_message(self, self.data_loader, mute=True)
 
-        if self.data_loader.prediction_loader():
-            temp_dlc_data = self.data_loader.get_loaded_dlc_data()
-            if temp_dlc_data:
-                if temp_dlc_data.pred_data_array.shape[0] > self.total_frames:
-                    QMessageBox.warning(self, "Warning", "Reloaded prediction has more frames than total frames. Truncating.")
-                    self.pred_data_array[:, cam_idx, :, :] = temp_dlc_data.pred_data_array[:self.total_frames, :, :]
-                else:
-                    self.pred_data_array[:temp_dlc_data.pred_data_array.shape[0], cam_idx, :, :] = temp_dlc_data.pred_data_array
-                    # Pad with NaNs if the reloaded prediction is shorter
-                    if temp_dlc_data.pred_data_array.shape[0] < self.total_frames:
-                            self.pred_data_array[temp_dlc_data.pred_data_array.shape[0]:, cam_idx, :, :] = np.nan
+        if not temp_dlc_data:
+            return
 
-            else:
-                print(f"Error: Failed to get loaded prediction data for camera {cam_idx+1}.")
-                traceback.print_exc()
+        if temp_dlc_data.pred_data_array.shape[0] > self.total_frames:
+            QMessageBox.warning(self, "Warning", "Reloaded prediction has more frames than total frames. Truncating.")
+            self.pred_data_array[:, cam_idx, :, :] = temp_dlc_data.pred_data_array[:self.total_frames, :, :]
         else:
-            print(f"Error: Failed to load prediction for camera {cam_idx+1} from {prediction_filepath}")
-            traceback.print_exc()
-            return False
-        return True
+            self.pred_data_array[:temp_dlc_data.pred_data_array.shape[0], cam_idx, :, :] = temp_dlc_data.pred_data_array
+            # Pad with NaNs if the reloaded prediction is shorter
+            if temp_dlc_data.pred_data_array.shape[0] < self.total_frames:
+                    self.pred_data_array[temp_dlc_data.pred_data_array.shape[0]:, cam_idx, :, :] = np.nan
 
     def parse_calibration_mat(self, calib):
         cam_pos = [None] * self.num_cam_from_calib
@@ -311,7 +300,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             cam_pos[i] = -np.dot(r.T, t)
             cam_dir[i] = r[2, :]
             self.camera_params[i]["K"] = K
-            self.camera_params[i]["P"] = self.get_projection_matrix(K,r,t)
+            self.camera_params[i]["P"] = dutri.get_projection_matrix(K,r,t)
             frame_count[i] = len(calib["sync"][i,0][0,0]["data_sampleID"][0])
         self.cam_pos = np.array(cam_pos)
         self.cam_dir = np.array(cam_dir)
@@ -592,7 +581,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 keypoint_data_all_kps_flattened = self.pred_data_array[self.current_frame_idx, cam_idx, inst, :]
 
                 if not undistorted_images:
-                    keypoint_data_all_kps_flattened = self.undistort_points(keypoint_data_all_kps_flattened, K, RDistort, TDistort)
+                    keypoint_data_all_kps_flattened = dutri.undistort_points(keypoint_data_all_kps_flattened, K, RDistort, TDistort)
                 
                 # Shape the flattened data back into (num_keypoints, 3) for easier iteration
                 keypoint_data_all_kps_reshaped = keypoint_data_all_kps_flattened.reshape(-1, 3)
@@ -616,120 +605,9 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 num_valid_views = len(projs)
 
                 if num_valid_views >= 2:
-                    point_3d_array[inst, kp_idx, :] = self.triangulate_point(num_valid_views, projs, pts_2d, confs)
+                    point_3d_array[inst, kp_idx, :] = dutri.triangulate_point(num_valid_views, projs, pts_2d, confs)
 
         return point_3d_array
-
-    @staticmethod
-    def triangulate_point(num_views, projs, pts_2d, confs):
-        """
-        Triangulates a single 3D point from multiple 2D camera views using the Direct Linear Transformation (DLT) method.
-        Each 2D point's contribution to the system of equations is weighted by its confidence.
-
-        Args:
-            num_views (int): The number of camera views providing observations for this point.
-            projs (list of np.array): A list of 3x4 projection matrices, one for each camera view.
-            pts_2d (list of tuple/np.array): A list of 2D image points (u, v), one for each camera view.
-            confs (list of float): A list of confidence values, one for each 2D point. Used as weights in the triangulation.
-
-        Returns:
-            np.array: The triangulated 3D point in Euclidean coordinates (x, y, z).
-        """
-        A = []
-        for i in range(num_views):
-            P_i = projs[i]
-            u, v = pts_2d[i]
-            w = confs[i] # Weight by confidence
-
-            P_i = np.array(P_i) # Ensure P_i is a numpy array for slicing
-
-            # Equations for DLT:
-            # u * P_i[2,:] - P_i[0,:] = 0
-            # v * P_i[2,:] - P_i[1,:] = 0
-            # Apply weight 'w' to each row
-            A.append(w * (u * P_i[2,:] - P_i[0,:]))
-            A.append(w * (v * P_i[2,:] - P_i[1,:]))
-
-        A = np.array(A) # Solve Ax = 0 using SVD
-        U, S, Vt = np.linalg.svd(A) # The 3D point is the last column of V (or last row of Vt)
-        
-        point_4d_hom = Vt[-1] 
-        point_3d = (point_4d_hom / point_4d_hom[3]).flatten()[:3] # Convert from homogeneous to Euclidean coordinates (x/w, y/w, z/w)
-        return point_3d
-
-    @staticmethod
-    def get_projection_matrix(K, R, t):
-        """
-        Computes the projection matrix from camera intrinsic and extrinsic parameters.
-
-        The projection matrix P combines the camera's intrinsic properties (K)
-        with its extrinsic pose (rotation R and translation t) relative to the
-        world coordinate system. It maps 3D world points to 2D image points.
-
-        Args:
-            K (np.array): The camera intrinsic matrix (3x3).
-                        Example: [[fx, 0, cx], [0, fy, cy], [0, 0, 1]]
-            R (np.array): The 3x3 rotation matrix representing the camera's orientation
-                        in the world coordinate system.
-            t (np.array): The 3x1 or (3,) translation vector representing the camera's
-                        position in the world coordinate system.
-
-        Returns:
-            np.array: The 3x4 projection matrix P = K * [R | t].
-        """
-        # Ensure t is a 3x1 column vector
-        if t.shape == (3,):
-            t = t.reshape(3, 1)
-        elif t.shape == (3, 1):
-            pass
-        else:
-            raise ValueError("Translation vector 't' must be of shape (3,) or (3,1)")
-
-        # Concatenate R and t to form the extrinsic matrix [R | t]
-        extrinsic_matrix = np.hstack((R, t))
-        
-        # Projection matrix
-        P = K @ extrinsic_matrix
-        return P
-
-    @staticmethod
-    def undistort_points(points_xy_conf, K, RDistort, TDistort):
-        """
-        Undistorts 2D image points given camera intrinsic matrix and distortion coefficients.
-
-        Args:
-            points_xy_conf (list or np.array): A 1D array or list of (x, y, confidence) triplets.
-                                            Example: [x1, y1, conf1, x2, y2, conf2, ...]
-            K (np.array): The camera intrinsic matrix (3x3).
-                        Example: [[fx, 0, cx], [0, fy, cy], [0, 0, 1]]
-            RDistort (list or np.array): Radial distortion coefficients [k1, k2].
-            TDistort (list or np.array): Tangential distortion coefficients [p1, p2].
-
-        Returns:
-            np.array: A 1D array of undistorted (x, y, confidence) triplets.
-                    Example: [undistorted_x1, undistorted_y1, conf1, ...]
-        """
-        if points_xy_conf.size % 3 != 0:
-            raise ValueError("Input 'points_xy_conf' must contain triplets of (x, y, confidence).")
-        
-        num_points = points_xy_conf.size // 3
-        dist_coeffs = np.array([RDistort[0], RDistort[1], TDistort[0], TDistort[1], 0])
-        points_xy_conf = np.array(points_xy_conf, dtype=np.float32)
-
-        reshaped_points = points_xy_conf.reshape(-1, 3) # Separate (x, y) coordinates from confidences
-        xy_coords = reshaped_points[:, :2]    # Shape (N, 2)
-        confidences = reshaped_points[:, 2]   # Shape (N,)
-
-        points_xy_conf = xy_coords.reshape(-1, 1, 2).astype(np.float32) # Reshape points for OpenCV: (N, 1, 2)
-        undistorted_pts = cv2.undistortPoints(points_xy_conf, K, dist_coeffs, P=K)
-
-        undistorted_pts_clean = undistorted_pts.reshape(-1, 2) #Reshape the undistorted (x, y) back to a simple (N, 2) array
-
-        output_combined = np.empty((num_points, 3), dtype=np.float32) #Create an empty array to hold the final (x, y, conf) triplets
-        output_combined[:, :2] = undistorted_pts_clean
-        output_combined[:, 2] = confidences
-
-        return output_combined.flatten() # Reshape back to 1D array
 
     ###################################################################################################################################################
 

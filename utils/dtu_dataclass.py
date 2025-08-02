@@ -1,0 +1,27 @@
+from dataclasses import dataclass
+
+from typing import List, Optional
+from numpy.typing import NDArray
+
+@dataclass
+class Loaded_DLC_Data:
+    dlc_config_filepath: str
+    scorer: str
+    multi_animal: bool
+    keypoints: List[str]
+    skeleton: List[List[str]]
+    individuals: Optional[List[str]]
+    instance_count: int
+    num_keypoint: int
+    
+    prediction_filepath: Optional[str]
+    pred_data_array: Optional[NDArray]
+    pred_frame_count: Optional[int]
+
+@dataclass
+class Export_Settings:
+    video_filepath: str
+    video_name: str
+    save_path: str
+    export_mode: str # "Append" or "Merge" or "CSV"
+    

@@ -12,14 +12,15 @@ import cv2
 from PySide6 import QtWidgets, QtGui
 from PySide6.QtCore import Qt, QEvent
 from PySide6.QtGui import QShortcut, QKeySequence, QCloseEvent
-from PySide6.QtWidgets import QMessageBox, QPushButton, QFileDialog
+from PySide6.QtWidgets import QMessageBox, QFileDialog
 
-from utils.dtu_io import DLC_Data_Loader, DLC_Exporter
+from utils.dtu_io import DLC_Loader, DLC_Exporter
 from utils.dtu_comp import Menu_Comp, Progress_Bar_Comp, Nav_Comp
+from utils.dtu_dataclass import Export_Settings
+import utils.dtu_helper as duh
+import utils.dtu_gui_helper as dugh
 
-import traceback
-
-class DLC_Frame_Finder(QtWidgets.QMainWindow):
+class DLC_Extractor(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("DLC Manual Frame Extractor")
@@ -32,7 +33,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
                 "display_name": "File",
                 "buttons": [
                     ("Load Video", self.load_video),
-                    ("Load Config and Prediction", self.load_prediction),
+                    ("Load Prediction", self.load_prediction),
                     ("Load Workplace", self.load_workplace)
                 ]
             },
@@ -41,7 +42,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
                 "buttons": [
                     ("Mark / Unmark Current Frame (X)", self.toggle_frame_status),
                     ("Adjust Confidence Cutoff", self.adjust_confidence_cutoff),
-                    ("Edit in Refiner", self.export_to_refiner)
+                    ("Edit in Refiner", self.call_refiner)
                 ]
             },
             "Export": {
@@ -92,15 +93,19 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         self.reset_state()
 
     def reset_state(self):
-        self.video_file, self.video_name, self.project_dir, self.dlc_data = None, None, None, None
+        self.video_file, self.video_name, self.project_dir = None, None, None
+        self.dlc_data = None
 
-        self.data_loader = DLC_Data_Loader(self, None, None)
+        self.data_loader = DLC_Loader(None, None) # Initialize the data loader
+        self.exp_set = Export_Settings(
+            video_filepath=None, video_name=None, save_path=None, export_mode=None
+        ) # Initialize export_settings
 
         self.labeled_frame_list, self.frame_list, self.refined_frame_list = [], [], []
         self.label_data_array = None
 
         self.cap, self.current_frame = None, None
-        self.confidence_cutoff = 0 # Default confidence cutoff
+        self.confidence_cutoff = 0
 
         self.is_playing = False
         self.is_saved = True
@@ -110,28 +115,19 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
 
         self.refiner_window = None
 
-    def _handle_refined_frames_exported(self, refined_frames):
-        self.refined_frame_list = refined_frames
-        self.progress_bar_comp.set_frame_category("refined_frames", self.refined_frame_list, "#009979", priority=7)
-        self.display_current_frame()
-        self.determine_save_status()
-
-    def _handle_frame_change_from_comp(self, new_frame_idx: int):
-        self.current_frame_idx = new_frame_idx
-        self.display_current_frame()
-        self.navigation_title_controller()
-
     def load_video(self):
         self.reset_state()
         file_dialog = QFileDialog(self)
         video_path, _ = file_dialog.getOpenFileName(self, "Load Video", "", "Video Files (*.mp4 *.avi *.mov *.mkv);;All Files (*)")
         if video_path:
             self.video_file = video_path
+            self.exp_set.video_filepath = video_path
             self.initialize_loaded_video()
             self.nav_comp.show()
 
     def initialize_loaded_video(self):
         self.video_name = os.path.basename(self.video_file).split(".")[0]
+        self.exp_set.video_name = self.video_name
         self.cap = cv2.VideoCapture(self.video_file)
 
         if not self.cap.isOpened():
@@ -156,22 +152,6 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
             return
         
-        # Loading DLC config first
-        file_dialog = QFileDialog(self)
-        dlc_config, _ = file_dialog.getOpenFileName(self, "Load DLC Config", "", "YAML Files (config.yaml);;All Files (*)")
-
-        if not dlc_config:
-            return
-
-        self.data_loader.dlc_config_filepath = dlc_config
-
-        if not self.data_loader.dlc_config_loader():
-            QMessageBox.critical(self, "DLC Config Error", "Failed to load DLC configuration. Check console for details.")
-            return
-
-        QMessageBox.information(self, "DLC Config Loaded", "Successfully loaded DLC Config, now loading prediction.")
-
-        # Then prediction data
         file_dialog = QFileDialog(self)
         prediction_path, _ = file_dialog.getOpenFileName(self, "Load Prediction", "", "HDF5 Files (*.h5);;All Files (*)")
 
@@ -180,13 +160,17 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         
         self.data_loader.prediction_filepath = prediction_path
 
-        if not self.data_loader.prediction_loader():
-            QMessageBox.critical(self, "Prediction Error", "Failed to load prediction data. Check console for details.")
-            return
-        
-        QMessageBox.information(self, "Prediction Loaded", "Prediction data and DLC config loaded successfully!")
+        QMessageBox.information(self, "DLC Config Loaded", "Prediction loaded , now loading DLC config.")
 
-        self.dlc_data = self.data_loader.get_loaded_dlc_data()
+        file_dialog = QFileDialog(self)
+        dlc_config, _ = file_dialog.getOpenFileName(self, "Load DLC Config", "", "YAML Files (config.yaml);;All Files (*)")
+
+        if not dlc_config:
+            return
+
+        self.data_loader.dlc_config_filepath = dlc_config
+
+        self.dlc_data = dugh.load_and_show_message(self, self.data_loader)
 
         self.process_labeled_frame()
         self.display_current_frame()
@@ -221,14 +205,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
                 self.data_loader.dlc_config_filepath = dlc_config
                 self.data_loader.prediction_filepath = prediction
 
-                if not self.data_loader.dlc_config_loader():
-                    QMessageBox.critical(self, "DLC Config Error", "Failed to load DLC configuration. Check console for details.")
-                    return
-                if not self.data_loader.prediction_loader():
-                    QMessageBox.critical(self, "Prediction Error", "Failed to load prediction data. Check console for details.")
-                    return
-
-                self.dlc_data = self.data_loader.get_loaded_dlc_data()
+                self.dlc_data = dugh.load_and_show_message(self, self.data_loader)
 
             if "refined_frame_list" in fmk.keys():
                 self.refined_frame_list = fmk["refined_frame_list"]
@@ -241,6 +218,7 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
     def process_labeled_frame(self):
         dlc_dir = os.path.dirname(self.data_loader.dlc_config_filepath)
         self.project_dir = os.path.join(dlc_dir, "labeled-data", self.video_name)
+        self.exp_set.save_path = self.project_dir
 
         if not os.path.isdir(self.project_dir):
             self.labeled_frame_list = []
@@ -265,8 +243,8 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
                 if cols / self.dlc_data.num_keypoint == 3 * self.dlc_data.instance_count:
                     labeled_data_with_conf = labeled_data_flattened
                 else:
-                    labeled_data_with_conf = DLC_Data_Loader.add_mock_confidence_score(labeled_data_flattened)
-                labeled_data_unflattened = DLC_Data_Loader.unflatten_data_array(
+                    labeled_data_with_conf = duh.add_mock_confidence_score(labeled_data_flattened)
+                labeled_data_unflattened = duh.unflatten_data_array(
                     labeled_data_with_conf, self.dlc_data.instance_count)
                 self.label_data_array[labeled_frame_list,:,:] = labeled_data_unflattened
         
@@ -547,16 +525,42 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
 
     ###################################################################################################################################################
 
+    def _handle_refined_frames_exported(self, refined_frames):
+        self.refined_frame_list = refined_frames
+        self.progress_bar_comp.set_frame_category("refined_frames", self.refined_frame_list, "#009979", priority=7)
+        self.display_current_frame()
+        self.determine_save_status()
+
+    def _handle_frame_change_from_comp(self, new_frame_idx: int):
+        self.current_frame_idx = new_frame_idx
+        self.display_current_frame()
+        self.navigation_title_controller()
+
+    ###################################################################################################################################################
+
     def determine_save_status(self):
         if set(self.last_saved) == set(self.frame_list):
             self.is_saved = True
         else:
             self.is_saved = False
 
+    def pre_saving_sanity_check(self):
+        if self.current_frame is None:
+            QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
+            return False
+        if not self.frame_list:
+            QMessageBox.warning(self, "No Marked Frame", "No frame has been marked, please mark some frames first.")
+            return False
+        if not self.labeled_frame_list:
+            QMessageBox.information(self, "No Previous Label Loaded", "Can't merge when no previous label is loaded.")
+            return False
+        
+        return True
+
     def save_workspace(self):
         if self.current_frame is None:
             QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
-            return
+            return False
         self.last_saved = self.frame_list
         self.is_saved = True
         if self.dlc_data:
@@ -569,9 +573,11 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
 
         with open(output_filepath, 'w') as file:
             yaml.dump(save_yaml, file)
+            
         QMessageBox.information(self, "Success", f"Current workplace files have been saved to {output_filepath}")
+        return True
 
-    def export_to_refiner(self):
+    def call_refiner(self):
         from dlc_track_refiner import DLC_Track_Refiner
         if not self.video_file:
             QMessageBox.warning(self, "Video Not Loaded", "No video is loaded, load a video first!")
@@ -614,15 +620,13 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
             self.refiner_window = None
 
     def save_to_dlc(self):
-        frame_only_mode = False
+        if not self.pre_saving_sanity_check():
+            return
 
-        if self.current_frame is None:
-            QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
-            return False
-        
-        if not self.frame_list:
-            QMessageBox.warning(self, "No Marked Frame", "No frame has been marked, please mark some frames first.")
-            return False
+        self.save_workspace()
+
+        self.exp_set.export_mode = "Append"
+        exporter = DLC_Exporter(self.dlc_data, self.exp_set, self.frame_list)
 
         if not self.dlc_data:
             reply = QMessageBox.question(
@@ -632,7 +636,6 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
                 QMessageBox.Yes | QMessageBox.No
             )
             if reply == QMessageBox.Yes:
-                frame_only_mode = True
                 QMessageBox.information(self, "Frame Only Mode", "Choose the directory of DLC project to save to DLC.")
                 dlc_dir = QFileDialog.getExistingDirectory(
                             self, "Select Project Folder",
@@ -640,53 +643,23 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
                             QFileDialog.ShowDirsOnly
                         )
                 if not dlc_dir: # When user close the file selection window
-                    return False
+                    return
                 self.project_dir = os.path.join(dlc_dir, "labeled-data", self.video_name)
+                dugh.export_and_show_message(exporter, frame_only=True)
+                return
             else:
                 self.load_prediction()
                 if self.dlc_data is None:
-                    return False
-                
-        self.save_workspace()
+                    return
 
-        try:
-            # Initialize DLC extractor backend
-            exporter = DLC_Exporter(self.video_file, self.video_name, self.frame_list, self.dlc_data, self.project_dir)
-            # Perform the extraction
-            os.makedirs(self.project_dir, exist_ok=True)
-
-            if not frame_only_mode:
-                success = exporter.extract_frame_and_label()
-            else:
-                success = exporter.extract_frame()
-
-            if success:
-                QMessageBox.information(
-                    self,"Success",
-                    f"Successfully saved {len(self.frame_list)} frames to:\n"
-                    f"{os.path.join(self.project_dir)}"
-                )
-                return True
-            else:
-                QMessageBox.warning(self, "Error", "Failed to save frames to DLC format.")
-                traceback.print_exc()
-                return False
-
-        except Exception as e:
-            QMessageBox.critical(self,"Error",f"An error occurred while saving to DLC:\n{str(e)}")
-            return False
+        dugh.export_and_show_message(exporter, frame_only=True)
 
     def merge_data(self):
+        if not self.pre_saving_sanity_check():
+            return
+        
         if not self.refined_frame_list:
             QMessageBox.warning(self, "No Refined Frame", "No frame has been refined, please refine some marked frames first.")
-            return
-        
-        if not self.dlc_data:
-            QMessageBox.warning(self, "No Pose Estimation", "No pose estimation is loaded.")
-            return
-        
-        if not self.labeled_frame_list:
-            QMessageBox.information(self, "No Previous Label Loaded", "Can't merge when no previous label is loaded.")
             return
         
         reply = QMessageBox.question(
@@ -699,45 +672,19 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         if reply == QMessageBox.No:
             return
         else:
+            self.save_workspace()
+
+            self.exp_set.export_mode = "Merge"
+
             self.label_data_array[self.refined_frame_list, :, :] = self.dlc_data.pred_data_array[self.refined_frame_list, :, :]
             merge_frame_list = list(set(self.labeled_frame_list) | set(self.refined_frame_list))
             label_data_array_with_conf = self.label_data_array[merge_frame_list, :, :]
+            label_data_array_export = duh.remove_mock_confidence_score(label_data_array_with_conf)
 
-            label_data_array_export = DLC_Data_Loader.remove_mock_confidence_score(label_data_array_with_conf)
-            scorer = self.dlc_data.scorer
-            merge_name = f"CollectedData_{scorer}"
-            
-        self.save_workspace()
+            exporter = DLC_Exporter(self.dlc_data, self.exp_set, self.frame_list, label_data_array_export)
+            dugh.export_and_show_message(exporter, frame_only=True)
 
-        try:
-            if not DLC_Exporter.extract_frame(self.video_file, merge_frame_list, self.project_dir):
-                QMessageBox.critical(self, "Frame Extraction Failed", "Failed to extract frames. Merge aborted.")
-                return
-
-            # Convert the merged prediction data to CSV
-            if not DLC_Exporter.prediction_to_csv(
-                self.dlc_data,
-                label_data_array_export,
-                self.project_dir,
-                marked_frames=merge_frame_list,
-                src_video_name=self.video_name,
-                prediction_filename=merge_name
-                ):
-                QMessageBox.critical(self, "CSV Export Failed", "Failed to export merged predictions to CSV. Merge aborted.")
-                return
-
-            # Convert the generated CSV back to H5
-            if not DLC_Exporter.csv_to_h5(self.project_dir, self.dlc_data.multi_animal, scorer=self.dlc_data.scorer, csv_name=merge_name):
-                QMessageBox.critical(self, "H5 Conversion Failed", "Failed to convert merged CSV to H5. Merge aborted.")
-                return
-            
-            QMessageBox.information(self, "Merge Success!", "Data merged and converted into h5.")
             self.process_labeled_frame()
-
-        except Exception as e:
-            QMessageBox.critical(self, "Merge Process Error", f"An unexpected error occurred during export/conversion: {e}")
-            traceback.print_exc()
-            return
 
     def changeEvent(self, event):
         if event.type() == QEvent.Type.WindowStateChange:
@@ -745,39 +692,12 @@ class DLC_Frame_Finder(QtWidgets.QMainWindow):
         super().changeEvent(event)
 
     def closeEvent(self, event: QCloseEvent):
-        if not self.is_saved:
-            # Create a dialog to confirm saving
-            close_call = QMessageBox(self)
-            close_call.setWindowTitle("Changes Unsaved")
-            close_call.setText("Do you want to save your changes before closing?")
-            close_call.setIcon(QMessageBox.Icon.Question)
-
-            save_btn = close_call.addButton("Save", QMessageBox.ButtonRole.AcceptRole)
-            discard_btn = close_call.addButton("Don't Save", QMessageBox.ButtonRole.DestructiveRole)
-            close_btn = close_call.addButton("Close", QMessageBox.RejectRole)
-            
-            close_call.setDefaultButton(close_btn)
-
-            close_call.exec()
-            clicked_button = close_call.clickedButton()
-            
-            if clicked_button == save_btn:
-                self.save_workspace()
-                if self.is_saved:
-                    event.accept()
-                else:
-                    event.ignore()
-            elif clicked_button == discard_btn:
-                event.accept()  # Close without saving
-            else:
-                event.ignore()  # Cancel the close action
-        else:
-            event.accept()  # No unsaved changes, close normally
+        dugh.handle_unsaved_changes_on_close(self, event, self.is_saved, self.save_workspace)
 
 #######################################################################################################################################################
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication([])
-    window = DLC_Frame_Finder()
+    window = DLC_Extractor()
     window.show()
     app.exec()

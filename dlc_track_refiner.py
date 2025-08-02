@@ -16,9 +16,11 @@ from PySide6.QtGui import QShortcut, QKeySequence, QPainter, QColor, QPen, QClos
 from PySide6.QtWidgets import QMessageBox, QPushButton, QGraphicsView, QGraphicsRectItem
 
 from utils.dtu_ui import Selectable_Instance, Draggable_Keypoint
-from utils.dtu_io import DLC_Data_Loader, DLC_Exporter
+from utils.dtu_io import DLC_Loader
 from utils.dtu_comp import Menu_Comp, Progress_Bar_Comp, Nav_Comp
-import utils.dtu_helper as dtuh
+from utils.dtu_dataclass import Export_Settings
+import utils.dtu_helper as duh
+import utils.dtu_gui_helper as dugh
 
 import traceback
 
@@ -38,7 +40,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         super().__init__()
 
         self.is_debug = False
-        self.setWindowTitle(dtuh.format_title("DLC Track Refiner", self.is_debug))
+        self.setWindowTitle(duh.format_title("DLC Track Refiner", self.is_debug))
         self.setGeometry(100, 100, 1200, 960)
 
         self.menu_comp = Menu_Comp(self)
@@ -48,14 +50,13 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 "display_name": "File",
                 "buttons": [
                     ("Load Video", self.load_video),
-                    ("Load Config and Prediction", self.load_prediction),
+                    ("Load Prediction", self.load_prediction),
                     ("Load Batch Commands", self.load_batch_commands)
                 ]
             },
             "Refiner": {
                 "display_name": "Adv. Refine",
                 "buttons": [
-                    ("Mark All As Refined", self.mark_all_as_refined),
                     ("Direct Keypoint Edit (Q)", self.direct_keypoint_edit),
                     ("Delete All Track Below Set Confidence", self.purge_inst_by_conf),
                     ("Interpolate All Frames for One Inst", self.interpolate_all),
@@ -73,6 +74,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             "Save": {
                 "display_name": "Save",
                 "buttons": [
+                    ("Mark All As Refined", self.mark_all_as_refined),
                     ("Save Prediction", self.save_prediction),
                     ("Save Prediction Into CSV", self.save_prediction_as_csv)
                 ]
@@ -154,6 +156,15 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.interpolate_track_button.clicked.connect(self.interpolate_track)
         self.fill_track_button.clicked.connect(self.fill_track)
 
+        self.graphics_view.mousePressEvent = self.graphics_view_mouse_press_event
+        self.graphics_view.mouseMoveEvent = self.graphics_view_mouse_move_event
+        self.graphics_view.mouseReleaseEvent = self.graphics_view_mouse_release_event
+        self.graphics_scene.parent = lambda: self # Allow items to access the main window
+
+        self.setup_shortcut()
+        self.reset_state()
+
+    def setup_shortcut(self):
         QShortcut(QKeySequence(Qt.Key_Left | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(-10))
         QShortcut(QKeySequence(Qt.Key_Left), self).activated.connect(lambda: self.change_frame(-1))
         QShortcut(QKeySequence(Qt.Key_Right), self).activated.connect(lambda: self.change_frame(1))
@@ -175,19 +186,12 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_Y | Qt.ControlModifier), self).activated.connect(self.redo_changes)
         QShortcut(QKeySequence(Qt.Key_S | Qt.ControlModifier), self).activated.connect(self.save_prediction)
         QShortcut(QKeySequence(Qt.Key_Z), self).activated.connect(self.toggle_zoom_mode)
-        
-        self.graphics_view.mousePressEvent = self.graphics_view_mouse_press_event
-        self.graphics_view.mouseMoveEvent = self.graphics_view_mouse_move_event
-        self.graphics_view.mouseReleaseEvent = self.graphics_view_mouse_release_event
-        self.graphics_scene.parent = lambda: self # Allow items to access the main window
-
-        self.reset_state()
 
     def reset_state(self):
         self.video_file, self.prediction, self.video_name = None, None, None
         self.dlc_data, self.keypoint_to_idx = None, None
         self.instance_count_per_frame, self.pred_data_array = None, None
-        self.data_loader = DLC_Data_Loader(self, None, None)
+        self.data_loader = DLC_Loader(None, None)
 
         self.roi_frame_list, self.marked_roi_frame_list, self.refined_roi_frame_list = [], [], []
 
@@ -221,6 +225,16 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
     def load_video(self):
         self.reset_state()
+
+        if self.is_debug:
+            self.video_file = VIDEO_FILE_DEBUG
+            self.initialize_loaded_video()
+            self.data_loader.dlc_config_filepath = DLC_CONFIG_DEBUG
+            self.data_loader.prediction_filepath = self.prediction = PRED_FILE_DEBUG
+            self.dlc_data = dugh.load_and_show_message(self, self.data_loader)
+            self.initialize_loaded_data()
+            return
+
         file_dialog = QtWidgets.QFileDialog(self)
         video_path, _ = file_dialog.getOpenFileName(self, "Load Video", "", "Video Files (*.mp4 *.avi *.mov *.mkv);;All Files (*)")
         if video_path:
@@ -247,51 +261,29 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         print(f"Video loaded: {self.video_file}")
 
     def load_prediction(self):
-        if self.is_debug:
-            self.video_file = VIDEO_FILE_DEBUG
-            self.initialize_loaded_video()
-            self.data_loader.dlc_config_filepath = DLC_CONFIG_DEBUG
-            self.data_loader.prediction_filepath = self.prediction = PRED_FILE_DEBUG
-            self.data_loader.dlc_config_loader()
-            self.data_loader.prediction_loader()
-        else:
-            if self.current_frame is None:
-                QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
-                return
-            
-            file_dialog = QtWidgets.QFileDialog(self)
-            dlc_config, _ = file_dialog.getOpenFileName(self, "Load DLC Config", "", "YAML Files (config.yaml);;All Files (*)")
+        if self.current_frame is None:
+            QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
+            return
+        
+        file_dialog = QtWidgets.QFileDialog(self)
+        prediction_path, _ = file_dialog.getOpenFileName(self, "Load Prediction", "", "HDF5 Files (*.h5);;All Files (*)")
 
-            if dlc_config:
-                self.data_loader.dlc_config_filepath = dlc_config
+        if not prediction_path:
+            return
+        
+        self.data_loader.prediction_filepath = prediction_path
 
-                if not self.data_loader.dlc_config_loader():
-                    QMessageBox.critical(self, "DLC Config Error", "Failed to load DLC configuration. Check console for details.")
-                    return
-                
-            msg = "Suucessfully loaded DLC Config, now loading prediction."
-            if self.in_batch_mode:
-                print(msg)
-            else:
-                QMessageBox.information(self, "DLC Config Loaded", str(msg))
+        QMessageBox.information(self, "DLC Config Loaded", "Prediction loaded , now loading DLC config.")
 
-            file_dialog = QtWidgets.QFileDialog(self)
-            prediction_path, _ = file_dialog.getOpenFileName(self, "Load Prediction", "", "HDF5 Files (*.h5);;All Files (*)")
+        file_dialog = QtWidgets.QFileDialog(self)
+        dlc_config, _ = file_dialog.getOpenFileName(self, "Load DLC Config", "", "YAML Files (config.yaml);;All Files (*)")
 
-            if prediction_path:
-                self.data_loader.prediction_filepath = prediction_path
-                
-                if not self.data_loader.prediction_loader():
-                    QMessageBox.critical(self, "Prediction Error", "Failed to load prediction data. Check console for details.")
-                    return
-                
-                msg = "Prediction data and DLC config loaded successfully!"
-                if self.in_batch_mode:
-                    print(msg)
-                else:
-                    QMessageBox.information(self, "Prediction Loaded", str(msg))
+        if not dlc_config:
+            return
 
-        self.dlc_data = self.data_loader.get_loaded_dlc_data()
+        self.data_loader.dlc_config_filepath = dlc_config
+
+        self.dlc_data = dugh.load_and_show_message(self, self.data_loader, mute=self.in_batch_mode)
         self.initialize_loaded_data()
 
     def initialize_loaded_data(self):
@@ -308,7 +300,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.display_current_frame()
         self.reset_zoom()
 
-    def load_batch_commands(self):
+    def load_batch_commands(self): # In need of a more robust implementation
         """Load a YAML file containing a list of commands and execute them in sequence."""
         file_dialog = QtWidgets.QFileDialog(self)
         command_filepath, _ = file_dialog.getOpenFileName(
@@ -343,9 +335,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                     elif command_name == "load_prediction":
                         self.data_loader.dlc_config_filepath = args.get("dlc_config")
                         self.data_loader.prediction_filepath = args.get("prediction_path")
-                        if self.data_loader.dlc_config_loader() and self.data_loader.prediction_loader():
-                            self.dlc_data = self.data_loader.get_loaded_dlc_data()
-                            self.initialize_loaded_data()
+                        self.dlc_data = dugh.load_and_show_message(self, self.data_loader, mute=True)
+                        self.initialize_loaded_data()
                     elif command_name == "save_prediction":
                         self.save_prediction()
                     elif command_name == "save_prediction_as_csv":
@@ -1268,7 +1259,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
     def save_prediction(self):
         if self.pred_data_array is None:
             QMessageBox.warning(self, "No Prediction Data", "Please load a prediction file first.")
-            return
+            return False
         # Made a copy of the original data and save upon that
         pred_file_dir = os.path.dirname(self.prediction)
         pred_file_name_without_ext = os.path.splitext(os.path.basename(self.prediction))[0]
@@ -1294,13 +1285,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             frame_data = self.pred_data_array[frame_idx, :, :].flatten()
             new_data.append((frame_idx, frame_data))
         try:
-            if new_data:
-                num_vals_per_frame = new_data[0][1].shape[0]
-                dtype = np.dtype([('index', 'i8'), ('data', 'f8', (num_vals_per_frame,))])
-            else:
-                print("No data to save. Skipping HDF5 write.")
-                return
-            
             with h5py.File(pred_file_to_save_path, "a") as pred_file_to_save: # Open the copied HDF5 file in write mode
                 if 'tracks/table' in pred_file_to_save:
                     pred_file_to_save['tracks/table'][...] = new_data
@@ -1319,6 +1303,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 QMessageBox.information(self, "Save Successful", str(msg))
             self.prediction_saved.emit(self.prediction) # Emit the signal with the saved file path
             self.refined_frames_exported.emit(self.refined_roi_frame_list)
+            return True
         except Exception as e:
             QMessageBox.critical(self, "Saving Error", f"An error occurred during HDF5 saving: {e}")
             traceback.print_exc()
@@ -1326,8 +1311,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
     def save_prediction_as_csv(self):
         save_path = os.path.dirname(self.prediction)
         pred_file = os.path.basename(self.prediction).split(".")[0]
+        exp_set = Export_Settings(self.video_file, self.video_name, save_path, "CSV")
         try:
-            DLC_Exporter.prediction_to_csv(self.dlc_data, self.pred_data_array, save_path, prediction_filename=pred_file)
+            duh.prediction_to_csv(self.dlc_data, self.dlc_data.pred_data_array, exp_set)
             msg = f"Successfully saved modified prediction in csv to: {os.path.join(save_path, pred_file)}.csv"
             if self.in_batch_mode:
                 print(msg)
@@ -1343,33 +1329,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         super().changeEvent(event)
 
     def closeEvent(self, event: QCloseEvent):
-        if not self.is_debug and self.prediction is not None and not self.is_saved:
-            # Create a dialog to confirm saving
-            close_call = QMessageBox(self)
-            close_call.setWindowTitle("Close Application?")
-            close_call.setText("Do you want to save your current prediction before closing?")
-            close_call.setIcon(QMessageBox.Icon.Question)
-
-            save_btn = close_call.addButton("Save", QMessageBox.ButtonRole.AcceptRole)
-            discard_btn = close_call.addButton("Don't Save", QMessageBox.ButtonRole.DestructiveRole)
-            close_btn = close_call.addButton("Cancel", QMessageBox.RejectRole)
-            
-            close_call.setDefaultButton(close_btn)
-            close_call.exec()
-            clicked_button = close_call.clickedButton()
-            
-            if clicked_button == save_btn:
-                self.save_prediction()
-                if self.is_saved: # Only accept if save was successful
-                    event.accept()
-                else: # If save failed or was cancelled by user from within save_prediction
-                    event.ignore()
-            elif clicked_button == discard_btn:
-                event.accept()
-            else:
-                event.ignore()
-        else:
-            event.accept()
+        dugh.handle_unsaved_changes_on_close(self, event, self.is_saved, self.save_prediction)
 
 #######################################################################################################################################################
 
