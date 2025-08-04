@@ -1,8 +1,18 @@
 ## Purpose of This Toolkit
 DeepLabCut’s napari interface suffers performance issues when the number of frames exceeds a few thousand, making manual frame extraction and track refinement tortuous tasks. This toolkit addresses the problem by handling everything with PySide6 and adding several features absent from the original DeepLabCut implementation.
 
+
+### Prerequisites
+
+- Install the DeepLabCut environment following the instructions on the [DeepLabCut](https://github.com/DeepLabCut/DeepLabCut)
+- Then, install `h5py` within the same environment
+```bash
+conda install h5py
+```
+
 **Table of Contents**
 
+#### Main scripts
 - [dlc_track_refiner.py](#dlc_track_refinerpy)
 - [dlc_3D_plotter.py](#dlc_3d_plotterpy)
 - [dlc_frame_extract.py](#dlc_frame_extractpy)
