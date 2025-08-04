@@ -15,9 +15,9 @@ from PySide6.QtWidgets import QMessageBox
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
-from utils.dtu_ui import Clickable_Video_Label
+from utils.dtu_comp import Clickable_Video_Label
 from utils.dtu_io import DLC_Loader
-from utils.dtu_comp import Menu_Comp, Progress_Bar_Comp, Nav_Comp
+from utils.dtu_widget import Menu_Comp, Progress_Bar_Comp, Nav_Comp
 import utils.dtu_helper as duh
 import utils.dtu_gui_helper as dugh
 import utils.dtu_triangulation as dutri

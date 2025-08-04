@@ -1,7 +1,10 @@
 import numpy as np
 import cv2
 
-def triangulate_point(num_views, projs, pts_2d, confs):
+from typing import List, Tuple
+from numpy.typing import NDArray
+
+def triangulate_point(num_views:int, projs:List[NDArray], pts_2d:List[Tuple[float]], confs:List[float]) -> NDArray:
     """
     Triangulates a single 3D point from multiple 2D camera views using the Direct Linear Transformation (DLT) method.
     Each 2D point's contribution to the system of equations is weighted by its confidence.
@@ -9,7 +12,7 @@ def triangulate_point(num_views, projs, pts_2d, confs):
     Args:
         num_views (int): The number of camera views providing observations for this point.
         projs (list of np.array): A list of 3x4 projection matrices, one for each camera view.
-        pts_2d (list of tuple/np.array): A list of 2D image points (u, v), one for each camera view.
+        pts_2d (list of tuple): A list of 2D image points (u, v), one for each camera view.
         confs (list of float): A list of confidence values, one for each 2D point. Used as weights in the triangulation.
 
     Returns:

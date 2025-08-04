@@ -15,9 +15,9 @@ from PySide6.QtCore import Qt, QEvent, Signal
 from PySide6.QtGui import QShortcut, QKeySequence, QPainter, QColor, QPen, QCloseEvent
 from PySide6.QtWidgets import QMessageBox, QPushButton, QGraphicsView, QGraphicsRectItem
 
-from utils.dtu_ui import Selectable_Instance, Draggable_Keypoint
+from utils.dtu_comp import Selectable_Instance, Draggable_Keypoint
 from utils.dtu_io import DLC_Loader
-from utils.dtu_comp import Menu_Comp, Progress_Bar_Comp, Nav_Comp
+from utils.dtu_widget import Menu_Comp, Progress_Bar_Comp, Nav_Comp
 from utils.dtu_dataclass import Export_Settings
 import utils.dtu_helper as duh
 import utils.dtu_gui_helper as dugh
