@@ -17,7 +17,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from utils.dtu_comp import Clickable_Video_Label
 from utils.dtu_io import DLC_Loader
-from utils.dtu_widget import Menu_Comp, Progress_Bar_Comp, Nav_Comp
+from utils.dtu_widget import Menu_Widget, Progress_Widget, Nav_Widget
 import utils.dtu_helper as duh
 import utils.dtu_gui_helper as dugh
 import utils.dtu_triangulation as dutri
@@ -38,8 +38,8 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.setWindowTitle(duh.format_title("DLC 3D Plotter", self.is_debug))
         self.setGeometry(100, 100, 1600, 960)
 
-        self.menu_comp = Menu_Comp(self)
-        self.setMenuBar(self.menu_comp)
+        self.menu_widget = Menu_Widget(self)
+        self.setMenuBar(self.menu_widget)
         plotter_3d_menu_config = {
             "File": {
                 "display_name": "File",
@@ -58,7 +58,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 ]
             }
         }
-        self.menu_comp.add_menu_from_config(plotter_3d_menu_config)
+        self.menu_widget.add_menu_from_config(plotter_3d_menu_config)
 
         self.central_widget = QtWidgets.QWidget()
         self.setCentralWidget(self.central_widget)
@@ -93,24 +93,24 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.display_layout.addLayout(self.plot_layout)
         self.layout.addLayout(self.display_layout, 1)
 
-        self.progress_bar_comp = Progress_Bar_Comp()
-        self.layout.addWidget(self.progress_bar_comp)
-        self.progress_bar_comp.frame_changed.connect(self._handle_frame_change_from_comp)
+        self.progress_widget = Progress_Widget()
+        self.layout.addWidget(self.progress_widget)
+        self.progress_widget.frame_changed.connect(self._handle_frame_change_from_comp)
 
         # Navigation controls
-        self.nav_comp = Nav_Comp()
-        self.layout.addWidget(self.nav_comp)
-        self.nav_comp.hide()
+        self.nav_widget = Nav_Widget()
+        self.layout.addWidget(self.nav_widget)
+        self.nav_widget.hide()
 
-        self.nav_comp.frame_changed_sig.connect(self.change_frame)
-        self.nav_comp.prev_marked_frame_sig.connect(self.wip_unimplemented)
-        self.nav_comp.next_marked_frame_sig.connect(self.wip_unimplemented)
+        self.nav_widget.frame_changed_sig.connect(self.change_frame)
+        self.nav_widget.prev_marked_frame_sig.connect(self.wip_unimplemented)
+        self.nav_widget.next_marked_frame_sig.connect(self.wip_unimplemented)
 
         QShortcut(QKeySequence(Qt.Key_Left | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(-10))
         QShortcut(QKeySequence(Qt.Key_Left), self).activated.connect(lambda: self.change_frame(-1))
         QShortcut(QKeySequence(Qt.Key_Right), self).activated.connect(lambda: self.change_frame(1))
         QShortcut(QKeySequence(Qt.Key_Right | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(10))
-        QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.progress_bar_comp.toggle_playback)
+        QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.progress_widget.toggle_playback)
         QShortcut(QKeySequence(Qt.Key_X), self).activated.connect(self.wip_unimplemented)
 
         self.canvas.mpl_connect("scroll_event", self.on_scroll_3d_plot)
@@ -240,7 +240,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             folder_list[i] = folder
         
         self.total_frames = temp_total_frames # Set the global total_frames
-        self.progress_bar_comp.set_slider_range(self.total_frames)
+        self.progress_widget.set_slider_range(self.total_frames)
 
         if not any(self.cap_list): # Check if at least one video was loaded
             QMessageBox.warning(self, "Error", "No video files were loaded successfully.")
@@ -263,8 +263,8 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 self.load_prediction(cam_idx=k, prediction_filepath=h5_file)
 
         self.current_frame_idx = 0
-        self.progress_bar_comp.set_slider_range(self.total_frames)
-        self.nav_comp.show()
+        self.progress_widget.set_slider_range(self.total_frames)
+        self.nav_widget.show()
         self.display_current_frame() # Display the first frames
 
     def load_prediction(self, cam_idx:int, prediction_filepath:str):
@@ -395,7 +395,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 self.video_labels[i].setText(f"Video {i+1} Not Loaded/Available")
                 self.video_labels[i].setPixmap(QtGui.QPixmap())
             
-            self.progress_bar_comp.set_current_frame(self.current_frame_idx) # Update slider handle's position
+            self.progress_widget.set_current_frame(self.current_frame_idx) # Update slider handle's position
 
             # Update border color based on selection
             if i == self.selected_cam_idx:
@@ -630,7 +630,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.canvas.draw_idle()
 
     def navigation_title_controller(self):
-        self.nav_comp.setTitle(f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1}")
+        self.nav_widget.setTitle(f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1}")
 
     ###################################################################################################################################################
 

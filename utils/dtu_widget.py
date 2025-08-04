@@ -4,7 +4,7 @@ from PySide6.QtWidgets import QPushButton
 
 from utils.dtu_comp import Slider_With_Marks
 
-class Menu_Comp(QtWidgets.QMenuBar):
+class Menu_Widget(QtWidgets.QMenuBar):
     def __init__(self, parent=None):
         super().__init__(parent)
 
@@ -38,7 +38,7 @@ class Menu_Comp(QtWidgets.QMenuBar):
 
 ###################################################################################################################################################
 
-class Progress_Bar_Comp(QtWidgets.QWidget):
+class Progress_Widget(QtWidgets.QWidget):
     frame_changed = Signal(int)
 
     def __init__(self):
@@ -108,7 +108,7 @@ class Progress_Bar_Comp(QtWidgets.QWidget):
 
 ###################################################################################################################################################
 
-class Nav_Comp(QtWidgets.QGroupBox):
+class Nav_Widget(QtWidgets.QGroupBox):
     """A modular QGroupBox widget for video navigation controls."""
     frame_changed_sig = Signal(int)
     prev_marked_frame_sig = Signal()

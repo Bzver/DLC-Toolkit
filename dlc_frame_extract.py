@@ -15,7 +15,7 @@ from PySide6.QtGui import QShortcut, QKeySequence, QCloseEvent
 from PySide6.QtWidgets import QMessageBox, QFileDialog
 
 from utils.dtu_io import DLC_Loader, DLC_Exporter
-from utils.dtu_widget import Menu_Comp, Progress_Bar_Comp, Nav_Comp
+from utils.dtu_widget import Menu_Widget, Progress_Widget, Nav_Widget
 from utils.dtu_dataclass import Export_Settings
 import utils.dtu_helper as duh
 import utils.dtu_gui_helper as dugh
@@ -26,8 +26,8 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.setWindowTitle("DLC Manual Frame Extractor")
         self.setGeometry(100, 100, 1200, 960)
 
-        self.menu_comp = Menu_Comp(self)
-        self.setMenuBar(self.menu_comp)
+        self.menu_widget = Menu_Widget(self)
+        self.setMenuBar(self.menu_widget)
         extractor_menu_config = {
             "File": {
                 "display_name": "File",
@@ -54,7 +54,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
                 ]
             }
         }
-        self.menu_comp.add_menu_from_config(extractor_menu_config)
+        self.menu_widget.add_menu_from_config(extractor_menu_config)
 
         self.central_widget = QtWidgets.QWidget()
         self.setCentralWidget(self.central_widget)
@@ -67,18 +67,18 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.video_label.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         self.layout.addWidget(self.video_label, 1)
 
-        self.progress_bar_comp = Progress_Bar_Comp()
-        self.layout.addWidget(self.progress_bar_comp)
-        self.progress_bar_comp.frame_changed.connect(self._handle_frame_change_from_comp)
+        self.progress_widget = Progress_Widget()
+        self.layout.addWidget(self.progress_widget)
+        self.progress_widget.frame_changed.connect(self._handle_frame_change_from_comp)
 
         # Navigation controls
-        self.nav_comp = Nav_Comp()
-        self.layout.addWidget(self.nav_comp)
-        self.nav_comp.hide()
+        self.nav_widget = Nav_Widget()
+        self.layout.addWidget(self.nav_widget)
+        self.nav_widget.hide()
 
-        self.nav_comp.frame_changed_sig.connect(self.change_frame)
-        self.nav_comp.prev_marked_frame_sig.connect(self.prev_marked_frame)
-        self.nav_comp.next_marked_frame_sig.connect(self.next_marked_frame)
+        self.nav_widget.frame_changed_sig.connect(self.change_frame)
+        self.nav_widget.prev_marked_frame_sig.connect(self.prev_marked_frame)
+        self.nav_widget.next_marked_frame_sig.connect(self.next_marked_frame)
 
         QShortcut(QKeySequence(Qt.Key_Left | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(-10))
         QShortcut(QKeySequence(Qt.Key_Left), self).activated.connect(lambda: self.change_frame(-1))
@@ -87,7 +87,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_X), self).activated.connect(self.toggle_frame_status)
         QShortcut(QKeySequence(Qt.Key_Up), self).activated.connect(self.prev_marked_frame)
         QShortcut(QKeySequence(Qt.Key_Down), self).activated.connect(self.next_marked_frame)
-        QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.progress_bar_comp.toggle_playback)
+        QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.progress_widget.toggle_playback)
         QShortcut(QKeySequence(Qt.Key_S | Qt.ControlModifier), self).activated.connect(self.save_workspace)
         
         self.reset_state()
@@ -111,7 +111,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.is_saved = True
         self.last_saved = []
 
-        self.nav_comp.hide()
+        self.nav_widget.hide()
 
         self.refiner_window = None
 
@@ -123,7 +123,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             self.video_file = video_path
             self.exp_set.video_filepath = video_path
             self.initialize_loaded_video()
-            self.nav_comp.show()
+            self.nav_widget.show()
 
     def initialize_loaded_video(self):
         self.video_name = os.path.basename(self.video_file).split(".")[0]
@@ -138,10 +138,10 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.current_frame_idx = 0
-        self.progress_bar_comp.set_slider_range(self.total_frames)
-        self.progress_bar_comp.set_frame_category("marked_frames", self.frame_list, "#E28F13")
-        self.progress_bar_comp.set_frame_category("refined_frames", self.refined_frame_list, "#009979", priority=7)
-        self.progress_bar_comp.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7")
+        self.progress_widget.set_slider_range(self.total_frames)
+        self.progress_widget.set_frame_category("marked_frames", self.frame_list, "#E28F13")
+        self.progress_widget.set_frame_category("refined_frames", self.refined_frame_list, "#009979", priority=7)
+        self.progress_widget.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7")
         self.display_current_frame()
         self.navigation_title_controller()
         print(f"Video loaded: {self.video_file}")
@@ -210,7 +210,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             if "refined_frame_list" in fmk.keys():
                 self.refined_frame_list = fmk["refined_frame_list"]
                 
-            self.progress_bar_comp.set_frame_category("marked_frames", self.frame_list, "#E28F13")
+            self.progress_widget.set_frame_category("marked_frames", self.frame_list, "#E28F13")
             self.determine_save_status()
             self.process_labeled_frame()
             self.display_current_frame()
@@ -252,7 +252,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.refined_frame_list = list(set(self.refined_frame_list) - set(self.labeled_frame_list))
         self.frame_list.sort()
 
-        self.progress_bar_comp.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7")
+        self.progress_widget.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7")
 
     ###################################################################################################################################################
 
@@ -273,7 +273,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
                 scaled_pixmap = pixmap.scaled(self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 self.video_label.setPixmap(scaled_pixmap)
                 self.video_label.setText("")
-                self.progress_bar_comp.set_current_frame(self.current_frame_idx) # Update slider handle's position
+                self.progress_widget.set_current_frame(self.current_frame_idx) # Update slider handle's position
             else:
                 self.video_label.setText("Error: Could not read frame")
         else:
@@ -405,16 +405,16 @@ class DLC_Extractor(QtWidgets.QMainWindow):
                 self.navigation_title_controller()
 
     def navigation_title_controller(self):
-        self.nav_comp.show()
-        self.nav_comp.setTitle(f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | Video: {self.video_name}")
+        self.nav_widget.show()
+        self.nav_widget.setTitle(f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | Video: {self.video_name}")
         if self.current_frame_idx in self.labeled_frame_list:
-            self.nav_comp.setStyleSheet("""QGroupBox::title {color: #1F32D7;}""")
+            self.nav_widget.setStyleSheet("""QGroupBox::title {color: #1F32D7;}""")
         elif self.current_frame_idx in self.refined_frame_list:
-            self.nav_comp.setStyleSheet("""QGroupBox::title {color: #009979;}""")
+            self.nav_widget.setStyleSheet("""QGroupBox::title {color: #009979;}""")
         elif self.current_frame_idx in self.frame_list:
-            self.nav_comp.setStyleSheet("""QGroupBox::title {color: #E28F13;}""")
+            self.nav_widget.setStyleSheet("""QGroupBox::title {color: #E28F13;}""")
         else:
-            self.nav_comp.setStyleSheet("""QGroupBox::title {color: black;}""")
+            self.nav_widget.setStyleSheet("""QGroupBox::title {color: black;}""")
 
     ###################################################################################################################################################
 
@@ -445,7 +445,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             self.frame_list.remove(self.current_frame_idx)
 
         self.determine_save_status()
-        self.progress_bar_comp.set_frame_category("marked_frames", self.frame_list, "#E28F13")
+        self.progress_widget.set_frame_category("marked_frames", self.frame_list, "#E28F13")
         self.navigation_title_controller()
 
     def adjust_confidence_cutoff(self):
@@ -527,7 +527,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
 
     def _handle_refined_frames_exported(self, refined_frames):
         self.refined_frame_list = refined_frames
-        self.progress_bar_comp.set_frame_category("refined_frames", self.refined_frame_list, "#009979", priority=7)
+        self.progress_widget.set_frame_category("refined_frames", self.refined_frame_list, "#009979", priority=7)
         self.display_current_frame()
         self.determine_save_status()
 
