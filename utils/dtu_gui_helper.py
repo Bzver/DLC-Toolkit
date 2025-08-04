@@ -24,8 +24,8 @@ def export_and_show_message(parent, exporter: DLC_Exporter, frame_only=False, mu
 
     return status
 
-def handle_unsaved_changes_on_close(parent, event, unsaved_changes: bool, save_callback: Callable[[], bool]):
-    if not unsaved_changes:
+def handle_unsaved_changes_on_close(parent, event, is_saved: bool, save_callback: Callable[[], bool]):
+    if is_saved:
         event.accept()
         return
     
