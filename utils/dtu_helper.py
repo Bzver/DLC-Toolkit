@@ -3,6 +3,7 @@ import bisect
 
 from typing import List, Optional
 from numpy.typing import NDArray
+from .dtu_dataclass import Loaded_DLC_Data
 
 def format_title(base_title: str, debug_status: bool) -> str:
     if debug_status:
@@ -37,8 +38,16 @@ def get_next_frame_in_list(frame_list:List[int], current_frame_idx:int) -> Optio
     
     return None
 
+def get_current_frame_inst(dlc_data:Loaded_DLC_Data, pred_data_array:NDArray, current_frame_idx:int) -> List[int]:
+    current_frame_inst = []
+    for inst in [ inst for inst in range(dlc_data.instance_count) ]:
+        if np.any(~np.isnan(pred_data_array[current_frame_idx, inst, :])):
+            current_frame_inst.append(inst)
+    return current_frame_inst
+
 ###########################################################################################
-def add_mock_confidence_score(array:NDArray[np.floating]) -> NDArray:
+
+def add_mock_confidence_score(array:NDArray) -> NDArray:
     array_dim = len(array.shape) # Always check for dimension first
     if array_dim not in (2, 3):
         raise ValueError("Input array must be 2D or 3D.")
