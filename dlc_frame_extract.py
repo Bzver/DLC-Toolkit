@@ -76,16 +76,16 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.nav_widget.hide()
 
         self.nav_widget.frame_changed_sig.connect(self.change_frame)
-        self.nav_widget.prev_marked_frame_sig.connect(self.prev_marked_frame)
-        self.nav_widget.next_marked_frame_sig.connect(self.next_marked_frame)
+        self.nav_widget.prev_marked_frame_sig.connect(lambda:self._navigate_marked_frames("prev"))
+        self.nav_widget.next_marked_frame_sig.connect(lambda:self._navigate_marked_frames("next"))
 
         QShortcut(QKeySequence(Qt.Key_Left | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(-10))
         QShortcut(QKeySequence(Qt.Key_Left), self).activated.connect(lambda: self.change_frame(-1))
         QShortcut(QKeySequence(Qt.Key_Right), self).activated.connect(lambda: self.change_frame(1))
         QShortcut(QKeySequence(Qt.Key_Right | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(10))
         QShortcut(QKeySequence(Qt.Key_X), self).activated.connect(self.toggle_frame_status)
-        QShortcut(QKeySequence(Qt.Key_Up), self).activated.connect(self.prev_marked_frame)
-        QShortcut(QKeySequence(Qt.Key_Down), self).activated.connect(self.next_marked_frame)
+        QShortcut(QKeySequence(Qt.Key_Up), self).activated.connect(lambda:self._navigate_marked_frames("prev"))
+        QShortcut(QKeySequence(Qt.Key_Down), self).activated.connect(lambda:self._navigate_marked_frames("next"))
         QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.progress_widget.toggle_playback)
         QShortcut(QKeySequence(Qt.Key_S | Qt.ControlModifier), self).activated.connect(self.save_workspace)
         
@@ -485,11 +485,8 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.confidence_cutoff = value / 100.0
         self.display_current_frame() # Redraw frame with new cutoff
 
-    def prev_marked_frame(self):
-        dugh.navigate_to_marked_frame(self, self.frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, "prev")
-
-    def next_marked_frame(self):
-        dugh.navigate_to_marked_frame(self, self.frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, "next")
+    def _navigate_marked_frames(self, mode):
+        dugh.navigate_to_marked_frame(self, self.frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, mode)
 
     ###################################################################################################################################################
 
