@@ -1,4 +1,7 @@
 import numpy as np
+import bisect
+
+from typing import List, Optional
 from numpy.typing import NDArray
 
 def format_title(base_title: str, debug_status: bool) -> str:
@@ -8,6 +11,33 @@ def format_title(base_title: str, debug_status: bool) -> str:
 
 ###########################################################################################
 
+def get_prev_frame_in_list(frame_list:List[int], current_frame_idx:int) -> Optional[int]:
+    try:
+        current_idx_in_list = frame_list.index(current_frame_idx)
+        prev_idx = current_idx_in_list - 1
+    except ValueError:
+        insertion_point = bisect.bisect_left(frame_list, current_frame_idx)
+        prev_idx = insertion_point - 1
+
+    if prev_idx >= 0:
+        return frame_list[prev_idx]
+    
+    return None
+
+def get_next_frame_in_list(frame_list:List[int], current_frame_idx:int) -> Optional[int]:
+    try:
+        current_idx_in_list = frame_list.index(current_frame_idx)
+        next_idx = current_idx_in_list + 1
+    except ValueError:
+        insertion_point = bisect.bisect_right(frame_list, current_frame_idx)
+        next_idx = insertion_point
+
+    if next_idx < len(frame_list):
+        return frame_list[next_idx]
+    
+    return None
+
+###########################################################################################
 def add_mock_confidence_score(array:NDArray[np.floating]) -> NDArray:
     array_dim = len(array.shape) # Always check for dimension first
     if array_dim not in (2, 3):
@@ -60,5 +90,3 @@ def remove_mock_confidence_score(array:NDArray):
         new_array[:,:,0::2] = array[:,:,0::3]
         new_array[:,:,1::2] = array[:,:,1::3]
     return new_array
-
-###########################################################################################

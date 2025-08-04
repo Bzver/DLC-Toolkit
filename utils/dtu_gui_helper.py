@@ -1,8 +1,34 @@
 from PySide6.QtWidgets import QMessageBox
-from typing import Optional, Callable
+from typing import Optional, Callable, List
 
 from .dtu_io import DLC_Loader, DLC_Exporter
 from .dtu_dataclass import Loaded_DLC_Data
+from . import dtu_helper as duh
+
+def navigate_to_marked_frame(parent:object, frame_list:List[int], current_frame_idx:int,
+        change_frame_callback:Callable[[int], None], mode:str):
+    if not frame_list:
+        QMessageBox.warning(parent, "No Marked Frames", "No marked frames to navigate.")
+        return
+
+    if mode == "prev":
+        dest_frame_idx = duh.get_prev_frame_in_list(frame_list, current_frame_idx)
+        no_frame_message = "No previous marked frame found."
+    elif mode == "next":
+        dest_frame_idx = duh.get_next_frame_in_list(frame_list, current_frame_idx)
+        no_frame_message = "No next marked frame found."
+    else:
+        QMessageBox.warning(parent, "Invalid Mode", "Expected mode: 'prev' or 'next'.")
+        return
+    
+    if not dest_frame_idx:
+        QMessageBox.warning(parent, "Navigation", no_frame_message)
+        return
+
+    try:
+        change_frame_callback(dest_frame_idx)
+    except Exception as e:
+        QMessageBox.critical(parent, "Exception", f"Enountering exception: {e}.")
 
 def load_and_show_message(parent, data_loader: DLC_Loader, metadata_only=False, mute=False) -> Optional[Loaded_DLC_Data]:
     loaded_data, msg = data_loader.load_data(metadata_only)

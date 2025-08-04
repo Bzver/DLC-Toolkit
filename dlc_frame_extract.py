@@ -5,7 +5,6 @@ import yaml
 
 import pandas as pd
 import numpy as np
-import bisect
 
 import cv2
 
@@ -487,41 +486,10 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.display_current_frame() # Redraw frame with new cutoff
 
     def prev_marked_frame(self):
-        if not self.frame_list:
-            QMessageBox.information(self, "No Marked Frames", "No marked frames to navigate.")
-            return
-        
-        self.frame_list.sort()
-        try:
-            current_idx_in_marked = self.frame_list.index(self.current_frame_idx) - 1
-        except ValueError:
-            # Current frame is not marked, find the closest previous marked frame
-            current_idx_in_marked = bisect.bisect_left(self.frame_list, self.current_frame_idx) - 1
-
-        if current_idx_in_marked >= 0:
-            self.current_frame_idx = self.frame_list[current_idx_in_marked]
-            self.display_current_frame()
-            self.navigation_title_controller()
-        else:
-            QMessageBox.information(self, "Navigation", "No previous marked frame found.")
+        dugh.navigate_to_marked_frame(self, self.frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, "prev")
 
     def next_marked_frame(self):
-        if not self.frame_list:
-            QMessageBox.information(self, "No Marked Frames", "No marked frames to navigate.")
-            return
-        self.frame_list.sort()
-        try:
-            current_idx_in_marked = self.frame_list.index(self.current_frame_idx) + 1
-        except ValueError:
-            # Current frame is not marked, find the closest next marked frame
-            current_idx_in_marked = bisect.bisect_right(self.frame_list, self.current_frame_idx)
-
-        if current_idx_in_marked < len(self.frame_list):
-            self.current_frame_idx = self.frame_list[current_idx_in_marked]
-            self.display_current_frame()
-            self.navigation_title_controller()
-        else:
-            QMessageBox.information(self, "Navigation", "No next marked frame found.")
+        dugh.navigate_to_marked_frame(self, self.frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, "next")
 
     ###################################################################################################################################################
 
