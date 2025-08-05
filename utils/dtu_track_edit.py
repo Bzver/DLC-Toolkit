@@ -127,3 +127,14 @@ def align_poses_by_vector(relative_x: NDArray, relative_y: NDArray) -> Tuple[NDA
     rotated_relative_y = relative_x * sin_angles[:, np.newaxis] + relative_y * cos_angles[:, np.newaxis]
     
     return rotated_relative_x, rotated_relative_y
+
+def clean_inconsistent_nans(pred_data_array:NDArray):
+    print("Cleaning up NaN keypoints that somehow has confidence value...")
+    nan_mask = np.isnan(pred_data_array)
+    x_is_nan = nan_mask[:, :, 0::3]
+    y_is_nan = nan_mask[:, :, 1::3]
+    keypoints_to_fully_nan = x_is_nan | y_is_nan
+    full_nan_sweep_mask = np.repeat(keypoints_to_fully_nan, 3, axis=-1)
+    pred_data_array[full_nan_sweep_mask] = np.nan
+    print("NaN keypoint confidence cleaned.")
+    return pred_data_array

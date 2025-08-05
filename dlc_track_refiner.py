@@ -59,8 +59,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 "buttons": [
                     ("Direct Keypoint Edit (Q)", self.direct_keypoint_edit),
                     ("Delete All Track Below Set Confidence", self.purge_inst_by_conf),
-                    ("Interpolate All Frames for One Inst", self.interpolate_all),
                     ("Remove All Prediction Inside Area", self.designate_no_mice_zone),
+                    ("Interpolate All Frames for One Inst", self.interpolate_all),
                     ("Segmental Auto Correct", self.segment_auto_correct)
                 ]
             },
@@ -1017,7 +1017,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
     def graphics_view_mouse_release_event(self, event):
         if self.is_drawing_zone and self.start_point and self.current_rect_item:
-            print("is called")
             self.is_drawing_zone = False
             self.graphics_view.setCursor(Qt.ArrowCursor)
             
@@ -1030,7 +1029,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             x1, y1, x2, y2 = int(rect.left()), int(rect.top()), int(rect.right()), int(rect.bottom())
 
             self._save_state_for_undo()
-            self._clean_inconsistent_nans() # Cleanup ghost points (NaN for x,y yet non-nan in confidence)
+            self.pred_data_array = dute.clean_inconsistent_nans() # Cleanup ghost points (NaN for x,y yet non-nan in confidence)
 
             all_x_kps = self.pred_data_array[:,:,0::3]
             all_y_kps = self.pred_data_array[:,:,1::3]
@@ -1077,17 +1076,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             super(QGraphicsView, self.graphics_view).wheelEvent(event)
 
     ###################################################################################################################################################
-
-    def _clean_inconsistent_nans(self):
-        print("Performing Operation Clean Sweep to inconsistent NaN keypoints...")
-        nan_mask = np.isnan(self.pred_data_array)
-        x_is_nan = nan_mask[:, :, 0::3]
-        y_is_nan = nan_mask[:, :, 1::3]
-        keypoints_to_fully_nan = x_is_nan | y_is_nan
-        full_nan_sweep_mask = np.repeat(keypoints_to_fully_nan, 3, axis=-1)
-        self.pred_data_array[full_nan_sweep_mask] = np.nan
-        print("Inconsistent NaN sweep completed.")
-
     def mark_all_as_refined(self):
         if not self.marked_roi_frame_list:
             QMessageBox.information(
