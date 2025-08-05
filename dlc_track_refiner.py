@@ -39,7 +39,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.is_debug = True
+        self.is_debug = False
         self.setWindowTitle(duh.format_title("DLC Track Refiner", self.is_debug))
         self.setGeometry(100, 100, 1200, 960)
 
@@ -652,10 +652,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 self.pred_data_array, self.dlc_data.num_keypoint, confidence_threshold, bodypart_threshold)
             QMessageBox.information(self, "Deletion Complete", f"Deleted {removed_instances_count} instances from {removed_frames_count} frames.")
 
-            self.is_saved = False
-            self.display_current_frame()
+            self._on_track_data_changed()
             self.reset_zoom()
-            self.check_instance_count_per_frame()
         else:
             QMessageBox.information(self, "Deletion Cancelled", "Deletion cancelled by user.")
 
