@@ -100,7 +100,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         # Progress bar
         self.progress_layout = QtWidgets.QHBoxLayout()
-
         self.progress_widget = Progress_Widget()
         self.progress_layout.addWidget(self.progress_widget)
         self.progress_widget.frame_changed.connect(self._handle_frame_change_from_comp)
@@ -930,8 +929,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self._on_track_data_changed()
 
     def _generate_track_wrapper(self):
-        if not self._track_edit_blocker():
-            return
+        if self.pred_data_array is None:
+            QMessageBox.warning(self, "Error", "Prediction data not loaded. Please load a prediction file first.")
+            return False
         
         current_frame_inst = duh.get_current_frame_inst(self.dlc_data, self.pred_data_array, self.current_frame_idx)
         missing_instances = [inst for inst in range(self.dlc_data.instance_count) if inst not in current_frame_inst]
