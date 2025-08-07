@@ -575,8 +575,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
     def reload_prediction(self, prediction_path):
         """Reload prediction data from file and update visualization"""
         self.data_loader.prediction_filepath = prediction_path
-        self.data_loader.prediction_loader()
-        self.dlc_data = self.data_loader.get_loaded_dlc_data()
+        self.dlc_data = self.data_loader.load_data()
         self.display_current_frame()
         QMessageBox.information(self, "Success", "Prediction reloaded successfully!")
 

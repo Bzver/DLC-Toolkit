@@ -29,7 +29,6 @@ VIDEO_FILE_DEBUG = "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-conv.mp4"
 PRED_FILE_DEBUG = "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-convDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_370_snapshot_150_el.h5"
 
 # Todo:
-#   Add instance generation in keypoint edit mode
 #   Add support for scenario where individual counts exceed 2
 
 class DLC_Track_Refiner(QtWidgets.QMainWindow):
@@ -1155,10 +1154,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                     pred_file_to_save['tracks/table'][...] = new_data
             self.prediction = pred_file_to_save_path
             self.data_loader.dlc_config_filepath = self.dlc_data.dlc_config_filepath
-            self.data_loader.dlc_config_loader()
             self.data_loader.prediction_filepath = self.prediction
-            self.data_loader.prediction_loader()
-            self.dlc_data = self.data_loader.get_loaded_dlc_data()
+            self.dlc_data = self.data_loader.load_data()
             self.is_saved = True
             
             msg = f"Successfully saved modified prediction to: {self.prediction}"
