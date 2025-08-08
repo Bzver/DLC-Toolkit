@@ -52,8 +52,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             "Edit": {
                 "display_name": "Edit",
                 "buttons": [
-                    ("Mark / Unmark Current Frame (X)", self.wip_unimplemented),
-                    ("Adjust Confidence Cutoff", self.wip_unimplemented),
+                    ("Track Swap Detect", self.wip_unimplemented),
                     ("Refine Tracks", self.call_track_refiner)
                 ]
             }
@@ -111,8 +110,6 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_Right), self).activated.connect(lambda: self.change_frame(1))
         QShortcut(QKeySequence(Qt.Key_Right | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(10))
         QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.progress_widget.toggle_playback)
-        QShortcut(QKeySequence(Qt.Key_X), self).activated.connect(self.wip_unimplemented)
-
         self.canvas.mpl_connect("scroll_event", self.on_scroll_3d_plot)
 
         self.reset_state()
@@ -135,13 +132,20 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.num_cam_from_calib = None
 
         self.plot_lim = 300
-        self.instance_color = [(255, 165, 0), (51, 255, 51), (51, 153, 255), (255, 51, 51), (255, 255, 102)] # RGB
+        self.instance_color = [
+            (255, 165, 0), (51, 255, 51), (51, 153, 255), (255, 51, 51), (255, 255, 102)] # RGB
         
         self.current_frame_idx = 0
         self.total_frames = 0
         self.selected_cam_idx = None
+        self.video_list, self.cap_list, self.prediction_list, self.camera_params = [], [], [], []
+        self.cam_pos, self.cam_dir = None, None
 
         self.refiner_window = None
+
+        self.ax.clear()
+        self.ax.set_title("3D Skeleton Plot - No DLC data loaded")
+        self.canvas.draw_idle()
 
     def open_video_folder_dialog(self):
         if self.is_debug:
@@ -162,7 +166,9 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             self.load_calibrations()
             if self.num_cam_from_calib is None: # User closed calibration loading window or failed to load
                 return
-        
+
+        self.reset_state()
+
         folder_path = QtWidgets.QFileDialog.getExistingDirectory(self, "Select Video Folder")
         if folder_path:
             self.load_video_folder(folder_path)
