@@ -40,6 +40,29 @@ def triangulate_point(num_views:int, projs:List[NDArray], pts_2d:List[Tuple[floa
     point_3d = (point_4d_hom / point_4d_hom[3]).flatten()[:3] # Convert from homogeneous to Euclidean coordinates (x/w, y/w, z/w)
     return point_3d
 
+def triangulate_point_simple(proj1:NDArray, proj2:NDArray, pts_2d1:Tuple[float], pts_2d2:Tuple[float], conf1:float, conf2:float) -> NDArray:
+    """
+    Triangulates a single 3D point from two 2D camera views.
+
+    Args:
+        proj1 (np.array): 3x4 projection matrix for the first camera view.
+        proj2 (np.array): 3x4 projection matrix for the second camera view.
+        pts_2d1 (tuple): 2D image point (u, v) from the first camera view.
+        pts_2d2 (tuple): 2D image point (u, v) from the second camera view.
+        conf1 (float): Confidence value for the first 2D point.
+        conf2 (float): Confidence value for the second 2D point.
+
+    Returns:
+        np.array: The triangulated 3D point in Euclidean coordinates (x, y, z).
+    """
+    num_views = 2
+    projs = [proj1, proj2]
+    pts_2d = [pts_2d1, pts_2d2]
+    confs = [conf1, conf2]
+    
+    point_3d = triangulate_point(num_views, projs, pts_2d, confs)
+    return point_3d
+
 def get_projection_matrix(K, R, t):
     """
     Computes the projection matrix from camera intrinsic and extrinsic parameters.
