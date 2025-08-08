@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QMessageBox, QFileDialog
 
 from utils.dtu_io import DLC_Loader, DLC_Exporter
 from utils.dtu_widget import Menu_Widget, Progress_Widget, Nav_Widget
+from utils.dtu_comp import Confidence_Dialog
 from utils.dtu_dataclass import Export_Settings
 import utils.dtu_helper as duh
 import utils.dtu_gui_helper as dugh
@@ -40,7 +41,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
                 "display_name": "Edit",
                 "buttons": [
                     ("Mark / Unmark Current Frame (X)", self.toggle_frame_status),
-                    ("Adjust Confidence Cutoff", self.adjust_confidence_cutoff),
+                    ("Adjust Confidence Cutoff", self.show_confidence_dialog),
                     ("Edit in Refiner", self.call_refiner)
                 ]
             },
@@ -447,46 +448,27 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.progress_widget.set_frame_category("marked_frames", self.frame_list, "#E28F13")
         self.navigation_title_controller()
 
-    def adjust_confidence_cutoff(self):
-        """Pops out a menu with a QSlider to adjust self.confidence_cutoff."""
+    def _navigate_marked_frames(self, mode):
+        dugh.navigate_to_marked_frame(self, self.frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, mode)
+
+    ###################################################################################################################################################
+
+    def show_confidence_dialog(self):
         if self.current_frame is None:
-            QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
+            QtWidgets.QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
             return
         
         if not self.dlc_data:
-            QMessageBox.warning(self, "No Prediction", "No prediction has been loaded, please load prediction first.")
+            QtWidgets.QMessageBox.warning(self, "No Prediction", "No prediction has been loaded, please load prediction first.")
             return
         
-        dialog = QtWidgets.QDialog(self)
-        dialog.setWindowTitle("Adjust Confidence Cutoff")
-        dialog.setModal(True)
+        dialog = Confidence_Dialog(self.confidence_cutoff, self)
+        dialog.confidence_cutoff_changed.connect(self._update_application_cutoff)
+        dialog.show() # .show() instead of .exec() for a non-modal dialog
 
-        layout = QtWidgets.QVBoxLayout(dialog)
-
-        # Label to display current value
-        self.confidence_label = QtWidgets.QLabel(f"Confidence Cutoff: {self.confidence_cutoff:.2f}")
-        layout.addWidget(self.confidence_label)
-
-        # Slider
-        slider = QtWidgets.QSlider(Qt.Horizontal)
-        slider.setRange(0, 100) # Scale 0.00 to 1.00 to 0 to 100
-        slider.setValue(int(self.confidence_cutoff * 100))
-        slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
-        slider.setTickInterval(10)
-        layout.addWidget(slider)
-
-        slider.valueChanged.connect(self._update_confidence_cutoff) # Connect slider to update label
-
-        dialog.exec()
-            
-    def _update_confidence_cutoff(self, value):
-        """Updates the label and the value to show the current slider value."""
-        self.confidence_label.setText(f"Confidence Cutoff: {value / 100.0:.2f}")
-        self.confidence_cutoff = value / 100.0
-        self.display_current_frame() # Redraw frame with new cutoff
-
-    def _navigate_marked_frames(self, mode):
-        dugh.navigate_to_marked_frame(self, self.frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, mode)
+    def _update_application_cutoff(self, new_cutoff):
+        self.confidence_cutoff = new_cutoff
+        self.display_current_frame() # Redraw with the new cutoff
 
     ###################################################################################################################################################
 

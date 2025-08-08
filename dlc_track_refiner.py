@@ -15,7 +15,7 @@ from PySide6.QtGui import QShortcut, QKeySequence, QPainter, QColor, QPen, QClos
 from PySide6.QtWidgets import QMessageBox, QPushButton, QGraphicsView, QGraphicsRectItem
 
 from utils.dtu_widget import Menu_Widget, Progress_Widget, Nav_Widget
-from utils.dtu_comp import Selectable_Instance, Draggable_Keypoint
+from utils.dtu_comp import Selectable_Instance, Draggable_Keypoint, Adjust_Point_Dialog
 from utils.dtu_io import DLC_Loader
 from utils.dtu_dataclass import Export_Settings
 import utils.dtu_helper as duh
@@ -536,43 +536,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         else:
             self.nav_widget.setStyleSheet("""QGroupBox::title {color: black;}""")
 
-    def adjust_point_size(self):
-        dialog = QtWidgets.QDialog(self)
-        dialog.setWindowTitle("Keypoint Size")
-        dialog.setModal(True)
-        layout = QtWidgets.QVBoxLayout(dialog)
-        slider = QtWidgets.QSlider(Qt.Horizontal)
-        slider.setRange(0, 100) # Scale 0.00 to 20.00 to 0 to 100
-        slider.setValue(int(self.plot_opacity * 5))
-        slider.setSingleStep(5)
-        slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
-        slider.setTickInterval(10)
-        layout.addWidget(slider)
-        slider.valueChanged.connect(self._update_point_size) # Connect slider to update opacity and redraw
-        dialog.exec()
-
-    def adjust_plot_opacity(self):
-        dialog = QtWidgets.QDialog(self)
-        dialog.setWindowTitle("Keypoint Visibility")
-        dialog.setModal(True)
-        layout = QtWidgets.QVBoxLayout(dialog)
-        slider = QtWidgets.QSlider(Qt.Horizontal)
-        slider.setRange(0, 100) # Scale 0.00 to 1.00 to 0 to 100
-        slider.setValue(int(self.plot_opacity * 100))
-        slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
-        slider.setTickInterval(10)
-        layout.addWidget(slider)
-        slider.valueChanged.connect(self._update_plot_opacity) # Connect slider to update opacity and redraw
-        dialog.exec()
-
-    def _update_point_size(self, value):
-        self.point_size = value / 5
-        self.display_current_frame()
-
-    def _update_plot_opacity(self, value):
-        self.plot_opacity = value / 100.0
-        self.display_current_frame()
-
     def toggle_zoom_mode(self):
         self.is_zoom_mode = not self.is_zoom_mode
         if self.is_zoom_mode:
@@ -586,6 +549,26 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
     def reset_zoom(self):
         self.zoom_factor = 1.0
         self.graphics_view.fitInView(self.graphics_scene.sceneRect(), Qt.KeepAspectRatio)
+
+    ###################################################################################################################################################
+
+    def adjust_point_size(self):
+        dialog = Adjust_Point_Dialog(self.point_size, 5, self)
+        dialog.point_property_changed.connect(self._update_point_size)
+        dialog.show()
+
+    def adjust_plot_opacity(self):
+        dialog = Adjust_Point_Dialog(self.plot_opacity, 100, self)
+        dialog.point_property_changed.connect(self._update_plot_opacity)
+        dialog.show()
+
+    def _update_point_size(self, value):
+        self.point_size = value
+        self.display_current_frame()
+
+    def _update_plot_opacity(self, value):
+        self.plot_opacity = value
+        self.display_current_frame()
 
     ###################################################################################################################################################
 

@@ -1,4 +1,5 @@
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QMessageBox, QDialog, QVBoxLayout, QLabel, QSlider
 from typing import Optional, Callable, List
 
 from .dtu_io import DLC_Loader, DLC_Exporter

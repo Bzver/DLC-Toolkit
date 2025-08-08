@@ -15,9 +15,9 @@ from PySide6.QtWidgets import QMessageBox
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
-from utils.dtu_comp import Clickable_Video_Label
 from utils.dtu_io import DLC_Loader
 from utils.dtu_widget import Menu_Widget, Progress_Widget, Nav_Widget
+from utils.dtu_comp import Clickable_Video_Label, Confidence_Dialog
 import utils.dtu_helper as duh
 import utils.dtu_gui_helper as dugh
 import utils.dtu_triangulation as dutri
@@ -52,6 +52,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             "Edit": {
                 "display_name": "Edit",
                 "buttons": [
+                    ("Adjust Confidence Cutoff", self.show_confidence_dialog),
                     ("Track Swap Detect", self.wip_unimplemented),
                     ("Refine Tracks", self.call_track_refiner)
                 ]
@@ -113,10 +114,6 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.canvas.mpl_connect("scroll_event", self.on_scroll_3d_plot)
 
         self.reset_state()
-
-    def wip_unimplemented(self):
-        QMessageBox.information(self, "Unimplemented", "This function has yet to be implemented.")
-        pass
 
     def reset_state(self):
         self.num_cam = None
@@ -638,6 +635,25 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
     def navigation_title_controller(self):
         self.nav_widget.setTitle(f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1}")
 
+    ###################################################################################################################################################
+
+    def show_confidence_dialog(self):
+        if self.current_frame is None:
+            QtWidgets.QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
+            return
+        
+        if not self.dlc_data:
+            QtWidgets.QMessageBox.warning(self, "No Prediction", "No prediction has been loaded, please load prediction first.")
+            return
+        
+        dialog = Confidence_Dialog(self.confidence_cutoff, self)
+        dialog.confidence_cutoff_changed.connect(self._update_application_cutoff)
+        dialog.show() # .show() instead of .exec() for a non-modal dialog
+
+    def _update_application_cutoff(self, new_cutoff):
+        self.confidence_cutoff = new_cutoff
+        self.display_current_frame() # Redraw with the new cutoff
+        
     ###################################################################################################################################################
 
     def _handle_frame_change_from_comp(self, new_frame_idx: int):

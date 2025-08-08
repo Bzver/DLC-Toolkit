@@ -238,3 +238,61 @@ class Clickable_Video_Label(QtWidgets.QLabel):
         if event.button() == Qt.LeftButton:
             self.clicked.emit(self.cam_idx)
         super().mousePressEvent(event)
+
+###################################################################################################################################################
+
+class Confidence_Dialog(QtWidgets.QDialog):
+    confidence_cutoff_changed = QtCore.Signal(float)
+
+    def __init__(self, current_cutoff, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Adjust Confidence Cutoff")
+        self.confidence_cutoff = current_cutoff
+
+        layout = QtWidgets.QVBoxLayout(self)
+
+        self.confidence_label = QtWidgets.QLabel(f"Confidence Cutoff: {self.confidence_cutoff:.2f}")
+        layout.addWidget(self.confidence_label)
+
+        self.slider = QtWidgets.QSlider(Qt.Horizontal)
+        self.slider.setRange(0, 100)
+        self.slider.setValue(int(self.confidence_cutoff * 100))
+        self.slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
+        self.slider.setTickInterval(10)
+        layout.addWidget(self.slider)
+
+        self.slider.valueChanged.connect(self._update_label_and_emit_change)
+
+    def _update_label_and_emit_change(self, value):
+        new_cutoff = value / 100.0
+        self.confidence_label.setText(f"Confidence Cutoff: {new_cutoff:.2f}")
+        self.confidence_cutoff_changed.emit(new_cutoff)
+
+###################################################################################################################################################
+
+class Adjust_Point_Dialog(QtWidgets.QDialog):
+    point_property_changed = QtCore.Signal(float)
+
+    def __init__(self, current_property, range_mult, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Adjust Point Property")
+        self.current_property = current_property
+        self.range_mult = range_mult
+
+        layout = QtWidgets.QVBoxLayout(self)
+
+        self.property_label = QtWidgets.QLabel("Point Property:")
+        self.property_input = QtWidgets.QDoubleSpinBox()
+
+        self.slider = QtWidgets.QSlider(Qt.Horizontal)
+        self.slider.setRange(0, 100)
+        self.slider.setValue(int(self.current_property * self.range_mult))
+        self.slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
+        self.slider.setTickInterval(10)
+        layout.addWidget(self.slider)
+
+        self.slider.valueChanged.connect(self._emit_adjusted_signal)
+
+    def _emit_adjusted_signal(self, value):
+        new_property_val =  value / self.range_mult
+        self.point_property_changed.emit(new_property_val)
