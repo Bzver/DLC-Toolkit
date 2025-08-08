@@ -15,7 +15,7 @@ from PySide6.QtWidgets import QMessageBox, QFileDialog
 
 from utils.dtu_io import DLC_Loader, DLC_Exporter
 from utils.dtu_widget import Menu_Widget, Progress_Widget, Nav_Widget
-from utils.dtu_comp import Confidence_Dialog
+from utils.dtu_comp import Adjust_Property_Dialog
 from utils.dtu_dataclass import Export_Settings
 import utils.dtu_helper as duh
 import utils.dtu_gui_helper as dugh
@@ -462,8 +462,9 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "No Prediction", "No prediction has been loaded, please load prediction first.")
             return
         
-        dialog = Confidence_Dialog(self.confidence_cutoff, self)
-        dialog.confidence_cutoff_changed.connect(self._update_application_cutoff)
+        dialog = Adjust_Property_Dialog(
+            property_name="Confidence Cutoff", property_val=self.confidence_cutoff, range_mult=100, parent=self)
+        dialog.property_changed.connect(self._update_application_cutoff)
         dialog.show() # .show() instead of .exec() for a non-modal dialog
 
     def _update_application_cutoff(self, new_cutoff):

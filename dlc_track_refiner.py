@@ -15,7 +15,7 @@ from PySide6.QtGui import QShortcut, QKeySequence, QPainter, QColor, QPen, QClos
 from PySide6.QtWidgets import QMessageBox, QPushButton, QGraphicsView, QGraphicsRectItem
 
 from utils.dtu_widget import Menu_Widget, Progress_Widget, Nav_Widget
-from utils.dtu_comp import Selectable_Instance, Draggable_Keypoint, Adjust_Point_Dialog
+from utils.dtu_comp import Selectable_Instance, Draggable_Keypoint, Adjust_Property_Dialog
 from utils.dtu_io import DLC_Loader
 from utils.dtu_dataclass import Export_Settings
 import utils.dtu_helper as duh
@@ -553,13 +553,15 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
     ###################################################################################################################################################
 
     def adjust_point_size(self):
-        dialog = Adjust_Point_Dialog(self.point_size, 5, self)
-        dialog.point_property_changed.connect(self._update_point_size)
+        dialog = Adjust_Property_Dialog(
+            property_name="Point Size", property_val=self.point_size, range_mult=5, parent=self)
+        dialog.property_changed.connect(self._update_point_size)
         dialog.show()
 
     def adjust_plot_opacity(self):
-        dialog = Adjust_Point_Dialog(self.plot_opacity, 100, self)
-        dialog.point_property_changed.connect(self._update_plot_opacity)
+        dialog = Adjust_Property_Dialog(
+            property_name="Point Opacity", property_val=self.point_size, range_mult=100, parent=self)
+        dialog.property_changed.connect(self._update_plot_opacity)
         dialog.show()
 
     def _update_point_size(self, value):

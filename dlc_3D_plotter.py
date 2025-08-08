@@ -18,7 +18,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from utils.dtu_io import DLC_Loader
 from utils.dtu_widget import Menu_Widget, Progress_Widget, Nav_Widget
-from utils.dtu_comp import Clickable_Video_Label, Confidence_Dialog
+from utils.dtu_comp import Clickable_Video_Label, Adjust_Property_Dialog
 import utils.dtu_helper as duh
 import utils.dtu_gui_helper as dugh
 import utils.dtu_triangulation as dutri
@@ -35,7 +35,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.is_debug = True
+        self.is_debug = False
         self.setWindowTitle(duh.format_title("DLC 3D Plotter", self.is_debug))
         self.setGeometry(100, 100, 1600, 960)
 
@@ -54,7 +54,8 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 "display_name": "Edit",
                 "buttons": [
                     ("Adjust Confidence Cutoff", self.show_confidence_dialog),
-                    ("Track Swap Detect", self.detect_identify_swap),
+                    ("Adjust Deviance Threshold", self.show_deviance_dialog),
+                    ("Track Swap Detect", self.calculate_identity_swap_score),
                     ("Refine Tracks", self.call_track_refiner)
                 ]
             }
@@ -120,6 +121,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.num_cam = None
 
         self.confidence_cutoff = 0.6 # Initialize confidence cutoff
+        self.deviance_threshold = 100 # Initialize deviancy threshold
 
         self.data_loader = DLC_Loader(None, None)
         self.dlc_data = None
@@ -249,6 +251,10 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         
         self.total_frames = temp_total_frames # Set the global total_frames
         self.progress_widget.set_slider_range(self.total_frames)
+
+        # Initialize the swap detection score array
+        self.swap_detection_score_array = np.full((self.total_frames, 3), np.nan)
+        self.swap_detection_score_array[:, 0] = np.arange(self.total_frames)
 
         if not any(self.cap_list): # Check if at least one video was loaded
             QMessageBox.warning(self, "Error", "No video files were loaded successfully.")
@@ -553,9 +559,16 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         for inst in range(self.dlc_data.instance_count):
             # iterate through each keypoint to perform triangulation
             for kp_idx in range(self.dlc_data.num_keypoint):
-                projs = keypoint_data_for_triangulation[inst][kp_idx]['projs']
-                pts_2d = keypoint_data_for_triangulation[inst][kp_idx]['2d_pts']
-                confs = keypoint_data_for_triangulation[inst][kp_idx]['confs']
+                # Convert dictionaries to lists while maintaining camera order
+                projs_dict = keypoint_data_for_triangulation[inst][kp_idx]['projs']
+                pts_2d_dict = keypoint_data_for_triangulation[inst][kp_idx]['2d_pts']
+                confs_dict = keypoint_data_for_triangulation[inst][kp_idx]['confs']
+                
+                # Get sorted camera indices to maintain order
+                cam_indices = sorted(projs_dict.keys())
+                projs = [projs_dict[i] for i in cam_indices]
+                pts_2d = [pts_2d_dict[i] for i in cam_indices]
+                confs = [confs_dict[i] for i in cam_indices]
                 num_valid_views = len(projs)
 
                 if num_valid_views >= 2:
@@ -585,7 +598,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
         return instances_detected_per_camera
 
-    def _acquire_keypoint_data(self, instances_detected_per_camera, undistorted_images=False):
+    def _acquire_keypoint_data(self, instances_detected_per_camera, undistorted_images=False, frame_idx=None):
         # Dictionary to store per-keypoint data across cameras:
         keypoint_data_for_triangulation = {
             inst:
@@ -612,7 +625,8 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 P = self.camera_params[cam_idx]['P']
 
                 # Get all keypoint data (flattened) for the current frame, camera, and instance
-                keypoint_data_all_kps_flattened = self.pred_data_array[self.current_frame_idx, cam_idx, inst_idx, :]
+                frame_to_use = frame_idx if frame_idx is not None else self.current_frame_idx
+                keypoint_data_all_kps_flattened = self.pred_data_array[frame_to_use, cam_idx, inst_idx, :]
 
                 if not undistorted_images:
                     keypoint_data_all_kps_flattened = dutri.undistort_points(keypoint_data_all_kps_flattened, K, RDistort, TDistort)
@@ -635,7 +649,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
     ###################################################################################################################################################
 
-    def detect_identify_swap(self):
+    def calculate_identity_swap_score(self):
         if not self.dlc_data or not self.pred_data_array.any():
             return
 
@@ -643,9 +657,22 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             QMessageBox.information(self, "Single Instance", "Only one instance detected, no swap detection needed.")
             return
 
-        deviation_threshold = 0.1
+        # Create progress dialog
+        progress = QtWidgets.QProgressDialog(
+            "Calculating swap detection score...", "Cancel",
+            0, self.total_frames, self
+        )
+        progress.setWindowTitle("Progress")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setValue(0)
 
         for frame in range(self.total_frames):
+            if progress.wasCanceled():
+                return
+                
+            progress.setValue(frame)
+            QtWidgets.QApplication.processEvents()  # Keep UI responsive
+            
             valid_view = []
             skip_frame = False
             instances_detected_per_camera = self._validate_multiview_instances()
@@ -661,7 +688,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
             for inst in range(self.dlc_data.instance_count):
                 keypoint_data_for_triangulation = \
-                    self._acquire_keypoint_data(instances_detected_per_camera, undistorted_images=False)
+                    self._acquire_keypoint_data(instances_detected_per_camera, undistorted_images=False, frame_idx=frame)
 
                 if not keypoint_data_for_triangulation:
                     skip_frame = True
@@ -676,7 +703,6 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             kp_3d_all_pair = np.full((len(all_camera_pairs), self.dlc_data.instance_count, self.dlc_data.num_keypoint, 3), np.nan)
 
             for pair_idx, (cam1_idx, cam2_idx) in enumerate(all_camera_pairs):
-                print(f"Processing pair {pair_idx} of frame {frame}")
                 for inst in range(self.dlc_data.instance_count): 
                     for kp_idx in range(self.dlc_data.num_keypoint):
                         if (cam1_idx in keypoint_data_for_triangulation[inst][kp_idx]['projs'] and 
@@ -692,8 +718,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                             kp_3d_all_pair[pair_idx, inst, kp_idx] = \
                                 dutri.triangulate_point_simple(proj1, proj2, pts_2d1, pts_2d2, conf1, conf2)
 
-            mean_3d_kp = np.nanmean(kp_3d_all_pair, axis=0) # [inst, kp, xyz]
-        
+            mean_3d_kp = np.nanmean(kp_3d_all_pair, axis=0) # [inst, kp, xyz]  
             # Calculate the Euclidean distance between each pair's result and the mean
             diffs = np.linalg.norm(kp_3d_all_pair - mean_3d_kp, axis=-1) # [pair, inst, kp]
             total_diffs_per_pair = np.nansum(diffs, axis=(1, 2)) # [pair]
@@ -710,16 +735,16 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             
             swap_camera_idx = np.argmax(deviant_cameras_scores)
             
-            print(f"Swap detected in camera {swap_camera_idx} for frame {frame}")
+            self.swap_detection_score_array[frame, 1] = swap_camera_idx
+            self.swap_detection_score_array[frame, 2] = total_diffs_per_pair[deviant_pair_idx]
 
-            if np.nanmax(total_diffs_per_pair) > deviation_threshold:
-                self.roi_frame_list.append(frame)
+        progress.close()
+        QMessageBox.information(self, "Swap Detection Score Calculated", "Identity swap detection completed.")
+        self.check_for_swap()
 
-        if len(self.roi_frame_list) == 0:
-            QMessageBox.information(self, "No Deviations Detected", "No significant deviations detected across frames.")
-        else:
-            QMessageBox.information(self, "Deviations Detected", f"Deviations detected in {len(self.roi_frame_list)} frames.")
-
+    def check_for_swap(self):
+        deviance_mask = self.swap_detection_score_array[:, 2] >= self.deviance_threshold
+        self.roi_frame_list = np.where(deviance_mask)[0].tolist() # Get the indices of frames with significant deviations
         self._refresh_slider()
 
     def _navigate_marked_frames(self, mode):
@@ -746,7 +771,11 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.canvas.draw_idle()
 
     def navigation_title_controller(self):
-        self.nav_widget.setTitle(f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1}")
+        title_text = f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1}"
+        if self.swap_detection_score_array is not None and self.swap_detection_score_array.shape[0] > 0:
+            deviance_scores = self.swap_detection_score_array[:, 2]
+            title_text += f" | Deviance Score: {deviance_scores[self.current_frame_idx]:.2f} (Threshold: {self.deviance_threshold})"
+        self.nav_widget.setTitle(title_text)
         if self.current_frame_idx in self.roi_frame_list:
             self.nav_widget.setStyleSheet("""QGroupBox::title {color: #F04C4C;}""")
         else:
@@ -755,17 +784,33 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
     ###################################################################################################################################################
 
     def show_confidence_dialog(self):
-        if not self.dlc_data:
+        if not self.pred_data_array.any():
             QtWidgets.QMessageBox.warning(self, "No Prediction", "No prediction has been loaded, please load prediction first.")
             return
         
-        dialog = Confidence_Dialog(self.confidence_cutoff, self)
-        dialog.confidence_cutoff_changed.connect(self._update_confidence_cutoff)
+        dialog = Adjust_Property_Dialog(
+            property_name="Confidence Cutoff", property_val=self.confidence_cutoff, range_mult=100, parent=self)
+        dialog.property_changed.connect(self._update_confidence_cutoff)
+        dialog.show() # .show() instead of .exec() for a non-modal dialog
+
+    def show_deviance_dialog(self):
+        if not self.pred_data_array.any():
+            QtWidgets.QMessageBox.warning(self, "No Prediction", "No prediction has been loaded, please load prediction first.")
+            return
+        
+        dialog = Adjust_Property_Dialog(
+            property_name="Deviance Threshold", property_val=self.deviance_threshold, range_mult=0.1, parent=self)
+        dialog.property_changed.connect(self._update_deviance_threshold)
         dialog.show() # .show() instead of .exec() for a non-modal dialog
 
     def _update_confidence_cutoff(self, new_cutoff):
         self.confidence_cutoff = new_cutoff
-        self.display_current_frame()
+        self.display_current_frame() # Redraw with the new cutoff
+
+    def _update_deviance_threshold(self, new_threshold):
+        self.deviance_threshold = new_threshold
+        self.check_for_swap()
+        self.navigation_title_controller()
 
     def _refresh_slider(self):
         self.progress_widget.set_frame_category("ROI frames", self.roi_frame_list, "#F04C4C") # Update ROI frames
