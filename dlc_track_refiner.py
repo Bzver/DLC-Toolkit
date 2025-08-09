@@ -79,6 +79,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 ]
             }
         }
+        if self.is_debug:
+            refiner_menu_config["File"]["buttons"].append(("Debug Load", self.debug_load))
         self.menu_widget.add_menu_from_config(refiner_menu_config)
 
         self.central_widget = QtWidgets.QWidget()
@@ -223,16 +225,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
     def load_video(self):
         self.reset_state()
-
-        if self.is_debug:
-            self.video_file = VIDEO_FILE_DEBUG
-            self.initialize_loaded_video()
-            self.data_loader.dlc_config_filepath = DLC_CONFIG_DEBUG
-            self.data_loader.prediction_filepath = self.prediction = PRED_FILE_DEBUG
-            self.dlc_data = dugh.load_and_show_message(self, self.data_loader)
-            self.initialize_loaded_data()
-            return
-
         file_dialog = QtWidgets.QFileDialog(self)
         video_path, _ = file_dialog.getOpenFileName(self, "Load Video", "", "Video Files (*.mp4 *.avi *.mov *.mkv);;All Files (*)")
         if video_path:
@@ -282,6 +274,14 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.data_loader.dlc_config_filepath = dlc_config
 
         self.dlc_data = dugh.load_and_show_message(self, self.data_loader, mute=self.in_batch_mode)
+        self.initialize_loaded_data()
+
+    def debug_load(self):
+        self.video_file = VIDEO_FILE_DEBUG
+        self.initialize_loaded_video()
+        self.data_loader.dlc_config_filepath = DLC_CONFIG_DEBUG
+        self.data_loader.prediction_filepath = self.prediction = PRED_FILE_DEBUG
+        self.dlc_data = dugh.load_and_show_message(self, self.data_loader)
         self.initialize_loaded_data()
 
     def initialize_loaded_data(self):
@@ -707,26 +707,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         self.check_instance_count_per_frame()
 
-        segments_to_correct = []
-        num_corrections_applied = 0
-        current_segment_start = -1
-
-        for i in range(len(self.instance_count_per_frame)):
-            if self.instance_count_per_frame[i] <= 1:
-                if current_segment_start == -1:
-                    current_segment_start = i
-            else:
-                if current_segment_start != -1:
-                    segment_length = i - current_segment_start
-                    if segment_length >= min_segment_length: # Use >= for segments of exactly 100 frames
-                        segments_to_correct.append((current_segment_start, i - 1))
-                    current_segment_start = -1
-        
-        # Handle the last segment if it extends to the end of the video
-        if current_segment_start != -1:
-            segment_length = len(self.instance_count_per_frame) - current_segment_start
-            if segment_length >= min_segment_length:
-                segments_to_correct.append((current_segment_start, len(self.instance_count_per_frame) - 1))
+        segments_to_correct = dute.find_segment_for_autocorrect(self.instance_count_per_frame, min_segment_length)
 
         if not segments_to_correct:
             QMessageBox.information(self, "Info", "No segments found where less than two instance is persistently detected for more than 100 frames.")
@@ -734,23 +715,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         self._save_state_for_undo() # Save state before making changes
 
-        for start_frame, end_frame in segments_to_correct:
-            for frame_idx in range(start_frame, end_frame + 1): # Swap non 'instance 0' with 'instance 0' for all frames in the segment
-                if self.instance_count_per_frame[frame_idx] == 0: # Skip swapping for empty predictions
-                    continue
-                current_present_at_frame = np.where(~np.all(np.isnan(self.pred_data_array[frame_idx]), axis=1))[0]
-                if current_present_at_frame[0] != 0: # Ensure that at this specific frame, the instance to be swapped is not instance 0
-                    self.pred_data_array[frame_idx, 0, :], self.pred_data_array[frame_idx, 1, :] = \
-                    self.pred_data_array[frame_idx, 1, :].copy(), self.pred_data_array[frame_idx, 0, :].copy()
-                last_present_instance = current_present_at_frame[0]
-
-            # Apply the swap from (end_frame + 1) to the end of the video, IF the last instance detected was not 0
-            if last_present_instance is not None and last_present_instance != 0:
-                print(f"Applying global swap from frame {end_frame + 1} to end.")
-                self.pred_data_array[end_frame + 1:, 0, :], self.pred_data_array[end_frame + 1:, 1, :] = \
-                self.pred_data_array[end_frame + 1:, 1, :].copy(), self.pred_data_array[end_frame + 1:, 0, :].copy()
-            
-            num_corrections_applied += 1
+        self.pred_data_array, num_corrections_applied = dute.apply_segmental_autocorrect(
+            self.pred_data_array, segments_to_correct, self.dlc_data.num_keypoint, self.dlc_data.instance_count)
 
         QMessageBox.information(self, "Success", f"Segmental auto-correction applied to {num_corrections_applied} segments.")
         self.is_saved = False
@@ -852,7 +818,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             return False
         return True
     
-    def _delete_track_wrapper(self, mode):
+    def _delete_track_wrapper(self, mode, deletion_range=None):
         if not self._track_edit_blocker():
             return
         
@@ -865,12 +831,16 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         
         self._save_state_for_undo()
         selected_instance_idx = self.selected_box.instance_id if self.selected_box else current_frame_inst[0]
-        self.pred_data_array = dute.delete_track(self.pred_data_array, self.current_frame_idx,
-                                     self.roi_frame_list, selected_instance_idx, mode)
+        try:
+            self.pred_data_array = dute.delete_track(self.pred_data_array, self.current_frame_idx,
+                                        self.roi_frame_list, selected_instance_idx, mode, deletion_range)
+        except ValueError as e:
+            QMessageBox.warning(self, "Deletion Error", str(e))
+            return
         
         self._on_track_data_changed()
         
-    def _swap_track_wrapper(self, mode):
+    def _swap_track_wrapper(self, mode, swap_range=None):
         if not self._track_edit_blocker():
             return
         
@@ -880,7 +850,12 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             return
 
         self._save_state_for_undo()
-        self.pred_data_array = dute.swap_track(self.pred_data_array, self.current_frame_idx, mode)
+        try:
+            self.pred_data_array = dute.swap_track(self.pred_data_array, self.current_frame_idx, mode, swap_range)
+        except ValueError as e:
+            QMessageBox.warning(self, "Deletion Error", str(e))
+            return
+        
         self._on_track_data_changed()
 
     def _interpolate_track_wrapper(self):
