@@ -36,6 +36,8 @@ A GUI application for visualizing 3D skeleton plots from multiple DeepLabCut pre
 - **Multi-camera 2D video display:** Shows synchronized video frames from up to 4 cameras.
 - **3D skeleton visualization:** Plots the 3D reconstructed skeleton based on 2D predictions and camera calibrations.
 - **Track refinement integration:** Can launch the `DLC_Track_Refiner` tool for selected camera views to correct 2D tracks.
+- **Advanced Detection Features:** Includes options to adjust confidence cutoffs, set deviance thresholds for track analysis, and calculate track swap scores.
+- **Automated Track Correction:** Provides functionality for automatic track swap correction for projects with two animals.
 
 #### Required Folder Structure
 The script expects a specific folder structure for videos and prediction files.
@@ -92,7 +94,7 @@ your_dlc_project/
 - **Video File:** The primary video file (`.mp4`, `.avi`, `.mov`, `.mkv`) from which frames will be extracted and reviewed.
 - **Prediction File (`.h5`):** (Optional) A DeepLabCut prediction `.h5` file. When loaded, pose estimations are overlaid on the video frames.
 - **DLC Config File (`config.yaml`):** (Optional) A DeepLabCut project configuration file. Used to define body parts, skeleton connections, and multi-animal settings for accurate visualization of predictions.
-- **Status File (`.yaml`):** (Optional) A previously saved workspace file from `dlc_frame_extract.py`. This file contains the video path, DLC config path, prediction path, and the list of marked frames, allowing resumption of a previous session.
+- **Status File (`.yaml`):** (Optional) A previously saved workspace file from `dlc_frame_extract.py`. This file contains the video path, DLC config path, prediction path, and the list of marked frames, enabling resumption of a previous session.
 
 **Outputs:**
 - **Workspace Status File (`_extractor_status.yaml`):** A YAML file generated when "Save the Current Workspace" is selected (or Ctrl+S is pressed). It stores the paths to the loaded video, DLC config, prediction file, and the list of marked frames, enabling seamless session resumption.
@@ -116,8 +118,10 @@ A GUI for refining DLC tracking data. It allows for manually correcting, interpo
     - **Interpolate All Frames for One Instance:** Apply interpolation across all frames for a selected instance.
     - **Remove All Prediction Inside Area:** Define a region of interest to remove all predictions within it.
     - **Segmental Auto Correct:** Automated correction for segments of tracks in a specific setup.
-- **Undo/Redo functionality:** Allows reverting or reapplying changes.
-- **Save refined predictions:** Save the modified prediction data back to a new `.h5` file.
+- **Preference Settings:** Allows adjustment of point size and plot visibility (opacity).
+- **Undo/Redo functionality:** Enables reverting or reapplying changes.
+- **Mark All as Refined:** A utility to mark all supploed ROI  frames ( from dlc_frame_extract ) as refined.
+- **Save refined predictions:** Save the modified prediction data back to a new `.h5` file or as a CSV.
 
 **Inputs:**
 - **Video File:** The video file to be refined.
@@ -204,7 +208,7 @@ This script is designed to fill in missing keypoints (NaN values) in SLEAP HDF5 
 
 ### sleap_viewer.ipynb
 
-A basic viewer to load and inspect data from a SLEAP HDF5 file (`.slp`). 
+A basic viewer to load and inspect data from a SLEAP HDF5 file (`.slp`).
 - List the keys (datasets) available within the SLEAP HDF5 file.
 - Access and print information about the `instances` dataset, including its fields and a few entries.
 - Access and parse the `tracks_json` dataset to understand the mapping between internal track indices and user-defined track identifiers.

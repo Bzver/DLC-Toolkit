@@ -76,7 +76,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             "Track": {
                 "display_name": "Track Refine",
                 "buttons": [
-                    ("Attempt Auto Swap Correct", self.automatic_track_correction),
+                    ("Auto Track Swap Correct", self.automatic_track_correction),
                     ("Manual Swap Selected View", self.manual_swap_frame_view),
                     ("Call Track Refiner", self.call_track_refiner)
                 ]
@@ -716,12 +716,12 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
     ###################################################################################################################################################
 
     def calculate_identity_swap_score(self, mode="full"):
-        if not self.dlc_data or not self.pred_data_array.any():
-            return
+        if not self.dlc_data:
+            return False
 
         if self.dlc_data.instance_count == 1:
             QMessageBox.information(self, "Single Instance", "Only one instance detected, no swap detection needed.")
-            return
+            return False
 
         show_progress = True
         if mode == "full": # Create progress dialog
@@ -750,7 +750,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         for frame in range(start_frame, end_frame):
             if show_progress:
                 if progress.wasCanceled():
-                    return
+                    return False
                 progress.setValue(frame)
             QtWidgets.QApplication.processEvents()  # Keep UI responsive
         
@@ -765,6 +765,8 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                     valid_view.append(cam_idx)
 
             if len(valid_view) < 4: # Only use frames with sufficient detections
+                if self.is_debug:
+                    print(f"DEBUG: Skippng frame {frame} due to insufficient detections. Only detected Camera {valid_view}.")
                 continue
 
             for inst in range(self.dlc_data.instance_count):
@@ -776,6 +778,8 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                     break
 
             if skip_frame:
+                if self.is_debug:
+                    print(f"DEBUG: Skippng frame {frame} due to insufficient keypoints.")
                 continue
 
             all_camera_pairs = list(combinations(valid_view, 2))
@@ -824,6 +828,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         if mode == "full":
             QMessageBox.information(self, "Swap Detection Score Calculated", "Identity swap detection completed.")
         self.populate_roi_frame_list()
+        return True
 
     def populate_roi_frame_list(self):
         deviance_mask = self.swap_detection_score_array[:, 2] >= self.deviance_threshold
@@ -831,12 +836,13 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self._refresh_slider()
 
     def automatic_track_correction(self):
-        if not self.dlc_data or not self.pred_data_array.any():
-            QMessageBox.information(self, "No Data", "Load prediction data first!")
+        if not self.dlc_data:
+            QMessageBox.information(self, "No Data", "Load prediction data first!") 
             return
 
-        if not self.swap_detection_score_array[:,2].any():
-            self.calculate_identity_swap_score(mode="full")
+        if np.isnan(self.swap_detection_score_array[:,2]).any:
+            if not self.calculate_identity_swap_score(mode="full"):
+                return
 
         if self.dlc_data.instance_count != 2:
             QMessageBox.information(self, "Unimplemented", "The function is only for two instance only.")
@@ -879,6 +885,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         
         culprit_view_idx = int(self.swap_detection_score_array[frame_idx, 1])
         self.selected_cam_idx = culprit_view_idx
+        self.adjust_3D_plot_view_angle()
         self._refresh_selected_cam()
 
         backup_pred_data_array = self.pred_data_array.copy() # Backup current prediction data
@@ -927,7 +934,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         return True
 
     def manual_swap_frame_view(self):
-        if not self.dlc_data or not self.pred_data_array.any():
+        if not self.dlc_data:
             return
         
         if self.selected_cam_idx is None:
@@ -1029,7 +1036,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
     ###################################################################################################################################################
 
     def show_confidence_dialog(self):
-        if not self.pred_data_array.any():
+        if not self.pred_data_array:
             QtWidgets.QMessageBox.warning(self, "No Prediction", "No prediction has been loaded, please load prediction first.")
             return
         
@@ -1039,7 +1046,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         dialog.show() # .show() instead of .exec() for a non-modal dialog
 
     def show_deviance_dialog(self):
-        if not self.pred_data_array.any():
+        if not self.pred_data_array:
             QtWidgets.QMessageBox.warning(self, "No Prediction", "No prediction has been loaded, please load prediction first.")
             return
         
@@ -1109,7 +1116,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
     def save_workspace(self):
         """Save all the self variables in a hdf5 file in case saving goes awry or user wants to resume later"""
-        if not self.dlc_data or not self.pred_data_array.any():
+        if not self.dlc_data:
             QMessageBox.information(self, "No Data", "Load prediction data first!")
             return
         
@@ -1131,7 +1138,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             QMessageBox.critical(self, "Save Failed", f"An error occurred while saving: {e}")
 
     def save_swapped_prediction(self):
-        if not self.dlc_data or not self.pred_data_array.any():
+        if not self.dlc_data:
             QMessageBox.information(self, "No Data", "Load prediction data first!")
             return
         
