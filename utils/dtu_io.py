@@ -159,22 +159,21 @@ def guarantee_multiindex_rows(df): # Adapted from DeepLabCut
 
 ######################################################################################################################################
 
-def determine_save_path_tr(prediction_filepath:str) -> str:
+def determine_save_path(prediction_filepath:str, suffix:str) -> str:
     pred_file_dir = os.path.dirname(prediction_filepath)
     pred_file_name_without_ext = os.path.splitext(os.path.basename(prediction_filepath))[0]
-    trrf_suffix = "_track_refiner_modified_"
     
-    if not trrf_suffix in pred_file_name_without_ext:
+    if not suffix in pred_file_name_without_ext:
         save_idx = 0
         base_name = pred_file_name_without_ext
     else:
-        base_name, save_idx_str = pred_file_name_without_ext.split(trrf_suffix)
+        base_name, save_idx_str = pred_file_name_without_ext.split(suffix)
         try:
             save_idx = int(save_idx_str) + 1
         except ValueError:
             save_idx = 0 # Fallback if suffix is malformed
     
-    pred_file_to_save_path = os.path.join(pred_file_dir,f"{base_name}{trrf_suffix}{save_idx}.h5")
+    pred_file_to_save_path = os.path.join(pred_file_dir,f"{base_name}{suffix}{save_idx}.h5")
 
     shutil.copy(prediction_filepath, pred_file_to_save_path)
     print(f"Saved modified prediction to: {pred_file_to_save_path}")

@@ -1082,7 +1082,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             QMessageBox.warning(self, "No Prediction Data", "Please load a prediction file first.")
             return
         
-        pred_file_to_save_path = dio.determine_save_path_tr(self.prediction)
+        pred_file_to_save_path = dio.determine_save_path(self.prediction, suffix="_track_refiner_modified_")
         status, msg = dio.save_prediction_to_h5(pred_file_to_save_path, self.pred_data_array)
         
         if not status:
