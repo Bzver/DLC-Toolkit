@@ -2,6 +2,7 @@ import os
 import glob
 
 import scipy.io as sio
+import pickle
 import h5py
 
 import numpy as np
@@ -199,38 +200,38 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
     def load_workspace(self):
         """Load all the saved variables from a previously saved HDF5 file."""
         self.reset_state()
-        workspace_h5, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select Workspace", "", "Workspace Files (*.h5)")
-        if not workspace_h5:
+        workspace_filepath, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select Workspace", "", "Workspace Files (*.pickle)")
+        if not workspace_filepath:
             return
         
-        print(f"Workspace loaded: {workspace_h5}")
+        print(f"Workspace loaded: {workspace_filepath}")
             
         try:
-            with h5py.File(workspace_h5, "r") as f:
-                session_data = f["session_data"]
+            with open(workspace_filepath, "rb") as f:
+                session_data = pickle.load(f)
 
-            self.calibration_loader(session_data["calibration_filepath"].decode('utf-8'))
-            self.dlc_config_loader(session_data["dlc_config_filepath"].decode('utf-8'))
-            self.load_video_folder(session_data["base_folder"].decode('utf-8'))
+            self.calibration_loader(session_data.base_folder)
+            self.dlc_config_loader(session_data.dlc_config_filepath)
+            self.load_video_folder(session_data.calibration_filepath)
 
         except Exception as e:
             QMessageBox.critical(self, "Load Failed", f"An error occurred while loading: {e}")
             traceback.print_exc()
 
-            self.pred_data_array = np.array(session_data["pred_data_array"])
-            self.current_frame_idx = int(session_data["current_frame_idx"])
-            self.confidence_cutoff = float(session_data["confidence_cutoff"])
-            self.deviance_threshold = int(session_data["deviance_threshold"])
-            self.roi_frame_list = list(session_data["roi_frame_list"])
-            self.failed_frame_list = list(session_data["failed_frame_list"])
-            self.sus_frame_list = list(session_data["sus_frame_list"])
-            self.swap_detection_score_array = np.array(session_data["swap_detection_score_array"])
+            self.pred_data_array = session_data.pred_data_array
+            self.current_frame_idx = session_data.current_frame_idx
+            self.confidence_cutoff = session_data.confidence_cutoff
+            self.deviance_threshold = session_data.deviance_threshold
+            self.roi_frame_list = session_data.roi_frame_list
+            self.failed_frame_list = session_data.failed_frame_list
+            self.sus_frame_list = session_data.sus_frame_list
+            self.swap_detection_score_array = session_data.swap_detection_score_array
 
         self.display_current_frame()
         self._refresh_slider()
         self.navigation_title_controller()
 
-        QMessageBox.information(self, "Load Successful", f"Workspace loaded from {workspace_h5}")
+        QMessageBox.information(self, "Load Successful", f"Workspace loaded from {workspace_filepath}")
 
     def open_video_folder_dialog(self):
         if self.dlc_data is None: # Check if dlc_data is loaded
@@ -715,7 +716,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
     ###################################################################################################################################################
 
-    def calculate_identity_swap_score(self, mode="full"):
+    def calculate_identity_swap_score(self, mode="full", parent_progress=None):
         if not self.dlc_data:
             return False
 
@@ -746,6 +747,12 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             progress.setWindowTitle(window_title)
             progress.setWindowModality(Qt.WindowModal)
             progress.setValue(0)
+
+            if parent_progress:
+                # Position it below and slightly to the side of the parent dialog
+                x = parent_progress.x() + 25
+                y = parent_progress.y() + parent_progress.height() + 25
+                progress.move(x, y)
 
         for frame in range(start_frame, end_frame):
             if show_progress:
@@ -840,7 +847,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             QMessageBox.information(self, "No Data", "Load prediction data first!") 
             return
 
-        if np.isnan(self.swap_detection_score_array[:,2]).any:
+        if np.isnan(self.swap_detection_score_array[:,2]).all():
             if not self.calculate_identity_swap_score(mode="full"):
                 return
 
@@ -852,6 +859,11 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         correction_progress.setWindowTitle("Automatic Correction Progress")
         correction_progress.setWindowModality(Qt.WindowModal)
         correction_progress.setValue(0)
+
+        main_window_center = self.geometry().center()
+        x = main_window_center.x() - correction_progress.width() // 2
+        y = main_window_center.y() - correction_progress.height() // 2
+        correction_progress.move(x, y)
 
         self.failed_frame_list = [] # Reset the failed frame list
         self.sus_frame_list = [] # Reset the suspicious frame list
@@ -885,12 +897,12 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         
         culprit_view_idx = int(self.swap_detection_score_array[frame_idx, 1])
         self.selected_cam_idx = culprit_view_idx
-        self.adjust_3D_plot_view_angle()
         self._refresh_selected_cam()
 
         backup_pred_data_array = self.pred_data_array.copy() # Backup current prediction data
         self.pred_data_array = dute.track_swap_3D_plotter(self.pred_data_array, frame_idx, self.selected_cam_idx)
         self.display_current_frame()
+        self.adjust_3D_plot_view_angle()
         self.calculate_identity_swap_score(mode="check")
         
         max_retry = self.num_cam
@@ -907,10 +919,11 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             print(f"Trying {self.selected_cam_idx} for swapping...")
             self.pred_data_array = dute.track_swap_3D_plotter(self.pred_data_array, frame_idx, self.selected_cam_idx)
             self.display_current_frame()
+            self.adjust_3D_plot_view_angle()
             self.calculate_identity_swap_score(mode="check")
 
         if retry_count < max_retry:
-            self.calculate_identity_swap_score(mode="remap")
+            self.calculate_identity_swap_score(mode="remap", parent_progress=correction_progress)
             self._refresh_slider()
         else:
             self.pred_data_array = backup_pred_data_array.copy() # Restore backup if max retries reached
@@ -921,6 +934,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 self.pred_data_array = dute.track_swap_3D_plotter(self.pred_data_array, frame_idx, cam2_idx)
                 self.selected_cam_idx = cam1_idx # Set the first camera as selected for display
                 self.display_current_frame()
+                self.adjust_3D_plot_view_angle()
                 self.calculate_identity_swap_score(mode="check")
 
                 if self.validate_swap_effect(frame_idx):
@@ -1121,7 +1135,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             return
         
         try:
-            save_path = os.path.join(self.base_folder, "workspace_save.h5")
+            save_path = os.path.join(self.base_folder, "workspace_save.pickle")
             session_data = Session_3D_Plotter(
                 base_folder=self.base_folder, calibration_filepath=self.calibration_filepath, dlc_config_filepath=self.dlc_config_filepath,
                 pred_data_array=self.pred_data_array, current_frame_idx=self.current_frame_idx,
@@ -1129,8 +1143,8 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 roi_frame_list=self.roi_frame_list, failed_frame_list=self.failed_frame_list,
                 sus_frame_list=self.sus_frame_list, swap_detection_score_array=self.swap_detection_score_array
             )
-            with h5py.File(save_path, "w") as f:
-                f.create_dataset("session_data", data=session_data)
+            with open(save_path, "wb") as f:
+                pickle.dump(session_data, f)
 
             QMessageBox.information(self, "Save Successful", f"Workspace saved to {save_path}")
             self.is_saved = True
