@@ -1,5 +1,4 @@
 import os
-import shutil
 
 import h5py
 import yaml
@@ -18,11 +17,10 @@ from utils.dtu_widget import Menu_Widget, Progress_Widget, Nav_Widget
 from utils.dtu_comp import Selectable_Instance, Draggable_Keypoint, Adjust_Property_Dialog
 from utils.dtu_io import DLC_Loader
 from utils.dtu_dataclass import Export_Settings
+import utils.dtu_io as dio
 import utils.dtu_helper as duh
 import utils.dtu_gui_helper as dugh
 import utils.dtu_track_edit as dute
-
-import traceback
 
 DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/NTD/config.yaml"
 VIDEO_FILE_DEBUG = "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-conv.mp4"
@@ -348,7 +346,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         except Exception as e:
             QMessageBox.critical(self, "Batch Command Error", f"An error occurred while loading or executing commands: {e}")
-            traceback.print_exc()
                 
         finally:
             self.in_batch_mode = False
@@ -1083,59 +1080,37 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
     def save_prediction(self):
         if self.pred_data_array is None:
             QMessageBox.warning(self, "No Prediction Data", "Please load a prediction file first.")
-            return False
-        # Made a copy of the original data and save upon that
-        pred_file_dir = os.path.dirname(self.prediction)
-        pred_file_name_without_ext = os.path.splitext(os.path.basename(self.prediction))[0]
-        trrf_suffix = "_track_refiner_modified_"
+            return
         
-        if not trrf_suffix in pred_file_name_without_ext:
-            save_idx = 0
-            base_name = pred_file_name_without_ext
+        pred_file_to_save_path = dio.determine_save_path_tr(self.prediction)
+        status, msg = dio.save_prediction_to_h5(pred_file_to_save_path, self.pred_data_array)
+        
+        if not status:
+            QMessageBox.critical(self, "Saving Error", f"An error occurred during saving: {msg}")
+            print(f"An error occurred during saving: {msg}")
+            return
+
+        if self.in_batch_mode:
+            print(msg)
         else:
-            base_name, save_idx_str = pred_file_name_without_ext.split(trrf_suffix)
-            try:
-                save_idx = int(save_idx_str) + 1
-            except ValueError:
-                save_idx = 0 # Fallback if suffix is malformed
-        
-        pred_file_to_save_path = os.path.join(pred_file_dir,f"{base_name}{trrf_suffix}{save_idx}.h5")
-        
-        shutil.copy(self.prediction, pred_file_to_save_path)
-        print(f"Saved modified prediction to: {pred_file_to_save_path}")
-        new_data = []
-        num_frames = self.pred_data_array.shape[0]
-        for frame_idx in range(num_frames):
-            frame_data = self.pred_data_array[frame_idx, :, :].flatten()
-            new_data.append((frame_idx, frame_data))
-        try:
-            with h5py.File(pred_file_to_save_path, "a") as pred_file_to_save: # Open the copied HDF5 file in write mode
-                if 'tracks/table' in pred_file_to_save:
-                    pred_file_to_save['tracks/table'][...] = new_data
-            self.prediction = pred_file_to_save_path
-            self.data_loader.dlc_config_filepath = self.dlc_data.dlc_config_filepath
-            self.data_loader.prediction_filepath = self.prediction
-            self.dlc_data = self.data_loader.load_data()
-            self.is_saved = True
-            
-            msg = f"Successfully saved modified prediction to: {self.prediction}"
-            if self.in_batch_mode:
-                print(msg)
-            else:
-                QMessageBox.information(self, "Save Successful", str(msg))
-            self.prediction_saved.emit(self.prediction) # Emit the signal with the saved file path
-            self.refined_frames_exported.emit(self.refined_roi_frame_list)
-            return True
-        except Exception as e:
-            QMessageBox.critical(self, "Saving Error", f"An error occurred during HDF5 saving: {e}")
-            traceback.print_exc()
+            QMessageBox.information(self, "Save Successful", str(msg))
+
+        self.is_saved = True
+        self.prediction_saved.emit(self.prediction) # Emit the signal with the saved file path
+        self.refined_frames_exported.emit(self.refined_roi_frame_list)
+
+    def reload_prediction(self, pred_file_to_save_path):
+        self.prediction = pred_file_to_save_path
+        self.data_loader.dlc_config_filepath = self.dlc_data.dlc_config_filepath
+        self.data_loader.prediction_filepath = self.prediction
+        self.dlc_data = self.data_loader.load_data()
 
     def save_prediction_as_csv(self):
         save_path = os.path.dirname(self.prediction)
         pred_file = os.path.basename(self.prediction).split(".")[0]
         exp_set = Export_Settings(self.video_file, self.video_name, save_path, "CSV")
         try:
-            duh.prediction_to_csv(self.dlc_data, self.dlc_data.pred_data_array, exp_set)
+            dio.prediction_to_csv(self.dlc_data, self.dlc_data.pred_data_array, exp_set)
             msg = f"Successfully saved modified prediction in csv to: {os.path.join(save_path, pred_file)}.csv"
             if self.in_batch_mode:
                 print(msg)

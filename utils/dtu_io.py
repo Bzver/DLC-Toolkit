@@ -16,6 +16,8 @@ from numpy.typing import NDArray
 from .dtu_dataclass import Loaded_DLC_Data, Export_Settings
 from . import dtu_helper as duh
 
+import traceback
+
 def prediction_to_csv(dlc_data:Loaded_DLC_Data, pred_data_array: NDArray, 
         export_settings: Export_Settings, frame_list: List[int]=None) -> bool:
     
@@ -157,6 +159,50 @@ def guarantee_multiindex_rows(df): # Adapted from DeepLabCut
 
 ######################################################################################################################################
 
+def determine_save_path_tr(prediction_filepath:str) -> str:
+    pred_file_dir = os.path.dirname(prediction_filepath)
+    pred_file_name_without_ext = os.path.splitext(os.path.basename(prediction_filepath))[0]
+    trrf_suffix = "_track_refiner_modified_"
+    
+    if not trrf_suffix in pred_file_name_without_ext:
+        save_idx = 0
+        base_name = pred_file_name_without_ext
+    else:
+        base_name, save_idx_str = pred_file_name_without_ext.split(trrf_suffix)
+        try:
+            save_idx = int(save_idx_str) + 1
+        except ValueError:
+            save_idx = 0 # Fallback if suffix is malformed
+    
+    pred_file_to_save_path = os.path.join(pred_file_dir,f"{base_name}{trrf_suffix}{save_idx}.h5")
+
+    shutil.copy(prediction_filepath, pred_file_to_save_path)
+    print(f"Saved modified prediction to: {pred_file_to_save_path}")
+    return pred_file_to_save_path
+
+def covert_prediction_array_to_save_format(pred_data_array: NDArray) -> List[Tuple[int, NDArray]]:
+    new_data = []
+    num_frames = pred_data_array.shape[0]
+
+    for frame_idx in range(num_frames):
+        frame_data = pred_data_array[frame_idx, :, :].flatten()
+        new_data.append((frame_idx, frame_data))
+
+    return new_data
+
+def save_prediction_to_h5(prediction_filepath: str, pred_data_array: NDArray) -> Tuple[bool, str]:
+    try:
+        with h5py.File(prediction_filepath, "w") as pred_file:
+            if 'tracks/table' in pred_file:
+                    pred_file['tracks/table'][...] = data=covert_prediction_array_to_save_format(pred_data_array)
+        return True, f"Successfully saved prediction to {prediction_filepath}."
+    except Exception as e:
+        print(f"Error saving prediction to HDF5: {e}")
+        traceback.print_exc()
+        return False, e
+
+######################################################################################################################################
+
 class DLC_Loader:
     """A class to load DeepLabCut configuration and prediction data."""
     def __init__(self, dlc_config_filepath: str, prediction_filepath: str):
@@ -270,6 +316,7 @@ class DLC_Exporter:
         self.dlc_data = dlc_data
         self.export_settings = export_settings
         self.frame_list = frame_list
+        self.pred_data_array = pred_data_array
 
     def export_data_to_DLC(self, frame_only:bool=False) -> Tuple[bool, str]:
         status, msg = self._extract_frame()
@@ -303,8 +350,10 @@ class DLC_Exporter:
                 cv2.imwrite(image_output_path, frame)
         return True, "Success"
 
-    def _extract_pred(self, pred_data_array) -> Tuple[bool, str]:
-        if not pred_data_array:
+    def _extract_pred(self) -> Tuple[bool, str]:
+        if self.pred_data_array:
+            pred_data_array = self.pred_data_array
+        else:
             pred_data_array = self.dlc_data.pred_data_array[self.frame_list, :, :]
         
         if not prediction_to_csv(self.dlc_data, pred_data_array, self.export_settings, self.frame_list):
