@@ -198,6 +198,12 @@ def apply_segmental_autocorrect(pred_data_array:NDArray, instance_count_per_fram
 
     ###################################################################################################################################################
 
+def track_swap_3D_plotter(pred_data_array:NDArray, frame_idx:int, selected_cam_idx:int) -> NDArray:
+    pred_data_array_to_swap = pred_data_array[:, selected_cam_idx, :, :]
+    pred_data_array_swapped = swap_track(pred_data_array_to_swap, frame_idx, mode="batch")
+    pred_data_array[:, selected_cam_idx, :, :] = pred_data_array_swapped
+    return pred_data_array
+
 def clean_inconsistent_nans(pred_data_array:NDArray):
     print("Cleaning up NaN keypoints that somehow has confidence value...")
     nan_mask = np.isnan(pred_data_array)
