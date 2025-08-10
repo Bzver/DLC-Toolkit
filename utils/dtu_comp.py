@@ -94,6 +94,15 @@ class Slider_With_Marks(QtWidgets.QSlider):
         
         painter.end()
 
+    def mousePressEvent(self, event):
+        if self.orientation() == Qt.Orientation.Horizontal:
+            pos = event.position().x()
+            slider_length = self.width()
+
+        new_value = (self.maximum() - self.minimum()) * pos / slider_length + self.minimum()
+        self.setValue(int(new_value))
+        super().mousePressEvent(event)
+
 #######################################################################################################################################################
 
 class Draggable_Keypoint(QtCore.QObject, QGraphicsEllipseItem):
