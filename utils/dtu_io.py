@@ -179,7 +179,7 @@ def determine_save_path(prediction_filepath:str, suffix:str) -> str:
     print(f"Saved modified prediction to: {pred_file_to_save_path}")
     return pred_file_to_save_path
 
-def covert_prediction_array_to_save_format(pred_data_array: NDArray) -> List[Tuple[int, NDArray]]:
+def convert_prediction_array_to_save_format(pred_data_array: NDArray) -> List[Tuple[int, NDArray]]:
     new_data = []
     num_frames = pred_data_array.shape[0]
 
@@ -191,9 +191,11 @@ def covert_prediction_array_to_save_format(pred_data_array: NDArray) -> List[Tup
 
 def save_prediction_to_h5(prediction_filepath: str, pred_data_array: NDArray) -> Tuple[bool, str]:
     try:
-        with h5py.File(prediction_filepath, "w") as pred_file:
+        with h5py.File(prediction_filepath, "a") as pred_file:
             if 'tracks/table' in pred_file:
-                    pred_file['tracks/table'][...] = data=covert_prediction_array_to_save_format(pred_data_array)
+                pred_file['tracks/table'][...] = convert_prediction_array_to_save_format(pred_data_array)
+            else:
+                return False, f"No 'tracks' key in the {prediction_filepath}? How is it possible!!?"
         return True, f"Successfully saved prediction to {prediction_filepath}."
     except Exception as e:
         print(f"Error saving prediction to HDF5: {e}")
@@ -286,7 +288,7 @@ class DLC_Loader:
 
                 prediction_raw = pred_file["tracks"]["table"]
                 pred_data_values = np.array([item[1] for item in prediction_raw])
-                pred_frame_count = prediction_raw.size
+                pred_frame_count = len(prediction_raw)
 
                 expected_cols = instance_count * num_keypoint * 3
                 if pred_data_values.shape[1] != expected_cols:

@@ -3,7 +3,6 @@ import glob
 
 import scipy.io as sio
 import pickle
-import h5py
 
 import numpy as np
 import pandas as pd
@@ -48,7 +47,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.setMenuBar(self.menu_widget)
         plotter_3d_menu_config = {
             "File": {
-                "display_name": "File",
+                "display_name": "Load",
                 "buttons": [
                     ("Load DLC Configs", self.load_dlc_config),
                     ("Load Calibrations", self.load_calibrations),
@@ -78,7 +77,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 "display_name": "Track Refine",
                 "buttons": [
                     ("Auto Track Swap Correct", self.automatic_track_correction),
-                    ("Manual Swap Selected View", self.manual_swap_frame_view),
+                    ("Manual Swap Selected View (X)", self.manual_swap_frame_view),
                     ("Call Track Refiner", self.call_track_refiner)
                 ]
             },
@@ -148,6 +147,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_Down), self).activated.connect(lambda:self._navigate_marked_frames("next"))
         QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.progress_widget.toggle_playback)
         QShortcut(QKeySequence(Qt.Key_S | Qt.ControlModifier), self).activated.connect(self.save_workspace)
+        QShortcut(QKeySequence(Qt.Key_X), self).activated.connect(self.manual_swap_frame_view)
         self.canvas.mpl_connect("scroll_event", self.on_scroll_3d_plot)
 
         self.reset_state()
@@ -421,6 +421,9 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
     def reload_prediction(self, pred_file_path):
         """Reload prediction data from file and update visualization"""
+        if pred_file_path == "reload_all":
+            self.load_video_folder(self.base_folder)
+            return
         try:
             # Find which camera this prediction belongs to
             cam_idx = None
@@ -1156,6 +1159,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             QMessageBox.information(self, "No Data", "Load prediction data first!")
             return
         
+        error_views = []
         for prediction in self.prediction_list:
             if prediction is None:
                 continue # Skip if no prediction loaded for this camera
@@ -1165,15 +1169,20 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
             pred_data_array = self.pred_data_array[:, prediction_idx, :, :].copy() # Extract the prediction data for this camera
             status, msg = dio.save_prediction_to_h5(pred_file_to_save_path, pred_data_array)
+            if not status:
+                error_views.append((prediction_idx, msg))
 
-            if status:
-                QMessageBox.information(self, "Save Successful", msg)
-            else:
-                self.save_workspace() # Save the workspace to ensure no progress is lost
-                QMessageBox.critical(self, "Save Failed", f"Failed to save prediction for camera {prediction_idx + 1}: {msg}. "
-                                     f"Workspace saved to {self.base_folder} for resuming later.")
-            
+        if error_views:
+            error_msg = [f"Camera {error_view[0]}: {error_view[1]}" for error_view in error_views]
+            error_msg_for_msgbox = "\n".join(error_msg)
+            self.save_workspace() # Save the workspace to ensure no progress is lost
+            QMessageBox.critical(self, "Save Failed", f"Failed to save prediction for following cameras and errors: "
+                f"{error_msg_for_msgbox}"
+                f"Workspace saved to {self.base_folder} for resuming later.")
+        else:
+            QMessageBox.information(self, "Save Successful", msg)
             self.is_saved = True
+            self.reload_prediction(pred_file_path="reload_all")
 
     def closeEvent(self, event: QCloseEvent):
         # Ensure all VideoCapture objects are released when the window closes

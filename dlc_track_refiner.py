@@ -1,6 +1,5 @@
 import os
 
-import h5py
 import yaml
 
 import pandas as pd
@@ -290,9 +289,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.check_instance_count_per_frame()
 
         if self.dlc_data.pred_frame_count != self.total_frames:
-            QMessageBox.warning(self, "Error: Frame Mismatch", "Total frames in video and in prediction do not match!")
-            print(f"Frames in config: {self.total_frames} \n Frames in prediction: {self.dlc_data.pred_frame_count}")
-
+            QMessageBox.warning(self, "Error: Frame Mismatch",
+                    "Total frames in video and in prediction do not match!"
+                    f"Frames in config: {self.total_frames} \n Frames in prediction: {self.dlc_data.pred_frame_count}")
+            
         self.display_current_frame()
         self.reset_zoom()
 
@@ -1089,6 +1089,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             QMessageBox.critical(self, "Saving Error", f"An error occurred during saving: {msg}")
             print(f"An error occurred during saving: {msg}")
             return
+        
+        self.reload_prediction(pred_file_to_save_path)
 
         if self.in_batch_mode:
             print(msg)
