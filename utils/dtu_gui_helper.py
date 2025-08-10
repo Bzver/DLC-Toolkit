@@ -1,5 +1,5 @@
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QMessageBox, QDialog, QVBoxLayout, QLabel, QSlider
+from PySide6.QtCore import Qt, QSize
+from PySide6.QtWidgets import QMessageBox, QProgressDialog
 from typing import Optional, Callable, List
 
 from .dtu_io import DLC_Loader, DLC_Exporter
@@ -80,3 +80,20 @@ def handle_unsaved_changes_on_close(parent, event, is_saved: bool, save_callback
         event.accept()  # Close without saving
     else:
         event.ignore()  # Cancel the close action
+
+def get_progress_dialog(parent_gui, start_frame:int, end_frame:int, title:str, dialog:str,
+                        parent_progress:QProgressDialog=None) -> QProgressDialog:
+    
+    progress = QProgressDialog(dialog, "Cancel",  start_frame, end_frame, parent_gui)
+    progress.setWindowTitle(title)
+    progress.setWindowModality(Qt.WindowModal)
+    progress.setValue(0)
+    progress.setFixedSize(QSize(300, 75))
+
+    if parent_progress:
+        # Position it below and slightly to the side of the parent dialog
+        x = parent_progress.x()
+        y = parent_progress.y() + parent_progress.height() + 30
+        progress.move(x, y)
+
+    return progress
