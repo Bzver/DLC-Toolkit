@@ -1,8 +1,12 @@
 import numpy as np
+import pandas as pd
+from itertools import combinations
 import cv2
 
 from typing import List, Tuple
 from numpy.typing import NDArray
+
+from .dtu_dataclass import Loaded_DLC_Data
 
 def triangulate_point(num_views:int, projs:List[NDArray], pts_2d:List[Tuple[float]], confs:List[float]) -> NDArray:
     """
@@ -134,3 +138,174 @@ def undistort_points(points_xy_conf, K, RDistort, TDistort):
     output_combined[:, 2] = confidences
 
     return output_combined.flatten() # Reshape back to 1D array
+
+#########################################################################################################################################################1
+
+def calculate_identity_swap_score_per_frame(keypoint_data_tr:dict, valid_view:int,
+        instance_count:int, num_keypoint:int, num_cam:int) -> Tuple[int, int]:
+    
+    all_camera_pairs = list(combinations(valid_view, 2))
+
+    kp_3d_all_pair = np.full((len(all_camera_pairs), instance_count, num_keypoint, 3), np.nan)
+
+    for pair_idx, (cam1_idx, cam2_idx) in enumerate(all_camera_pairs):
+        for inst in range(instance_count): 
+            for kp_idx in range(num_keypoint):
+                if (cam1_idx in keypoint_data_tr[inst][kp_idx]['projs'] and 
+                cam2_idx in keypoint_data_tr[inst][kp_idx]['projs']):
+                    
+                    proj1 = keypoint_data_tr[inst][kp_idx]['projs'][cam1_idx]
+                    proj2 = keypoint_data_tr[inst][kp_idx]['projs'][cam2_idx]
+                    pts_2d1 = keypoint_data_tr[inst][kp_idx]['2d_pts'][cam1_idx]
+                    pts_2d2 = keypoint_data_tr[inst][kp_idx]['2d_pts'][cam2_idx]
+                    conf1 = keypoint_data_tr[inst][kp_idx]['confs'][cam1_idx]
+                    conf2 = keypoint_data_tr[inst][kp_idx]['confs'][cam2_idx]
+
+                    kp_3d_all_pair[pair_idx, inst, kp_idx] = \
+                        triangulate_point_simple(proj1, proj2, pts_2d1, pts_2d2, conf1, conf2)
+
+    mean_3d_kp = np.nanmean(kp_3d_all_pair, axis=0) # [inst, kp, xyz]  
+    # Calculate the Euclidean distance between each pair's result and the mean
+    diffs = np.linalg.norm(kp_3d_all_pair - mean_3d_kp, axis=-1) # [pair, inst, kp]
+    total_diffs_per_pair = np.nansum(diffs, axis=(1, 2)) # [pair]
+
+    if len(total_diffs_per_pair) > 0:
+        if not np.all(np.isnan(total_diffs_per_pair)):
+            deviant_pair_idx = np.nanargmax(total_diffs_per_pair)
+            deviant_pair = all_camera_pairs[deviant_pair_idx]
+            deviant_cameras_scores = np.zeros(num_cam)
+        else:
+            return np.nan, np.nan
+    
+    deviant_cameras_scores[deviant_pair[0]] += 1
+    deviant_cameras_scores[deviant_pair[1]] += 1
+    
+    swap_camera_idx = np.argmax(deviant_cameras_scores)
+    
+    return swap_camera_idx, total_diffs_per_pair[deviant_pair_idx]
+
+#########################################################################################################################################################1
+
+class Data_Processor_3D:
+    def __init__(self, dlc_data:Loaded_DLC_Data, camera_params:dict, pred_data_array:NDArray, frame_idx:int,
+            confidence_cutoff:float, num_cam:int, undistorted_images:bool=False):
+        
+        self.dlc_data = dlc_data
+        self.camera_params = camera_params
+        self.pred_data_array = pred_data_array
+        self.frame_idx = frame_idx
+        self.confidence_cutoff = confidence_cutoff
+        self.num_cam = num_cam
+        self.undistorted_images = undistorted_images
+
+    def get_3d_pose_array(self):
+        if self.dlc_data is None or self.pred_data_array is None:
+            return np.full((1, 1, 3), np.nan) # Return empty array if no data
+
+        point_3d_array = np.full((self.dlc_data.instance_count, self.dlc_data.num_keypoint, 3), np.nan)
+        keypoint_data_tr, valid_view = self.get_keypoint_data_for_frame()
+
+        for inst in range(self.dlc_data.instance_count):
+            # iterate through each keypoint to perform triangulation
+            for kp_idx in range(self.dlc_data.num_keypoint):
+                # Convert dictionaries to lists while maintaining camera order
+                projs_dict = keypoint_data_tr[inst][kp_idx]['projs']
+                pts_2d_dict = keypoint_data_tr[inst][kp_idx]['2d_pts']
+                confs_dict = keypoint_data_tr[inst][kp_idx]['confs']
+                
+                # Get sorted camera indices to maintain order
+                cam_indices = sorted(projs_dict.keys())
+                projs = [projs_dict[i] for i in cam_indices]
+                pts_2d = [pts_2d_dict[i] for i in cam_indices]
+                confs = [confs_dict[i] for i in cam_indices]
+                num_valid_views = len(projs)
+
+                if num_valid_views >= 2:
+                    point_3d_array[inst, kp_idx, :] = triangulate_point(num_valid_views, projs, pts_2d, confs)
+
+        return point_3d_array
+
+    def get_keypoint_data_for_frame(self):
+        instances_detected_per_camera = self._validate_multiview_instances()
+        valid_view = [cam_idx for cam_idx, count in enumerate(instances_detected_per_camera) if count >= 2]
+
+        if len(valid_view) < 3:
+            return None, valid_view
+
+        # Check for valid keypoint data for each instance
+        keypoint_data_tr = self._acquire_keypoint_data(instances_detected_per_camera)
+
+        if not keypoint_data_tr:
+            return None, valid_view
+            
+        return keypoint_data_tr, valid_view
+
+    def _validate_multiview_instances(self):
+        if self.dlc_data.instance_count < 2:
+            return [1] * self.num_cam # All cameras valid for the single instance
+
+        instances_detected_per_camera = [0] * self.num_cam
+        for cam_idx_check in range(self.num_cam):
+            detected_instances_in_cam = 0
+
+            for inst_check in range(self.dlc_data.instance_count):
+                has_valid_data = False
+                for kp_idx_check in range(self.dlc_data.num_keypoint):
+
+                    if not pd.isna(self.pred_data_array[self.frame_idx, cam_idx_check, inst_check, kp_idx_check*3]):
+                        has_valid_data = True
+                        break
+
+                if has_valid_data:
+                    detected_instances_in_cam += 1
+            instances_detected_per_camera[cam_idx_check] = detected_instances_in_cam
+
+        return instances_detected_per_camera
+
+    def _acquire_keypoint_data(self, instances_detected_per_camera):
+        # Dictionary to store per-keypoint data across cameras:
+        keypoint_data_tr = {
+            inst:
+            {
+                kp_idx: {'projs': {}, '2d_pts': {}, 'confs': {}}
+                for kp_idx in range(self.dlc_data.num_keypoint)
+            }
+            for inst in range(self.dlc_data.instance_count)
+        }
+
+        for inst_idx in range(self.dlc_data.instance_count):
+            for cam_idx in range(self.num_cam):
+                if self.dlc_data.instance_count > 1 and instances_detected_per_camera[cam_idx] < 2:
+                    continue # Skip if this camera has not detect enough instances
+
+                # Ensure camera_params are available for the current camera index
+                if cam_idx >= len(self.camera_params) or not self.camera_params[cam_idx]:
+                    print(f"Warning: Camera parameters not available for camera {cam_idx}. Skipping.")
+                    continue
+
+                RDistort = self.camera_params[cam_idx]['RDistort']
+                TDistort = self.camera_params[cam_idx]['TDistort']
+                K = self.camera_params[cam_idx]['K']
+                P = self.camera_params[cam_idx]['P']
+
+                # Get all keypoint data (flattened) for the current frame, camera, and instance
+                keypoint_data_all_kps_flattened = self.pred_data_array[self.frame_idx, cam_idx, inst_idx, :]
+
+                if not self.undistorted_images:
+                    keypoint_data_all_kps_flattened = undistort_points(keypoint_data_all_kps_flattened, K, RDistort, TDistort)
+                
+                # Shape the flattened data back into (num_keypoints, 3) for easier iteration
+                keypoint_data_all_kps_reshaped = keypoint_data_all_kps_flattened.reshape(-1, 3)
+
+                # Iterate through each keypoint's (x,y,conf) for the current camera
+                for kp_idx in range(self.dlc_data.num_keypoint):
+                    point_2d = keypoint_data_all_kps_reshaped[kp_idx, :2] # (x, y)
+                    confidence = keypoint_data_all_kps_reshaped[kp_idx, 2] # confidence
+
+                    # Only add data if the confidence is above a threshold
+                    if confidence >= self.confidence_cutoff:
+                        keypoint_data_tr[inst_idx][kp_idx]['projs'][cam_idx] = P
+                        keypoint_data_tr[inst_idx][kp_idx]['2d_pts'][cam_idx] = point_2d
+                        keypoint_data_tr[inst_idx][kp_idx]['confs'][cam_idx] = confidence
+
+        return keypoint_data_tr

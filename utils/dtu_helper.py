@@ -1,7 +1,7 @@
 import numpy as np
 import bisect
 
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from numpy.typing import NDArray
 from .dtu_dataclass import Loaded_DLC_Data, Swap_Calculation_Config
 
@@ -149,3 +149,14 @@ def remove_mock_confidence_score(array:NDArray):
         new_array[:,:,0::2] = array[:,:,0::3]
         new_array[:,:,1::2] = array[:,:,1::3]
     return new_array
+
+###########################################################################################
+
+def acquire_view_perspective_for_cur_cam(cam_pos:NDArray) -> Tuple[float, float]:
+    hypot = np.linalg.norm(cam_pos[:2]) # Length of the vector's projection on the xy plane
+    elevation = np.arctan2(cam_pos[2], hypot)
+    elev_deg = np.degrees(elevation)
+    # Calculate azimuth (angle in the xy plane)
+    azimuth = np.arctan2(cam_pos[1], cam_pos[0])
+    azim_deg = np.degrees(azimuth)
+    return elev_deg, azim_deg

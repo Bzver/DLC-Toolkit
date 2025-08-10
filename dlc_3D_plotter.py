@@ -20,6 +20,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from utils.dtu_io import DLC_Loader
 from utils.dtu_widget import Menu_Widget, Progress_Widget, Nav_Widget
 from utils.dtu_comp import Clickable_Video_Label, Adjust_Property_Dialog
+from utils.dtu_triangulation import Data_Processor_3D
 from utils.dtu_dataclass import Session_3D_Plotter
 import utils.dtu_io as dio
 import utils.dtu_helper as duh
@@ -58,9 +59,9 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             "Detect": {
                 "display_name": "Swap Detect",
                 "buttons": [
+                    ("Track Swap Score Calculation", lambda:self.calculate_identity_swap_score(mode="full")),
                     ("Adjust Confidence Cutoff", self.show_confidence_dialog),
                     ("Adjust Deviance Threshold", self.show_deviance_dialog),
-                    ("Track Swap Score Calculation", lambda:self.calculate_identity_swap_score(mode="full")),
                     ("Refresh Failed Frames Ater Deviance Adjustment", self.refresh_failed_frame_list)
                 ]
             },
@@ -70,7 +71,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                     ("Change Marked Frame View Mode", self.change_mark_view_mode),
                     ("Reset Marked Frames", self.reset_marked_frames),
                     ("Check Camera Geometry", self.plot_camera_geometry),
-                    ("View 3D Plot in Selected Camera's Perspective", self.adjust_3D_plot_view_angle)
+                    ("Toggle 3D View Auto Perspective", self.toggle_auto_3d_perspective)
                 ]
             },
             "Track": {
@@ -105,7 +106,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             for col in range(2):
                 cam_idx = row * 2 + col # 0-indexed camera index
                 label = Clickable_Video_Label(cam_idx, self) # Use the custom label
-                label.setText(f"Video {cam_idx + 1}")
+                label.setText(f"Video {cam_idx }")
                 label.setAlignment(Qt.AlignCenter) # Center the "Video X" text
                 label.setFixedSize(480, 360) # Set a fixed size for video display
                 label.setStyleSheet("border: 1px solid gray;") # Add a border for visibility
@@ -170,7 +171,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
         self.num_cam_from_calib = None
 
-        self.plot_lim = 300
+        self.plot_lim = 150
         self.instance_color = [
             (255, 165, 0), (51, 255, 51), (51, 153, 255), (255, 51, 51), (255, 255, 102)] # RGB
         
@@ -180,12 +181,14 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
         self.refiner_window = None
 
-        self.view_mode_choice = ["ROI Frames", "Failed Frames", "Multi-swap Frames"]
+        self.view_mode_choice = ["ROI Frames", "Failed Frames", "Skipped Frames"]
         self.current_view_mode_idx = 0
 
         self.is_saved = True
+        self.auto_perspective = True
 
-        self.roi_frame_list, self.failed_frame_list, self.sus_frame_list = [], [], []
+        self.roi_frame_list, self.failed_frame_list, self.skipped_frame_list = [], [], []
+        self.check_range = 100
         self._refresh_slider()
 
         self.ax.clear()
@@ -224,7 +227,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             self.deviance_threshold = session_data.deviance_threshold
             self.roi_frame_list = session_data.roi_frame_list
             self.failed_frame_list = session_data.failed_frame_list
-            self.sus_frame_list = session_data.sus_frame_list
+            self.skipped_frame_list = session_data.skipped_frame_list
             self.swap_detection_score_array = session_data.swap_detection_score_array
 
         self.display_current_frame()
@@ -355,6 +358,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.current_frame_idx = 0
         self.progress_widget.set_slider_range(self.total_frames)
         self.nav_widget.show()
+        self.navigation_title_controller()
         self.display_current_frame() # Display the first frames
 
     def load_prediction(self, cam_idx:int, prediction_filepath:str):
@@ -372,6 +376,9 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             # Pad with NaNs if the reloaded prediction is shorter
             if temp_dlc_data.pred_data_array.shape[0] < self.total_frames:
                     self.pred_data_array[temp_dlc_data.pred_data_array.shape[0]:, cam_idx, :, :] = np.nan
+
+        if self.dlc_data.pred_frame_count is None:
+            self.dlc_data.pred_frame_count = temp_dlc_data.pred_frame_count
 
     def parse_calibration_mat(self, calib):
         cam_pos = [None] * self.num_cam_from_calib
@@ -559,7 +566,9 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             self.canvas.draw_idle()
             return # Cannot plot if DLC data is not loaded
 
-        point_3d_array = self.data_loader_for_3d_plot()
+        data_processor_3d = Data_Processor_3D(
+            self.dlc_data, self.camera_params, self.pred_data_array, self.current_frame_idx, self.confidence_cutoff, self.num_cam)
+        point_3d_array = data_processor_3d.get_3d_pose_array()
         self.ax.clear()
         self.ax.set_xlabel('X')
         self.ax.set_ylabel('Y')
@@ -618,108 +627,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
     ###################################################################################################################################################
 
-    def data_loader_for_3d_plot(self, undistorted_images=False):
-        if self.dlc_data is None or self.pred_data_array is None:
-            return np.full((1, 1, 3), np.nan) # Return empty array if no data
-
-        point_3d_array = np.full((self.dlc_data.instance_count, self.dlc_data.num_keypoint, 3), np.nan)
-        instances_detected_per_camera = self._validate_multiview_instances()
-        keypoint_data_for_triangulation = self._acquire_keypoint_data(instances_detected_per_camera, undistorted_images)
-
-        for inst in range(self.dlc_data.instance_count):
-            # iterate through each keypoint to perform triangulation
-            for kp_idx in range(self.dlc_data.num_keypoint):
-                # Convert dictionaries to lists while maintaining camera order
-                projs_dict = keypoint_data_for_triangulation[inst][kp_idx]['projs']
-                pts_2d_dict = keypoint_data_for_triangulation[inst][kp_idx]['2d_pts']
-                confs_dict = keypoint_data_for_triangulation[inst][kp_idx]['confs']
-                
-                # Get sorted camera indices to maintain order
-                cam_indices = sorted(projs_dict.keys())
-                projs = [projs_dict[i] for i in cam_indices]
-                pts_2d = [pts_2d_dict[i] for i in cam_indices]
-                confs = [confs_dict[i] for i in cam_indices]
-                num_valid_views = len(projs)
-
-                if num_valid_views >= 2:
-                    point_3d_array[inst, kp_idx, :] = dutri.triangulate_point(num_valid_views, projs, pts_2d, confs)
-
-        return point_3d_array
-
-    def _validate_multiview_instances(self):
-        if self.dlc_data.instance_count < 2:
-            return [1] * self.num_cam # All cameras valid for the single instance
-        
-        instances_detected_per_camera = [0] * self.num_cam
-        for cam_idx_check in range(self.num_cam):
-            detected_instances_in_cam = 0
-
-            for inst_check in range(self.dlc_data.instance_count):
-                has_valid_data = False
-                for kp_idx_check in range(self.dlc_data.num_keypoint):
-
-                    if not pd.isna(self.pred_data_array[self.current_frame_idx,cam_idx_check, inst_check, kp_idx_check*3]):
-                        has_valid_data = True
-                        break
-
-                if has_valid_data:
-                    detected_instances_in_cam += 1
-            instances_detected_per_camera[cam_idx_check] = detected_instances_in_cam
-
-        return instances_detected_per_camera
-
-    def _acquire_keypoint_data(self, instances_detected_per_camera, undistorted_images=False, frame_idx=None):
-        # Dictionary to store per-keypoint data across cameras:
-        keypoint_data_for_triangulation = {
-            inst:
-            {
-                kp_idx: {'projs': {}, '2d_pts': {}, 'confs': {}}
-                for kp_idx in range(self.dlc_data.num_keypoint)
-            }
-            for inst in range(self.dlc_data.instance_count)
-        }
-
-        for inst_idx in range(self.dlc_data.instance_count):
-            for cam_idx in range(self.num_cam):
-                if self.dlc_data.instance_count > 1 and instances_detected_per_camera[cam_idx] < 2:
-                    continue # Skip if this camera has not detect enough instances
-
-                # Ensure camera_params are available for the current camera index
-                if cam_idx >= len(self.camera_params) or not self.camera_params[cam_idx]:
-                    print(f"Warning: Camera parameters not available for camera {cam_idx}. Skipping.")
-                    continue
-
-                RDistort = self.camera_params[cam_idx]['RDistort']
-                TDistort = self.camera_params[cam_idx]['TDistort']
-                K = self.camera_params[cam_idx]['K']
-                P = self.camera_params[cam_idx]['P']
-
-                # Get all keypoint data (flattened) for the current frame, camera, and instance
-                frame_to_use = frame_idx if frame_idx is not None else self.current_frame_idx
-                keypoint_data_all_kps_flattened = self.pred_data_array[frame_to_use, cam_idx, inst_idx, :]
-
-                if not undistorted_images:
-                    keypoint_data_all_kps_flattened = dutri.undistort_points(keypoint_data_all_kps_flattened, K, RDistort, TDistort)
-                
-                # Shape the flattened data back into (num_keypoints, 3) for easier iteration
-                keypoint_data_all_kps_reshaped = keypoint_data_all_kps_flattened.reshape(-1, 3)
-
-                # Iterate through each keypoint's (x,y,conf) for the current camera
-                for kp_idx in range(self.dlc_data.num_keypoint):
-                    point_2d = keypoint_data_all_kps_reshaped[kp_idx, :2] # (x, y)
-                    confidence = keypoint_data_all_kps_reshaped[kp_idx, 2] # confidence
-
-                    # Only add data if the confidence is above a threshold
-                    if confidence >= self.confidence_cutoff:
-                        keypoint_data_for_triangulation[inst_idx][kp_idx]['projs'][cam_idx] = P
-                        keypoint_data_for_triangulation[inst_idx][kp_idx]['2d_pts'][cam_idx] = point_2d
-                        keypoint_data_for_triangulation[inst_idx][kp_idx]['confs'][cam_idx] = confidence
-
-        return keypoint_data_for_triangulation
-
-    ###################################################################################################################################################
-
-    def calculate_identity_swap_score(self, mode="full", parent_progress=None):
+    def calculate_identity_swap_score(self, mode, parent_progress=None, mute=False):
         if not self.dlc_data:
             return False
 
@@ -727,120 +635,58 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             QMessageBox.information(self, "Single Instance", "Only one instance detected, no swap detection needed.")
             return False
 
-        show_progress = True
-        if mode == "full": # Create progress dialog
-            start_frame = 0
-            end_frame = self.total_frames
-            window_title = "Identity Swap Calculation"
-        elif mode == "check":
-            start_frame = self.current_frame_idx
-            end_frame = self.current_frame_idx + 1000
-            if end_frame > self.total_frames:
-                end_frame = self.total_frames
-            show_progress = False
-        elif self.current_frame_idx < self.total_frames - 1000: # remap mode
-            start_frame = self.current_frame_idx + 1000 
-            end_frame = self.total_frames
-            window_title = f"Remap Swap at {start_frame - 1000}"
+        try:
+            config = duh.get_config_from_calculation_mdode(mode, self.current_frame_idx, self.check_range, self.total_frames)
+        except ValueError as e:
+            QMessageBox.warning(self, "Invalid Mode", f"{e}")
+            return False
+
+        if config.show_progress:
+            dialog = "Calculating swap detection score..."
+            title = f"Calculating Identity Score In {mode}"
+            progress = dugh.get_progress_dialog(self, config.start_frame, self.total_frames, title, dialog, parent_progress)
         else:
-            return # No need for remapping when the remaining part is already remapped
+            progress = None
 
-        if show_progress:
-            progress = QtWidgets.QProgressDialog("Calculating swap detection score...", "Cancel", start_frame, end_frame, self)
-            progress.setWindowTitle(window_title)
-            progress.setWindowModality(Qt.WindowModal)
-            progress.setValue(0)
+        calculated_frame_count = 0
 
-            if parent_progress:
-                # Position it below and slightly to the side of the parent dialog
-                x = parent_progress.x() + 25
-                y = parent_progress.y() + parent_progress.height() + 25
-                progress.move(x, y)
+        for frame_idx in range(config.start_frame, self.total_frames):
+            if calculated_frame_count >= config.frame_count_max:
+                break
 
-        for frame in range(start_frame, end_frame):
-            if show_progress:
+            if progress:
+                progress.setValue(frame_idx)
                 if progress.wasCanceled():
                     return False
-                progress.setValue(frame)
+
             QtWidgets.QApplication.processEvents()  # Keep UI responsive
         
-            valid_view = []
-            skip_frame = False
-            instances_detected_per_camera = self._validate_multiview_instances()
+            data_processor_3d = Data_Processor_3D(self.dlc_data, self.camera_params, self.pred_data_array, frame_idx, self.confidence_cutoff, self.num_cam)
+            keypoint_data_tr, valid_view = data_processor_3d.get_keypoint_data_for_frame()
 
-            for cam_idx in range(self.num_cam):
-                if instances_detected_per_camera[cam_idx] < 2:
-                    break
-                else:
-                    valid_view.append(cam_idx)
-
-            if len(valid_view) < 4: # Only use frames with sufficient detections
-                if self.is_debug:
-                    print(f"DEBUG: Skippng frame {frame} due to insufficient detections. Only detected Camera {valid_view}.")
+            if not keypoint_data_tr:
+                if mode == "full": # Only applying during the initial sweep
+                    self.skipped_frame_list.append(frame_idx)
                 continue
 
-            for inst in range(self.dlc_data.instance_count):
-                keypoint_data_for_triangulation = \
-                    self._acquire_keypoint_data(instances_detected_per_camera, undistorted_images=False, frame_idx=frame)
-
-                if not keypoint_data_for_triangulation:
-                    skip_frame = True
-                    break
-
-            if skip_frame:
-                if self.is_debug:
-                    print(f"DEBUG: Skippng frame {frame} due to insufficient keypoints.")
-                continue
-
-            all_camera_pairs = list(combinations(valid_view, 2))
-
-            # Initiate a numpy array for storing the 3D keypoints
-            kp_3d_all_pair = np.full((len(all_camera_pairs), self.dlc_data.instance_count, self.dlc_data.num_keypoint, 3), np.nan)
-
-            for pair_idx, (cam1_idx, cam2_idx) in enumerate(all_camera_pairs):
-                for inst in range(self.dlc_data.instance_count): 
-                    for kp_idx in range(self.dlc_data.num_keypoint):
-                        if (cam1_idx in keypoint_data_for_triangulation[inst][kp_idx]['projs'] and 
-                        cam2_idx in keypoint_data_for_triangulation[inst][kp_idx]['projs']):
-                            
-                            proj1 = keypoint_data_for_triangulation[inst][kp_idx]['projs'][cam1_idx]
-                            proj2 = keypoint_data_for_triangulation[inst][kp_idx]['projs'][cam2_idx]
-                            pts_2d1 = keypoint_data_for_triangulation[inst][kp_idx]['2d_pts'][cam1_idx]
-                            pts_2d2 = keypoint_data_for_triangulation[inst][kp_idx]['2d_pts'][cam2_idx]
-                            conf1 = keypoint_data_for_triangulation[inst][kp_idx]['confs'][cam1_idx]
-                            conf2 = keypoint_data_for_triangulation[inst][kp_idx]['confs'][cam2_idx]
-
-                            kp_3d_all_pair[pair_idx, inst, kp_idx] = \
-                                dutri.triangulate_point_simple(proj1, proj2, pts_2d1, pts_2d2, conf1, conf2)
-
-            mean_3d_kp = np.nanmean(kp_3d_all_pair, axis=0) # [inst, kp, xyz]  
-            # Calculate the Euclidean distance between each pair's result and the mean
-            diffs = np.linalg.norm(kp_3d_all_pair - mean_3d_kp, axis=-1) # [pair, inst, kp]
-            total_diffs_per_pair = np.nansum(diffs, axis=(1, 2)) # [pair]
-
-            if np.nanstd(total_diffs_per_pair) == 0:
-                continue
-
-            deviant_pair_idx = np.nanargmax(total_diffs_per_pair)
-            deviant_pair = all_camera_pairs[deviant_pair_idx]
-            deviant_cameras_scores = np.zeros(self.num_cam)
+            suspected_cam_idx, swap_score = dutri.calculate_identity_swap_score_per_frame(
+                keypoint_data_tr, valid_view, self.dlc_data.instance_count, self.dlc_data.num_keypoint, self.num_cam)
             
-            deviant_cameras_scores[deviant_pair[0]] += 1
-            deviant_cameras_scores[deviant_pair[1]] += 1
-            
-            swap_camera_idx = np.argmax(deviant_cameras_scores)
-            
-            self.swap_detection_score_array[frame, 1] = swap_camera_idx
-            self.swap_detection_score_array[frame, 2] = total_diffs_per_pair[deviant_pair_idx]
+            self.swap_detection_score_array[frame_idx, 1], self.swap_detection_score_array[frame_idx, 2] = suspected_cam_idx, swap_score
+            calculated_frame_count += 1
 
-        if show_progress:
+            if config.until_next_error and swap_score > self.deviance_threshold and calculated_frame_count > config.frame_count_min:
+                break
+
+        if progress:
             progress.close()
-        if mode == "full":
+        if not mute and mode == "full":
             QMessageBox.information(self, "Swap Detection Score Calculated", "Identity swap detection completed.")
-        self.populate_roi_frame_list()
+
+        self._populate_roi_frame_list()
         return True
 
-    def populate_roi_frame_list(self):
+    def _populate_roi_frame_list(self):
         deviance_mask = self.swap_detection_score_array[:, 2] >= self.deviance_threshold
         self.roi_frame_list = np.where(deviance_mask)[0].tolist() # Get the indices of frames with significant deviations
         self._refresh_slider()
@@ -851,17 +697,15 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             return
 
         if np.isnan(self.swap_detection_score_array[:,2]).all():
-            if not self.calculate_identity_swap_score(mode="full"):
+            if not self.calculate_identity_swap_score(mode="full", mute=True):
                 return
 
         if self.dlc_data.instance_count != 2:
             QMessageBox.information(self, "Unimplemented", "The function is only for two instance only.")
             return
-        
-        correction_progress = QtWidgets.QProgressDialog("Commencing automatic track correction...", "Cancel", 0, self.total_frames, self)
-        correction_progress.setWindowTitle("Automatic Correction Progress")
-        correction_progress.setWindowModality(Qt.WindowModal)
-        correction_progress.setValue(0)
+
+        correction_progress = dugh.get_progress_dialog(self, 0, self.total_frames,
+            title="Automatic Correction Progress", dialog="Commencing automatic track correction...")
 
         main_window_center = self.geometry().center()
         x = main_window_center.x() - correction_progress.width() // 2
@@ -869,15 +713,18 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         correction_progress.move(x, y)
 
         self.failed_frame_list = [] # Reset the failed frame list
-        self.sus_frame_list = [] # Reset the suspicious frame list
         for frame_idx in range(self.total_frames):
+            if frame_idx in self.skipped_frame_list:
+                continue
+            
             if not self.attempt_track_correction(frame_idx, correction_progress):
                 QMessageBox.warning(self, "Correction Cancelled", "Track correction was cancelled by the user.")
                 break
 
         correction_progress.close()
+
         if self.failed_frame_list:
-            QMessageBox.warning(self, "Correction Partially Failed", f"Failed to correct frames: {', '.join(map(str, self.failed_frame_list))}.")
+            QMessageBox.warning(self, "Correction Partially Successful", f"Failed to correct frames: {', '.join(map(str, self.failed_frame_list))}.")
         else:
             QMessageBox.information(self, "Correction Successful", "All marked frames corrected successfully.") 
 
@@ -886,9 +733,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
     def attempt_track_correction(self, frame_idx, correction_progress):
         if frame_idx not in self.roi_frame_list:
             return True
-        if self.failed_frame_list and frame_idx <= self.failed_frame_list[-1] + 10:
-            print(f"Skipping frame {frame_idx} as it is within 10 frames of the last failed correction.")
-            return True
+        
         if correction_progress.wasCanceled():
             return False
         
@@ -904,50 +749,57 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
         backup_pred_data_array = self.pred_data_array.copy() # Backup current prediction data
         self.pred_data_array = dute.track_swap_3D_plotter(self.pred_data_array, frame_idx, self.selected_cam_idx)
-        self.display_current_frame()
-        self.adjust_3D_plot_view_angle()
-        self.calculate_identity_swap_score(mode="check")
+        self._post_correction_attempt_operations()
         
         max_retry = self.num_cam
         retry_count = 0
 
-        while not self.validate_swap_effect(frame_idx):
+        best_swap_score, best_swap_cam = self.swap_detection_score_array[frame_idx, 1], culprit_view_idx
+
+        while not self._validate_swap_score_post_correction(frame_idx):
             self.pred_data_array = backup_pred_data_array.copy() # Restore backup
-            print(f"Frame {frame_idx} correction failed, retrying with next camera view...")
+            print(f"Frame {frame_idx} correction with camera {self.selected_cam_idx} failed, retrying with next camera view...")
             retry_count += 1
             if retry_count >= max_retry:
                 break
 
             self.selected_cam_idx = (self.selected_cam_idx + 1) % self.num_cam
-            print(f"Trying {self.selected_cam_idx} for swapping...")
+            print(f"Trying camera {self.selected_cam_idx} for swapping...")
             self.pred_data_array = dute.track_swap_3D_plotter(self.pred_data_array, frame_idx, self.selected_cam_idx)
-            self.display_current_frame()
-            self.adjust_3D_plot_view_angle()
-            self.calculate_identity_swap_score(mode="check")
-
+            self._post_correction_attempt_operations()
+            
+            if self.swap_detection_score_array[frame_idx, 1] < best_swap_score:
+                best_swap_score = self.swap_detection_score_array[frame_idx, 1]
+                best_swap_cam = self.selected_cam_idx
+        
         if retry_count < max_retry:
             self.calculate_identity_swap_score(mode="remap", parent_progress=correction_progress)
             self._refresh_slider()
-        else:
-            self.pred_data_array = backup_pred_data_array.copy() # Restore backup if max retries reached
-            print("Try to swap two views simulatenously...")
-            all_camera_pairs = list(combinations(range(self.num_cam), 2))
-            for cam1_idx, cam2_idx in all_camera_pairs:
-                self.pred_data_array = dute.track_swap_3D_plotter(self.pred_data_array, frame_idx, cam1_idx)
-                self.pred_data_array = dute.track_swap_3D_plotter(self.pred_data_array, frame_idx, cam2_idx)
-                self.selected_cam_idx = cam1_idx # Set the first camera as selected for display
-                self.display_current_frame()
-                self.adjust_3D_plot_view_angle()
-                self.calculate_identity_swap_score(mode="check")
+            return True
 
-                if self.validate_swap_effect(frame_idx):
-                    self.sus_frame_list.append(frame_idx)
-                    self._refresh_slider()
-                    print(f"Successfully swapped cameras {cam1_idx} and {cam2_idx} for frame {frame_idx}.")
-                    break
+        self.pred_data_array = backup_pred_data_array.copy() # Restore backup if max retries reached
+        print("Try to swap two views simulatenously...")
+        all_camera_pairs = list(combinations(range(self.num_cam), 2))
+        for cam1_idx, cam2_idx in all_camera_pairs:
+            self.pred_data_array = dute.track_swap_3D_plotter(self.pred_data_array, frame_idx, cam1_idx)
+            self.pred_data_array = dute.track_swap_3D_plotter(self.pred_data_array, frame_idx, cam2_idx)
+            self.selected_cam_idx = cam1_idx # Set the first camera as selected for display
+            self._post_correction_attempt_operations()
 
-            self.pred_data_array = backup_pred_data_array.copy() # Restore backup if no valid swap found
-            self.failed_frame_list.append(frame_idx)
+            if self._validate_swap_score_post_correction(frame_idx):
+                self._refresh_slider()
+                print(f"Successfully swapped cameras {cam1_idx} and {cam2_idx} for frame {frame_idx}.")
+                return True
+
+        print(f"Two swap solution failed for frame {frame_idx}.")
+        
+        if best_swap_score < self.deviance_threshold:
+            self.pred_data_array = dute.track_swap_3D_plotter(self.pred_data_array, frame_idx, best_swap_cam)
+            print(f"Falling back to best single camera swap (camera {best_swap_cam}) that also happens to fall below threshold.")
+            return True
+
+        self.pred_data_array = backup_pred_data_array.copy() # Restore backup if no valid swap found
+        self.failed_frame_list.append(frame_idx)
         return True
 
     def manual_swap_frame_view(self):
@@ -964,18 +816,25 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         
         self.pred_data_array = dute.track_swap_3D_plotter(self.pred_data_array, self.current_frame_idx, self.selected_cam_idx)
         self.display_current_frame() # Refresh the display to show the swapped frame
-        self.calculate_identity_swap_score(mode="check")
+        self.calculate_identity_swap_score(mode="manual_check")
+        self.navigation_title_controller()
         self._refresh_slider()
         self.is_saved = False
 
-    def validate_swap_effect(self, frame_idx):
-        end_check_idx = frame_idx + 100 if frame_idx + 100 < self.total_frames else self.total_frames
+    def _validate_swap_score_post_correction(self, frame_idx):
+        processed_frame_count = 0
         error_frame_count = 0
-        for check_frame_idx in range(frame_idx, end_check_idx):
+
+        for check_frame_idx in range(frame_idx, self.total_frames):
+            if processed_frame_count > self.check_range:
+                break
+            if check_frame_idx in self.skipped_frame_list:
+                continue
             if check_frame_idx in self.roi_frame_list:
                 error_frame_count += 1
+            processed_frame_count += 1
 
-        if error_frame_count > 90:
+        if error_frame_count > processed_frame_count * 0.9:
             return False
         
         return True
@@ -984,7 +843,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         """Reset all marked frames and clear the lists."""
         self.roi_frame_list = []
         self.failed_frame_list = []
-        self.sus_frame_list = []
+        self.skipped_frame_list = []
         self.swap_detection_score_array = np.full((self.total_frames, 3), np.nan)
         self.navigation_title_controller()
         self._refresh_slider()
@@ -1012,10 +871,15 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 return
             dugh.navigate_to_marked_frame(self, self.failed_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, direction)
         elif self.current_view_mode_idx == 2:  # Multi-swap frames
-            if not self.sus_frame_list:
-                QMessageBox.information(self, "No Multi-Swap Frames", "No frames of multiple instance swap available to navigate.")
+            if not self.skipped_frame_list:
+                QMessageBox.information(self, "No Skipped Frames", "No frames of multiple instance swap available to navigate.")
                 return
-            dugh.navigate_to_marked_frame(self, self.sus_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, direction)
+            dugh.navigate_to_marked_frame(self, self.skipped_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, direction)
+
+    def _post_correction_attempt_operations(self):
+        self.display_current_frame()
+        self._adjust_3D_plot_view_angle()
+        self.calculate_identity_swap_score(mode="auto_check")
 
     ###################################################################################################################################################
 
@@ -1023,7 +887,9 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         if hasattr(self, 'cap_list'):
             self.selected_cam_idx = cam_idx
             print(f"Selected Camera Index: {self.selected_cam_idx}")
-            self.display_current_frame() # Refresh display to update border
+            self._refresh_selected_cam()
+            if self.auto_perspective:
+                self._adjust_3D_plot_view_angle()
 
     def change_frame(self, delta):
         self.selected_cam_idx = None # Clear the selected cam upon frame switch
@@ -1043,14 +909,20 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.nav_widget.setTitle(title_text)
         if self.current_frame_idx in self.failed_frame_list:
             self.nav_widget.setStyleSheet("""QGroupBox::title {color: #FF0000;}""")
-        elif self.current_frame_idx in self.sus_frame_list:
-            self.nav_widget.setStyleSheet("""QGroupBox::title {color: #FF00FF;}""")
+        elif self.current_frame_idx in self.skipped_frame_list:
+            self.nav_widget.setStyleSheet("""QGroupBox::title {color: #3D3D3D;}""")
         elif self.current_frame_idx in self.roi_frame_list:
             self.nav_widget.setStyleSheet("""QGroupBox::title {color: #F79F1C;}""")
         else:
             self.nav_widget.setStyleSheet("""QGroupBox::title {color: black;}""")
 
     ###################################################################################################################################################
+
+    def toggle_auto_3d_perspective(self):
+        self.auto_perspective = not self.auto_perspective
+        QMessageBox.information(self, "Success", f"Auto 3D perspective has been set to {self.auto_perspective}.")
+        self.ax.view_init(elev=30, azim=-60)
+        self.canvas.draw_idle()
 
     def show_confidence_dialog(self):
         if not self.pred_data_array:
@@ -1078,13 +950,13 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
     def _update_deviance_threshold(self, new_threshold):
         self.deviance_threshold = new_threshold
-        self.populate_roi_frame_list()
+        self._populate_roi_frame_list()
         self.navigation_title_controller()
 
     def _refresh_slider(self):
         self.progress_widget.set_frame_category("ROI frames", self.roi_frame_list, "#F79F1C") # Update ROI frames
         self.progress_widget.set_frame_category("Failed frames", self.failed_frame_list, "#FF0000", priority=7)
-        self.progress_widget.set_frame_category("Multi-Swap frames", self.sus_frame_list, "#FF00FF", priority=6)
+        self.progress_widget.set_frame_category("Skippedframes", self.skipped_frame_list, "#3D3D3D", priority=6)
 
     def _refresh_selected_cam(self):
         for i in range(4): # Will change to a flexible range later
@@ -1098,24 +970,12 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.display_current_frame()
         self.navigation_title_controller()
 
-    def adjust_3D_plot_view_angle(self):
+    def _adjust_3D_plot_view_angle(self):
         if self.selected_cam_idx is None:
-            QMessageBox.information(self, "No Camera Selected", "Please select a camera view first by clicking on one of the video frames.")
             return
-
         cam_pos = self.cam_pos[self.selected_cam_idx]
-        direction_to_target = cam_pos
-
-        hypot = np.linalg.norm(direction_to_target[:2]) # Length of the vector's projection on the xy plane
-        elevation = np.arctan2(direction_to_target[2], hypot)
-
-        elev_deg = np.degrees(elevation)
-
-        # Calculate azimuth (angle in the xy plane)
-        azimuth = np.arctan2(direction_to_target[1], direction_to_target[0])
-        azim_deg = np.degrees(azimuth)
-
-        self.ax.view_init(elev=elev_deg, azim=azim_deg)
+        elev, azim = duh.acquire_view_perspective_for_cur_cam(cam_pos)
+        self.ax.view_init(elev=elev, azim=azim)
         self.canvas.draw_idle()
 
     def on_scroll_3d_plot(self, event):
@@ -1124,7 +984,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         if event.button == 'up':  # Zoom in (or typically 1 for wheel up)
             self.plot_lim = max(50, self.plot_lim / zoom_factor)
         elif event.button == 'down':  # Zoom out (or typically -1 for wheel down)
-            self.plot_lim = min(1000, self.plot_lim * zoom_factor)
+            self.plot_lim = min(500, self.plot_lim * zoom_factor)
         
         self.plot_3d_points()
         self.canvas.draw_idle() # Ensure the canvas redraws
@@ -1144,7 +1004,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 pred_data_array=self.pred_data_array, current_frame_idx=self.current_frame_idx,
                 confidence_cutoff=self.confidence_cutoff, deviance_threshold=self.deviance_threshold,
                 roi_frame_list=self.roi_frame_list, failed_frame_list=self.failed_frame_list,
-                sus_frame_list=self.sus_frame_list, swap_detection_score_array=self.swap_detection_score_array
+                skipped_frame_list=self.skipped_frame_list, swap_detection_score_array=self.swap_detection_score_array
             )
             with open(save_path, "wb") as f:
                 pickle.dump(session_data, f)
