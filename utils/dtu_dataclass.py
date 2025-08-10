@@ -38,3 +38,11 @@ class Session_3D_Plotter:
     failed_frame_list: List[Optional[int]]
     sus_frame_list: List[Optional[int]]
     swap_detection_score_array: NDArray
+
+@dataclass
+class Swap_Calculation_Config:
+    show_progress: bool
+    start_frame: int
+    frame_count_min: int
+    frame_count_max: int
+    until_next_error: bool

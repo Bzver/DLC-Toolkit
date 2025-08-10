@@ -3,12 +3,62 @@ import bisect
 
 from typing import List, Optional
 from numpy.typing import NDArray
-from .dtu_dataclass import Loaded_DLC_Data
+from .dtu_dataclass import Loaded_DLC_Data, Swap_Calculation_Config
 
 def format_title(base_title: str, debug_status: bool) -> str:
     if debug_status:
         return f"{base_title} --- DEBUG MODE"
     return base_title
+
+def get_config_from_calculation_mdode(mode:str, frame_idx:int, check_range:int, total_frames:int) -> Swap_Calculation_Config:
+    """
+    Determines the calculation parameters based on a given mode.
+
+    Args:
+        mode (str): The calculation mode ("full", "auto_check", "manual_check", "remap").
+        frame_idx (int): The starting frame index for the check.
+        check_range (int): A base value for the frame check range.
+
+    Returns:
+        Swap_Calculation_Config: An object containing the configuration parameters.
+    """
+
+    modes_config = {
+        "full": Swap_Calculation_Config(
+            show_progress=True,
+            start_frame=0,
+            frame_count_min=0,
+            frame_count_max=total_frames,
+            until_next_error=False,
+        ),
+        "auto_check": Swap_Calculation_Config(
+            show_progress=False,
+            start_frame=frame_idx,
+            frame_count_min=0,
+            frame_count_max=check_range,
+            until_next_error=False,
+        ),
+        "manual_check": Swap_Calculation_Config(
+            show_progress=False,
+            start_frame=frame_idx,
+            frame_count_min=check_range,
+            frame_count_max=check_range * 10,
+            until_next_error=True,
+        ),
+        "remap": Swap_Calculation_Config(
+            show_progress=True,
+            start_frame=frame_idx,
+            frame_count_min=check_range,
+            frame_count_max=total_frames,
+            until_next_error=True,
+        )
+    }
+
+    if mode not in modes_config:
+        # Handle the case of an invalid mode
+        raise ValueError(f"Invalid mode: '{mode}'. Expected one of {list(modes_config.keys())}")
+
+    return modes_config[mode]
 
 ###########################################################################################
 
