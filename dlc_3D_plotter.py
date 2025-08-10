@@ -210,9 +210,9 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             with open(workspace_filepath, "rb") as f:
                 session_data = pickle.load(f)
 
-            self.calibration_loader(session_data.base_folder)
+            self.calibration_loader(session_data.calibration_filepath)
             self.dlc_config_loader(session_data.dlc_config_filepath)
-            self.load_video_folder(session_data.calibration_filepath)
+            self.load_video_folder(session_data.base_folder)
 
         except Exception as e:
             QMessageBox.critical(self, "Load Failed", f"An error occurred while loading: {e}")
