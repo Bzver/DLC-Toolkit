@@ -878,7 +878,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.pred_data_array = dute.track_swap_3D_plotter(self.pred_data_array, self.current_frame_idx, self.selected_cam_idx)
         self.display_current_frame() # Refresh the display to show the swapped frame
         self.calculate_identity_swap_score(mode="manual_check")
-        self.calculate_temporal_vel(frame_idx=self.current_frame_idx)
+        self.calculate_temporal_vel(frame_idx_r=self.current_frame_idx)
         self.refresh_failed_frame_list()
         self.navigation_title_controller()
         self._refresh_slider()
@@ -903,7 +903,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         return True
     
     def _validate_velocity_post_correction(self, frame_idx):
-        self.calculate_temporal_vel(frame_idx=frame_idx)
+        self.calculate_temporal_vel(frame_idx_r=frame_idx)
         result_list = []
         for inst_idx in range(self.dlc_data.instance_count):
             result = self.temporal_dist_array_all[frame_idx, inst_idx] > self.velocity_threhold
