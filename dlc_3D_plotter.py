@@ -59,10 +59,11 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             "Detect": {
                 "display_name": "Swap Detect",
                 "buttons": [
-                    ("Track Swap Score Calculation", lambda:self.calculate_identity_swap_score(mode="full")),
+                    ("Calculate Track Swap Score", lambda:self.calculate_identity_swap_score(mode="full")),
+                    ("Calculate Temporal Velocity", self.calculate_temporal_vel),
                     ("Adjust Confidence Cutoff", self.show_confidence_dialog),
                     ("Adjust Deviance Threshold", self.show_deviance_dialog),
-                    ("Refresh Failed Frames Ater Deviance Adjustment", self.refresh_failed_frame_list)
+                    ("Adjust Velocity Threshold", self.show_velocity_dialog),
                 ]
             },
             "View": {
@@ -156,8 +157,9 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
     def reset_state(self):
         self.num_cam = None
 
-        self.confidence_cutoff = 0.6 # Initialize confidence cutoff
-        self.deviance_threshold = 100 # Initialize deviancy threshold
+        self.confidence_cutoff = 0.6
+        self.deviance_threshold = 150
+        self.velocity_threhold = 20
 
         self.data_loader = DLC_Loader(None, None)
         self.dlc_data = None
@@ -168,6 +170,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.cam_pos, self.cam_dir = None, None
 
         self.pred_data_array = None # Combined prediction data for all cameras
+        self.temporal_dist_array_all = None
 
         self.num_cam_from_calib = None
 
@@ -207,7 +210,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         if not workspace_filepath:
             return
         
-        print(f"Workspace loaded: {workspace_filepath}")
+        print(f"LOADER | Workspace loaded: {workspace_filepath}")
             
         try:
             with open(workspace_filepath, "rb") as f:
@@ -221,14 +224,15 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             QMessageBox.critical(self, "Load Failed", f"An error occurred while loading: {e}")
             traceback.print_exc()
 
-            self.pred_data_array = session_data.pred_data_array
-            self.current_frame_idx = session_data.current_frame_idx
-            self.confidence_cutoff = session_data.confidence_cutoff
-            self.deviance_threshold = session_data.deviance_threshold
-            self.roi_frame_list = session_data.roi_frame_list
-            self.failed_frame_list = session_data.failed_frame_list
-            self.skipped_frame_list = session_data.skipped_frame_list
-            self.swap_detection_score_array = session_data.swap_detection_score_array
+        self.pred_data_array = session_data.pred_data_array
+        self.current_frame_idx = session_data.current_frame_idx
+        self.confidence_cutoff = session_data.confidence_cutoff
+        self.deviance_threshold = session_data.deviance_threshold
+        self.roi_frame_list = session_data.roi_frame_list
+        self.failed_frame_list = session_data.failed_frame_list
+        self.skipped_frame_list = session_data.skipped_frame_list
+        self.swap_detection_score_array = session_data.swap_detection_score_array
+        self.temporal_dist_array_all = session_data.temporal_dist_array_all
 
         self.display_current_frame()
         self._refresh_slider()
@@ -239,13 +243,13 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
     def open_video_folder_dialog(self):
         if self.dlc_data is None: # Check if dlc_data is loaded
             QMessageBox.warning(self, "Warning", "DLC config is not loaded, load DLC config first!")
-            print("DLC config is not loaded, load DLC config first!")
+            print("LOADER | DLC config is not loaded, load DLC config first!")
             self.load_dlc_config()
             if self.dlc_data is None: # User closed DLC loading window or failed to load
                 return
         if self.num_cam_from_calib is None:
             QMessageBox.warning(self, "Warning", "Calibrations are not loaded, load calibrations first!")
-            print("Calibrations are not loaded, load calibrations first!")
+            print("LOADER | Calibrations are not loaded, load calibrations first!")
             self.load_calibrations()
             if self.num_cam_from_calib is None: # User closed calibration loading window or failed to load
                 return
@@ -275,7 +279,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
     def load_calibrations(self):
         calib_file, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select Calibration File", "", "Calibration Files (*.mat)")
         if calib_file:
-            print(f"Calibration loaded: {calib_file}")
+            print(f"LOADER | Calibration loaded: {calib_file}")
             self.calibration_loader(calib_file)
 
     def calibration_loader(self, calibration_file):
@@ -307,7 +311,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         folder_list = [None] * self.num_cam
         self.prediction_list = [None] * self.num_cam
 
-        print(f"Loading videos from: {folder_path}")
+        print(f"LOADER | Loading videos from: {folder_path}")
         
         # Determine total frames based on the longest video
         temp_total_frames = 0
@@ -318,7 +322,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             
             cap = cv2.VideoCapture(video_file) # Try to open the video capture
             if not cap.isOpened():
-                print(f"Warning: Could not open video file: {video_file}")
+                print(f"LOADER | Warning: Could not open video file: {video_file}")
                 cap = None
             else:
                 num_frame = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -333,6 +337,9 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         # Initialize the swap detection score array
         self.swap_detection_score_array = np.full((self.total_frames, 3), np.nan)
         self.swap_detection_score_array[:, 0] = np.arange(self.total_frames)
+
+        # Initialize the temporal distance array
+        self.temporal_dist_array_all = np.full((self.total_frames, self.dlc_data.instance_count), np.nan)
 
         if not any(self.cap_list): # Check if at least one video was loaded
             QMessageBox.warning(self, "Error", "No video files were loaded successfully.")
@@ -564,11 +571,18 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             self.ax.clear()
             self.ax.set_title("3D Skeleton Plot - No DLC data loaded")
             self.canvas.draw_idle()
-            return # Cannot plot if DLC data is not loaded
+            return
 
-        data_processor_3d = Data_Processor_3D(
-            self.dlc_data, self.camera_params, self.pred_data_array, self.current_frame_idx, self.confidence_cutoff, self.num_cam)
-        point_3d_array = data_processor_3d.get_3d_pose_array()
+        if self.dlc_data is None or self.pred_data_array is None:
+            point_3d_array = np.full((1, 1, 3), np.nan)
+        else:
+            data_processor_3d = Data_Processor_3D(
+                self.dlc_data, self.camera_params, self.pred_data_array, self.confidence_cutoff, self.num_cam)
+            point_3d_array = data_processor_3d.get_3d_pose_array(self.current_frame_idx)
+
+        if point_3d_array is None:
+            return
+
         self.ax.clear()
         self.ax.set_xlabel('X')
         self.ax.set_ylabel('Y')
@@ -661,8 +675,9 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
             QtWidgets.QApplication.processEvents()  # Keep UI responsive
         
-            data_processor_3d = Data_Processor_3D(self.dlc_data, self.camera_params, self.pred_data_array, frame_idx, self.confidence_cutoff, self.num_cam)
-            keypoint_data_tr, valid_view = data_processor_3d.get_keypoint_data_for_frame()
+            data_processor_3d = Data_Processor_3D(self.dlc_data, self.camera_params, self.pred_data_array, self.confidence_cutoff, self.num_cam)
+            keypoint_data_tr, valid_view = data_processor_3d.get_keypoint_data_for_frame(
+                frame_idx, instance_threshold=self.dlc_data.instance_count, view_threshold=3)
 
             if not keypoint_data_tr:
                 if mode == "full": # Only applying during the initial sweep
@@ -685,6 +700,32 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
         self._populate_roi_frame_list()
         return True
+    
+    def calculate_temporal_vel(self, frame_idx_r=None, check_window=5):
+        if not self.dlc_data:
+            return False
+
+        progress = None
+        if frame_idx_r is None:
+            dialog = "Calculating temporal velocity for all the frames..."
+            title = f"Calculating Temporal Velocity"
+            progress = dugh.get_progress_dialog(self, 0, self.total_frames, title, dialog)
+
+        data_processor_3d = Data_Processor_3D(self.dlc_data, self.camera_params, self.pred_data_array, self.confidence_cutoff, self.num_cam)
+
+        if progress:
+            for frame_idx in range(self.total_frames):
+                progress.setValue(frame_idx)
+                self.temporal_dist_array_all[frame_idx, :] = data_processor_3d.calculate_temporal_dist(frame_idx)
+            progress.close()
+        else:
+            end_frame = frame_idx_r + check_window + 1
+            if end_frame > self.total_frames:
+                end_frame = self.total_frames
+            for frame_idx in range(frame_idx_r, end_frame):
+                self.temporal_dist_array_all[frame_idx, :] = data_processor_3d.calculate_temporal_dist(frame_idx, check_window)
+
+        self.navigation_title_controller()
 
     def _populate_roi_frame_list(self):
         deviance_mask = self.swap_detection_score_array[:, 2] >= self.deviance_threshold
@@ -719,9 +760,11 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             
             if not self.attempt_track_correction(frame_idx, correction_progress):
                 QMessageBox.warning(self, "Correction Cancelled", "Track correction was cancelled by the user.")
-                break
+                return
 
         correction_progress.close()
+
+        self.calculate_temporal_vel()
 
         if self.failed_frame_list:
             QMessageBox.warning(self, "Correction Partially Successful", f"Failed to correct frames: {', '.join(map(str, self.failed_frame_list))}.")
@@ -741,7 +784,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
         self.current_frame_idx = frame_idx
         self.display_current_frame()
-        print(f"Attempting automatic correction for frame {frame_idx}...")
+        print(f"AUTOCORRECT | Attempting automatic correction for frame {frame_idx}...")
         
         culprit_view_idx = int(self.swap_detection_score_array[frame_idx, 1])
         self.selected_cam_idx = culprit_view_idx
@@ -749,7 +792,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
         backup_pred_data_array = self.pred_data_array.copy() # Backup current prediction data
         self.pred_data_array = dute.track_swap_3D_plotter(self.pred_data_array, frame_idx, self.selected_cam_idx)
-        self._post_correction_attempt_operations()
+        self._post_correction_operations()
         
         max_retry = self.num_cam
         retry_count = 0
@@ -758,15 +801,15 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
         while not self._validate_swap_score_post_correction(frame_idx):
             self.pred_data_array = backup_pred_data_array.copy() # Restore backup
-            print(f"Frame {frame_idx} correction with camera {self.selected_cam_idx} failed, retrying with next camera view...")
+            print(f"AUTOCORRECT | Frame {frame_idx} correction with camera {self.selected_cam_idx} failed, retrying with next camera view...")
             retry_count += 1
             if retry_count >= max_retry:
                 break
 
             self.selected_cam_idx = (self.selected_cam_idx + 1) % self.num_cam
-            print(f"Trying camera {self.selected_cam_idx} for swapping...")
+            print(f"AUTOCORRECT | Trying camera {self.selected_cam_idx} for swapping...")
             self.pred_data_array = dute.track_swap_3D_plotter(self.pred_data_array, frame_idx, self.selected_cam_idx)
-            self._post_correction_attempt_operations()
+            self._post_correction_operations()
             
             if self.swap_detection_score_array[frame_idx, 1] < best_swap_score:
                 best_swap_score = self.swap_detection_score_array[frame_idx, 1]
@@ -778,29 +821,47 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             return True
 
         self.pred_data_array = backup_pred_data_array.copy() # Restore backup if max retries reached
-        print("Try to swap two views simulatenously...")
-        all_camera_pairs = list(combinations(range(self.num_cam), 2))
-        for cam1_idx, cam2_idx in all_camera_pairs:
-            self.pred_data_array = dute.track_swap_3D_plotter(self.pred_data_array, frame_idx, cam1_idx)
-            self.pred_data_array = dute.track_swap_3D_plotter(self.pred_data_array, frame_idx, cam2_idx)
-            self.selected_cam_idx = cam1_idx # Set the first camera as selected for display
-            self._post_correction_attempt_operations()
-
-            if self._validate_swap_score_post_correction(frame_idx):
-                self._refresh_slider()
-                print(f"Successfully swapped cameras {cam1_idx} and {cam2_idx} for frame {frame_idx}.")
-                return True
-
-        print(f"Two swap solution failed for frame {frame_idx}.")
         
+        for swap_num in range(2,5): # Try 2, 3 ,4-way swap
+            if self.attempt_multiple_way_swap_solution(frame_idx, swap_num=swap_num, parent_progress=correction_progress):
+                self.calculate_identity_swap_score(mode="remap", parent_progress=correction_progress)
+                self._refresh_slider()
+                return True
+            
+        self.pred_data_array = backup_pred_data_array.copy() # Restore backup if all-way swap failed
+
         if best_swap_score < self.deviance_threshold:
+            self._validate_swap_score_post_correction(frame_idx)
             self.pred_data_array = dute.track_swap_3D_plotter(self.pred_data_array, frame_idx, best_swap_cam)
-            print(f"Falling back to best single camera swap (camera {best_swap_cam}) that also happens to fall below threshold.")
-            return True
+            if self._validate_velocity_post_correction(frame_idx):
+                self.calculate_identity_swap_score(mode="remap", parent_progress=correction_progress)
+                print(f"AUTOCORRECT | Falling back to best single camera swap (camera {best_swap_cam}) that also happens to satisfy the temporal criteria.")
+                return True
 
         self.pred_data_array = backup_pred_data_array.copy() # Restore backup if no valid swap found
         self.failed_frame_list.append(frame_idx)
         return True
+
+    def attempt_multiple_way_swap_solution(self, frame_idx:int, swap_num:int, parent_progress):
+        print(f"AUTOCORRECT | Attempting to find a {swap_num}-way swap solution for frame {frame_idx}...")
+        all_camera_pairs = list(combinations(range(self.num_cam), swap_num))
+        backup_pred_data_array = self.pred_data_array.copy()
+
+        for cam_combo in all_camera_pairs:
+            self.pred_data_array = backup_pred_data_array.copy()
+
+            for cam_idx in cam_combo:
+                self.pred_data_array = dute.track_swap_3D_plotter(self.pred_data_array, frame_idx, cam_idx)
+
+            self.selected_cam_idx = cam_combo[0] # Set the first camera as selected for display
+            self._post_correction_operations()
+
+            if self._validate_swap_score_post_correction(frame_idx) and self._validate_velocity_post_correction(frame_idx):
+                print(f"AUTOCORRECT | Successfully applied {swap_num}-way swap for cameras {cam_combo} on frame {frame_idx}.")
+                return True
+
+        print(f"AUTOCORRECT | {swap_num} swap solution failed for frame {frame_idx}.")
+        return False
 
     def manual_swap_frame_view(self):
         if not self.dlc_data:
@@ -817,6 +878,8 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.pred_data_array = dute.track_swap_3D_plotter(self.pred_data_array, self.current_frame_idx, self.selected_cam_idx)
         self.display_current_frame() # Refresh the display to show the swapped frame
         self.calculate_identity_swap_score(mode="manual_check")
+        for i in range(6):
+            self.calculate_temporal_vel(frame_idx=self.current_frame_idx)
         self.navigation_title_controller()
         self._refresh_slider()
         self.is_saved = False
@@ -838,6 +901,18 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             return False
         
         return True
+    
+    def _validate_velocity_post_correction(self, frame_idx):
+        self.calculate_temporal_vel(frame_idx=frame_idx)
+        result_list = []
+        for inst_idx in range(self.dlc_data.instance_count):
+            result = self.temporal_dist_array_all[frame_idx, inst_idx] > self.velocity_threhold
+            result_list.append(result)
+
+        if all(result_list):
+            return False
+        
+        return True
 
     def reset_marked_frames(self):
         """Reset all marked frames and clear the lists."""
@@ -850,6 +925,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
     def refresh_failed_frame_list(self):
         """Refresh the failed frame list to only include frames that are also in the ROI frame list."""
+        self.dialog_deviance = None
         self.failed_frame_list = [frame for frame in self.failed_frame_list if frame in self.roi_frame_list]
         self.navigation_title_controller()
         self._refresh_slider()
@@ -876,17 +952,17 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 return
             dugh.navigate_to_marked_frame(self, self.skipped_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, direction)
 
-    def _post_correction_attempt_operations(self):
+    def _post_correction_operations(self):
         self.display_current_frame()
         self._adjust_3D_plot_view_angle()
         self.calculate_identity_swap_score(mode="auto_check")
+        self.navigation_title_controller()
 
     ###################################################################################################################################################
 
     def set_selected_camera(self, cam_idx):
         if hasattr(self, 'cap_list'):
             self.selected_cam_idx = cam_idx
-            print(f"Selected Camera Index: {self.selected_cam_idx}")
             self._refresh_selected_cam()
             if self.auto_perspective:
                 self._adjust_3D_plot_view_angle()
@@ -902,10 +978,17 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.canvas.draw_idle()
 
     def navigation_title_controller(self):
-        title_text = f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | View Mode: {self.view_mode_choice[self.current_view_mode_idx]}"
+        title_text = f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | View Mode: {self.view_mode_choice[self.current_view_mode_idx]}"\
+        
         if self.swap_detection_score_array is not None and self.swap_detection_score_array.shape[0] > 0:
             deviance_scores = self.swap_detection_score_array[:, 2]
-            title_text += f" | Deviance Score: {deviance_scores[self.current_frame_idx]:.2f} (Threshold: {self.deviance_threshold})"
+            title_text += f" | Deviance Score: {deviance_scores[self.current_frame_idx]:.2f}"
+        
+        if self.temporal_dist_array_all is not None:
+            for inst_idx in range(self.dlc_data.instance_count):
+                inst_vel = self.temporal_dist_array_all[self.current_frame_idx, inst_idx]
+                title_text += f" | Instance {inst_idx} Velocity: {inst_vel}"
+
         self.nav_widget.setTitle(title_text)
         if self.current_frame_idx in self.failed_frame_list:
             self.nav_widget.setStyleSheet("""QGroupBox::title {color: #FF0000;}""")
@@ -925,7 +1008,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.canvas.draw_idle()
 
     def show_confidence_dialog(self):
-        if not self.pred_data_array:
+        if self.pred_data_array is None:
             QtWidgets.QMessageBox.warning(self, "No Prediction", "No prediction has been loaded, please load prediction first.")
             return
         
@@ -935,13 +1018,25 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         dialog.show() # .show() instead of .exec() for a non-modal dialog
 
     def show_deviance_dialog(self):
-        if not self.pred_data_array:
+        if self.pred_data_array is None:
             QtWidgets.QMessageBox.warning(self, "No Prediction", "No prediction has been loaded, please load prediction first.")
             return
         
         dialog = Adjust_Property_Dialog(
             property_name="Deviance Threshold", property_val=self.deviance_threshold, range_mult=0.1, parent=self)
         dialog.property_changed.connect(self._update_deviance_threshold)
+        dialog.finished.connect(self.refresh_failed_frame_list)
+        dialog.show()
+        self.dialog_deviance = dialog # Keep a reference to the dialog instance
+
+    def show_velocity_dialog(self):
+        if self.pred_data_array is None:
+            QtWidgets.QMessageBox.warning(self, "No Prediction", "No prediction has been loaded, please load prediction first.")
+            return
+        
+        dialog = Adjust_Property_Dialog(
+            property_name="Velocity Threshold", property_val=self.velocity_threhold, range_mult=1, parent=self)
+        dialog.property_changed.connect(self._update_velocity_threshold)
         dialog.show() # .show() instead of .exec() for a non-modal dialog
 
     def _update_confidence_cutoff(self, new_cutoff):
@@ -950,6 +1045,11 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
     def _update_deviance_threshold(self, new_threshold):
         self.deviance_threshold = new_threshold
+        self._populate_roi_frame_list()
+        self.navigation_title_controller()
+
+    def _update_velocity_threshold(self, new_threshold):
+        self.velocity_threhold = new_threshold
         self._populate_roi_frame_list()
         self.navigation_title_controller()
 
@@ -1003,8 +1103,8 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 base_folder=self.base_folder, calibration_filepath=self.calibration_filepath, dlc_config_filepath=self.dlc_config_filepath,
                 pred_data_array=self.pred_data_array, current_frame_idx=self.current_frame_idx,
                 confidence_cutoff=self.confidence_cutoff, deviance_threshold=self.deviance_threshold,
-                roi_frame_list=self.roi_frame_list, failed_frame_list=self.failed_frame_list,
-                skipped_frame_list=self.skipped_frame_list, swap_detection_score_array=self.swap_detection_score_array
+                roi_frame_list=self.roi_frame_list, failed_frame_list=self.failed_frame_list, skipped_frame_list=self.skipped_frame_list,
+                swap_detection_score_array=self.swap_detection_score_array, temporal_dist_array_all=self.temporal_dist_array_all
             )
             with open(save_path, "wb") as f:
                 pickle.dump(session_data, f)

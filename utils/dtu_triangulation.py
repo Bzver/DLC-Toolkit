@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from scipy.signal.windows import gaussian
 from itertools import combinations
 import cv2
 
@@ -187,23 +188,26 @@ def calculate_identity_swap_score_per_frame(keypoint_data_tr:dict, valid_view:in
 #########################################################################################################################################################1
 
 class Data_Processor_3D:
-    def __init__(self, dlc_data:Loaded_DLC_Data, camera_params:dict, pred_data_array:NDArray, frame_idx:int,
-            confidence_cutoff:float, num_cam:int, undistorted_images:bool=False):
+    def __init__(self, dlc_data:Loaded_DLC_Data, camera_params:dict, pred_data_array:NDArray, confidence_cutoff:float,
+                 num_cam:int, undistorted_images:bool=False):
         
         self.dlc_data = dlc_data
         self.camera_params = camera_params
         self.pred_data_array = pred_data_array
-        self.frame_idx = frame_idx
         self.confidence_cutoff = confidence_cutoff
         self.num_cam = num_cam
         self.undistorted_images = undistorted_images
 
-    def get_3d_pose_array(self):
-        if self.dlc_data is None or self.pred_data_array is None:
-            return np.full((1, 1, 3), np.nan) # Return empty array if no data
+    def get_3d_pose_array(self, frame_idx):
+        if frame_idx not in range(self.pred_data_array.shape[0]):
+            print(f"Frame {frame_idx} is not within the range of prediction data!")
+            return None
 
         point_3d_array = np.full((self.dlc_data.instance_count, self.dlc_data.num_keypoint, 3), np.nan)
-        keypoint_data_tr, valid_view = self.get_keypoint_data_for_frame()
+        keypoint_data_tr, valid_view = self.get_keypoint_data_for_frame(frame_idx, instance_threshold=1, view_threshold=2)
+        if not keypoint_data_tr:
+            print(f"Failed to get valid data from triangulation in {frame_idx}")
+            return None
 
         for inst in range(self.dlc_data.instance_count):
             # iterate through each keypoint to perform triangulation
@@ -225,22 +229,90 @@ class Data_Processor_3D:
 
         return point_3d_array
 
-    def get_keypoint_data_for_frame(self):
-        instances_detected_per_camera = self._validate_multiview_instances()
-        valid_view = [cam_idx for cam_idx, count in enumerate(instances_detected_per_camera) if count >= 2]
+    def get_keypoint_data_for_frame(self, frame_idx, instance_threshold, view_threshold):
+        instances_detected_per_camera = self._validate_multiview_instances(frame_idx)
+        valid_view = [cam_idx for cam_idx, count in enumerate(instances_detected_per_camera) if count >= instance_threshold]
 
-        if len(valid_view) < 3:
+        if len(valid_view) < view_threshold:
             return None, valid_view
 
         # Check for valid keypoint data for each instance
-        keypoint_data_tr = self._acquire_keypoint_data(instances_detected_per_camera)
+        keypoint_data_tr = self._acquire_keypoint_data(instances_detected_per_camera, frame_idx)
 
         if not keypoint_data_tr:
             return None, valid_view
             
         return keypoint_data_tr, valid_view
 
-    def _validate_multiview_instances(self):
+    def calculate_temporal_dist(self, frame_idx:int, check_window:int=5) -> NDArray:
+        """
+        Calculates a single averaged temporal distance score for each instance,
+        using a Gaussian weighting on the distances between the current frame and
+        the preceding frames within the check_window.
+        
+        Args:
+            frame_idx (int): The current frame index.
+            check_window (int): The number of frames to check the current frame and the preceding frames.
+        
+        Returns:
+            np.ndarray: A 1D array of shape (instance_count,) containing the
+                        single averaged temporal distance score for each instance.
+        """
+        if check_window < 1:
+            return np.full(self.dlc_data.instance_count, np.nan)
+
+        # Get poses for the current frame and the check_window frames before it
+        start_frame = frame_idx - check_window
+        frame_indices = np.arange(start_frame, frame_idx + 1)
+        
+        frame_pose_array = np.full((len(frame_indices), self.dlc_data.instance_count, self.dlc_data.num_keypoint, 3), np.nan)
+        
+        for i, f_idx in enumerate(frame_indices):
+            frame_pose = self.get_3d_pose_array(frame_idx=f_idx)
+            
+            if frame_pose is None:
+                return np.full(self.dlc_data.instance_count, np.nan)
+            
+            frame_pose_array[i, :, :, :] = frame_pose
+        
+        weights = gaussian(check_window, std=check_window / 4.0)
+        # We need to reverse the weights so the highest weight is for the most recent frame.
+        weights = weights[::-1]
+        weights /= weights.sum() # Normalize weights to sum to 1
+
+        temporal_dist_array = np.full(self.dlc_data.instance_count, np.nan)
+
+        for inst_idx in range(self.dlc_data.instance_count):
+            
+            averaged_kp_distances = []
+            
+            for kp_idx in range(self.dlc_data.num_keypoint):
+                current_kp_pose = frame_pose_array[-1, inst_idx, kp_idx, :]
+                
+                if np.any(np.isnan(current_kp_pose)):
+                    continue
+                
+                # Get the trajectory of the current keypoint for the preceding frames
+                past_kp_trajectory = frame_pose_array[:-1, inst_idx, kp_idx, :]
+                
+                # Calculate the distances between the current pose and all past poses
+                distances = np.linalg.norm(current_kp_pose - past_kp_trajectory, axis=1)
+
+                # Filter out NaNs and apply weights
+                valid_distances = distances[~np.isnan(distances)]
+                if len(valid_distances) > 0:
+                    valid_weights = weights[~np.isnan(distances)]
+                    valid_weights /= valid_weights.sum()
+
+                    keypoint_average = np.sum(valid_distances * valid_weights)
+                    averaged_kp_distances.append(keypoint_average)
+            
+            if averaged_kp_distances:
+                temporal_dist_array[inst_idx] = np.mean(averaged_kp_distances)
+
+        return temporal_dist_array
+    
+    def _validate_multiview_instances(self, frame_idx):
         if self.dlc_data.instance_count < 2:
             return [1] * self.num_cam # All cameras valid for the single instance
 
@@ -252,7 +324,7 @@ class Data_Processor_3D:
                 has_valid_data = False
                 for kp_idx_check in range(self.dlc_data.num_keypoint):
 
-                    if not pd.isna(self.pred_data_array[self.frame_idx, cam_idx_check, inst_check, kp_idx_check*3]):
+                    if not pd.isna(self.pred_data_array[frame_idx, cam_idx_check, inst_check, kp_idx_check*3]):
                         has_valid_data = True
                         break
 
@@ -262,7 +334,7 @@ class Data_Processor_3D:
 
         return instances_detected_per_camera
 
-    def _acquire_keypoint_data(self, instances_detected_per_camera):
+    def _acquire_keypoint_data(self, instances_detected_per_camera, frame_idx):
         # Dictionary to store per-keypoint data across cameras:
         keypoint_data_tr = {
             inst:
@@ -289,7 +361,7 @@ class Data_Processor_3D:
                 P = self.camera_params[cam_idx]['P']
 
                 # Get all keypoint data (flattened) for the current frame, camera, and instance
-                keypoint_data_all_kps_flattened = self.pred_data_array[self.frame_idx, cam_idx, inst_idx, :]
+                keypoint_data_all_kps_flattened = self.pred_data_array[frame_idx, cam_idx, inst_idx, :]
 
                 if not self.undistorted_images:
                     keypoint_data_all_kps_flattened = undistort_points(keypoint_data_all_kps_flattened, K, RDistort, TDistort)

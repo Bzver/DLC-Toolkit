@@ -38,6 +38,7 @@ class Session_3D_Plotter:
     failed_frame_list: List[Optional[int]]
     skipped_frame_list: List[Optional[int]]
     swap_detection_score_array: NDArray
+    temporal_dist_array_all: NDArray
 
 @dataclass
 class Swap_Calculation_Config:
