@@ -36,7 +36,7 @@ class Session_3D_Plotter:
     deviance_threshold: int
     roi_frame_list: List[Optional[int]]
     failed_frame_list: List[Optional[int]]
-    sus_frame_list: List[Optional[int]]
+    skipped_frame_list: List[Optional[int]]
     swap_detection_score_array: NDArray
 
 @dataclass
