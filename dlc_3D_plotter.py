@@ -78,7 +78,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             "Track": {
                 "display_name": "Track Refine",
                 "buttons": [
-                    ("Auto Track Swap Correct", self.automatic_track_correction),
+                    ("Automatic Track Correction", self.automatic_track_correction),
                     ("Manual Swap Selected View (X)", self.manual_swap_frame_view),
                     ("Call Track Refiner", self.call_track_refiner)
                 ]
@@ -765,6 +765,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         correction_progress.close()
 
         self.calculate_temporal_vel()
+        self.refresh_failed_frame_list()
 
         if self.failed_frame_list:
             QMessageBox.warning(self, "Correction Partially Successful", f"Failed to correct frames: {', '.join(map(str, self.failed_frame_list))}.")
@@ -991,13 +992,13 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
         self.nav_widget.setTitle(title_text)
         if self.current_frame_idx in self.failed_frame_list:
-            self.nav_widget.setStyleSheet("""QGroupBox::title {color: #FF0000;}""")
+            self.nav_widget.setTitleColor("#FF0000")  # Red
         elif self.current_frame_idx in self.skipped_frame_list:
-            self.nav_widget.setStyleSheet("""QGroupBox::title {color: #3D3D3D;}""")
+            self.nav_widget.setTitleColor("#3D3D3D")  # Dark Gray
         elif self.current_frame_idx in self.roi_frame_list:
-            self.nav_widget.setStyleSheet("""QGroupBox::title {color: #F79F1C;}""")
+            self.nav_widget.setTitleColor("#F79F1C")  # Amber/Orange
         else:
-            self.nav_widget.setStyleSheet("""QGroupBox::title {color: black;}""")
+            self.nav_widget.setTitleColor("black")
 
     ###################################################################################################################################################
 

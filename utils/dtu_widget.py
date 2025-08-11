@@ -1,6 +1,7 @@
 from PySide6 import QtWidgets
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtWidgets import QPushButton
+from PySide6.QtCore import Qt, QTimer, Signal, QPropertyAnimation, QEasingCurve
+from PySide6.QtWidgets import QPushButton, QHBoxLayout, QVBoxLayout, QFrame
+from PySide6.QtGui import QFont
 
 from utils.dtu_comp import Slider_With_Marks
 
@@ -8,7 +9,7 @@ class Menu_Widget(QtWidgets.QMenuBar):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        self.menu_layout = QtWidgets.QHBoxLayout()
+        self.menu_layout = QHBoxLayout()
         self.setLayout(self.menu_layout)
 
     def add_menu_from_config(self, menu_config):
@@ -16,17 +17,17 @@ class Menu_Widget(QtWidgets.QMenuBar):
         Adds menus and their actions based on a configuration dictionary.
         Args:
             menu_config (dict): A dictionary defining the menu structure.
-                                Example:
-                                {
-                                    "File": {
-                                        "display_name": "File",
-                                        "buttons": [
-                                            ("Load Video", load_video_function),
-                                            ("Load Config and Prediction", load_prediction_function),
-                                        ]
-                                    },
-                                    ...
-                                }
+            Example:
+            {
+                "File": {
+                    "display_name": "File",
+                    "buttons": [
+                        ("Load Video", load_video_function),
+                        ("Load Config and Prediction", load_prediction_function),
+                    ]
+                },
+                ...
+            }
         """
         for menu_name, config in menu_config.items():
             display_name = config.get("display_name", menu_name)
@@ -47,7 +48,7 @@ class Progress_Widget(QtWidgets.QWidget):
         self.current_frame = 0
         self.is_playing = False
         
-        self.layout = QtWidgets.QHBoxLayout(self)
+        self.layout = QHBoxLayout(self)
 
         self.play_button = QPushButton("▶")
         self.play_button.setFixedWidth(20)
@@ -108,40 +109,145 @@ class Progress_Widget(QtWidgets.QWidget):
 
 ###################################################################################################################################################
 
-class Nav_Widget(QtWidgets.QGroupBox):
-    """A modular QGroupBox widget for video navigation controls."""
+class Nav_Widget(QtWidgets.QWidget):
+    """
+    Custom collapsible navigation widget with collapse button beside the title.
+    Built for PySide6.
+    """
     frame_changed_sig = Signal(int)
     prev_marked_frame_sig = Signal()
     next_marked_frame_sig = Signal()
 
     def __init__(self, mark_name="Marked", parent=None):
         super().__init__(parent)
-        self.title = "Video Navigation"
         self.marked_name = mark_name
-        self.navigation_layout = QtWidgets.QGridLayout(self)
+        self.collapsed = False
+
+        # Main layout
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setSpacing(0)
+
+        # Header bar (acts like a styled group box title)
+        self.header_frame = QFrame()
+        self.header_frame.setStyleSheet("""
+            QFrame {
+                background-color: #d3d7cf;
+                border: 1px solid #a0a0a0;
+                border-radius: 4px;
+            }
+        """)
+        self.header_layout = QHBoxLayout(self.header_frame)
+        self.header_layout.setContentsMargins(6, 4, 6, 4)
+        self.header_layout.setSpacing(6)
+
+        # Toggle button (triangle arrow)
+        self.toggle_button = QPushButton("▼")
+        self.toggle_button.setFixedSize(16, 16)
+        font = QFont("Arial", 8)
+        font.setBold(True)
+        self.toggle_button.setFont(font)
+        self.toggle_button.clicked.connect(self._toggle_collapsed)
+
+        # Title label
+        self.title_label = QtWidgets.QLabel("Video Navigation")
+        self.title_label.setFont(QFont("Arial", 9, QFont.Bold))
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        # Assemble header
+        self.header_layout.addWidget(self.toggle_button)
+        self.header_layout.addWidget(self.title_label)
+        self.header_layout.addStretch()
+
+        # Content frame (holds navigation buttons)
+        self.content_frame = QFrame()
+        self.content_frame.setStyleSheet("""
+            QFrame {
+                border: 1px solid #a0a0a0;
+                border-top: none;
+                background-color: #f8f8f8;
+            }
+        """)
+        self.content_layout = QVBoxLayout(self.content_frame)
+        self.content_layout.setSpacing(6)
+        self.content_layout.setContentsMargins(8, 6, 8, 6)
+
         self._create_buttons()
 
+        # Add header and content to main layout
+        self.main_layout.addWidget(self.header_frame)
+        self.main_layout.addWidget(self.content_frame)
+
+        # Smooth animation for collapse/expand
+        self.animation = QPropertyAnimation(self.content_frame, b"maximumHeight")
+        self.animation.setDuration(240)
+        self.animation.setEasingCurve(QEasingCurve.Type.InOutCubic)
+
+    def setTitle(self, title_text):
+        self.title_label.setText(title_text)
+
+    def setTitleColor(self, color_hex):
+        self.title_label.setStyleSheet(f"color: {color_hex}; font-weight: bold;")
+
     def _create_buttons(self):
-        self.prev_10_frames_button = QtWidgets.QPushButton("Prev 10 Frames (Shift + ←)")
-        self.prev_frame_button = QtWidgets.QPushButton("Prev Frame (←)")
-        self.next_frame_button = QtWidgets.QPushButton("Next Frame (→)")
-        self.next_10_frames_button = QtWidgets.QPushButton("Next 10 Frames (Shift + →)")
-        self.prev_marked_frame_button = QtWidgets.QPushButton(f"◄ Prev {self.marked_name} (↑)")
-        self.next_marked_frame_button = QtWidgets.QPushButton(f"► Next {self.marked_name} (↓)")
+        """Create navigation buttons and arrange them in a grid-like layout."""
+        self.prev_10_frames_button = QPushButton("Prev 10 Frames (Shift + ←)")
+        self.prev_frame_button = QPushButton("Prev Frame (←)")
+        self.prev_marked_frame_button = QPushButton(f"◄ Prev {self.marked_name} (↑)")
 
-        self.navigation_layout.addWidget(self.prev_10_frames_button, 0, 0)
-        self.navigation_layout.addWidget(self.next_10_frames_button, 1, 0)
-        self.navigation_layout.addWidget(self.prev_frame_button, 0, 1)
-        self.navigation_layout.addWidget(self.next_frame_button, 1, 1)
-        self.navigation_layout.addWidget(self.prev_marked_frame_button, 0, 2)
-        self.navigation_layout.addWidget(self.next_marked_frame_button, 1, 2)
+        row1 = QHBoxLayout()
+        row1.addWidget(self.prev_10_frames_button)
+        row1.addWidget(self.prev_frame_button)
+        row1.addWidget(self.prev_marked_frame_button)
 
-        # Connect internal button signals to our custom signals
+        self.next_10_frames_button = QPushButton("Next 10 Frames (Shift + →)")
+        self.next_frame_button = QPushButton("Next Frame (→)")
+        self.next_marked_frame_button = QPushButton(f"► Next {self.marked_name} (↓)")
+
+        row2 = QHBoxLayout()
+        row2.addWidget(self.next_10_frames_button)
+        row2.addWidget(self.next_frame_button)
+        row2.addWidget(self.next_marked_frame_button)
+
+        # Add rows to content layout
+        self.content_layout.addLayout(row1)
+        self.content_layout.addLayout(row2)
+
+        # Connect signals
         self.prev_10_frames_button.clicked.connect(lambda: self.frame_changed_sig.emit(-10))
         self.prev_frame_button.clicked.connect(lambda: self.frame_changed_sig.emit(-1))
         self.next_frame_button.clicked.connect(lambda: self.frame_changed_sig.emit(1))
         self.next_10_frames_button.clicked.connect(lambda: self.frame_changed_sig.emit(10))
         self.prev_marked_frame_button.clicked.connect(self.prev_marked_frame_sig.emit)
         self.next_marked_frame_button.clicked.connect(self.next_marked_frame_sig.emit)
+
+    def _toggle_collapsed(self):
+        """Toggle collapse/expand state with animation."""
+        self.collapsed = not self.collapsed
+        self.toggle_button.setText("►" if self.collapsed else "▼")
+
+        # Update animation direction
+        self.animation.stop()
+        if self.collapsed:
+            # Collapse: animate to 0
+            self.animation.setStartValue(self.content_frame.sizeHint().height())
+            self.animation.setEndValue(0)
+            self.animation.start()
+            # Hide after animation
+            def finish_hide():
+                self.content_frame.hide()
+            self.animation.finished.connect(finish_hide)
+        else:
+            # Expand: show first, then animate from 0 to full
+            self.content_frame.show()
+            height = self.content_frame.sizeHint().height()
+            self.animation.setStartValue(0)
+            self.animation.setEndValue(height)
+            self.animation.start()
+
+    def set_collapsed(self, collapsed: bool):
+        """Allow external code to collapse or expand the widget."""
+        if collapsed != self.collapsed:
+            self._toggle_collapsed()
 
 ###################################################################################################################################################

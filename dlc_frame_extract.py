@@ -408,13 +408,13 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.nav_widget.show()
         self.nav_widget.setTitle(f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | Video: {self.video_name}")
         if self.current_frame_idx in self.labeled_frame_list:
-            self.nav_widget.setStyleSheet("""QGroupBox::title {color: #1F32D7;}""")
+            self.nav_widget.setTitleColor("#1F32D7")  # Blue
         elif self.current_frame_idx in self.refined_frame_list:
-            self.nav_widget.setStyleSheet("""QGroupBox::title {color: #009979;}""")
+            self.nav_widget.setTitleColor("#009979")  # Teal/Green
         elif self.current_frame_idx in self.frame_list:
-            self.nav_widget.setStyleSheet("""QGroupBox::title {color: #E28F13;}""")
+            self.nav_widget.setTitleColor("#E28F13")  # Amber/Orange
         else:
-            self.nav_widget.setStyleSheet("""QGroupBox::title {color: black;}""")
+            self.nav_widget.setTitleColor("black")
 
     ###################################################################################################################################################
 
