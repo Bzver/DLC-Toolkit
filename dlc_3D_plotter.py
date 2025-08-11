@@ -878,8 +878,8 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.pred_data_array = dute.track_swap_3D_plotter(self.pred_data_array, self.current_frame_idx, self.selected_cam_idx)
         self.display_current_frame() # Refresh the display to show the swapped frame
         self.calculate_identity_swap_score(mode="manual_check")
-        for i in range(6):
-            self.calculate_temporal_vel(frame_idx=self.current_frame_idx)
+        self.calculate_temporal_vel(frame_idx=self.current_frame_idx)
+        self.refresh_failed_frame_list()
         self.navigation_title_controller()
         self._refresh_slider()
         self.is_saved = False
