@@ -1,51 +1,127 @@
 import numpy as np
 import pandas as pd
-from scipy.signal.windows import gaussian
 from itertools import combinations
+
+from scipy.ndimage import gaussian_filter1d
+from sklearn.linear_model import LinearRegression
+
 import cv2
 
-from typing import List, Tuple
+from typing import List, Tuple, Union
 from numpy.typing import NDArray
 
 from .dtu_dataclass import Loaded_DLC_Data
 
-def triangulate_point(num_views:int, projs:List[NDArray], pts_2d:List[Tuple[float]], confs:List[float]) -> NDArray:
+def triangulate_point(
+    num_views: int,
+    projs: List[np.ndarray],
+    pts_2d: List[Tuple[float, float]],
+    confs: List[float],
+    return_confidence: bool = True
+) -> Union[np.ndarray, Tuple[np.ndarray, float]]:
     """
-    Triangulates a single 3D point from multiple 2D camera views using the Direct Linear Transformation (DLT) method.
-    Each 2D point's contribution to the system of equations is weighted by its confidence.
+    Triangulates a single 3D point using Direct Linear Transformation (DLT) with confidence weighting.
+    Optionally returns a confidence score based on weighted reprojection error and system condition.
 
     Args:
-        num_views (int): The number of camera views providing observations for this point.
-        projs (list of np.array): A list of 3x4 projection matrices, one for each camera view.
-        pts_2d (list of tuple): A list of 2D image points (u, v), one for each camera view.
-        confs (list of float): A list of confidence values, one for each 2D point. Used as weights in the triangulation.
+        num_views (int): Number of camera views.
+        projs (list of np.array): List of 3x4 camera projection matrices.
+        pts_2d (list of tuple): List of 2D image points (u, v).
+        confs (list of float): Confidence values for each 2D point (e.g., detector confidence).
+        return_confidence (bool): If True, returns both 3D point and a confidence score.
 
     Returns:
-        np.array: The triangulated 3D point in Euclidean coordinates (x, y, z).
+        If return_confidence is False:
+            np.array: 3D point (x, y, z)
+        If return_confidence is True:
+            tuple: (point_3d: np.array (3,), confidence: float in [0, 1])
     """
+    # === Step 1: Build DLT system with confidence weighting ===
     A = []
+    valid_indices = []
     for i in range(num_views):
-        P_i = projs[i]
+        if np.isnan(pts_2d[i][0]) or np.isnan(pts_2d[i][1]) or confs[i] <= 0:
+            continue  # Skip invalid or zero-confidence views
+        P_i = np.array(projs[i])
         u, v = pts_2d[i]
-        w = confs[i] # Weight by confidence
+        w = confs[i]
 
-        P_i = np.array(P_i) # Ensure P_i is a numpy array for slicing
+        A.append(w * (u * P_i[2, :] - P_i[0, :]))
+        A.append(w * (v * P_i[2, :] - P_i[1, :]))
+        valid_indices.append(i)
 
-        # Equations for DLT:
-        # u * P_i[2,:] - P_i[0,:] = 0
-        # v * P_i[2,:] - P_i[1,:] = 0
-        # Apply weight 'w' to each row
-        A.append(w * (u * P_i[2,:] - P_i[0,:]))
-        A.append(w * (v * P_i[2,:] - P_i[1,:]))
+    if len(A) < 4:  # Need at least 2 views (4 equations)
+        if return_confidence:
+            return np.full(3, np.nan), 0.0
+        else:
+            return np.full(3, np.nan)
 
-    A = np.array(A) # Solve Ax = 0 using SVD
-    U, S, Vt = np.linalg.svd(A) # The 3D point is the last column of V (or last row of Vt)
+    A = np.array(A)
     
-    point_4d_hom = Vt[-1] 
-    point_3d = (point_4d_hom / point_4d_hom[3]).flatten()[:3] # Convert from homogeneous to Euclidean coordinates (x/w, y/w, z/w)
-    return point_3d
+    # === Step 2: Solve via SVD ===
+    U, S, Vt = np.linalg.svd(A)
+    point_4d_hom = Vt[-1]
+    if abs(point_4d_hom[3]) < 1e-10:
+        # Poorly conditioned
+        if return_confidence:
+            return np.full(3, np.nan), 0.0
+        else:
+            return np.full(3, np.nan)
+    
+    point_3d = (point_4d_hom / point_4d_hom[3])[:3]
 
-def triangulate_point_simple(proj1:NDArray, proj2:NDArray, pts_2d1:Tuple[float], pts_2d2:Tuple[float], conf1:float, conf2:float) -> NDArray:
+    if not return_confidence:
+        return point_3d
+
+    # === Step 3: Compute Reprojection Error (Confidence Basis) ===
+    reprojection_errors = []
+    weighted_errors = []
+    total_weight = 0.0
+
+    for i in valid_indices:
+        P_i = np.array(projs[i])
+        u_obs, v_obs = pts_2d[i]
+        conf = confs[i]
+
+        # Reproject 3D point
+        p_3d_hom = np.append(point_3d, 1.0)
+        proj = P_i @ p_3d_hom
+        u_proj, v_proj, w_proj = proj
+        if abs(w_proj) < 1e-10:
+            continue
+        u_proj /= w_proj
+        v_proj /= w_proj
+
+        error = np.hypot(u_proj - u_obs, v_proj - v_obs)  # pixel error
+        reprojection_errors.append(error)
+        weighted_errors.append(conf * error)
+        total_weight += conf
+
+    if len(reprojection_errors) == 0:
+        return point_3d, 0.0
+
+    # Mean weighted reprojection error
+    mean_weighted_error = sum(weighted_errors) / total_weight if total_weight > 0 else np.inf
+
+    # === Step 4: Compute Condition Number (Numerical Stability) ===
+    cond_num = S[0] / (S[-1] + 1e-10)  # Avoid division by zero
+    condition_score = np.clip(1.0 / (cond_num / 100.0), 0, 1)  # Normalize to ~[0,1]
+
+    # === Step 5: Map reprojection error to [0,1] confidence ===
+    # Example: error > 10px → 0, error < 1px → 1
+    max_allowed_error = 10.0  # pixels
+    reproj_conf = np.clip(1.0 - (mean_weighted_error / max_allowed_error), 0.0, 1.0)
+
+    # Combine with condition score
+    final_confidence = 0.7 * reproj_conf + 0.3 * condition_score
+
+    return point_3d, final_confidence
+
+def triangulate_point_simple(
+        proj1:NDArray,           proj2:NDArray, 
+        pts_2d1:Tuple[float],    pts_2d2:Tuple[float], 
+        conf1:float,             conf2:float
+        ) -> NDArray:
     """
     Triangulates a single 3D point from two 2D camera views.
 
@@ -65,10 +141,11 @@ def triangulate_point_simple(proj1:NDArray, proj2:NDArray, pts_2d1:Tuple[float],
     pts_2d = [pts_2d1, pts_2d2]
     confs = [conf1, conf2]
     
-    point_3d = triangulate_point(num_views, projs, pts_2d, confs)
+    point_3d = triangulate_point(num_views, projs, pts_2d, confs, return_confidence=False)
     return point_3d
 
 def get_projection_matrix(K, R, t):
+
     """
     Computes the projection matrix from camera intrinsic and extrinsic parameters.
 
@@ -143,7 +220,7 @@ def undistort_points(points_xy_conf, K, RDistort, TDistort):
 #########################################################################################################################################################1
 
 def calculate_identity_swap_score_per_frame(keypoint_data_tr:dict, valid_view:int,
-        instance_count:int, num_keypoint:int, num_cam:int) -> Tuple[int, int]:
+        instance_count:int, num_keypoint:int, num_cam:int) -> float:
     
     all_camera_pairs = list(combinations(valid_view, 2))
 
@@ -165,7 +242,8 @@ def calculate_identity_swap_score_per_frame(keypoint_data_tr:dict, valid_view:in
                     kp_3d_all_pair[pair_idx, inst, kp_idx] = \
                         triangulate_point_simple(proj1, proj2, pts_2d1, pts_2d2, conf1, conf2)
 
-    mean_3d_kp = np.nanmean(kp_3d_all_pair, axis=0) # [inst, kp, xyz]  
+    with np.errstate(invalid='ignore'):
+        mean_3d_kp = np.nanmean(kp_3d_all_pair, axis=0)
     # Calculate the Euclidean distance between each pair's result and the mean
     diffs = np.linalg.norm(kp_3d_all_pair - mean_3d_kp, axis=-1) # [pair, inst, kp]
     total_diffs_per_pair = np.nansum(diffs, axis=(1, 2)) # [pair]
@@ -173,17 +251,10 @@ def calculate_identity_swap_score_per_frame(keypoint_data_tr:dict, valid_view:in
     if len(total_diffs_per_pair) > 0:
         if not np.all(np.isnan(total_diffs_per_pair)):
             deviant_pair_idx = np.nanargmax(total_diffs_per_pair)
-            deviant_pair = all_camera_pairs[deviant_pair_idx]
-            deviant_cameras_scores = np.zeros(num_cam)
         else:
             return np.nan, np.nan
-    
-    deviant_cameras_scores[deviant_pair[0]] += 1
-    deviant_cameras_scores[deviant_pair[1]] += 1
-    
-    swap_camera_idx = np.argmax(deviant_cameras_scores)
-    
-    return swap_camera_idx, total_diffs_per_pair[deviant_pair_idx]
+        
+    return total_diffs_per_pair[deviant_pair_idx]
 
 #########################################################################################################################################################1
 
@@ -198,15 +269,16 @@ class Data_Processor_3D:
         self.num_cam = num_cam
         self.undistorted_images = undistorted_images
 
-    def get_3d_pose_array(self, frame_idx):
+    def get_3d_pose_array(self, frame_idx:int, return_confidence:bool=True):
         if frame_idx not in range(self.pred_data_array.shape[0]):
-            print(f"Frame {frame_idx} is not within the range of prediction data!")
+            print(f"TRIANGULATION | Frame {frame_idx} is not within the range of prediction data!")
             return None
 
-        point_3d_array = np.full((self.dlc_data.instance_count, self.dlc_data.num_keypoint, 3), np.nan)
+        point_data_size = 4 if return_confidence else 3
+        point_3d_array = np.full((self.dlc_data.instance_count, self.dlc_data.num_keypoint, point_data_size), np.nan)
         keypoint_data_tr, valid_view = self.get_keypoint_data_for_frame(frame_idx, instance_threshold=1, view_threshold=2)
         if not keypoint_data_tr:
-            print(f"Failed to get valid data from triangulation in {frame_idx}")
+            print(f"TRIANGULATION | Failed to get valid data from triangulation in {frame_idx}")
             return None
 
         for inst in range(self.dlc_data.instance_count):
@@ -225,7 +297,11 @@ class Data_Processor_3D:
                 num_valid_views = len(projs)
 
                 if num_valid_views >= 2:
-                    point_3d_array[inst, kp_idx, :] = triangulate_point(num_valid_views, projs, pts_2d, confs)
+                    if return_confidence:
+                        point_3d_array[inst, kp_idx, :3], point_3d_array[inst, kp_idx, 3] = triangulate_point(
+                            num_valid_views, projs, pts_2d, confs, return_confidence)
+                    else:
+                        point_3d_array[inst, kp_idx, :] = triangulate_point(num_valid_views, projs, pts_2d, confs, return_confidence)
 
         return point_3d_array
 
@@ -244,74 +320,94 @@ class Data_Processor_3D:
             
         return keypoint_data_tr, valid_view
 
-    def calculate_temporal_dist(self, frame_idx:int, check_window:int=5) -> NDArray:
+    def calculate_temporal_velocity(
+        self,
+        frame_idx: int,
+        check_window: int = 5,
+        min_valid_frames: int = 2,
+        smoothing: bool = True,
+        sigma: float = 0.8
+        ) -> NDArray:
         """
-        Calculates a single averaged temporal distance score for each instance,
-        using a Gaussian weighting on the distances between the current frame and
-        the preceding frames within the check_window.
+        Calculates an averaged velocity-based motion score for each instance,
+        using linear regression over recent trajectories within a time window.
         
         Args:
-            frame_idx (int): The current frame index.
-            check_window (int): The number of frames to check the current frame and the preceding frames.
-        
+            frame_idx (int): Current frame index.
+            check_window (int): Number of past frames to include (excludes current).
+            min_valid_frames (int): Minimum number of valid frames to compute velocity.
+            smoothing (bool): Whether to smooth velocity per keypoint over time.
+            sigma (float): Gaussian smoothing sigma if smoothing is True.
+
         Returns:
-            np.ndarray: A 1D array of shape (instance_count,) containing the
-                        single averaged temporal distance score for each instance.
+            np.ndarray: 1D array of shape (instance_count,) with average speed per instance.
         """
         if check_window < 1:
             return np.full(self.dlc_data.instance_count, np.nan)
 
-        # Get poses for the current frame and the check_window frames before it
-        start_frame = frame_idx - check_window
+        # Get frame range
+        start_frame = max(0, frame_idx - check_window)
         frame_indices = np.arange(start_frame, frame_idx + 1)
-        
-        frame_pose_array = np.full((len(frame_indices), self.dlc_data.instance_count, self.dlc_data.num_keypoint, 3), np.nan)
-        
-        for i, f_idx in enumerate(frame_indices):
-            frame_pose = self.get_3d_pose_array(frame_idx=f_idx)
-            
-            if frame_pose is None:
-                return np.full(self.dlc_data.instance_count, np.nan)
-            
-            frame_pose_array[i, :, :, :] = frame_pose
-        
-        weights = gaussian(check_window, std=check_window / 4.0)
-        # We need to reverse the weights so the highest weight is for the most recent frame.
-        weights = weights[::-1]
-        weights /= weights.sum() # Normalize weights to sum to 1
+        n_frames = len(frame_indices)
 
-        temporal_dist_array = np.full(self.dlc_data.instance_count, np.nan)
+        if n_frames <= 1:
+            return np.full(self.dlc_data.instance_count, np.nan)
+
+        # Load pose data with optional confidence
+        pose_array = np.full((n_frames, self.dlc_data.instance_count, self.dlc_data.num_keypoint, 3), np.nan)
+        conf_array = np.full((n_frames, self.dlc_data.instance_count, self.dlc_data.num_keypoint), np.nan)
+
+        for i, f_idx in enumerate(frame_indices):
+            pose_conf = self.get_3d_pose_array(f_idx)
+            if pose_conf is not None:
+                pose_array[i] = pose_conf[..., :3]
+                conf_array[i] = pose_conf[..., 3]
+
+        # Time vector for regression (shape: T,)
+        times = np.arange(n_frames).astype(float)
+
+        avg_speeds = np.full(self.dlc_data.instance_count, np.nan)
 
         for inst_idx in range(self.dlc_data.instance_count):
-            
-            averaged_kp_distances = []
-            
+            speeds = []  # collect keypoint speeds
+
             for kp_idx in range(self.dlc_data.num_keypoint):
-                current_kp_pose = frame_pose_array[-1, inst_idx, kp_idx, :]
-                
-                if np.any(np.isnan(current_kp_pose)):
+                traj = pose_array[:, inst_idx, kp_idx, :]  # (T, 3)
+                mask = np.all(np.isfinite(traj), axis=1)
+
+                if np.sum(mask) < min_valid_frames:
                     continue
-                
-                # Get the trajectory of the current keypoint for the preceding frames
-                past_kp_trajectory = frame_pose_array[:-1, inst_idx, kp_idx, :]
-                
-                # Calculate the distances between the current pose and all past poses
-                distances = np.linalg.norm(current_kp_pose - past_kp_trajectory, axis=1)
 
-                # Filter out NaNs and apply weights
-                valid_distances = distances[~np.isnan(distances)]
-                if len(valid_distances) > 0:
-                    valid_weights = weights[~np.isnan(distances)]
-                    valid_weights /= valid_weights.sum()
+                # Extract valid data
+                valid_times = times[mask]
+                valid_traj = traj[mask]
 
-                    keypoint_average = np.sum(valid_distances * valid_weights)
-                    averaged_kp_distances.append(keypoint_average)
-            
-            if averaged_kp_distances:
-                temporal_dist_array[inst_idx] = np.mean(averaged_kp_distances)
+                # Weight by confidence if available
+                sample_weights = None
+                w = conf_array[mask, inst_idx, kp_idx]
+                sample_weights = (w - w.min() + 1e-8)  # avoid zero weights
 
-        return temporal_dist_array
-    
+                # Fit linear model: pos(t) = v * t + b
+                try:
+                    model = LinearRegression().fit(
+                        valid_times.reshape(-1, 1), valid_traj,
+                        sample_weight=sample_weights
+                    )
+                    velocity_vector = model.coef_  # (3,) — velocity in x,y,z
+                    speed = np.linalg.norm(velocity_vector)
+
+                    speeds.append(speed)
+                except Exception:
+                    continue  # skip if fit fails
+
+            # Average across keypoints
+            if speeds:
+                if smoothing:
+                    speeds = gaussian_filter1d(np.array(speeds), sigma=sigma)
+                avg_speeds[inst_idx] = np.mean(speeds)
+
+        return avg_speeds
+
     def _validate_multiview_instances(self, frame_idx):
         if self.dlc_data.instance_count < 2:
             return [1] * self.num_cam # All cameras valid for the single instance
@@ -352,7 +448,7 @@ class Data_Processor_3D:
 
                 # Ensure camera_params are available for the current camera index
                 if cam_idx >= len(self.camera_params) or not self.camera_params[cam_idx]:
-                    print(f"Warning: Camera parameters not available for camera {cam_idx}. Skipping.")
+                    print(f"TRIANGULATION | Warning: Camera parameters not available for camera {cam_idx}. Skipping.")
                     continue
 
                 RDistort = self.camera_params[cam_idx]['RDistort']

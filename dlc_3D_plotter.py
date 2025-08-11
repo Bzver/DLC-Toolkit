@@ -173,6 +173,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.temporal_dist_array_all = None
 
         self.num_cam_from_calib = None
+        self.correction_progress = None
 
         self.plot_lim = 150
         self.instance_color = [
@@ -578,7 +579,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         else:
             data_processor_3d = Data_Processor_3D(
                 self.dlc_data, self.camera_params, self.pred_data_array, self.confidence_cutoff, self.num_cam)
-            point_3d_array = data_processor_3d.get_3d_pose_array(self.current_frame_idx)
+            point_3d_array = data_processor_3d.get_3d_pose_array(self.current_frame_idx, return_confidence=False)
 
         if point_3d_array is None:
             return
@@ -624,9 +625,9 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.ax.set_ylabel('Y')
         self.ax.set_zlabel('Z')
         self.ax.set_title(f"3D Camera Geometry")
-        self.ax.set_xlim([-self.plot_lim, self.plot_lim])
-        self.ax.set_ylim([-self.plot_lim, self.plot_lim])
-        self.ax.set_zlim([-self.plot_lim // 5, self.plot_lim])
+        self.ax.set_xlim([-self.plot_lim * 3, self.plot_lim * 3])
+        self.ax.set_ylim([-self.plot_lim * 3, self.plot_lim * 3])
+        self.ax.set_zlim([-self.plot_lim * 3 // 5, self.plot_lim * 3])
 
         for i in range(self.num_cam_from_calib):
             self.ax.scatter(*self.cam_pos[i], s=100, label=f"Camera {i+1} Pos")
@@ -684,10 +685,10 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                     self.skipped_frame_list.append(frame_idx)
                 continue
 
-            suspected_cam_idx, swap_score = dutri.calculate_identity_swap_score_per_frame(
+            swap_score = dutri.calculate_identity_swap_score_per_frame(
                 keypoint_data_tr, valid_view, self.dlc_data.instance_count, self.dlc_data.num_keypoint, self.num_cam)
             
-            self.swap_detection_score_array[frame_idx, 1], self.swap_detection_score_array[frame_idx, 2] = suspected_cam_idx, swap_score
+            self.swap_detection_score_array[frame_idx, 1] = swap_score
             calculated_frame_count += 1
 
             if config.until_next_error and swap_score > self.deviance_threshold and calculated_frame_count > config.frame_count_min:
@@ -716,20 +717,22 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         if progress:
             for frame_idx in range(self.total_frames):
                 progress.setValue(frame_idx)
-                self.temporal_dist_array_all[frame_idx, :] = data_processor_3d.calculate_temporal_dist(frame_idx)
+                self.temporal_dist_array_all[frame_idx, :] = data_processor_3d.calculate_temporal_velocity(frame_idx)
             progress.close()
         else:
             end_frame = frame_idx_r + check_window + 1
             if end_frame > self.total_frames:
                 end_frame = self.total_frames
             for frame_idx in range(frame_idx_r, end_frame):
-                self.temporal_dist_array_all[frame_idx, :] = data_processor_3d.calculate_temporal_dist(frame_idx, check_window)
+                self.temporal_dist_array_all[frame_idx, :] = data_processor_3d.calculate_temporal_velocity(frame_idx, check_window)
 
         self.navigation_title_controller()
 
     def _populate_roi_frame_list(self):
-        deviance_mask = self.swap_detection_score_array[:, 2] >= self.deviance_threshold
-        self.roi_frame_list = np.where(deviance_mask)[0].tolist() # Get the indices of frames with significant deviations
+        deviance_mask = self.swap_detection_score_array[:, 1] >= self.deviance_threshold
+        temporal_mask = self.temporal_dist_array_all[:, 1] >= self.velocity_threhold
+        combined_mask = deviance_mask | temporal_mask
+        self.roi_frame_list = np.where(combined_mask)[0].tolist() # Get the indices of frames with significant deviations
         self._refresh_slider()
 
     def automatic_track_correction(self):
@@ -737,7 +740,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             QMessageBox.information(self, "No Data", "Load prediction data first!") 
             return
 
-        if np.isnan(self.swap_detection_score_array[:,2]).all():
+        if np.isnan(self.swap_detection_score_array[:, 1]).all():
             if not self.calculate_identity_swap_score(mode="full", mute=True):
                 return
 
@@ -745,24 +748,24 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             QMessageBox.information(self, "Unimplemented", "The function is only for two instance only.")
             return
 
-        correction_progress = dugh.get_progress_dialog(self, 0, self.total_frames,
+        self.correction_progress = dugh.get_progress_dialog(self, 0, self.total_frames,
             title="Automatic Correction Progress", dialog="Commencing automatic track correction...")
 
         main_window_center = self.geometry().center()
-        x = main_window_center.x() - correction_progress.width() // 2
-        y = main_window_center.y() - correction_progress.height() // 2
-        correction_progress.move(x, y)
+        x = main_window_center.x() - self.correction_progress.width() // 2
+        y = main_window_center.y() - self.correction_progress.height() // 2
+        self.correction_progress.move(x, y)
 
         self.failed_frame_list = [] # Reset the failed frame list
         for frame_idx in range(self.total_frames):
             if frame_idx in self.skipped_frame_list:
                 continue
             
-            if not self.attempt_track_correction(frame_idx, correction_progress):
+            if not self.attempt_track_correction(frame_idx):
                 QMessageBox.warning(self, "Correction Cancelled", "Track correction was cancelled by the user.")
                 return
 
-        correction_progress.close()
+        self.correction_progress.close()
 
         self.calculate_temporal_vel()
         self.refresh_failed_frame_list()
@@ -774,76 +777,38 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
         self.is_saved = False
 
-    def attempt_track_correction(self, frame_idx, correction_progress):
+    def attempt_track_correction(self, frame_idx):
         if frame_idx not in self.roi_frame_list:
             return True
         
-        if correction_progress.wasCanceled():
+        if self.correction_progress.wasCanceled():
             return False
         
-        correction_progress.setValue(frame_idx)
-
+        self.correction_progress.setValue(frame_idx)
         self.current_frame_idx = frame_idx
         self.display_current_frame()
-        print(f"AUTOCORRECT | Attempting automatic correction for frame {frame_idx}...")
         
-        culprit_view_idx = int(self.swap_detection_score_array[frame_idx, 1])
-        self.selected_cam_idx = culprit_view_idx
-        self._refresh_selected_cam()
-
         backup_pred_data_array = self.pred_data_array.copy() # Backup current prediction data
-        self.pred_data_array = dute.track_swap_3D_plotter(self.pred_data_array, frame_idx, self.selected_cam_idx)
-        self._post_correction_operations()
         
-        max_retry = self.num_cam
-        retry_count = 0
+        for swap_num in range(1, 5): # Try 1, 2, 3 ,4 -way swap
+            if self.attempt_multiple_way_swap_solution(frame_idx, swap_num=swap_num):
+                self.calculate_identity_swap_score(mode="remap")
+                self._refresh_slider()
+                return True
 
-        best_swap_score, best_swap_cam = self.swap_detection_score_array[frame_idx, 1], culprit_view_idx
+        self.pred_data_array = backup_pred_data_array # Restore backup for a second round
 
-        while not self._validate_swap_score_post_correction(frame_idx):
-            self.pred_data_array = backup_pred_data_array.copy() # Restore backup
-            print(f"AUTOCORRECT | Frame {frame_idx} correction with camera {self.selected_cam_idx} failed, retrying with next camera view...")
-            retry_count += 1
-            if retry_count >= max_retry:
-                break
-
-            self.selected_cam_idx = (self.selected_cam_idx + 1) % self.num_cam
-            print(f"AUTOCORRECT | Trying camera {self.selected_cam_idx} for swapping...")
-            self.pred_data_array = dute.track_swap_3D_plotter(self.pred_data_array, frame_idx, self.selected_cam_idx)
-            self._post_correction_operations()
-            
-            if self.swap_detection_score_array[frame_idx, 1] < best_swap_score:
-                best_swap_score = self.swap_detection_score_array[frame_idx, 1]
-                best_swap_cam = self.selected_cam_idx
-        
-        if retry_count < max_retry:
-            self.calculate_identity_swap_score(mode="remap", parent_progress=correction_progress)
-            self._refresh_slider()
-            return True
-
-        self.pred_data_array = backup_pred_data_array.copy() # Restore backup if max retries reached
-        
-        for swap_num in range(2,5): # Try 2, 3 ,4-way swap
-            if self.attempt_multiple_way_swap_solution(frame_idx, swap_num=swap_num, parent_progress=correction_progress):
-                self.calculate_identity_swap_score(mode="remap", parent_progress=correction_progress)
+        for swap_num in range(1, 5): # Second chance, with easy_mode requirements
+            if self.attempt_multiple_way_swap_solution(frame_idx, swap_num=swap_num, easy_mode=True):
+                self.calculate_identity_swap_score(mode="remap", parent_progress=self.correction_progress)
                 self._refresh_slider()
                 return True
             
-        self.pred_data_array = backup_pred_data_array.copy() # Restore backup if all-way swap failed
-
-        if best_swap_score < self.deviance_threshold:
-            self._validate_swap_score_post_correction(frame_idx)
-            self.pred_data_array = dute.track_swap_3D_plotter(self.pred_data_array, frame_idx, best_swap_cam)
-            if self._validate_velocity_post_correction(frame_idx):
-                self.calculate_identity_swap_score(mode="remap", parent_progress=correction_progress)
-                print(f"AUTOCORRECT | Falling back to best single camera swap (camera {best_swap_cam}) that also happens to satisfy the temporal criteria.")
-                return True
-
-        self.pred_data_array = backup_pred_data_array.copy() # Restore backup if no valid swap found
+        self.pred_data_array = backup_pred_data_array # Restore backup if FUBAR
         self.failed_frame_list.append(frame_idx)
         return True
 
-    def attempt_multiple_way_swap_solution(self, frame_idx:int, swap_num:int, parent_progress):
+    def attempt_multiple_way_swap_solution(self, frame_idx:int, swap_num:int, easy_mode:bool=False):
         print(f"AUTOCORRECT | Attempting to find a {swap_num}-way swap solution for frame {frame_idx}...")
         all_camera_pairs = list(combinations(range(self.num_cam), swap_num))
         backup_pred_data_array = self.pred_data_array.copy()
@@ -857,11 +822,21 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             self.selected_cam_idx = cam_combo[0] # Set the first camera as selected for display
             self._post_correction_operations()
 
-            if self._validate_swap_score_post_correction(frame_idx) and self._validate_velocity_post_correction(frame_idx):
-                print(f"AUTOCORRECT | Successfully applied {swap_num}-way swap for cameras {cam_combo} on frame {frame_idx}.")
+            swap_score_calculation_result = self._validate_swap_score_post_correction(frame_idx)
+            temporal_calculation_result = self._validate_velocity_post_correction(frame_idx)
+
+            if easy_mode:
+                condition = swap_score_calculation_result
+                appendix = "(SECOND RUN)"
+            else:
+                condition = swap_score_calculation_result and temporal_calculation_result
+                appendix = ""
+
+            if condition:
+                print(f"AUTOCORRECT | Successfully applied {swap_num}-way swap for cameras {cam_combo} on frame {frame_idx}. {appendix}")
                 return True
 
-        print(f"AUTOCORRECT | {swap_num} swap solution failed for frame {frame_idx}.")
+        print(f"AUTOCORRECT | {swap_num} swap solution failed for frame {frame_idx}. {appendix}")
         return False
 
     def manual_swap_frame_view(self):
@@ -886,21 +861,10 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.is_saved = False
 
     def _validate_swap_score_post_correction(self, frame_idx):
-        processed_frame_count = 0
-        error_frame_count = 0
-
-        for check_frame_idx in range(frame_idx, self.total_frames):
-            if processed_frame_count > self.check_range:
-                break
-            if check_frame_idx in self.skipped_frame_list:
-                continue
-            if check_frame_idx in self.roi_frame_list:
-                error_frame_count += 1
-            processed_frame_count += 1
-
-        if error_frame_count > processed_frame_count * 0.9:
+        self.calculate_identity_swap_score(mode="auto_check", parent_progress=self.correction_progress)
+        if self.swap_detection_score_array[frame_idx, 1] >= self.deviance_threshold:
             return False
-        
+
         return True
     
     def _validate_velocity_post_correction(self, frame_idx):
@@ -920,7 +884,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.roi_frame_list = []
         self.failed_frame_list = []
         self.skipped_frame_list = []
-        self.swap_detection_score_array = np.full((self.total_frames, 3), np.nan)
+        self.swap_detection_score_array = np.full((self.total_frames, 2), np.nan)
         self.navigation_title_controller()
         self._refresh_slider()
 
@@ -982,7 +946,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         title_text = f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | View Mode: {self.view_mode_choice[self.current_view_mode_idx]}"\
         
         if self.swap_detection_score_array is not None and self.swap_detection_score_array.shape[0] > 0:
-            deviance_scores = self.swap_detection_score_array[:, 2]
+            deviance_scores = self.swap_detection_score_array[:, 1]
             title_text += f" | Deviance Score: {deviance_scores[self.current_frame_idx]:.2f}"
         
         if self.temporal_dist_array_all is not None:
