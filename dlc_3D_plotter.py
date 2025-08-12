@@ -157,7 +157,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.num_cam = None
 
         self.confidence_cutoff = 0.6
-        self.deviance_threshold = 150
+        self.deviance_threshold = 50
         self.velocity_threshold = 20
 
         self.data_loader = DLC_Loader(None, None)
@@ -824,7 +824,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             temporal_calculation_result = self._validate_velocity_post_correction(frame_idx)
 
             if easy_mode:
-                condition = swap_score_calculation_result
+                condition = self._validate_swap_score_post_correction(frame_idx, easy_mode=True)
                 appendix = "(SECOND RUN)"
             else:
                 condition = swap_score_calculation_result and temporal_calculation_result
@@ -858,13 +858,20 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self._refresh_slider()
         self.is_saved = False
 
-    def _validate_swap_score_post_correction(self, frame_idx):
+    def _validate_swap_score_post_correction(self, frame_idx, easy_mode=False):
         self.calculate_identity_swap_score(mode="auto_check", parent_progress=self.correction_progress)
-        if self.swap_detection_score_array[frame_idx, 1] >= self.deviance_threshold:
-            return False
+        
+        score = self.swap_detection_score_array[frame_idx, 1]
 
-        return True
-    
+        if easy_mode:
+            if score >= self.deviance_threshold * 2:
+                return False
+            return True  # Allow even if above normal threshold
+        else:
+            if score >= self.deviance_threshold:
+                return False
+            return True
+        
     def _validate_velocity_post_correction(self, frame_idx):
         self.calculate_temporal_vel(frame_idx_r=frame_idx)
         result_list = []
