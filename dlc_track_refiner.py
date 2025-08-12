@@ -527,11 +527,11 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             title += " ----- KEYPOINTS EDITING MODE ----- "
         self.nav_widget.setTitle(title)
         if self.current_frame_idx in self.refined_roi_frame_list:
-            self.nav_widget.set_title_color("#009979")  # Teal/Green for refined
+            self.nav_widget.setTitleColor("#009979")  # Teal/Green for refined
         elif self.current_frame_idx in self.roi_frame_list:
-            self.nav_widget.set_title_color("#F04C4C")  # Red for ROI
+            self.nav_widget.setTitleColor("#F04C4C")  # Red for ROI
         else:
-            self.nav_widget.set_title_color("black")  # Default black
+            self.nav_widget.setTitleColor("black")  # Default black
 
     def toggle_zoom_mode(self):
         self.is_zoom_mode = not self.is_zoom_mode
