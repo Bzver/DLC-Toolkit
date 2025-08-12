@@ -24,22 +24,6 @@ class Export_Settings:
     video_name: str
     save_path: str
     export_mode: str # "Append" or "Merge" or "CSV"
-    
-@dataclass
-class Session_3D_Plotter:
-    base_folder: str
-    calibration_filepath: str
-    dlc_config_filepath: str
-    pred_data_array: NDArray
-    current_frame_idx: int
-    confidence_cutoff: float
-    deviance_threshold: int
-    velocity_threshold: float
-    roi_frame_list: List[Optional[int]]
-    failed_frame_list: List[Optional[int]]
-    skipped_frame_list: List[Optional[int]]
-    swap_detection_score_array: NDArray
-    temporal_dist_array_all: NDArray
 
 @dataclass
 class Swap_Calculation_Config:
