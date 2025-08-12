@@ -463,7 +463,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             return
         
         dialog = Adjust_Property_Dialog(
-            property_name="Confidence Cutoff", property_val=self.confidence_cutoff, range_mult=100, parent=self)
+            property_name="Confidence Cutoff", property_val=self.confidence_cutoff, range=(0.00, 1.00), parent=self)
         dialog.property_changed.connect(self._update_application_cutoff)
         dialog.show() # .show() instead of .exec() for a non-modal dialog
 

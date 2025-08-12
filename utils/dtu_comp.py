@@ -253,28 +253,43 @@ class Clickable_Video_Label(QtWidgets.QLabel):
 class Adjust_Property_Dialog(QtWidgets.QDialog):
     property_changed = QtCore.Signal(float)
 
-    def __init__(self, property_name, property_val, range_mult, parent=None):
+    def __init__(self, property_name, property_val, range:tuple, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"Adjust {property_name}")
         self.property_name = property_name
-        self.property_val = property_val
-        self.range_mult = range_mult
-
+        self.property_val = float(property_val)
+        self.range = range
+        range_length = (self.range[1] - self.range[0])
+        self.slider_mult = range_length / 100
         layout = QtWidgets.QVBoxLayout(self)
 
-        self.property_label = QtWidgets.QLabel(f"{self.property_name}: {self.property_val:.2f}")
         self.property_input = QtWidgets.QDoubleSpinBox()
+        self.property_input.setRange(self.range[0], self.range[1])
+        self.property_input.setValue(self.property_val)
+        self.property_input.setSingleStep(self.slider_mult)
+        layout.addWidget(self.property_input)
 
         self.slider = QtWidgets.QSlider(Qt.Horizontal)
         self.slider.setRange(0, 100)
-        self.slider.setValue(int(self.property_val * self.range_mult))
+        initial_slider_value = int((self.property_val - self.range[0]) / self.slider_mult)
+        initial_slider_value = max(0, min(100, initial_slider_value)) 
+        self.slider.setValue(initial_slider_value)
         self.slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
         self.slider.setTickInterval(10)
         layout.addWidget(self.slider)
 
-        self.slider.valueChanged.connect(self._emit_adjusted_signal)
+        self.slider.valueChanged.connect(self._slider_changed)
+        self.property_input.valueChanged.connect(self._spinbox_changed)
 
-    def _emit_adjusted_signal(self, value):
-        new_property_val =  value / self.range_mult
-        self.property_label.setText(f"{self.property_name} {new_property_val:.2f}")
-        self.property_changed.emit(new_property_val)
+    def _spinbox_changed(self, value):
+        self.property_val = value
+        slider_value = int((value - self.range[0]) / self.slider_mult)
+        slider_value = max(0, min(100, slider_value))
+        self.slider.setValue(slider_value)
+        self.property_changed.emit(self.property_val)
+
+    def _slider_changed(self, value):
+        # Map slider (0–100) to actual value
+        self.property_val = self.range[0] + value * self.slider_mult
+        self.property_input.setValue(self.property_val)
+        self.property_changed.emit(self.property_val )

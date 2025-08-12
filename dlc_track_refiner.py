@@ -551,13 +551,13 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
     def adjust_point_size(self):
         dialog = Adjust_Property_Dialog(
-            property_name="Point Size", property_val=self.point_size, range_mult=5, parent=self)
+            property_name="Point Size", property_val=self.point_size, range=(0.1, 5), parent=self)
         dialog.property_changed.connect(self._update_point_size)
         dialog.show()
 
     def adjust_plot_opacity(self):
         dialog = Adjust_Property_Dialog(
-            property_name="Point Opacity", property_val=self.point_size, range_mult=100, parent=self)
+            property_name="Point Opacity", property_val=self.point_size, range=(0.00, 1.00), parent=self)
         dialog.property_changed.connect(self._update_plot_opacity)
         dialog.show()
 

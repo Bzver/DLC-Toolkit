@@ -978,7 +978,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             return
         
         dialog = Adjust_Property_Dialog(
-            property_name="Confidence Cutoff", property_val=self.confidence_cutoff, range_mult=100, parent=self)
+            property_name="Confidence Cutoff", property_val=self.confidence_cutoff, range=(0.00, 1.00), parent=self)
         dialog.property_changed.connect(self._update_confidence_cutoff)
         dialog.show() # .show() instead of .exec() for a non-modal dialog
 
@@ -988,11 +988,11 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             return
         
         dialog = Adjust_Property_Dialog(
-            property_name="Deviance Threshold", property_val=self.deviance_threshold, range_mult=0.1, parent=self)
+            property_name="Deviance Threshold", property_val=self.deviance_threshold, range=(0, 300), parent=self)
         dialog.property_changed.connect(self._update_deviance_threshold)
         dialog.finished.connect(self.refresh_failed_frame_list)
         dialog.show()
-        self.dialog_deviance = dialog # Keep a reference to the dialog instance
+        self.dialog_deviance = dialog
 
     def show_velocity_dialog(self):
         if self.pred_data_array is None:
@@ -1000,7 +1000,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             return
         
         dialog = Adjust_Property_Dialog(
-            property_name="Velocity Threshold", property_val=self.velocity_threhold, range_mult=1, parent=self)
+            property_name="Velocity Threshold", property_val=self.velocity_threhold, range=(0, 100), parent=self)
         dialog.property_changed.connect(self._update_velocity_threshold)
         dialog.show() # .show() instead of .exec() for a non-modal dialog
 
@@ -1014,7 +1014,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.navigation_title_controller()
 
     def _update_velocity_threshold(self, new_threshold):
-        self.velocity_threhold = new_threshold
+        self.velocity_threshold = new_threshold
         self._populate_roi_frame_list()
         self.navigation_title_controller()
 
