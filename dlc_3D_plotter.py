@@ -21,7 +21,6 @@ from utils.dtu_io import DLC_Loader
 from utils.dtu_widget import Menu_Widget, Progress_Widget, Nav_Widget
 from utils.dtu_comp import Clickable_Video_Label, Adjust_Property_Dialog
 from utils.dtu_triangulation import Data_Processor_3D
-from utils.dtu_dataclass import Session_3D_Plotter
 import utils.dtu_io as dio
 import utils.dtu_helper as duh
 import utils.dtu_gui_helper as dugh
@@ -159,7 +158,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
         self.confidence_cutoff = 0.6
         self.deviance_threshold = 150
-        self.velocity_threhold = 20
+        self.velocity_threshold = 20
 
         self.data_loader = DLC_Loader(None, None)
         self.dlc_data = None
@@ -170,6 +169,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.cam_pos, self.cam_dir = None, None
 
         self.pred_data_array = None # Combined prediction data for all cameras
+        self.swap_detection_score_array = None
         self.temporal_dist_array_all = None
 
         self.num_cam_from_calib = None
@@ -205,41 +205,39 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.load_video_folder(VIDEO_FOLDER_DEBUG)
 
     def load_workspace(self):
-        """Load all the saved variables from a previously saved HDF5 file."""
         self.reset_state()
+
         workspace_filepath, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select Workspace", "", "Workspace Files (*.pickle)")
         if not workspace_filepath:
             return
         
         print(f"LOADER | Workspace loaded: {workspace_filepath}")
-            
+        
         try:
             with open(workspace_filepath, "rb") as f:
-                session_data = pickle.load(f)
+                state = pickle.load(f)
 
-            self.calibration_loader(session_data.calibration_filepath)
-            self.dlc_config_loader(session_data.dlc_config_filepath)
-            self.load_video_folder(session_data.base_folder)
+            self.calibration_filepath = state["calibration_filepath"]
+            self.dlc_config_filepath = state["dlc_config_filepath"]
+            self.base_folder = state["base_folder"]
 
+            self.calibration_loader(self.calibration_filepath)
+            self.dlc_config_loader(self.dlc_config_filepath)
+            self.load_video_folder(self.base_folder)
+
+            for key, value in state.items():
+                if hasattr(self, key):
+                    setattr(self, key, value)
+                else:
+                    print(f"LOADER | Warning: Loaded unknown attribute '{key}' — not restored.")
+
+            self.display_current_frame()
+            self._refresh_slider()
+            self.navigation_title_controller()
+
+            QMessageBox.information(self, "Load Successful", f"Workspace loaded from {workspace_filepath}")
         except Exception as e:
-            QMessageBox.critical(self, "Load Failed", f"An error occurred while loading: {e}")
-            traceback.print_exc()
-
-        self.pred_data_array = session_data.pred_data_array
-        self.current_frame_idx = session_data.current_frame_idx
-        self.confidence_cutoff = session_data.confidence_cutoff
-        self.deviance_threshold = session_data.deviance_threshold
-        self.roi_frame_list = session_data.roi_frame_list
-        self.failed_frame_list = session_data.failed_frame_list
-        self.skipped_frame_list = session_data.skipped_frame_list
-        self.swap_detection_score_array = session_data.swap_detection_score_array
-        self.temporal_dist_array_all = session_data.temporal_dist_array_all
-
-        self.display_current_frame()
-        self._refresh_slider()
-        self.navigation_title_controller()
-
-        QMessageBox.information(self, "Load Successful", f"Workspace loaded from {workspace_filepath}")
+            QMessageBox.critical(self, "Load Failed", f"Could not load workspace: {e}")
 
     def open_video_folder_dialog(self):
         if self.dlc_data is None: # Check if dlc_data is loaded
@@ -730,7 +728,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
     def _populate_roi_frame_list(self):
         deviance_mask = self.swap_detection_score_array[:, 1] >= self.deviance_threshold
-        temporal_mask = self.temporal_dist_array_all[:, 1] >= self.velocity_threhold
+        temporal_mask = self.temporal_dist_array_all[:, 1] >= self.velocity_threshold
         combined_mask = deviance_mask | temporal_mask
         self.roi_frame_list = np.where(combined_mask)[0].tolist() # Get the indices of frames with significant deviations
         self._refresh_slider()
@@ -871,7 +869,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.calculate_temporal_vel(frame_idx_r=frame_idx)
         result_list = []
         for inst_idx in range(self.dlc_data.instance_count):
-            result = self.temporal_dist_array_all[frame_idx, inst_idx] > self.velocity_threhold
+            result = self.temporal_dist_array_all[frame_idx, inst_idx] > self.velocity_threshold
             result_list.append(result)
 
         if all(result_list):
@@ -1000,7 +998,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             return
         
         dialog = Adjust_Property_Dialog(
-            property_name="Velocity Threshold", property_val=self.velocity_threhold, range=(0, 100), parent=self)
+            property_name="Velocity Threshold", property_val=self.velocity_threshold, range=(0, 100), parent=self)
         dialog.property_changed.connect(self._update_velocity_threshold)
         dialog.show() # .show() instead of .exec() for a non-modal dialog
 
@@ -1056,29 +1054,39 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
     ###################################################################################################################################################
 
+    def get_saveable_state(self):
+        return {
+            'base_folder': self.base_folder,
+            'calibration_filepath': self.calibration_filepath,
+            'dlc_config_filepath': self.dlc_config_filepath,
+            'pred_data_array': self.pred_data_array,
+            'current_frame_idx': self.current_frame_idx,
+            'confidence_cutoff': self.confidence_cutoff,
+            'deviance_threshold': self.deviance_threshold,
+            'velocity_threshold': self.velocity_threshold,
+            'roi_frame_list': self.roi_frame_list,
+            'failed_frame_list': self.failed_frame_list,
+            'skipped_frame_list': self.skipped_frame_list,
+            'swap_detection_score_array': self.swap_detection_score_array,
+            'temporal_dist_array_all': self.temporal_dist_array_all,
+        }
+
     def save_workspace(self):
-        """Save all the self variables in a hdf5 file in case saving goes awry or user wants to resume later"""
-        if not self.dlc_data:
+        if not hasattr(self, 'pred_data_array') or self.pred_data_array is None:
             QMessageBox.information(self, "No Data", "Load prediction data first!")
             return
-        
-        try:
-            save_path = os.path.join(self.base_folder, "workspace_save.pickle")
-            session_data = Session_3D_Plotter(
-                base_folder=self.base_folder, calibration_filepath=self.calibration_filepath, dlc_config_filepath=self.dlc_config_filepath,
-                pred_data_array=self.pred_data_array, current_frame_idx=self.current_frame_idx,
-                confidence_cutoff=self.confidence_cutoff, deviance_threshold=self.deviance_threshold,
-                roi_frame_list=self.roi_frame_list, failed_frame_list=self.failed_frame_list, skipped_frame_list=self.skipped_frame_list,
-                swap_detection_score_array=self.swap_detection_score_array, temporal_dist_array_all=self.temporal_dist_array_all
-            )
-            with open(save_path, "wb") as f:
-                pickle.dump(session_data, f)
 
+        save_path = os.path.join(self.base_folder, "workspace_save.pickle")
+
+        try:
+            state = self.get_saveable_state() 
+            with open(save_path, "wb") as f:
+                pickle.dump(state, f)
             QMessageBox.information(self, "Save Successful", f"Workspace saved to {save_path}")
             self.is_saved = True
         except Exception as e:
             QMessageBox.critical(self, "Save Failed", f"An error occurred while saving: {e}")
-
+            
     def save_swapped_prediction(self):
         if not self.dlc_data:
             QMessageBox.information(self, "No Data", "Load prediction data first!")

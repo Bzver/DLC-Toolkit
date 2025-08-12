@@ -34,6 +34,7 @@ class Session_3D_Plotter:
     current_frame_idx: int
     confidence_cutoff: float
     deviance_threshold: int
+    velocity_threshold: float
     roi_frame_list: List[Optional[int]]
     failed_frame_list: List[Optional[int]]
     skipped_frame_list: List[Optional[int]]
