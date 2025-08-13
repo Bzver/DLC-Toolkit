@@ -86,7 +86,8 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                 "display_name": "Save",
                 "buttons": [
                     ("Save Workspace", self.save_workspace),
-                    ("Save Swapped Track", self.save_swapped_prediction)
+                    ("Save Swapped Track", self.save_swapped_prediction),
+                    ("Export COM to SDANNCE", self.export_COM_to_SDANNCE)
                 ]
             },
         }
@@ -698,6 +699,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             QMessageBox.information(self, "Swap Detection Score Calculated", "Identity swap detection completed.")
 
         self._populate_roi_frame_list()
+        self.navigation_title_controller()
         return True
     
     def calculate_temporal_vel(self, frame_idx_r=None, check_window=5):
@@ -724,6 +726,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             for frame_idx in range(frame_idx_r, end_frame):
                 self.temporal_dist_array_all[frame_idx, :] = data_processor_3d.calculate_temporal_velocity(frame_idx, check_window)
 
+        self._populate_roi_frame_list()
         self.navigation_title_controller()
 
     def _populate_roi_frame_list(self):
@@ -853,6 +856,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.display_current_frame() # Refresh the display to show the swapped frame
         self.calculate_identity_swap_score(mode="manual_check")
         self.calculate_temporal_vel(frame_idx_r=self.current_frame_idx)
+
         self.refresh_failed_frame_list()
         self.navigation_title_controller()
         self._refresh_slider()
@@ -1123,6 +1127,62 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             QMessageBox.information(self, "Save Successful", msg)
             self.is_saved = True
             self.reload_prediction(pred_file_path="reload_all")
+
+    def export_COM_to_SDANNCE(self):
+        # Create a dialog for the user to select the COM bodypart
+        item, ok = QtWidgets.QInputDialog.getItem(
+            self, "Select COM Bodypart", "Choose a bodypart to use as Center of Mass (COM):",
+            self.dlc_data.keypoints, 0, False
+        )
+
+        if not ok or not item:
+            QMessageBox.warning(self, "No Selection", "COM export cancelled by user.")
+            return
+
+        com_idx = self.keypoint_to_idx[item]
+        dialog = "Gathering 3D COM (Center of Mass) data for export..."
+        title = f"Gather 3D COM Data For Export"
+        progress = dugh.get_progress_dialog(self, 0, self.total_frames, title, dialog)
+
+        data_processor_3d = Data_Processor_3D(self.dlc_data, self.camera_params, self.pred_data_array, self.confidence_cutoff, self.num_cam)
+        com_for_export = np.full((self.total_frames, 3, self.dlc_data.instance_count), np.nan)
+        for frame_idx in range(self.total_frames):
+            point_3d_array_current_frame = data_processor_3d.get_3d_pose_array(frame_idx, return_confidence=False)
+            com_for_export[frame_idx, :, :] = point_3d_array_current_frame[:, com_idx, :].T
+            progress.setValue(frame_idx)
+        
+        progress.close()
+
+        print("Interpolating missing 3D COM data...")
+        for inst_idx in range(self.dlc_data.instance_count):
+            com_data = com_for_export[:, :, inst_idx]  # Shape: (T, 3)
+            df = pd.DataFrame(com_data, columns=['x', 'y', 'z'])
+            # Linear interpolation across time (axis=0)
+            df_interpol = df.interpolate(method='linear', axis=0, limit_direction='both')
+            df_filled = df_interpol.ffill().bfill()
+            com_for_export[:, :, inst_idx] = df_filled.values
+
+        for inst_idx in range(self.dlc_data.instance_count):
+            mat_data = {
+                "com": com_for_export[:, :, inst_idx],
+                "sampleID": range(self.total_frames)
+            }
+            mat_filename = f"instance{inst_idx}com3d.mat"
+            mat_save_path = os.path.join(self.base_folder, mat_filename)
+            sio.savemat(mat_save_path, mat_data)
+            print(f"Saved: {mat_filename} for instance{inst_idx}")
+
+        mat_data = {
+            "com": com_for_export[:, :, :],
+            "sampleID": range(self.total_frames)
+        }
+        mat_filename = f"com3d.mat"
+        mat_save_path = os.path.join(self.base_folder, mat_filename)
+        sio.savemat(mat_save_path, mat_data)
+        print(f"Saved combined mat in {mat_filename} ")
+
+        QMessageBox.information(self, "Export Complete", 
+            f"3D COM data '{item}' exported successfully for {self.dlc_data.instance_count} instances.")
 
     def closeEvent(self, event: QCloseEvent):
         # Ensure all VideoCapture objects are released when the window closes
