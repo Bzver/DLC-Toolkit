@@ -82,13 +82,12 @@ def handle_unsaved_changes_on_close(parent, event, is_saved: bool, save_callback
         event.ignore()  # Cancel the close action
 
 def get_progress_dialog(parent_gui, start_frame:int, end_frame:int, title:str, dialog:str,
-                        parent_progress:QProgressDialog=None) -> QProgressDialog:
+        parent_progress:QProgressDialog=None) -> QProgressDialog:
     
     progress = QProgressDialog(dialog, "Cancel",  start_frame, end_frame, parent_gui)
     progress.setWindowTitle(title)
     progress.setWindowModality(Qt.WindowModal)
     progress.setValue(0)
-    progress.setFixedSize(QSize(300, 75))
 
     if parent_progress:
         # Position it below and slightly to the side of the parent dialog
