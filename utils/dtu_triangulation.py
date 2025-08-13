@@ -274,8 +274,8 @@ class Data_Processor_3D:
             print(f"TRIANGULATION | Frame {frame_idx} is not within the range of prediction data!")
             return None
 
-        point_data_size = 4 if return_confidence else 3
-        point_3d_array = np.full((self.dlc_data.instance_count, self.dlc_data.num_keypoint, point_data_size), np.nan)
+        data_size = 4 if return_confidence else 3
+        point_3d_array = np.full((self.dlc_data.instance_count, self.dlc_data.num_keypoint, data_size), np.nan)
         keypoint_data_tr, valid_view = self.get_keypoint_data_for_frame(frame_idx, instance_threshold=1, view_threshold=2)
         if not keypoint_data_tr:
             print(f"TRIANGULATION | Failed to get valid data from triangulation in {frame_idx}")
