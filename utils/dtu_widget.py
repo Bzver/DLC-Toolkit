@@ -58,6 +58,7 @@ class Progress_Widget(QtWidgets.QWidget):
         self.progress_slider.setRange(0, 0)
         self.progress_slider.setTracking(True)
         self.progress_slider.sliderMoved.connect(self.handle_slider_move)
+        self.progress_slider.frame_changed.connect(self.handle_slider_move)
 
         self.layout.addWidget(self.play_button)
         self.layout.addWidget(self.progress_slider)

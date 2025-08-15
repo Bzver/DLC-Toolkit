@@ -4,6 +4,8 @@ from PySide6.QtGui import QColor, QPen
 from PySide6.QtWidgets import QGraphicsEllipseItem, QGraphicsRectItem
 
 class Slider_With_Marks(QtWidgets.QSlider):
+    frame_changed = Signal(int)
+
     def __init__(self, orientation):
         super().__init__(orientation)
         self.frame_categories = {} # Stores {category_name: set_of_frames}
@@ -101,6 +103,7 @@ class Slider_With_Marks(QtWidgets.QSlider):
 
         new_value = (self.maximum() - self.minimum()) * pos / slider_length + self.minimum()
         self.setValue(int(new_value))
+        self.frame_changed.emit(new_value)
         super().mousePressEvent(event)
 
 #######################################################################################################################################################
