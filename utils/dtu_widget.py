@@ -227,24 +227,27 @@ class Nav_Widget(QtWidgets.QWidget):
         self.collapsed = not self.collapsed
         self.toggle_button.setText("►" if self.collapsed else "▼")
 
-        # Update animation direction
         self.animation.stop()
+
         if self.collapsed:
-            # Collapse: animate to 0
-            self.animation.setStartValue(self.content_frame.sizeHint().height())
+            start_height = self.content_frame.sizeHint().height()
+            self.animation.setStartValue(start_height)
             self.animation.setEndValue(0)
             self.animation.start()
-            # Hide after animation
-            def finish_hide():
-                self.content_frame.hide()
-            self.animation.finished.connect(finish_hide)
         else:
-            # Expand: show first, then animate from 0 to full
             self.content_frame.show()
+            self.content_frame.setMaximumHeight(16777215)  # Large value instead of hiding
+
             height = self.content_frame.sizeHint().height()
+
             self.animation.setStartValue(0)
             self.animation.setEndValue(height)
             self.animation.start()
+
+            def on_animation_finished():
+                if not self.collapsed:
+                    self.content_frame.setMaximumHeight(16777215)  # No limit
+            self.animation.finished.connect(on_animation_finished, Qt.UniqueConnection)
 
     def set_collapsed(self, collapsed: bool):
         """Allow external code to collapse or expand the widget."""
