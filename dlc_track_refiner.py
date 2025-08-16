@@ -51,6 +51,17 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 ]
             },
             "Refiner": {
+                "display_name": "Refine",
+                "buttons": [
+                    ("Swap Track On Current Frame (W)", lambda:self._swap_track_wrapper("point")),
+                    ("Delete Selected Track On Current Frame (X)", lambda:self._delete_track_wrapper("point")),
+                    ("Interpolate Track (T)", self._interpolate_track_wrapper),
+                    ("Generate Instance (G)", self._generate_track_wrapper),
+                    ("Swap Track Until The End (Shift + W)", lambda:self._swap_track_wrapper("batch")),
+                    ("Delete Selected Track Until Next ROI (Shift + X)", lambda:self._delete_track_wrapper("batch")),
+                ]
+            },
+            "AdvRefiner": {
                 "display_name": "Adv. Refine",
                 "buttons": [
                     ("Direct Keypoint Edit (Q)", self.direct_keypoint_edit),
@@ -115,43 +126,16 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.progress_layout.addWidget(self.magnifier_button)
         self.progress_layout.addWidget(self.undo_button)
         self.progress_layout.addWidget(self.redo_button)
-
         self.layout.addLayout(self.progress_layout)
 
-        # Navigation controls and refiner controls
-        self.control_layout = QtWidgets.QHBoxLayout()
-
         self.nav_widget = Nav_Widget(mark_name="ROI Frame")
-        self.control_layout.addWidget(self.nav_widget)
+        self.layout.addWidget(self.nav_widget)
         self.nav_widget.hide()
-
-        self.refiner_group_box = QtWidgets.QGroupBox("Track Refiner")
-        self.refiner_layout = QtWidgets.QGridLayout(self.refiner_group_box)
-
-        self.swap_track_button = QPushButton("Swap Track (W)")
-        self.swap_track_button.setToolTip("Shift + W for swapping all the frames instance before next ROI.")
-        self.delete_track_button = QPushButton("Delete Track (X)")
-        self.delete_track_button.setToolTip("Shift + X for deleting all the frames instance before next ROI.")
-        self.interpolate_track_button = QPushButton("Interpolate Track (T)")
-        self.fill_track_button = QPushButton("Generate Instance (G)")
-
-        self.refiner_layout.addWidget(self.swap_track_button, 0, 0)
-        self.refiner_layout.addWidget(self.delete_track_button, 0, 1)
-        self.refiner_layout.addWidget(self.interpolate_track_button, 1, 0)
-        self.refiner_layout.addWidget(self.fill_track_button, 1, 1)
-        self.control_layout.addWidget(self.refiner_group_box)
-
-        self.layout.addLayout(self.control_layout)
 
         # Connect buttons to events
         self.undo_button.clicked.connect(self.undo_changes)
         self.redo_button.clicked.connect(self.redo_changes)
         self.magnifier_button.clicked.connect(self.toggle_zoom_mode)
-
-        self.swap_track_button.clicked.connect(lambda:self._swap_track_wrapper("point"))
-        self.delete_track_button.clicked.connect(lambda:self._delete_track_wrapper("point"))
-        self.interpolate_track_button.clicked.connect(self._interpolate_track_wrapper)
-        self.fill_track_button.clicked.connect(self._generate_track_wrapper)
 
         self.graphics_view.mousePressEvent = self.graphics_view_mouse_press_event
         self.graphics_view.mouseMoveEvent = self.graphics_view_mouse_move_event
@@ -197,7 +181,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.is_playing = False
 
         self.nav_widget.hide()
-        self.refiner_group_box.hide()
         self.plot_opacity = 1.0
         self.point_size = 6
 
@@ -231,7 +214,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
     def initialize_loaded_video(self):
         self.video_name = os.path.basename(self.video_file).split(".")[0]
         self.nav_widget.show()
-        self.refiner_group_box.show()
         self.cap = cv2.VideoCapture(self.video_file)
         
         if not self.cap.isOpened():
@@ -1032,12 +1014,13 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             super(QGraphicsView, self.graphics_view).wheelEvent(event)
 
     ###################################################################################################################################################
+    
     def mark_all_as_refined(self):
         if not self.marked_roi_frame_list:
             QMessageBox.information(
                 self,  "Action Not Available", 
-                "To begin **keypoint refinement**, you must first select and designate frames" \
-                " using the **Extractor** tool. The Refiner tool is open, but only for track " \
+                "To begin keypoint refinement, you must first select and designate frames" \
+                " using the Extractor tool. The Refiner tool is open, but only for track " \
                 "refinement, which uses the automatically tagged frames to assist with track " \
                 "swapping, interpolation, and other tracking tasks."
             )
