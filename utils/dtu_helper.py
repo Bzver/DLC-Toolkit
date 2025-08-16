@@ -160,3 +160,19 @@ def acquire_view_perspective_for_cur_cam(cam_pos:NDArray) -> Tuple[float, float]
     azimuth = np.arctan2(cam_pos[1], cam_pos[0])
     azim_deg = np.degrees(azimuth)
     return elev_deg, azim_deg
+
+###########################################################################################
+
+def get_non_completely_nan_slice_count(arr_3D:NDArray) -> int:
+    if arr_3D.ndim != 3:
+        raise("Error: Input array must be a 3D array!")
+    not_nan = ~np.isnan(arr_3D)
+    has_non_nan = np.any(not_nan, axis=(1,2))
+    count = np.sum(has_non_nan)
+    return count
+
+def circular_mean(angles: np.ndarray) -> float:
+    """Compute mean of angles in radians."""
+    x = np.nanmean(np.cos(angles))
+    y = np.nanmean(np.sin(angles))
+    return np.arctan2(y, x)

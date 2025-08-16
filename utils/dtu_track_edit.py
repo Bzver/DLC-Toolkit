@@ -61,7 +61,7 @@ def interpolate_track(pred_data_array:NDArray, frames_to_interpolate:List[int], 
         
 def generate_track(pred_data_array:NDArray, current_frame_idx:int, missing_instances:List[int], num_keypoint:int) -> NDArray:
     for instance_idx in missing_instances:
-        avg_pose = get_average_pose(pred_data_array, instance_idx, num_keypoint)
+        avg_pose = get_average_pose(pred_data_array, instance_idx, num_keypoint, frame_idx=current_frame_idx)
         pred_data_array[current_frame_idx, instance_idx, :] = avg_pose
 
     return pred_data_array
@@ -92,28 +92,65 @@ def purge_by_conf_and_bp(pred_data_array:NDArray, num_keypoint:int,
 
     ###################################################################################################################################################
 
-def get_average_pose(pred_data_array:NDArray, selected_instance_idx:int, num_keypoint:int) -> NDArray:
-    inst_array = pred_data_array[:, selected_instance_idx:selected_instance_idx+1, :]
+def get_pose_window(frame_idx:int, total_frames:int, pose_range:int):
+    min_frame = frame_idx - pose_range
+    max_frame = frame_idx + pose_range + 1
+
+    offset = 0
+    if min_frame < 0:
+        offset = -min_frame
+    elif max_frame > total_frames:
+        offset = total_frames - max_frame
+
+    min_frame += offset
+    max_frame += offset
+
+    # Ensure bounds
+    min_frame = max(0, min_frame)
+    max_frame = min(total_frames, max_frame)
+
+    return list(range(min_frame, max_frame))
+
+def get_average_pose(pred_data_array:NDArray, selected_instance_idx:int, num_keypoint:int, frame_idx:int) -> NDArray:
+    pose_range = 100
+    pose_window = get_pose_window(frame_idx, len(pred_data_array), pose_range)
+    inst_array = pred_data_array[pose_window, selected_instance_idx:selected_instance_idx+1, :]
 
     # Purge the data for frames with low confidence or too few body parts
-    # This ensures only valid poses contribute to the average.
     inst_array_filtered, removed_frames_count, removed_instances_count = purge_by_conf_and_bp(inst_array, num_keypoint, 0.6, 80)
+    non_purged_frame_count = duh.get_non_completely_nan_slice_count(inst_array_filtered)
+
+    max_attempts = 10
+    attempt = 0
+    while non_purged_frame_count <= 50 and attempt < max_attempts:
+        pose_range *= 2
+        pose_window = get_pose_window(frame_idx, len(pred_data_array), pose_range)
+        inst_array = pred_data_array[pose_window, selected_instance_idx:selected_instance_idx+1, :]
+        inst_array_filtered, removed_frames_count, removed_instances_count = purge_by_conf_and_bp(inst_array, num_keypoint, 0.6, 80)
+        non_purged_frame_count = duh.get_non_completely_nan_slice_count(inst_array_filtered)
+        attempt += 1
+
+    if non_purged_frame_count <= 50:
+        raise ValueError("Not enough valid frames to compute average pose, even after expanding window.")
+
     print(f'Ignored {removed_instances_count} instances on {removed_frames_count} frames for pose calculation,')
     inst_array_filtered = np.squeeze(inst_array_filtered)
 
     # Separate coordinates and confidence scores
     conf_scores = inst_array_filtered[:, 2:num_keypoint*3:3]
     relative_x, relative_y, centroid_x, centroid_y = normalize_poses_by_centroid(inst_array_filtered, num_keypoint)
-    rotated_relative_x, rotated_relative_y = align_poses_by_vector(relative_x, relative_y)
+    rotated_relative_x, rotated_relative_y, rotation_angles = align_poses_by_vector(relative_x, relative_y)
 
     avg_relative_x = np.nanmean(rotated_relative_x, axis=0)
     avg_relative_y = np.nanmean(rotated_relative_y, axis=0)
     avg_conf = np.nanmean(conf_scores, axis=0)
+    avg_angle = duh.circular_mean(rotation_angles)
+    cos_a, sin_a = np.cos(avg_angle), np.sin(avg_angle)
 
     avg_centroid_x, avg_centroid_y = np.nanmean(centroid_x, axis=0), np.nanmean(centroid_y, axis=0)
 
-    avg_absolute_x = avg_relative_x + avg_centroid_x
-    avg_absolute_y = avg_relative_y + avg_centroid_y
+    avg_absolute_x = avg_relative_x * cos_a - avg_relative_y * sin_a + avg_centroid_x
+    avg_absolute_y = avg_relative_x * sin_a + avg_relative_y * cos_a + avg_centroid_y
 
     average_pose = np.stack([avg_absolute_x, avg_absolute_y, avg_conf], axis=-1).flatten()
     return average_pose
@@ -131,7 +168,7 @@ def normalize_poses_by_centroid(inst_array_filtered: NDArray, num_keypoint: int)
     
     return relative_x, relative_y, centroid_x, centroid_y
 
-def align_poses_by_vector(relative_x: NDArray, relative_y: NDArray) -> Tuple[NDArray, NDArray]:
+def align_poses_by_vector(relative_x: NDArray, relative_y: NDArray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Rotates all poses to a common orientation using an anchor-reference vector."""
     rmse_from_centroid = np.nanmean(np.sqrt(relative_x**2 + relative_y**2), axis=0)
     anchor_keypoint_idx = np.argmin(rmse_from_centroid)
@@ -145,7 +182,7 @@ def align_poses_by_vector(relative_x: NDArray, relative_y: NDArray) -> Tuple[NDA
     rotated_relative_x = relative_x * cos_angles[:, np.newaxis] - relative_y * sin_angles[:, np.newaxis]
     rotated_relative_y = relative_x * sin_angles[:, np.newaxis] + relative_y * cos_angles[:, np.newaxis]
     
-    return rotated_relative_x, rotated_relative_y
+    return rotated_relative_x, rotated_relative_y, angles
 
     ###################################################################################################################################################
 
