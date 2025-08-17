@@ -500,7 +500,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             if 0 <= new_frame_idx < self.total_frames:
                 self.current_frame_idx = new_frame_idx
                 self.display_current_frame()
-                self.reset_zoom()
                 self.navigation_title_controller()
 
     def navigation_title_controller(self):
