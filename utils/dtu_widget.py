@@ -39,7 +39,7 @@ class Menu_Widget(QtWidgets.QMenuBar):
 
 ###################################################################################################################################################
 
-class Progress_Widget(QtWidgets.QWidget):
+class Progress_Bar_Widget(QtWidgets.QWidget):
     frame_changed = Signal(int)
 
     def __init__(self):

@@ -14,7 +14,7 @@ from PySide6.QtGui import QShortcut, QKeySequence, QCloseEvent
 from PySide6.QtWidgets import QMessageBox, QFileDialog
 
 from utils.dtu_io import DLC_Loader, DLC_Exporter
-from utils.dtu_widget import Menu_Widget, Progress_Widget, Nav_Widget
+from utils.dtu_widget import Menu_Widget, Progress_Bar_Widget, Nav_Widget
 from utils.dtu_comp import Adjust_Property_Dialog
 from utils.dtu_dataclass import Export_Settings
 import utils.dtu_helper as duh
@@ -67,7 +67,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.video_label.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         self.layout.addWidget(self.video_label, 1)
 
-        self.progress_widget = Progress_Widget()
+        self.progress_widget = Progress_Bar_Widget()
         self.layout.addWidget(self.progress_widget)
         self.progress_widget.frame_changed.connect(self._handle_frame_change_from_comp)
 

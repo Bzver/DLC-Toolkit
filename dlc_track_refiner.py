@@ -12,7 +12,7 @@ from PySide6.QtCore import Qt, QEvent, Signal
 from PySide6.QtGui import QShortcut, QKeySequence, QPainter, QColor, QPen, QCloseEvent
 from PySide6.QtWidgets import QMessageBox, QPushButton, QGraphicsView, QGraphicsRectItem
 
-from utils.dtu_widget import Menu_Widget, Progress_Widget, Nav_Widget
+from utils.dtu_widget import Menu_Widget, Progress_Bar_Widget, Nav_Widget
 from utils.dtu_comp import Selectable_Instance, Draggable_Keypoint, Adjust_Property_Dialog
 from utils.dtu_io import DLC_Loader
 from utils.dtu_dataclass import Export_Settings
@@ -109,7 +109,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         # Progress bar
         self.progress_layout = QtWidgets.QHBoxLayout()
-        self.progress_widget = Progress_Widget()
+        self.progress_widget = Progress_Bar_Widget()
         self.progress_layout.addWidget(self.progress_widget)
         self.progress_widget.frame_changed.connect(self._handle_frame_change_from_comp)
 

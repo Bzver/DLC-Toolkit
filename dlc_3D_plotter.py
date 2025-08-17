@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from utils.dtu_io import DLC_Loader
-from utils.dtu_widget import Menu_Widget, Progress_Widget, Nav_Widget
+from utils.dtu_widget import Menu_Widget, Progress_Bar_Widget, Nav_Widget
 from utils.dtu_comp import Clickable_Video_Label, Adjust_Property_Dialog
 from utils.dtu_triangulation import Data_Processor_3D
 import utils.dtu_io as dio
@@ -128,7 +128,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.display_layout.addLayout(self.plot_layout)
         self.layout.addLayout(self.display_layout, 1)
 
-        self.progress_widget = Progress_Widget()
+        self.progress_widget = Progress_Bar_Widget()
         self.layout.addWidget(self.progress_widget)
         self.progress_widget.frame_changed.connect(self._handle_frame_change_from_comp)
 
