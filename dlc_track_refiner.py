@@ -22,7 +22,7 @@ import utils.dtu_gui_helper as dugh
 import utils.dtu_track_edit as dute
 
 DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/NTD/config.yaml"
-VIDEO_FILE_DEBUG = "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-conv.mp4"
+VIDEO_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/20250709-first3h-S-conv.mp4"
 PRED_FILE_DEBUG = "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-convDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_370_snapshot_150_el.h5"
 
 # Todo:
@@ -526,6 +526,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.navigation_title_controller()
 
     def reset_zoom(self):
+        if self.zoom_factor == 1.0: # Don't do anything when there has not been any zoom in/out yet
+            return
         self.zoom_factor = 1.0
         self.graphics_view.fitInView(self.graphics_scene.sceneRect(), Qt.KeepAspectRatio)
 
@@ -792,9 +794,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         if self.is_kp_edit:
             QMessageBox.warning(self, "Not Allowed", "Please finish editing keypoints before using this function.")
             return False
-        if self.is_zoom_mode:
-            QMessageBox.warning(self, "Not Allowed", "Please finish zooming before using this function.")
-            return False
         return True
     
     def _delete_track_wrapper(self, mode, deletion_range=None):
@@ -893,8 +892,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.current_frame_idx = new_frame_idx
         self.display_current_frame()
         self.navigation_title_controller()
-        if self.zoom_factor == 1.0: # reset zoom when user has not zoomed in / out
-            self.reset_zoom()
+        self.reset_zoom()
 
     def _refresh_slider(self):
         self.progress_widget.set_frame_category("Refined frames", self.refined_roi_frame_list, "#009979", priority=7)
