@@ -892,7 +892,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.current_frame_idx = new_frame_idx
         self.display_current_frame()
         self.navigation_title_controller()
-        self.reset_zoom()
 
     def _refresh_slider(self):
         self.progress_widget.set_frame_category("Refined frames", self.refined_roi_frame_list, "#009979", priority=7)
