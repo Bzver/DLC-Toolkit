@@ -14,15 +14,15 @@ class Slider_With_Marks(QtWidgets.QSlider):
         self.setStyleSheet("""
             QSlider::groove:horizontal {
                 border: 1px solid #999999;
-                height: 8px;
+                height: 20px;
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #B1B1B1, stop:1 #B1B1B1);
                 margin: 2px 0;
             }
             
             QSlider::handle:horizontal {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #b4b4b4, stop:1 #8f8f8f);
+                background: transparent;
                 border: 1px solid #5c5c5c;
-                width: 10px;
+                width: 5px;
                 margin: -2px 0;
                 border-radius: 3px;
             }
@@ -38,62 +38,61 @@ class Slider_With_Marks(QtWidgets.QSlider):
         self.update() # Request a repaint
 
     def paintEvent(self, event):
-        super().paintEvent(event)
-        if not self.frame_categories:
-            return
-        
         painter = QtGui.QPainter(self)
         painter.setRenderHint(QtGui.QPainter.Antialiasing)
-        # Get slider geometry
+
         opt = QtWidgets.QStyleOptionSlider()
         self.initStyleOption(opt)
+        
+        # Manually draw groove only
         groove_rect = self.style().subControlRect(
-            QtWidgets.QStyle.CC_Slider, 
-            opt, 
-            QtWidgets.QStyle.SC_SliderGroove, 
+            QtWidgets.QStyle.CC_Slider,
+            opt,
+            QtWidgets.QStyle.SC_SliderGroove,
             self
         )
-        # Calculate available width and range
-        min_val = self.minimum()
-        max_val = self.maximum()
-        available_width = groove_rect.width()
+        opt.subControls = QtWidgets.QStyle.SC_SliderGroove
+        self.style().drawComplexControl(QtWidgets.QStyle.CC_Slider, opt, painter, self)
 
-        frame_colors_to_plot = {} # {frame: color} Decide which color to use for a frame in multiple category
+        # Draw marks on top of groove, but below handle
+        if self.frame_categories:
+            min_val = self.minimum()
+            max_val = self.maximum()
+            available_width = groove_rect.width()
 
-        sorted_categories = sorted(
-            self.frame_categories.keys(),
-            key=lambda cat_name: self.category_priorities.get(cat_name, float('inf')) # Default high priority for safety
-        )
-        
-        for category_name in sorted_categories:
-            frames = self.frame_categories.get(category_name, set())
-            color = self.category_colors.get(category_name)
+            frame_colors_to_plot = {}
 
-            if frames and color:
-                for frame in frames:
-                    if min_val <= frame <= max_val:
-                        frame_colors_to_plot[frame] = color
-
-        painter.setPen(QtCore.Qt.NoPen)
-
-        # Draw each frame on slider
-        for frame, color in frame_colors_to_plot.items():
-            pos = QtWidgets.QStyle.sliderPositionFromValue(
-                min_val, 
-                max_val, 
-                frame, 
-                available_width,
-                opt.upsideDown
-            ) + groove_rect.left()
-            
-            painter.setBrush(QtGui.QColor(color))
-            painter.drawRect(
-                int(pos) - 1,  # Center the mark
-                groove_rect.top(),
-                1,             # Width
-                groove_rect.height()
+            sorted_categories = sorted(
+                self.frame_categories.keys(),
+                key=lambda cat: self.category_priorities.get(cat, float('inf'))
             )
-        
+
+            for category_name in sorted_categories:
+                frames = self.frame_categories.get(category_name, set())
+                color = self.category_colors.get(category_name)
+                if frames and color:
+                    for frame in frames:
+                        if min_val <= frame <= max_val:
+                            frame_colors_to_plot[frame] = color
+
+            painter.setPen(QtCore.Qt.NoPen)
+            for frame, color in frame_colors_to_plot.items():
+                pos = QtWidgets.QStyle.sliderPositionFromValue(
+                    min_val, max_val, frame, available_width, opt.upsideDown
+                ) + groove_rect.left()
+
+                painter.setBrush(QtGui.QColor(color))
+                painter.drawRect(
+                    int(pos) - 1,
+                    groove_rect.top(),
+                    1,  # Width of mark
+                    groove_rect.height()
+                )
+
+        # Draw the handle
+        opt.subControls = QtWidgets.QStyle.SC_SliderHandle
+        self.style().drawComplexControl(QtWidgets.QStyle.CC_Slider, opt, painter, self)
+
         painter.end()
 
     def mousePressEvent(self, event):
