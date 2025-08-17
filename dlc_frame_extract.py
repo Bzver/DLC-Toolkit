@@ -211,6 +211,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
                 self.refined_frame_list = fmk["refined_frame_list"]
                 
             self.progress_widget.set_frame_category("marked_frames", self.frame_list, "#E28F13")
+            self.progress_widget.set_frame_category("refined_frames", self.refined_frame_list, "#009979", priority=7)
             self.determine_save_status()
             self.process_labeled_frame()
             self.display_current_frame()
