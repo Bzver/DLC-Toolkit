@@ -74,7 +74,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         # Navigation controls
         self.nav_widget = Nav_Widget()
         self.layout.addWidget(self.nav_widget)
-        self.nav_widget.hide()
+        self.nav_widget.set_collapsed(True)
 
         self.nav_widget.frame_changed_sig.connect(self.change_frame)
         self.nav_widget.prev_marked_frame_sig.connect(lambda:self._navigate_marked_frames("prev"))
@@ -111,8 +111,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.is_saved = True
         self.last_saved = []
 
-        self.nav_widget.hide()
-
+        self.nav_widget.set_collapsed(True)
         self.refiner_window = None
 
     def load_video(self):
@@ -123,7 +122,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             self.video_file = video_path
             self.exp_set.video_filepath = video_path
             self.initialize_loaded_video()
-            self.nav_widget.show()
+            self.nav_widget.set_collapsed(False)
 
     def initialize_loaded_video(self):
         self.video_name = os.path.basename(self.video_file).split(".")[0]
@@ -144,6 +143,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.progress_widget.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7")
         self.display_current_frame()
         self.navigation_title_controller()
+        self.nav_widget.set_collapsed(False)
         print(f"Video loaded: {self.video_file}")
 
     def load_prediction(self):
@@ -405,7 +405,6 @@ class DLC_Extractor(QtWidgets.QMainWindow):
                 self.navigation_title_controller()
 
     def navigation_title_controller(self):
-        self.nav_widget.show()
         self.nav_widget.setTitle(f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | Video: {self.video_name}")
         if self.current_frame_idx in self.labeled_frame_list:
             self.nav_widget.setTitleColor("#1F32D7")  # Blue

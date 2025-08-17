@@ -135,7 +135,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         # Navigation controls
         self.nav_widget = Nav_Widget()
         self.layout.addWidget(self.nav_widget)
-        self.nav_widget.hide()
+        self.nav_widget.set_collapsed(True)
 
         self.nav_widget.frame_changed_sig.connect(self.change_frame)
         self.nav_widget.prev_marked_frame_sig.connect(lambda:self._navigate_marked_frames("prev"))
@@ -364,7 +364,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.base_folder = folder_path # Store the base folder path for saving later
         self.current_frame_idx = 0
         self.progress_widget.set_slider_range(self.total_frames)
-        self.nav_widget.show()
+        self.nav_widget.set_collapsed(False)
         self.navigation_title_controller()
         self.display_current_frame() # Display the first frames
 

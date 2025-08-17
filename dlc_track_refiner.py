@@ -130,7 +130,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         self.nav_widget = Nav_Widget(mark_name="ROI Frame")
         self.layout.addWidget(self.nav_widget)
-        self.nav_widget.hide()
+        self.nav_widget.set_collapsed(True)
 
         # Connect buttons to events
         self.undo_button.clicked.connect(self.undo_changes)
@@ -180,7 +180,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         self.is_playing = False
 
-        self.nav_widget.hide()
+        self.nav_widget.set_collapsed(True)
         self.plot_opacity = 1.0
         self.point_size = 6
 
@@ -213,7 +213,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             
     def initialize_loaded_video(self):
         self.video_name = os.path.basename(self.video_file).split(".")[0]
-        self.nav_widget.show()
+        self.nav_widget.set_collapsed(False)
         self.cap = cv2.VideoCapture(self.video_file)
         
         if not self.cap.isOpened():
