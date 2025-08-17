@@ -1086,7 +1086,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.prediction = pred_file_to_save_path
         self.data_loader.dlc_config_filepath = self.dlc_data.dlc_config_filepath
         self.data_loader.prediction_filepath = self.prediction
-        self.dlc_data = self.data_loader.load_data()
+        self.dlc_data, msg = self.data_loader.load_data()
 
     def save_prediction_as_csv(self):
         save_path = os.path.dirname(self.prediction)
