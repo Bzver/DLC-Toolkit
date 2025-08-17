@@ -798,9 +798,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         return True
     
     def _delete_track_wrapper(self, mode, deletion_range=None):
-        if not self._track_edit_blocker():
-            return
-        
         current_frame_inst = duh.get_current_frame_inst(self.dlc_data, self.pred_data_array, self.current_frame_idx)
         if len(current_frame_inst) > 1 and not self.selected_box:
             QMessageBox.information(self, "No Track Seleted",
