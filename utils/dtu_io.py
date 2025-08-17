@@ -55,6 +55,8 @@ def prediction_to_csv(dlc_data:Loaded_DLC_Data, pred_data_array: NDArray,
 
     if export_settings.export_mode == "Append":
         csv_name = "MachineLabelsRefine"
+    elif export_settings.export_mode == "Merge":
+        csv_name = f"CollectedData_{dlc_data.scorer}"
     else:
         prediction_filename = os.path.basename(dlc_data.prediction_filepath)
         csv_name = prediction_filename.split(".h5")[0]
@@ -96,7 +98,7 @@ def csv_to_h5(project_dir:str, multi_animal:bool, scorer:str="machine-labeled", 
         data.to_csv(fn)
         return True
     except FileNotFoundError:
-        print("Attention:", project_dir, "does not appear to have labeled data!")
+        print(f"Expected file: {csv_name}.csv not found in f{project_dir}!")
 
 def construct_header_row(dlc_data:Loaded_DLC_Data, has_conf:bool=False) -> Tuple[NDArray, List[str]]:
     keypoints = dlc_data.keypoints
@@ -352,7 +354,7 @@ class DLC_Exporter:
         return True, "Success"
 
     def _extract_pred(self) -> Tuple[bool, str]:
-        if self.pred_data_array:
+        if self.pred_data_array is not None:
             pred_data_array = self.pred_data_array
         else:
             pred_data_array = self.dlc_data.pred_data_array[self.frame_list, :, :]
@@ -360,7 +362,8 @@ class DLC_Exporter:
         if not prediction_to_csv(self.dlc_data, pred_data_array, self.export_settings, self.frame_list):
             return False, "Error exporting predictions to csv."
 
-        if not csv_to_h5(self.export_settings.save_path, self.dlc_data.multi_animal):
+        csv_name = f"CollectedData_{self.dlc_data.scorer}"
+        if not csv_to_h5(self.export_settings.save_path, self.dlc_data.multi_animal, self.dlc_data.scorer, csv_name=csv_name):
             return False, "Error transforming to h5."
         
         return True, f"Label extracted to {self.export_settings.save_path}"

@@ -140,7 +140,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.progress_widget.set_slider_range(self.total_frames)
         self.progress_widget.set_frame_category("marked_frames", self.frame_list, "#E28F13")
         self.progress_widget.set_frame_category("refined_frames", self.refined_frame_list, "#009979", priority=7)
-        self.progress_widget.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7")
+        self.progress_widget.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7", priority=9)
         self.display_current_frame()
         self.navigation_title_controller()
         self.nav_widget.set_collapsed(False)
@@ -194,6 +194,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
                 return
             
             self.video_file = video_file
+            self.exp_set.video_filepath = video_file
             self.initialize_loaded_video()
             self.frame_list = fmk["frame_list"]
             print(f"Marked frames loaded: {self.frame_list}")
@@ -253,7 +254,8 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.refined_frame_list = list(set(self.refined_frame_list) - set(self.labeled_frame_list))
         self.frame_list.sort()
 
-        self.progress_widget.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7")
+        self.progress_widget.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7", priority=9)
+        self.navigation_title_controller()
 
     ###################################################################################################################################################
 
@@ -631,8 +633,8 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             label_data_array_with_conf = self.label_data_array[merge_frame_list, :, :]
             label_data_array_export = duh.remove_mock_confidence_score(label_data_array_with_conf)
 
-            exporter = DLC_Exporter(self.dlc_data, self.exp_set, self.frame_list, label_data_array_export)
-            dugh.export_and_show_message(self, exporter, frame_only=True)
+            exporter = DLC_Exporter(self.dlc_data, self.exp_set, merge_frame_list, label_data_array_export)
+            dugh.export_and_show_message(self, exporter, frame_only=False)
 
             self.process_labeled_frame()
 
