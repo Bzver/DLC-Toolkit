@@ -160,7 +160,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         
         self.data_loader.prediction_filepath = prediction_path
 
-        QMessageBox.information(self, "DLC Config Loaded", "Prediction loaded , now loading DLC config.")
+        QMessageBox.information(self, "DLC Config Loaded", "Prediction loaded, now loading DLC config.")
 
         file_dialog = QFileDialog(self)
         dlc_config, _ = file_dialog.getOpenFileName(self, "Load DLC Config", "", "YAML Files (config.yaml);;All Files (*)")
