@@ -405,7 +405,10 @@ class DLC_Extractor(QtWidgets.QMainWindow):
                 self.navigation_title_controller()
 
     def navigation_title_controller(self):
-        self.nav_widget.setTitle(f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | Video: {self.video_name}")
+        title_text = f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | Video: {self.video_name}"
+        if self.frame_list:
+            title_text += f" | Marked Frame Count: {len(self.frame_list)}"
+        self.nav_widget.setTitle(title_text)
         if self.current_frame_idx in self.labeled_frame_list:
             self.nav_widget.setTitleColor("#1F32D7")  # Blue
         elif self.current_frame_idx in self.refined_frame_list:
