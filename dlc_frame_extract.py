@@ -594,14 +594,14 @@ class DLC_Extractor(QtWidgets.QMainWindow):
                 if not dlc_dir: # When user close the file selection window
                     return
                 self.project_dir = os.path.join(dlc_dir, "labeled-data", self.video_name)
-                dugh.export_and_show_message(exporter, frame_only=True)
+                dugh.export_and_show_message(self, exporter, frame_only=True)
                 return
             else:
                 self.load_prediction()
                 if self.dlc_data is None:
                     return
 
-        dugh.export_and_show_message(exporter, frame_only=True)
+        dugh.export_and_show_message(self, exporter, frame_only=True)
 
     def merge_data(self):
         if not self.pre_saving_sanity_check():
@@ -631,7 +631,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             label_data_array_export = duh.remove_mock_confidence_score(label_data_array_with_conf)
 
             exporter = DLC_Exporter(self.dlc_data, self.exp_set, self.frame_list, label_data_array_export)
-            dugh.export_and_show_message(exporter, frame_only=True)
+            dugh.export_and_show_message(self, exporter, frame_only=True)
 
             self.process_labeled_frame()
 
