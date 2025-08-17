@@ -42,7 +42,8 @@ class DLC_Extractor(QtWidgets.QMainWindow):
                 "buttons": [
                     ("Mark / Unmark Current Frame (X)", self.toggle_frame_status),
                     ("Adjust Confidence Cutoff", self.show_confidence_dialog),
-                    ("Edit in Refiner", self.call_refiner)
+                    ("Call Refiner - Track Edit Only", lambda: self.call_refiner(track_only=True)),
+                    ("Call Refiner", lambda: self.call_refiner(track_only=False))
                 ]
             },
             "Export": {
@@ -530,7 +531,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         QMessageBox.information(self, "Success", f"Current workplace files have been saved to {output_filepath}")
         return True
 
-    def call_refiner(self):
+    def call_refiner(self, track_only=False):
         from dlc_track_refiner import DLC_Track_Refiner
         if not self.video_file:
             QMessageBox.warning(self, "Video Not Loaded", "No video is loaded, load a video first!")
@@ -543,14 +544,15 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             self.refiner_window.video_file = self.video_file
             self.refiner_window.initialize_loaded_video()
             self.refiner_window.dlc_data = self.dlc_data
-            self.refiner_window.marked_roi_frame_list = self.frame_list
-            self.refiner_window.refined_roi_frame_list = self.refined_frame_list
+            if not track_only:
+                self.refiner_window.marked_roi_frame_list = self.frame_list
+                self.refiner_window.refined_roi_frame_list = self.refined_frame_list
             self.refiner_window.current_frame_idx = self.current_frame_idx
             self.refiner_window.prediction = self.dlc_data.prediction_filepath
             self.refiner_window.initialize_loaded_data()
             self.refiner_window.display_current_frame()
             self.refiner_window.navigation_title_controller()
-            if self.frame_list:
+            if self.frame_list and not track_only:
                 self.refiner_window.direct_keypoint_edit()
                 self.refiner_window.refined_frames_exported.connect(self._handle_refined_frames_exported)
             self.refiner_window.show()
