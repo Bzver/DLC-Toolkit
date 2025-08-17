@@ -336,15 +336,15 @@ class DLC_Exporter:
         return status, msg
 
     def _extract_frame(self) -> Tuple[bool, str]:
-        cap = cv2.VideoCapture(self.video_file)
+        cap = cv2.VideoCapture(self.export_settings.video_filepath)
         if not cap.isOpened():
-            return False, f"Error: Could not open video {self.video_file}"
+            return False, f"Error: Could not open video {self.export_settings.video_filepath}"
         
         frames_to_extract = set(self.frame_list)
 
         for frame in frames_to_extract:
             image_path = f"img{str(int(frame)).zfill(8)}.png"
-            image_output_path = os.path.join(self.save_path, image_path)
+            image_output_path = os.path.join(self.export_settings.save_path, image_path)
             cap.set(cv2.CAP_PROP_POS_FRAMES, frame)
             ret, frame = cap.read()
             if ret:
