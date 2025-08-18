@@ -723,13 +723,13 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             elif isinstance(item, Selectable_Instance):
                 item.setFlag(QGraphicsRectItem.ItemIsMovable, self.is_kp_edit)
         
+        # Non-intrusive feedback
         if self.is_kp_edit:
-            QMessageBox.information(self, "Keypoint Editing Mode", 
-                    "Keypoint editing mode is ON.\n" 
-                    "You can now drag keypoints and bounding boxes to adjust positions.\n"
-                    "If you want to delete a keypoint, simply press Backspace when holding it.")
+            self.statusBar().showMessage(
+                "Keypoint editing mode is ON. Drag to adjust. Press Backspace to delete a keypoint."
+            )
         else:
-            QMessageBox.information(self, "Keypoint Editing Mode", "Keypoint editing mode is OFF.")
+            self.statusBar().showMessage("Keypoint editing mode is OFF.")
 
         self.navigation_title_controller()
 
