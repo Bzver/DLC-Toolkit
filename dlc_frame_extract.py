@@ -43,15 +43,15 @@ class DLC_Extractor(QtWidgets.QMainWindow):
                     ("Mark / Unmark Current Frame (X)", self.toggle_frame_status),
                     ("Adjust Confidence Cutoff", self.show_confidence_dialog),
                     ("Call Refiner - Track Edit Only", lambda: self.call_refiner(track_only=True)),
-                    ("Call Refiner", lambda: self.call_refiner(track_only=False))
+                    ("Call Refiner - Pose Refining", lambda: self.call_refiner(track_only=False))
                 ]
             },
             "Export": {
                 "display_name": "Save",
                 "buttons": [
                     ("Save the Current Workspace", self.save_workspace),
-                    ("Export to DLC", self.save_to_dlc),
-                    ("Merge with Existing Data", self.merge_data)
+                    ("Export to DLC Labeling", self.save_to_dlc),
+                    ("Merge with Existing Label in DLC", self.merge_data)
                 ]
             }
         }
@@ -177,6 +177,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.display_current_frame()
 
     def load_workplace(self):
+        self.reset_state()
         file_dialog = QFileDialog(self)
         marked_frame_path, _ = file_dialog.getOpenFileName(self, "Load Status", "", "YAML Files (*.yaml);;All Files (*)")
 
@@ -505,9 +506,6 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         if not self.frame_list:
             QMessageBox.warning(self, "No Marked Frame", "No frame has been marked, please mark some frames first.")
             return False
-        if not self.labeled_frame_list:
-            QMessageBox.information(self, "No Previous Label Loaded", "Can't merge when no previous label is loaded.")
-            return False
         
         return True
 
@@ -578,8 +576,14 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             return
 
         self.save_workspace()
+        if self.labeled_frame_list:
+            self.exp_set.export_mode = "Append"
+        else:
+            self.exp_set.export_mode = "Merge"
+            dlc_dir = os.path.dirname(self.data_loader.dlc_config_filepath)
+            self.exp_set.save_path = os.path.join(dlc_dir, "labeled-data", self.video_name)
+            os.makedirs(self.exp_set.save_path, exist_ok=True)
 
-        self.exp_set.export_mode = "Append"
         exporter = DLC_Exporter(self.dlc_data, self.exp_set, self.frame_list)
 
         if not self.dlc_data:
@@ -590,7 +594,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
                 QMessageBox.Yes | QMessageBox.No
             )
             if reply == QMessageBox.Yes:
-                QMessageBox.information(self, "Frame Only Mode", "Choose the directory of DLC project to save to DLC.")
+                QMessageBox.information(self, "Frame Only Mode", "Choose the directory of DLC project.")
                 dlc_dir = QFileDialog.getExistingDirectory(
                             self, "Select Project Folder",
                             os.path.dirname(self.video_file),
@@ -606,7 +610,10 @@ class DLC_Extractor(QtWidgets.QMainWindow):
                 if self.dlc_data is None:
                     return
 
-        dugh.export_and_show_message(self, exporter, frame_only=True)
+        dugh.export_and_show_message(self, exporter, frame_only=False)
+
+        if self.exp_set.export_mode == "Merge":
+            self.process_labeled_frame()
 
     def merge_data(self):
         if not self.pre_saving_sanity_check():
@@ -616,6 +623,10 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             QMessageBox.warning(self, "No Refined Frame", "No frame has been refined, please refine some marked frames first.")
             return
         
+        if not self.labeled_frame_list:
+            self.save_to_dlc()
+            return
+
         reply = QMessageBox.question(
             self, "Confirm Merge",
             "This action will merge the selected data into the labeled dataset. "

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from typing import List, Optional
+from typing import List, Optional, Literal
 from numpy.typing import NDArray
 
 @dataclass
@@ -23,7 +23,7 @@ class Export_Settings:
     video_filepath: str
     video_name: str
     save_path: str
-    export_mode: str # "Append" or "Merge" or "CSV"
+    export_mode: Literal["Append", "Merge", "CSV"]
 
 @dataclass
 class Swap_Calculation_Config:
