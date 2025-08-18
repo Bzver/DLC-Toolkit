@@ -648,8 +648,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
 
             self.label_data_array[self.refined_frame_list, :, :] = self.dlc_data.pred_data_array[self.refined_frame_list, :, :]
             merge_frame_list = list(set(self.labeled_frame_list) | set(self.refined_frame_list))
-            label_data_array_with_conf = self.label_data_array[merge_frame_list, :, :]
-            label_data_array_export = duh.remove_confidence_score(label_data_array_with_conf)
+            label_data_array_export = duh.remove_confidence_score(self.label_data_array)
 
             exporter = DLC_Exporter(self.dlc_data, self.exp_set, merge_frame_list, label_data_array_export)
             dugh.export_and_show_message(self, exporter, frame_only=False)

@@ -381,7 +381,7 @@ class DLC_Exporter:
 
     def _extract_pred(self) -> Tuple[bool, str]:
         if self.pred_data_array is None:
-            pred_data_array = self.dlc_data.pred_data_array
+            pred_data_array = self.dlc_data.pred_data_array[self.frame_list, :, :]
         else:
             pred_data_array = self.pred_data_array[self.frame_list, :, :]
         
