@@ -19,6 +19,7 @@ from utils.dtu_comp import Adjust_Property_Dialog
 from utils.dtu_dataclass import Export_Settings
 import utils.dtu_helper as duh
 import utils.dtu_gui_helper as dugh
+import utils.dtu_io as dio
 
 class DLC_Extractor(QtWidgets.QMainWindow):
     def __init__(self):
@@ -50,7 +51,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
                 "display_name": "Save",
                 "buttons": [
                     ("Save the Current Workspace", self.save_workspace),
-                    ("Export to DLC Labeling", self.save_to_dlc),
+                    ("Export to DLC", self.save_to_dlc),
                     ("Merge with Existing Label in DLC", self.merge_data)
                 ]
             }
@@ -575,17 +576,20 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         if not self.pre_saving_sanity_check():
             return
 
+        dlc_dir = os.path.dirname(self.data_loader.dlc_config_filepath)
+
         self.save_workspace()
-        if self.labeled_frame_list:
+        if not self.refined_frame_list:
             self.exp_set.export_mode = "Append"
+            exporter = DLC_Exporter(self.dlc_data, self.exp_set, self.frame_list)
         else:
-            self.exp_set.export_mode = "Merge"
-            dlc_dir = os.path.dirname(self.data_loader.dlc_config_filepath)
             self.exp_set.save_path = os.path.join(dlc_dir, "labeled-data", self.video_name)
             os.makedirs(self.exp_set.save_path, exist_ok=True)
 
-        exporter = DLC_Exporter(self.dlc_data, self.exp_set, self.frame_list)
-
+            pred_data_array_for_export = duh.remove_confidence_score(self.dlc_data.pred_data_array)
+            self.exp_set.export_mode = "Merge"
+            exporter = DLC_Exporter(self.dlc_data, self.exp_set, self.refined_frame_list, pred_data_array_for_export)
+        
         if not self.dlc_data:
             reply = QMessageBox.question(
                 self,
@@ -611,6 +615,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
                     return
 
         dugh.export_and_show_message(self, exporter, frame_only=False)
+        dio.append_new_video_to_dlc_config(self.dlc_data.dlc_config_filepath, self.video_name)
 
         if self.exp_set.export_mode == "Merge":
             self.process_labeled_frame()
@@ -644,7 +649,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             self.label_data_array[self.refined_frame_list, :, :] = self.dlc_data.pred_data_array[self.refined_frame_list, :, :]
             merge_frame_list = list(set(self.labeled_frame_list) | set(self.refined_frame_list))
             label_data_array_with_conf = self.label_data_array[merge_frame_list, :, :]
-            label_data_array_export = duh.remove_mock_confidence_score(label_data_array_with_conf)
+            label_data_array_export = duh.remove_confidence_score(label_data_array_with_conf)
 
             exporter = DLC_Exporter(self.dlc_data, self.exp_set, merge_frame_list, label_data_array_export)
             dugh.export_and_show_message(self, exporter, frame_only=False)

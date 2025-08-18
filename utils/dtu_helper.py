@@ -136,7 +136,7 @@ def unflatten_data_array(array:NDArray, inst_count:int) -> NDArray:
         new_array[:, inst_idx, :] = array[:, start_col:end_col]
     return new_array
 
-def remove_mock_confidence_score(array:NDArray):
+def remove_confidence_score(array:NDArray):
     array_dim = len(array.shape) # Always check for dimension first
     if array_dim == 2:
         rows, cols = array.shape

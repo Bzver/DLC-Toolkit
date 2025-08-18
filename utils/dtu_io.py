@@ -203,6 +203,32 @@ def save_prediction_to_h5(prediction_filepath: str, pred_data_array: NDArray) ->
         print(f"Error saving prediction to HDF5: {e}")
         traceback.print_exc()
         return False, e
+    
+def append_new_video_to_dlc_config(config_path, video_name):
+    dlc_dir = os.path.dirname(config_path)
+    config_backup = os.path.join(dlc_dir, "config_bak.yaml")
+    print("Backup up the original config.yaml as config_bak.yaml")
+    shutil.copy(config_path ,config_backup)
+
+    video_filepath = os.path.join(dlc_dir, "videos", f"{video_name}.mp4")
+
+    # Load original config
+    with open(config_path, 'r') as f:
+        try:
+            config_org = yaml.load(f, Loader=yaml.SafeLoader)
+        except yaml.YAMLError as e:
+            raise ValueError(f"Error parsing YAML file: {e}")
+
+    if video_filepath in config_org["video_sets"]:
+        print(f"Video {video_filepath} already exists in video_sets. Skipping update.")
+        return
+
+    with open(config_path, 'r') as f:
+        config_org["video_sets"][video_filepath] = {"crop": "0, 0, 0, 0"}
+        print("Appended new video_sets to the originals.")
+    with open(config_path, 'w') as file:
+        yaml.dump(config_org, file, default_flow_style=False, sort_keys=False)
+        print(f"DeepLabCut config in {config_path} has been updated.")
 
 ######################################################################################################################################
 
@@ -354,10 +380,10 @@ class DLC_Exporter:
         return True, "Success"
 
     def _extract_pred(self) -> Tuple[bool, str]:
-        if self.pred_data_array is not None:
-            pred_data_array = self.pred_data_array
+        if self.pred_data_array is None:
+            pred_data_array = self.dlc_data.pred_data_array
         else:
-            pred_data_array = self.dlc_data.pred_data_array[self.frame_list, :, :]
+            pred_data_array = self.pred_data_array[self.frame_list, :, :]
         
         if not prediction_to_csv(self.dlc_data, pred_data_array, self.export_settings, self.frame_list):
             return False, "Error exporting predictions to csv."
