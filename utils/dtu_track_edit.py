@@ -66,6 +66,79 @@ def generate_track(pred_data_array:NDArray, current_frame_idx:int, missing_insta
 
     return pred_data_array
 
+def interpolate_missing_keypoints(pred_data_array:NDArray, current_frame_idx:int, selected_instance_idx:int) -> NDArray:
+    # Check for missing keypoints of the selected instance in the current frame, interpolate using sorrounding frames for the keypoints coords
+    num_keypoints = pred_data_array.shape[2] // 3
+    missing_keypoints = []
+    for keypoint_idx in range(num_keypoints):
+        confidence_idx = keypoint_idx * 3 + 2
+        confidence = pred_data_array[current_frame_idx, selected_instance_idx, confidence_idx]
+        if np.isnan(confidence) or confidence < 0.1:
+            missing_keypoints.append(keypoint_idx)
+
+    print(f"Missing keypoints in frame {current_frame_idx}: {missing_keypoints}") # For debugging
+
+    # Find surrounding frames with valid data
+    interpolation_data = {}
+    for keypoint_idx in missing_keypoints:
+        interpolation_data[keypoint_idx] = find_interpolation_frames(pred_data_array, current_frame_idx, selected_instance_idx, keypoint_idx)
+
+    print(f"Interpolation data: {interpolation_data}") # For debugging
+
+    # Interpolate keypoint coordinates
+    for keypoint_idx, (before_frame, after_frame) in interpolation_data.items():
+        if before_frame is not None and after_frame is not None:
+            # Linear interpolation
+            x_before = pred_data_array[before_frame, selected_instance_idx, keypoint_idx * 3]
+            y_before = pred_data_array[before_frame, selected_instance_idx, keypoint_idx * 3 + 1]
+            x_after = pred_data_array[after_frame, selected_instance_idx, keypoint_idx * 3]
+            y_after = pred_data_array[after_frame, selected_instance_idx, keypoint_idx * 3 + 1]
+
+            x_interpolated = np.interp(current_frame_idx, [before_frame, after_frame], [x_before, x_after])
+            y_interpolated = np.interp(current_frame_idx, [before_frame, after_frame], [y_before, y_after])
+            confidence_interpolated = 1.0  # Set confidence to 1.0 after interpolation
+
+            pred_data_array[current_frame_idx, selected_instance_idx, keypoint_idx * 3] = x_interpolated
+            pred_data_array[current_frame_idx, selected_instance_idx, keypoint_idx * 3 + 1] = y_interpolated
+            pred_data_array[current_frame_idx, selected_instance_idx, keypoint_idx * 3 + 2] = confidence_interpolated
+        else:
+            # No valid surrounding frames found, use default values (0, 0, 1)
+            pred_data_array[current_frame_idx, selected_instance_idx, keypoint_idx * 3] = 0.0
+            pred_data_array[current_frame_idx, selected_instance_idx, keypoint_idx * 3 + 1] = 0.0
+            pred_data_array[current_frame_idx, selected_instance_idx, keypoint_idx * 3 + 2] = 1.0
+
+    return pred_data_array
+
+def find_interpolation_frames(pred_data_array: NDArray, current_frame_idx: int, selected_instance_idx: int, keypoint_idx: int, search_range: int = 5) -> Tuple[Optional[int], Optional[int]]:
+    """Finds the nearest frames before and after the current frame with valid data for the given keypoint."""
+    before_frame = None
+    after_frame = None
+    num_frames = pred_data_array.shape[0]
+
+    # Search for valid data in frames before the current frame
+    for i in range(1, search_range + 1):
+        frame_idx = current_frame_idx - i
+        if frame_idx < 0:
+            break
+        confidence_idx = keypoint_idx * 3 + 2
+        confidence = pred_data_array[frame_idx, selected_instance_idx, confidence_idx]
+        if not np.isnan(confidence) and confidence >= 0.1:
+            before_frame = frame_idx
+            break
+
+    # Search for valid data in frames after the current frame
+    for i in range(1, search_range + 1):
+        frame_idx = current_frame_idx + i
+        if frame_idx >= num_frames:
+            break
+        confidence_idx = keypoint_idx * 3 + 2
+        confidence = pred_data_array[frame_idx, selected_instance_idx, confidence_idx]
+        if not np.isnan(confidence) and confidence >= 0.1:
+            after_frame = frame_idx
+            break
+
+    return before_frame, after_frame
+
     ###################################################################################################################################################
 
 def purge_by_conf_and_bp(pred_data_array:NDArray, num_keypoint:int,

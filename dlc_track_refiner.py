@@ -59,6 +59,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                     ("Generate Instance (G)", self._generate_track_wrapper),
                     ("Swap Track Until The End (Shift + W)", lambda:self._swap_track_wrapper("batch")),
                     ("Delete Selected Track Until Next ROI (Shift + X)", lambda:self._delete_track_wrapper("batch")),
+                    ("Interpolate Missing Keypoints (Shift + T)", self._interpolate_missing_kp_wrapper)
                 ]
             },
             "AdvRefiner": {
@@ -159,6 +160,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_W | Qt.ShiftModifier), self).activated.connect(lambda:self._swap_track_wrapper("batch"))
         QShortcut(QKeySequence(Qt.Key_X | Qt.ShiftModifier), self).activated.connect(lambda:self._delete_track_wrapper("batch"))
         QShortcut(QKeySequence(Qt.Key_T), self).activated.connect(self._interpolate_track_wrapper)
+        QShortcut(QKeySequence(Qt.Key_T | Qt.ShiftModifier), self).activated.connect(self._interpolate_missing_kp_wrapper)
         QShortcut(QKeySequence(Qt.Key_G), self).activated.connect(self._generate_track_wrapper)
         QShortcut(QKeySequence(Qt.Key_Q), self).activated.connect(self.direct_keypoint_edit)
         QShortcut(QKeySequence(Qt.Key_Backspace), self).activated.connect(self.delete_dragged_keypoint)
@@ -798,6 +800,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         return True
     
     def _delete_track_wrapper(self, mode, deletion_range=None):
+        if not self._track_edit_blocker():
+            return
+
         current_frame_inst = duh.get_current_frame_inst(self.dlc_data, self.pred_data_array, self.current_frame_idx)
         if len(current_frame_inst) > 1 and not self.selected_box:
             QMessageBox.information(self, "No Track Seleted",
@@ -840,7 +845,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         
         current_frame_inst = duh.get_current_frame_inst(self.dlc_data, self.pred_data_array, self.current_frame_idx)
         if len(current_frame_inst) > 1 and not self.selected_box:
-            QMessageBox.information( "Track Not Interpolated", "No track is selected.")
+            QMessageBox.information(self, "Track Not Interpolated", "No track is selected.")
             return
         
         selected_instance_idx = self.selected_box.instance_id if self.selected_box else current_frame_inst[0]
@@ -852,11 +857,11 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             frames_to_interpolate.append(iter_frame_idx)
             iter_frame_idx += 1
             if iter_frame_idx >= self.total_frames:
-                QMessageBox.information( "Interpolation Failed", "No valid subsequent keypoint data found for this instance to interpolate to.")
+                QMessageBox.information(self, "Interpolation Failed", "No valid subsequent keypoint data found for this instance to interpolate to.")
                 return
        
         if not frames_to_interpolate:
-            QMessageBox.information( "Interpolation Info", "No gaps found to interpolate for the selected instance.")
+            QMessageBox.information(self, "Interpolation Info", "No gaps found to interpolate for the selected instance.")
             return
         
         frames_to_interpolate.sort()
@@ -876,6 +881,21 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         
         self.pred_data_array = dute.generate_track(
             self.pred_data_array, self.current_frame_idx, missing_instances, self.dlc_data.num_keypoint)
+        self._on_track_data_changed()
+
+    def _interpolate_missing_kp_wrapper(self):
+        if not self._track_edit_blocker():
+            return
+        
+        current_frame_inst = duh.get_current_frame_inst(self.dlc_data, self.pred_data_array, self.current_frame_idx)
+        if len(current_frame_inst) > 1 and not self.selected_box:
+            QMessageBox.information(self, "Track Not Interpolated", "No track is selected.")
+            return
+        
+        selected_instance_idx = self.selected_box.instance_id if self.selected_box else current_frame_inst[0]
+        self._save_state_for_undo()
+
+        self.pred_data_array = dute.interpolate_missing_keypoints(self.pred_data_array, self.current_frame_idx, selected_instance_idx)
         self._on_track_data_changed()
 
     ###################################################################################################################################################  
