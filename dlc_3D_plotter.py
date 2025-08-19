@@ -71,7 +71,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                     ("Change Marked Frame View Mode", self.change_mark_view_mode),
                     ("Reset Marked Frames", self.reset_marked_frames),
                     ("Check Camera Geometry", self.plot_camera_geometry),
-                    ("Toggle 3D View Auto Perspective", self.toggle_auto_3d_perspective)
+                    ("Auto 3D View Perspective", self.toggle_auto_3d_perspective, {"checkable": True, "checked": True})
                 ]
             },
             "Track": {
@@ -977,7 +977,6 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
     def toggle_auto_3d_perspective(self):
         self.auto_perspective = not self.auto_perspective
-        QMessageBox.information(self, "Success", f"Auto 3D perspective has been set to {self.auto_perspective}.")
         self.ax.view_init(elev=30, azim=-60)
         self.canvas.draw_idle()
 

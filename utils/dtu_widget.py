@@ -9,9 +9,6 @@ class Menu_Widget(QtWidgets.QMenuBar):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        self.menu_layout = QHBoxLayout()
-        self.setLayout(self.menu_layout)
-
     def add_menu_from_config(self, menu_config):
         """
         Adds menus and their actions based on a configuration dictionary.
@@ -24,6 +21,7 @@ class Menu_Widget(QtWidgets.QMenuBar):
                     "buttons": [
                         ("Load Video", load_video_function),
                         ("Load Config and Prediction", load_prediction_function),
+                        ("Show Axis", toggle_axis, {"checkable": True, "checked": True}),
                     ]
                 },
                 ...
@@ -32,10 +30,25 @@ class Menu_Widget(QtWidgets.QMenuBar):
         for menu_name, config in menu_config.items():
             display_name = config.get("display_name", menu_name)
             menu = self.addMenu(display_name)
-            
-            for action_text, action_func in config["buttons"]:
-                action = menu.addAction(action_text)
-                action.triggered.connect(action_func)
+
+            buttons = config.get("buttons", [])
+            for item in buttons:
+                if len(item) == 2:
+                    action_text, action_func = item
+                    action = menu.addAction(action_text)
+                    action.triggered.connect(action_func)
+                elif len(item) == 3:
+                    action_text, action_func, options = item
+                    action = menu.addAction(action_text)
+                    action.triggered.connect(action_func)
+                    if options and options.get("checkable"):
+                        action.setCheckable(True)
+                        action.setChecked(options.get("checked", False))
+                else:
+                    raise ValueError(
+                        "Menu button must be a tuple of length 2 (text, func) "
+                        "or 3 (text, func, options)"
+                    )
 
 ###################################################################################################################################################
 
