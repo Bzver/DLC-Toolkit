@@ -20,7 +20,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from utils.dtu_io import DLC_Loader
 from utils.dtu_widget import Menu_Widget, Progress_Bar_Widget, Nav_Widget
 from utils.dtu_comp import Clickable_Video_Label, Adjust_Property_Dialog
-from utils.dtu_triangulation import Data_Processor_3D
+from utils.dtu_helper import Data_Processor_3D
 import utils.dtu_io as dio
 import utils.dtu_helper as duh
 import utils.dtu_gui_helper as dugh
@@ -684,7 +684,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                     self.skipped_frame_list.append(frame_idx)
                 continue
 
-            swap_score = dutri.calculate_identity_swap_score_per_frame(
+            swap_score = duh.calculate_identity_swap_score_per_frame(
                 keypoint_data_tr, valid_view, self.dlc_data.instance_count, self.dlc_data.num_keypoint, self.num_cam)
             
             self.swap_detection_score_array[frame_idx, 1] = swap_score
