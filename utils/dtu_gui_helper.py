@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox, QProgressDialog
 from typing import Optional, Callable, List
 

@@ -1,12 +1,11 @@
 import numpy as np
 
 from typing import List, Optional, Tuple
-from numpy.typing import NDArray
 
 from . import dtu_helper as duh
 
-def delete_track(pred_data_array:NDArray, current_frame_idx:int, roi_frame_list:List[int], selected_instance_idx:int,
-                mode:str="point", deletion_range:Optional[List[int]]=None) -> Optional[NDArray]:
+def delete_track(pred_data_array:np.ndarray, current_frame_idx:int, roi_frame_list:List[int], selected_instance_idx:int,
+                mode:str="point", deletion_range:Optional[List[int]]=None) -> Optional[np.ndarray]:
     
     if mode == "point": # Only removing the current frame
         frames_to_delete = current_frame_idx
@@ -28,8 +27,8 @@ def delete_track(pred_data_array:NDArray, current_frame_idx:int, roi_frame_list:
 
     return pred_data_array
 
-def swap_track(pred_data_array:NDArray, current_frame_idx:int, mode:str="point",
-               swap_range:Optional[List[int]]=None) -> Optional[NDArray]:
+def swap_track(pred_data_array:np.ndarray, current_frame_idx:int, mode:str="point",
+               swap_range:Optional[List[int]]=None) -> Optional[np.ndarray]:
     
     if mode == "point":
         frames_to_swap = current_frame_idx
@@ -48,7 +47,7 @@ def swap_track(pred_data_array:NDArray, current_frame_idx:int, mode:str="point",
 
     return pred_data_array
 
-def interpolate_track(pred_data_array:NDArray, frames_to_interpolate:List[int], selected_instance_idx:int) -> NDArray:
+def interpolate_track(pred_data_array:np.ndarray, frames_to_interpolate:List[int], selected_instance_idx:int) -> np.ndarray:
     start_frame_for_interpol = frames_to_interpolate[0] - 1
     end_frame_for_interpol = frames_to_interpolate[-1] + 1
 
@@ -59,14 +58,14 @@ def interpolate_track(pred_data_array:NDArray, frames_to_interpolate:List[int], 
     
     return pred_data_array
         
-def generate_track(pred_data_array:NDArray, current_frame_idx:int, missing_instances:List[int], num_keypoint:int) -> NDArray:
+def generate_track(pred_data_array:np.ndarray, current_frame_idx:int, missing_instances:List[int], num_keypoint:int) -> np.ndarray:
     for instance_idx in missing_instances:
         avg_pose = get_average_pose(pred_data_array, instance_idx, num_keypoint, frame_idx=current_frame_idx)
         pred_data_array[current_frame_idx, instance_idx, :] = avg_pose
 
     return pred_data_array
 
-def interpolate_missing_keypoints(pred_data_array:NDArray, current_frame_idx:int, selected_instance_idx:int) -> NDArray:
+def interpolate_missing_keypoints(pred_data_array:np.ndarray, current_frame_idx:int, selected_instance_idx:int) -> np.ndarray:
     num_keypoints = pred_data_array.shape[2] // 3
     missing_keypoints = []
     for keypoint_idx in range(num_keypoints):
@@ -87,10 +86,10 @@ def interpolate_missing_keypoints(pred_data_array:NDArray, current_frame_idx:int
 
     return pred_data_array
 
-    ###################################################################################################################################################
+###################################################################################################################################################
 
-def purge_by_conf_and_bp(pred_data_array:NDArray, num_keypoint:int,
-                         confidence_threshold:float, bodypart_threshold:int) -> Tuple[NDArray, int, int]:
+def purge_by_conf_and_bp(pred_data_array:np.ndarray, num_keypoint:int,
+                         confidence_threshold:float, bodypart_threshold:int) -> Tuple[np.ndarray, int, int]:
     # Calculate a mask for low confidence instances
     confidence_scores = pred_data_array[:, :, 2:num_keypoint*3:3]
     inst_conf_all = np.nanmean(confidence_scores, axis=2)
@@ -111,7 +110,7 @@ def purge_by_conf_and_bp(pred_data_array:NDArray, num_keypoint:int,
     pred_data_array[f_idx, i_idx, :] = np.nan
     return pred_data_array, removed_frames_count, removed_instances_count
 
-    ###################################################################################################################################################
+###################################################################################################################################################
 
 def get_pose_window(frame_idx:int, total_frames:int, pose_range:int):
     min_frame = frame_idx - pose_range
@@ -132,7 +131,7 @@ def get_pose_window(frame_idx:int, total_frames:int, pose_range:int):
 
     return list(range(min_frame, max_frame))
 
-def get_average_pose(pred_data_array:NDArray, selected_instance_idx:int, num_keypoint:int, frame_idx:int) -> NDArray:
+def get_average_pose(pred_data_array:np.ndarray, selected_instance_idx:int, num_keypoint:int, frame_idx:int) -> np.ndarray:
     pose_range = 30
     pose_window = get_pose_window(frame_idx, len(pred_data_array), pose_range)
     inst_array = pred_data_array[pose_window, selected_instance_idx:selected_instance_idx+1, :]
@@ -176,7 +175,7 @@ def get_average_pose(pred_data_array:NDArray, selected_instance_idx:int, num_key
     average_pose = np.stack([avg_absolute_x, avg_absolute_y, avg_conf], axis=-1).flatten()
     return average_pose
 
-def normalize_poses_by_centroid(inst_array_filtered: NDArray, num_keypoint: int) -> Tuple[NDArray, NDArray, NDArray, NDArray]:
+def normalize_poses_by_centroid(inst_array_filtered: np.ndarray, num_keypoint: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Calculates centroids and normalizes poses relative to them."""
     x_coords = inst_array_filtered[:, 0:num_keypoint*3:3]
     y_coords = inst_array_filtered[:, 1:num_keypoint*3:3]
@@ -189,7 +188,7 @@ def normalize_poses_by_centroid(inst_array_filtered: NDArray, num_keypoint: int)
     
     return relative_x, relative_y, centroid_x, centroid_y
 
-def align_poses_by_vector(relative_x: NDArray, relative_y: NDArray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def align_poses_by_vector(relative_x: np.ndarray, relative_y: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Rotates all poses to a common orientation using an anchor-reference vector."""
     rmse_from_centroid = np.nanmean(np.sqrt(relative_x**2 + relative_y**2), axis=0)
     anchor_keypoint_idx = np.argmin(rmse_from_centroid)
@@ -205,64 +204,21 @@ def align_poses_by_vector(relative_x: NDArray, relative_y: NDArray) -> Tuple[np.
     
     return rotated_relative_x, rotated_relative_y, angles
 
-    ###################################################################################################################################################
+###################################################################################################################################################
 
-def find_segment_for_autocorrect(instance_count_per_frame:List[int], min_segment_length:int=100) -> List[Tuple[int, int]]:
-    segments_to_correct = []
-    current_segment_start = -1
+def fix_track_with_idtracker(pred_data_array:np.ndarray, ):
+    pass
 
-    for i in range(len(instance_count_per_frame)):
-        if instance_count_per_frame[i] <= 1:
-            if current_segment_start == -1:
-                current_segment_start = i
-        else:
-            if current_segment_start != -1:
-                segment_length = i - current_segment_start
-                if segment_length >= min_segment_length:
-                    segments_to_correct.append((current_segment_start, i - 1))
-                current_segment_start = -1
-    
-    # Handle the last segment if it extends to the end of the video
-    if current_segment_start != -1:
-        segment_length = len(instance_count_per_frame) - current_segment_start
-        if segment_length >= min_segment_length:
-            segments_to_correct.append((current_segment_start, len(instance_count_per_frame) - 1))
 
-    return segments_to_correct
+###################################################################################################################################################
 
-def apply_segmental_autocorrect(pred_data_array:NDArray, instance_count_per_frame:List[int],
-                                segments_to_correct:List[Tuple[int, int]]) -> Tuple[NDArray, int]:
-        
-        num_corrections_applied = 0
-
-        for start_frame, end_frame in segments_to_correct:
-
-            for frame_idx in range(start_frame, end_frame + 1): # Swap non 'instance 0' with 'instance 0' for all frames in the segment
-                if instance_count_per_frame[frame_idx] == 0: # Skip swapping for empty predictions
-                    continue
-                current_present_at_frame = np.where(~np.all(np.isnan(pred_data_array[frame_idx]), axis=1))[0]
-                if current_present_at_frame[0] != 0: # Ensure that at this specific frame, the instance to be swapped is not instance 0
-                    swap_track(pred_data_array, frame_idx, mode="point")
-                last_present_instance = current_present_at_frame[0]
-
-            # Apply the swap from (end_frame + 1) to the end of the video, IF the last instance detected was not 0
-            if last_present_instance is not None and last_present_instance != 0:
-                print(f"Applying global swap from frame {end_frame + 1} to end.")
-                swap_track(pred_data_array, end_frame + 1, mode="batch")
-            
-            num_corrections_applied += 1
-        
-        return pred_data_array, num_corrections_applied
-
-    ###################################################################################################################################################
-
-def track_swap_3D_plotter(pred_data_array:NDArray, frame_idx:int, selected_cam_idx:int) -> NDArray:
+def track_swap_3D_plotter(pred_data_array:np.ndarray, frame_idx:int, selected_cam_idx:int) -> np.ndarray:
     pred_data_array_to_swap = pred_data_array[:, selected_cam_idx, :, :]
     pred_data_array_swapped = swap_track(pred_data_array_to_swap, frame_idx, mode="batch")
     pred_data_array[:, selected_cam_idx, :, :] = pred_data_array_swapped
     return pred_data_array
 
-def clean_inconsistent_nans(pred_data_array:NDArray):
+def clean_inconsistent_nans(pred_data_array:np.ndarray):
     print("Cleaning up NaN keypoints that somehow has confidence value...")
     nan_mask = np.isnan(pred_data_array)
     x_is_nan = nan_mask[:, :, 0::3]

@@ -11,14 +11,13 @@ from itertools import islice
 import cv2
 
 from typing import List, Tuple, Optional, Any
-from numpy.typing import NDArray
 
 from .dtu_dataclass import Loaded_DLC_Data, Export_Settings
 from . import dtu_helper as duh
 
 import traceback
 
-def prediction_to_csv(dlc_data:Loaded_DLC_Data, pred_data_array: NDArray, 
+def prediction_to_csv(dlc_data:Loaded_DLC_Data, pred_data_array: np.ndarray, 
         export_settings: Export_Settings, frame_list: List[int]=None) -> bool:
     
     pred_data_flattened = pred_data_array.reshape(pred_data_array.shape[0], -1)
@@ -100,7 +99,7 @@ def csv_to_h5(project_dir:str, multi_animal:bool, scorer:str="machine-labeled", 
     except FileNotFoundError:
         print(f"Expected file: {csv_name}.csv not found in f{project_dir}!")
 
-def construct_header_row(dlc_data:Loaded_DLC_Data, has_conf:bool=False) -> Tuple[NDArray, List[str]]:
+def construct_header_row(dlc_data:Loaded_DLC_Data, has_conf:bool=False) -> Tuple[np.ndarray, List[str]]:
     keypoints = dlc_data.keypoints
     num_keypoint = dlc_data.num_keypoint
     instance_count = dlc_data.instance_count
@@ -181,7 +180,7 @@ def determine_save_path(prediction_filepath:str, suffix:str) -> str:
     print(f"Saved modified prediction to: {pred_file_to_save_path}")
     return pred_file_to_save_path
 
-def convert_prediction_array_to_save_format(pred_data_array: NDArray) -> List[Tuple[int, NDArray]]:
+def convert_prediction_array_to_save_format(pred_data_array: np.ndarray) -> List[Tuple[int, np.ndarray]]:
     new_data = []
     num_frames = pred_data_array.shape[0]
 
@@ -191,7 +190,7 @@ def convert_prediction_array_to_save_format(pred_data_array: NDArray) -> List[Tu
 
     return new_data
 
-def save_prediction_to_h5(prediction_filepath: str, pred_data_array: NDArray) -> Tuple[bool, str]:
+def save_prediction_to_h5(prediction_filepath: str, pred_data_array: np.ndarray) -> Tuple[bool, str]:
     try:
         with h5py.File(prediction_filepath, "a") as pred_file:
             if 'tracks/table' in pred_file:
@@ -341,7 +340,7 @@ class DLC_Loader:
 class DLC_Exporter:
     """A class to handle saving or merging predictions back to DLC"""
     def __init__(self, dlc_data: Loaded_DLC_Data, export_settings: Export_Settings,
-        frame_list: List[int], pred_data_array: NDArray=None):
+        frame_list: List[int], pred_data_array: np.ndarray=None):
         self.dlc_data = dlc_data
         self.export_settings = export_settings
         self.frame_list = frame_list

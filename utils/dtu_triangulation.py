@@ -8,7 +8,6 @@ from sklearn.linear_model import LinearRegression
 import cv2
 
 from typing import List, Tuple, Union
-from numpy.typing import NDArray
 
 from .dtu_dataclass import Loaded_DLC_Data
 
@@ -118,10 +117,10 @@ def triangulate_point(
     return point_3d, final_confidence
 
 def triangulate_point_simple(
-        proj1:NDArray,           proj2:NDArray, 
+        proj1:np.ndarray,           proj2:np.ndarray, 
         pts_2d1:Tuple[float],    pts_2d2:Tuple[float], 
         conf1:float,             conf2:float
-        ) -> NDArray:
+        ) -> np.ndarray:
     """
     Triangulates a single 3D point from two 2D camera views.
 
@@ -259,7 +258,7 @@ def calculate_identity_swap_score_per_frame(keypoint_data_tr:dict, valid_view:in
 #########################################################################################################################################################1
 
 class Data_Processor_3D:
-    def __init__(self, dlc_data:Loaded_DLC_Data, camera_params:dict, pred_data_array:NDArray, confidence_cutoff:float,
+    def __init__(self, dlc_data:Loaded_DLC_Data, camera_params:dict, pred_data_array:np.ndarray, confidence_cutoff:float,
                  num_cam:int, undistorted_images:bool=False):
         
         self.dlc_data = dlc_data
@@ -327,7 +326,7 @@ class Data_Processor_3D:
         min_valid_frames: int = 2,
         smoothing: bool = True,
         sigma: float = 0.8
-        ) -> NDArray:
+        ) -> np.ndarray:
         """
         Calculates an averaged velocity-based motion score for each instance,
         using linear regression over recent trajectories within a time window.
