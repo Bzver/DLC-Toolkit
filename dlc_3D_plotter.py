@@ -171,7 +171,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
         self.pred_data_array = None # Combined prediction data for all cameras
         self.swap_detection_score_array = None
-        self.temporal_dist_array_all = None
+        self.avg_velocity_array = None
 
         self.num_cam_from_calib = None
         self.correction_progress = None
@@ -339,7 +339,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.swap_detection_score_array[:, 0] = np.arange(self.total_frames)
 
         # Initialize the temporal distance array
-        self.temporal_dist_array_all = np.full((self.total_frames, self.dlc_data.instance_count), np.nan)
+        self.avg_velocity_array = np.full((self.total_frames, self.dlc_data.instance_count), np.nan)
 
         if not any(self.cap_list): # Check if at least one video was loaded
             QMessageBox.warning(self, "Error", "No video files were loaded successfully.")
@@ -717,21 +717,21 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         if progress:
             for frame_idx in range(self.total_frames):
                 progress.setValue(frame_idx)
-                self.temporal_dist_array_all[frame_idx, :] = data_processor_3d.calculate_temporal_velocity(frame_idx)
+                self.avg_velocity_array[frame_idx, :] = data_processor_3d.calculate_temporal_velocity(frame_idx)
             progress.close()
         else:
             end_frame = frame_idx_r + check_window + 1
             if end_frame > self.total_frames:
                 end_frame = self.total_frames
             for frame_idx in range(frame_idx_r, end_frame):
-                self.temporal_dist_array_all[frame_idx, :] = data_processor_3d.calculate_temporal_velocity(frame_idx, check_window)
+                self.avg_velocity_array[frame_idx, :] = data_processor_3d.calculate_temporal_velocity(frame_idx, check_window)
 
         self._populate_roi_frame_list()
         self.navigation_title_controller()
 
     def _populate_roi_frame_list(self):
         deviance_mask = self.swap_detection_score_array[:, 1] >= self.deviance_threshold
-        temporal_mask = self.temporal_dist_array_all[:, 1] >= self.velocity_threshold
+        temporal_mask = self.avg_velocity_array[:, 1] >= self.velocity_threshold
         combined_mask = deviance_mask | temporal_mask
         self.roi_frame_list = np.where(combined_mask)[0].tolist() # Get the indices of frames with significant deviations
         self._refresh_slider()
@@ -880,7 +880,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.calculate_temporal_vel(frame_idx_r=frame_idx)
         result_list = []
         for inst_idx in range(self.dlc_data.instance_count):
-            result = self.temporal_dist_array_all[frame_idx, inst_idx] > self.velocity_threshold
+            result = self.avg_velocity_array[frame_idx, inst_idx] > self.velocity_threshold
             result_list.append(result)
 
         if all(result_list):
@@ -958,9 +958,11 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             deviance_scores = self.swap_detection_score_array[:, 1]
             title_text += f" | Deviance Score: {deviance_scores[self.current_frame_idx]:.2f}"
         
-        if self.temporal_dist_array_all is not None:
+        if self.avg_velocity_array is not None:
             for inst_idx in range(self.dlc_data.instance_count):
-                inst_vel = self.temporal_dist_array_all[self.current_frame_idx, inst_idx]
+                inst_vel = self.avg_velocity_array[self.current_frame_idx, inst_idx]
+                if np.isnan(inst_vel):
+                    continue
                 title_text += f" | Instance {inst_idx} Velocity: {inst_vel}"
 
         self.nav_widget.setTitle(title_text)
@@ -1078,7 +1080,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             'failed_frame_list': self.failed_frame_list,
             'skipped_frame_list': self.skipped_frame_list,
             'swap_detection_score_array': self.swap_detection_score_array,
-            'temporal_dist_array_all': self.temporal_dist_array_all,
+            'avg_velocity_array': self.avg_velocity_array,
         }
 
     def save_workspace(self):
