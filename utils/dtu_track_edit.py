@@ -269,7 +269,6 @@ def idt_track_correction(pred_data_array:np.ndarray, idt_traj_array:np.ndarray, 
         max_dist = 20.0
 
         if np.all(distances < max_dist):
-            last_order = range(instance_count)
             continue
 
         cost_matrix = np.linalg.norm(valid_positions_pred[:, np.newaxis, :] - valid_positions_idt[np.newaxis, :, :], axis=2)

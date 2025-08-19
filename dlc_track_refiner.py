@@ -1,7 +1,5 @@
 import os
 
-import yaml
-
 import pandas as pd
 import numpy as np
 
@@ -26,7 +24,7 @@ VIDEO_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/20250709-first3h-S-conv.mp4
 PRED_FILE_DEBUG = "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-convDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_370_snapshot_150_el.h5"
 
 # Todo:
-#   Add support for scenario where individual counts exceed 2
+#   Add support for use cases where individual counts exceed 2
 
 class DLC_Track_Refiner(QtWidgets.QMainWindow):
     prediction_saved = Signal(str) # Signal to emit the path of the saved prediction file
