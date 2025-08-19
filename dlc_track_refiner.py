@@ -46,8 +46,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 "display_name": "File",
                 "buttons": [
                     ("Load Video", self.load_video),
-                    ("Load Prediction", self.load_prediction),
-                    ("Load Batch Commands", self.load_batch_commands)
+                    ("Load Prediction", self.load_prediction)
                 ]
             },
             "Refiner": {
@@ -69,7 +68,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                     ("Delete All Track Below Set Confidence", self.purge_inst_by_conf),
                     ("Remove All Prediction Inside Area", self.designate_no_mice_zone),
                     ("Interpolate All Frames for One Inst", self.interpolate_all),
-                    ("Segmental Auto Correct", self.segment_auto_correct)
+                    ("Fix Track Using Idtrackerai Trajectory", self.correct_track_using_idtrackerai)
                 ]
             },
             "Preference": {
@@ -201,8 +200,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.is_zoom_mode = False
         self.zoom_factor = 1.0
 
-        self.in_batch_mode = False
-
         self._refresh_slider()
 
     def load_video(self):
@@ -254,7 +251,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         self.data_loader.dlc_config_filepath = dlc_config
 
-        self.dlc_data = dugh.load_and_show_message(self, self.data_loader, mute=self.in_batch_mode)
+        self.dlc_data = dugh.load_and_show_message(self, self.data_loader)
         self.initialize_loaded_data()
 
     def debug_load(self):
@@ -279,60 +276,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             
         self.display_current_frame()
         self.reset_zoom()
-
-    def load_batch_commands(self): # In need of a more robust implementation
-        """Load a YAML file containing a list of commands and execute them in sequence."""
-        file_dialog = QtWidgets.QFileDialog(self)
-        command_filepath, _ = file_dialog.getOpenFileName(
-            self, "Load Batch Commands", "", "YAML Files (*.yaml);;All Files (*)"
-        )
-
-        if not command_filepath:
-            return
-
-        self.in_batch_mode = True
-
-        try:
-            with open(command_filepath, 'r') as file:
-                commands = yaml.safe_load(file)
-                if not isinstance(commands, list):
-                    QMessageBox.critical(self, "Batch Command Error", "Command file must be a list of commands.")
-                    return
-
-            for command_dict in commands:
-                command_name = command_dict.get("command")
-                args = command_dict.get("args", {})
-
-                print(f"Executing command: {command_name} with args: {args}")
-
-                # Execute the command
-                if hasattr(self, command_name):
-                    # Handle specific command logic
-                    if command_name == "load_video":
-                        self.video_file = args.get("path")
-                        if self.video_file:
-                            self.initialize_loaded_video()
-                    elif command_name == "load_prediction":
-                        self.data_loader.dlc_config_filepath = args.get("dlc_config")
-                        self.data_loader.prediction_filepath = args.get("prediction_path")
-                        self.dlc_data = dugh.load_and_show_message(self, self.data_loader, mute=True)
-                        self.initialize_loaded_data()
-                    elif command_name == "save_prediction":
-                        self.save_prediction()
-                    elif command_name == "save_prediction_as_csv":
-                        self.save_prediction_as_csv()
-                    else:
-                        QMessageBox.warning(self, "Unknown Command", f"Unknown command: {command_name}. Skipping.")
-                else:
-                    QMessageBox.warning(self, "Unknown Command", f"Method not found for command: {command_name}. Skipping.")
-
-            QMessageBox.information(self, "Batch Commands", "Batch command execution finished.")
-
-        except Exception as e:
-            QMessageBox.critical(self, "Batch Command Error", f"An error occurred while loading or executing commands: {e}")
-                
-        finally:
-            self.in_batch_mode = False
 
     ###################################################################################################################################################
 
@@ -431,11 +374,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         min_y = max(0, min_y - padding)
         max_x = min(frame.shape[1] - 1, max_x + padding)
         max_y = min(frame.shape[0] - 1, max_y + padding)
-
-        # Calculate mouse center
-        mouse_center_x = (min_x + max_x) / 2
-        mouse_center_y = (min_y + max_y) / 2
-        mouse_center = (mouse_center_x, mouse_center_y)
 
         # Draw bounding box using QGraphicsRectItem
         rect_item = Selectable_Instance(min_x, min_y, max_x - min_x, max_y - min_y, inst, default_color_rgb=color)
@@ -667,46 +605,34 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.graphics_view.setCursor(Qt.CrossCursor)
         QMessageBox.information(self, "Designate No Mice Zone", "Click and drag on the video to select a zone. Release to apply.")
 
-    def segment_auto_correct(self):
+    def correct_track_using_idtrackerai(self):
         if not self._track_edit_blocker():
             return
+        folder_path = QtWidgets.QFileDialog.getExistingDirectory(self, "Select Video Folder")
+        if not folder_path:
+            return
+        
+        idt_csv = os.path.join(folder_path, "trajectories", "trajectories_csv", "trajectories.csv")
+        if not os.path.isfile(idt_csv):
+            QMessageBox.warning(self, "", "")
+        df_idt = pd.read_csv(idt_csv, header=0)
+        idt_traj_array = duh.parse_idt_df_into_ndarray(df_idt)
 
-        if self.dlc_data.instance_count < 2: # Need at least two instances for swapping to make sense
-            QMessageBox.information(self, "Info", "Less than two instances configured. Segmental auto-correction is not applicable.")
+        dialog = "Fixing track from idTracker.ai trajectories..."
+        title = f"Fix Track Using idTracker.ai"
+        progress = dugh.get_progress_dialog(self, 0, self.total_frames, title, dialog)
+
+        self.pred_data_array, changes_applied = dute.idt_track_correction(self.pred_data_array, idt_traj_array, progress)
+
+        progress.close()
+
+        if not changes_applied:
+            QMessageBox.information(self, "No Changes Applied", "No changes were applied.")
             return
 
-        QMessageBox.information(self, "Segmental Auto Correct",
-        """
-  This function works for scenarios where only one instance persistently remains in view while another goes in and out.\n
-  It will identify segments where only one instance is detected for more than a set number of frames.\n
-  Throughout and proceeding these segments, the track associated with the remaining instance will be swapped to instance 0.\n
-        """
-        )
+        QMessageBox.information(self, "Track Correction Finished", f"Applied {changes_applied} changes to the current track.")
 
-        min_segment_length, ok = QtWidgets.QInputDialog.getInt(self, "Minimum Segment Length",
-            "Enter the minimum number of frames for a segment to be considered:",
-            value=50, minValue=1, step=1)
-        if not ok:  # User cancelled the input dialog
-            return
-
-        self.check_instance_count_per_frame()
-
-        segments_to_correct = dute.find_segment_for_autocorrect(self.instance_count_per_frame, min_segment_length)
-
-        if not segments_to_correct:
-            QMessageBox.information(self, "Info", "No segments found where less than two instance is persistently detected for more than 100 frames.")
-            return
-
-        self._save_state_for_undo() # Save state before making changes
-
-        self.pred_data_array, num_corrections_applied = dute.apply_segmental_autocorrect(
-            self.pred_data_array, segments_to_correct, self.dlc_data.num_keypoint, self.dlc_data.instance_count)
-
-        QMessageBox.information(self, "Success", f"Segmental auto-correction applied to {num_corrections_applied} segments.")
-        self.is_saved = False
-        self.check_instance_count_per_frame()
-        self.display_current_frame()
-        self.reset_zoom()
+        self._on_track_data_changed()
 
     def direct_keypoint_edit(self):
         if self.pred_data_array is None:
@@ -982,7 +908,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             x1, y1, x2, y2 = int(rect.left()), int(rect.top()), int(rect.right()), int(rect.bottom())
 
             self._save_state_for_undo()
-            self.pred_data_array = dute.clean_inconsistent_nans() # Cleanup ghost points (NaN for x,y yet non-nan in confidence)
+            self.pred_data_array = dute.clean_inconsistent_nans(self.pred_data_array) # Cleanup ghost points (NaN for x,y yet non-nan in confidence)
 
             all_x_kps = self.pred_data_array[:,:,0::3]
             all_y_kps = self.pred_data_array[:,:,1::3]
@@ -1090,10 +1016,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         
         self.reload_prediction(pred_file_to_save_path)
 
-        if self.in_batch_mode:
-            print(msg)
-        else:
-            QMessageBox.information(self, "Save Successful", str(msg))
+        QMessageBox.information(self, "Save Successful", str(msg))
 
         self.is_saved = True
         self.prediction_saved.emit(self.prediction) # Emit the signal with the saved file path
@@ -1112,10 +1035,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         try:
             dio.prediction_to_csv(self.dlc_data, self.dlc_data.pred_data_array, exp_set)
             msg = f"Successfully saved modified prediction in csv to: {os.path.join(save_path, pred_file)}.csv"
-            if self.in_batch_mode:
-                print(msg)
-            else:
-                QMessageBox.information(self, "Save Successful", str(msg))
+            QMessageBox.information(self, "Save Successful", str(msg))
         except Exception as e:
             QMessageBox.critical(self, "Saving Error", f"An error occurred during csv saving: {e}")
             print(f"An error occurred during csv saving: {e}")

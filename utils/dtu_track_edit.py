@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.optimize import linear_sum_assignment
 
 from typing import List, Optional, Tuple
 
@@ -206,9 +207,159 @@ def align_poses_by_vector(relative_x: np.ndarray, relative_y: np.ndarray) -> Tup
 
 ###################################################################################################################################################
 
-def fix_track_with_idtracker(pred_data_array:np.ndarray, ):
-    pass
+def idt_track_correction(pred_data_array:np.ndarray, idt_traj_array:np.ndarray, progress) -> Tuple[np.ndarray, int]:
+    assert pred_data_array.shape[1] == idt_traj_array.shape[1], "Instance count must match between prediction and idTracker"
 
+    total_frames, instance_count, _ = pred_data_array.shape
+    pred_positions = np.full((total_frames, instance_count, 2), np.nan)
+    x_vals = pred_data_array[:, :, 0::3]
+    y_vals = pred_data_array[:, :, 1::3]
+    pred_positions[:, :, 0] = np.nanmean(x_vals, axis=2)
+    pred_positions[:, :, 1] = np.nanmean(y_vals, axis=2)
+
+    remapped_idt = remap_idt_array(pred_positions, idt_traj_array)
+    corrected_pred_data = pred_data_array.copy()
+    pred_position_curr = np.full((instance_count, 2), np.nan)
+
+    last_order = list(range(instance_count))
+    changes_applied = 0
+    for frame_idx in range(total_frames):
+        progress.setValue(frame_idx)
+        if progress.wasCanceled():
+            return pred_data_array, 0
+        
+        # Trying last order first no matter what
+        corrected_pred_data[frame_idx, :, :] = corrected_pred_data[frame_idx, last_order, :]
+
+        x_curr = corrected_pred_data[frame_idx, :, 0::3]
+        y_curr = corrected_pred_data[frame_idx, :, 1::3]
+        pred_position_curr[:, 0] = np.nanmean(x_curr, axis=1)
+        pred_position_curr[:, 1] = np.nanmean(y_curr, axis=1)
+
+        valid_pred_curr = np.all(~np.isnan(pred_position_curr), axis=1)
+        valid_idt_curr = np.all(~np.isnan(remapped_idt[frame_idx]), axis=1) 
+
+        n_pred = np.sum(valid_pred_curr)
+        n_idt  = np.sum(valid_idt_curr)
+        if n_pred != n_idt or n_pred == 0 or n_idt == 0:
+            if frame_idx == 4172:
+                print(f"4172: Skipped due to mismatch or missing data")
+                print(f"  n_pred = {n_pred}, n_idt = {n_idt}")
+            continue
+
+        if n_pred == 1:
+            if frame_idx == 4172:
+                print("4172, one instance")
+            valid_pred_inst = np.where(valid_pred_curr)[0][0]
+            valid_idt_inst = np.where(valid_idt_curr)[0][0]
+            if valid_pred_inst == valid_idt_inst:
+                if frame_idx == 4172:
+                    print(f"4172, skipped due to already aligned. valid_pred_inst: {valid_pred_inst}; valid_idt_inst:{valid_idt_inst}")
+                continue
+
+            new_order = list(range(instance_count))
+            new_order[valid_pred_inst] = valid_idt_inst
+            new_order[valid_idt_inst] = valid_pred_inst
+
+            corrected_pred_data[frame_idx, :, :] = corrected_pred_data[frame_idx, new_order, :]
+            last_order = new_order
+            
+            if frame_idx == 4172:
+                print(f"Swap instance {valid_pred_inst} to instance {valid_idt_inst} from frame {frame_idx} onwards.")
+
+            changes_applied += 1
+            continue
+
+        if frame_idx == 4172:
+            print("4172, 2 instances")
+        valid_positions_pred = pred_position_curr[valid_pred_curr]
+        valid_positions_idt  = remapped_idt[frame_idx][valid_idt_curr]
+
+        distances = np.linalg.norm(valid_positions_pred - valid_positions_idt, axis=1)
+        max_dist = 20.0
+
+        if np.all(distances < max_dist):
+            if frame_idx == 4172:
+                last_order = range(instance_count)
+                print("4172, skipped due to error within acceptavle range")
+            continue
+
+        cost_matrix = np.linalg.norm(valid_positions_pred[:, np.newaxis, :] - valid_positions_idt[np.newaxis, :, :], axis=2)
+        try:
+            row_ind, col_ind = linear_sum_assignment(cost_matrix)
+        except:
+            continue
+
+        new_order = np.arange(instance_count)
+        pred_indices = np.where(valid_pred_curr)[0]
+        idt_indices  = np.where(valid_idt_curr)[0]
+
+        for i, j in zip(row_ind, col_ind):
+            new_order[idt_indices[j]] = pred_indices[i]
+
+        new_order = new_order.tolist()
+        corrected_pred_data[frame_idx, :, :] = corrected_pred_data[frame_idx, new_order, :]
+        last_order = new_order
+        if frame_idx == 4172:
+            print(f"Rearrange order of instances from frame {frame_idx} onwards. New order: {new_order}")
+        changes_applied += 1
+        
+    return corrected_pred_data, changes_applied
+
+def remap_idt_array(pred_positions:np.ndarray, idt_traj_array:np.ndarray) -> np.ndarray:
+    total_frames, _, _ = pred_positions.shape
+
+    remapped_idt = idt_traj_array.copy()
+    valid_pred = np.all(~np.isnan(pred_positions), axis=2)
+    valid_idt = np.all(~np.isnan(idt_traj_array), axis=2) 
+
+    valid_frame_idx = None
+    for frame_idx in range(total_frames):
+        n_pred = np.sum(valid_pred[frame_idx])
+        n_idt  = np.sum(valid_idt[frame_idx])
+        if n_pred == n_idt and n_pred > 0:
+            valid_frame_idx = frame_idx
+            break
+
+    if valid_frame_idx is None:
+        raise ValueError("No frame with valid data in both arrays.")
+    
+    valid_pred_indices = np.where(valid_pred[valid_frame_idx])[0]
+    valid_idt_indices = np.where(valid_idt[valid_frame_idx])[0] 
+
+    if np.sum(valid_pred[valid_frame_idx]) == 1:
+        valid_pred_inst = valid_pred_indices[0]
+        valid_idt_inst = valid_idt_indices[0]
+        remapped_idt[:, valid_pred_inst, :], remapped_idt[:, valid_idt_inst, :] = \
+            idt_traj_array[:, valid_idt_inst, :], idt_traj_array[:, valid_pred_inst, :]
+        
+        print(f"Successfully remapped idtracker trajectory using frame {valid_frame_idx}.")
+        print(f"Mapping: idTracker instance {valid_idt_inst} → Prediction instance {valid_pred_inst}")
+
+        return remapped_idt
+        
+    p_pred = pred_positions[valid_frame_idx]
+    p_idt = idt_traj_array[valid_frame_idx]
+
+    cost_matrix = np.linalg.norm(p_pred[:, np.newaxis, :] - p_idt[np.newaxis, :, :], axis=2)
+    row_ind, col_ind = linear_sum_assignment(cost_matrix)
+
+    mapping_details = []
+    for pred_local_idx, idt_local_idx in zip(row_ind, col_ind):
+        pred_global_idx = valid_pred_indices[pred_local_idx]
+        idt_global_idx = valid_idt_indices[idt_local_idx]
+        remapped_idt[:, pred_global_idx, :] = idt_traj_array[:, idt_global_idx, :]
+        mapping_details.append((idt_global_idx, pred_global_idx))
+
+    # Optional: sort by prediction index for cleaner output
+    mapping_details.sort(key=lambda x: x[1])
+
+    print(f"Successfully remapped idtracker trajectory using frame {valid_frame_idx}.")
+    print(f"Matched using Hungarian algorithm (total cost: {cost_matrix[row_ind, col_ind].sum():.3f}):")
+    for idt_inst, pred_inst in mapping_details:
+        print(f"  idTracker instance {idt_inst:2d} → Prediction instance {pred_inst:2d}")
+
+    return remapped_idt
 
 ###################################################################################################################################################
 

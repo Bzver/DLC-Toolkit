@@ -1,8 +1,8 @@
+import pandas as pd
 import numpy as np
 import bisect
 
 from typing import List, Optional, Tuple
-from numpy.typing import NDArray
 from .dtu_dataclass import Loaded_DLC_Data, Swap_Calculation_Config
 
 def format_title(base_title: str, debug_status: bool) -> str:
@@ -88,7 +88,7 @@ def get_next_frame_in_list(frame_list:List[int], current_frame_idx:int) -> Optio
     
     return None
 
-def get_current_frame_inst(dlc_data:Loaded_DLC_Data, pred_data_array:NDArray, current_frame_idx:int) -> List[int]:
+def get_current_frame_inst(dlc_data:Loaded_DLC_Data, pred_data_array:np.ndarray, current_frame_idx:int) -> List[int]:
     current_frame_inst = []
     for inst in [ inst for inst in range(dlc_data.instance_count) ]:
         if np.any(~np.isnan(pred_data_array[current_frame_idx, inst, :])):
@@ -97,7 +97,7 @@ def get_current_frame_inst(dlc_data:Loaded_DLC_Data, pred_data_array:NDArray, cu
 
 ###########################################################################################
 
-def add_mock_confidence_score(array:NDArray) -> NDArray:
+def add_mock_confidence_score(array:np.ndarray) -> np.ndarray:
     array_dim = len(array.shape) # Always check for dimension first
     if array_dim not in (2, 3):
         raise ValueError("Input array must be 2D or 3D.")
@@ -126,7 +126,7 @@ def add_mock_confidence_score(array:NDArray) -> NDArray:
 
     return new_array
 
-def unflatten_data_array(array:NDArray, inst_count:int) -> NDArray:
+def unflatten_data_array(array:np.ndarray, inst_count:int) -> np.ndarray:
     rows, cols = array.shape
     new_array = np.full((rows, inst_count, cols // inst_count), np.nan)
 
@@ -136,7 +136,7 @@ def unflatten_data_array(array:NDArray, inst_count:int) -> NDArray:
         new_array[:, inst_idx, :] = array[:, start_col:end_col]
     return new_array
 
-def remove_confidence_score(array:NDArray):
+def remove_confidence_score(array:np.ndarray):
     array_dim = len(array.shape) # Always check for dimension first
     if array_dim == 2:
         rows, cols = array.shape
@@ -152,7 +152,7 @@ def remove_confidence_score(array:NDArray):
 
 ###########################################################################################
 
-def acquire_view_perspective_for_cur_cam(cam_pos:NDArray) -> Tuple[float, float]:
+def acquire_view_perspective_for_cur_cam(cam_pos:np.ndarray) -> Tuple[float, float]:
     hypot = np.linalg.norm(cam_pos[:2]) # Length of the vector's projection on the xy plane
     elevation = np.arctan2(cam_pos[2], hypot)
     elev_deg = np.degrees(elevation)
@@ -163,7 +163,7 @@ def acquire_view_perspective_for_cur_cam(cam_pos:NDArray) -> Tuple[float, float]
 
 ###########################################################################################
 
-def get_non_completely_nan_slice_count(arr_3D:NDArray) -> int:
+def get_non_completely_nan_slice_count(arr_3D:np.ndarray) -> int:
     if arr_3D.ndim != 3:
         raise("Error: Input array must be a 3D array!")
     not_nan = ~np.isnan(arr_3D)
@@ -176,3 +176,34 @@ def circular_mean(angles: np.ndarray) -> float:
     x = np.nanmean(np.cos(angles))
     y = np.nanmean(np.sin(angles))
     return np.arctan2(y, x)
+
+###########################################################################################
+
+def parse_idt_df_into_ndarray(df_idtracker:pd.DataFrame) ->np.ndarray:
+    """
+    Convert a DataFrame with idtracker.ai-like format to a 3D numpy array.
+    
+    Input: 
+        df_idtracker: pd.DataFrame with columns ("time", "x1", "y1", "x2", "y2", ...)
+                     where each pair (xN, yN) represents the coordinates of individual N.
+                     Index may represent frame/time.
+    
+    Output: 
+        np.ndarray of shape (num_frames, num_individuals, 2), where the last dimension is [x, y] coordinates.
+    """
+    df = df_idtracker.drop(columns="time")
+
+    x_cols = sorted([col for col in df.columns if col.startswith('x')], key=lambda x: int(x[1:]))
+    y_cols = sorted([col for col in df.columns if col.startswith('y')], key=lambda x: int(x[1:]))
+
+    assert len(x_cols) == len(y_cols), "Mismatch between x and y coordinate columns"
+
+    num_frames = len(df)
+    num_individuals = len(x_cols)
+    coords_array = np.full((num_frames, num_individuals, 2), np.nan)
+
+    for i, (x_col, y_col) in enumerate(zip(x_cols, y_cols)):
+        coords_array[:, i, 0] = df[x_col].values  # x coordinates
+        coords_array[:, i, 1] = df[y_col].values  # y coordinates
+
+    return coords_array
