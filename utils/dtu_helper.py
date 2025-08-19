@@ -9,7 +9,7 @@ from sklearn.linear_model import LinearRegression
 from typing import List, Optional, Tuple
 from .dtu_dataclass import Loaded_DLC_Data, Swap_Calculation_Config
 
-import dtu_triangulation as dutri
+from . import dtu_triangulation as dutri
 
 def format_title(base_title: str, debug_status: bool) -> str:
     if debug_status:

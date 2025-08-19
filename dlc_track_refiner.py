@@ -443,12 +443,12 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 self.navigation_title_controller()
 
     def navigation_title_controller(self):
-        title = f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | Video: {self.video_name}"
+        title_text = f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | Video: {self.video_name}"
         if self.refined_roi_frame_list and self.marked_roi_frame_list:
-            title += f"Manual Refining Progress: {len(self.refined_roi_frame_list)} / {len(self.marked_roi_frame_list)} Frames Refined"
+            title_text += f"Manual Refining Progress: {len(self.refined_roi_frame_list)} / {len(self.marked_roi_frame_list)} Frames Refined"
         if self.is_kp_edit and self.current_frame_idx:
-            title += " ----- KEYPOINTS EDITING MODE ----- "
-        self.nav_widget.setTitle(title)
+            title_text += " ----- KEYPOINTS EDITING MODE ----- "
+        self.nav_widget.setTitle(title_text)
         if self.current_frame_idx in self.refined_roi_frame_list:
             self.nav_widget.setTitleColor("#009979")  # Teal/Green for refined
         elif self.current_frame_idx in self.roi_frame_list:

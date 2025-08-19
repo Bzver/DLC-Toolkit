@@ -242,19 +242,12 @@ def idt_track_correction(pred_data_array:np.ndarray, idt_traj_array:np.ndarray, 
         n_pred = np.sum(valid_pred_curr)
         n_idt  = np.sum(valid_idt_curr)
         if n_pred != n_idt or n_pred == 0 or n_idt == 0:
-            if frame_idx == 4172:
-                print(f"4172: Skipped due to mismatch or missing data")
-                print(f"  n_pred = {n_pred}, n_idt = {n_idt}")
             continue
 
         if n_pred == 1:
-            if frame_idx == 4172:
-                print("4172, one instance")
             valid_pred_inst = np.where(valid_pred_curr)[0][0]
             valid_idt_inst = np.where(valid_idt_curr)[0][0]
             if valid_pred_inst == valid_idt_inst:
-                if frame_idx == 4172:
-                    print(f"4172, skipped due to already aligned. valid_pred_inst: {valid_pred_inst}; valid_idt_inst:{valid_idt_inst}")
                 continue
 
             new_order = list(range(instance_count))
@@ -264,14 +257,11 @@ def idt_track_correction(pred_data_array:np.ndarray, idt_traj_array:np.ndarray, 
             corrected_pred_data[frame_idx, :, :] = corrected_pred_data[frame_idx, new_order, :]
             last_order = new_order
             
-            if frame_idx == 4172:
-                print(f"Swap instance {valid_pred_inst} to instance {valid_idt_inst} from frame {frame_idx} onwards.")
+            print(f"Swap instance {valid_pred_inst} to instance {valid_idt_inst} from frame {frame_idx} onwards.")
 
             changes_applied += 1
             continue
 
-        if frame_idx == 4172:
-            print("4172, 2 instances")
         valid_positions_pred = pred_position_curr[valid_pred_curr]
         valid_positions_idt  = remapped_idt[frame_idx][valid_idt_curr]
 
@@ -279,9 +269,7 @@ def idt_track_correction(pred_data_array:np.ndarray, idt_traj_array:np.ndarray, 
         max_dist = 20.0
 
         if np.all(distances < max_dist):
-            if frame_idx == 4172:
-                last_order = range(instance_count)
-                print("4172, skipped due to error within acceptavle range")
+            last_order = range(instance_count)
             continue
 
         cost_matrix = np.linalg.norm(valid_positions_pred[:, np.newaxis, :] - valid_positions_idt[np.newaxis, :, :], axis=2)
@@ -300,11 +288,23 @@ def idt_track_correction(pred_data_array:np.ndarray, idt_traj_array:np.ndarray, 
         new_order = new_order.tolist()
         corrected_pred_data[frame_idx, :, :] = corrected_pred_data[frame_idx, new_order, :]
         last_order = new_order
-        if frame_idx == 4172:
-            print(f"Rearrange order of instances from frame {frame_idx} onwards. New order: {new_order}")
+        print(f"Rearrange order of instances from frame {frame_idx} onwards. New order: {new_order}")
         changes_applied += 1
         
     return corrected_pred_data, changes_applied
+
+def velocity_track_correction(pred_data_array:np.ndarray, progress) -> np.ndarray:
+    total_frames, instance_counts, _ = pred_data_array.shape
+    avg_velocity_array = np.full((total_frames, instance_counts), np.nan)
+
+    for frame_idx in range(total_frames):
+        progress.setValue(frame_idx)
+        if progress.wasCanceled():
+            return avg_velocity_array
+        
+        avg_velocity_array[frame_idx] = duh.calculate_temporal_velocity_2d(pred_data_array, frame_idx)
+
+    return avg_velocity_array
 
 def remap_idt_array(pred_positions:np.ndarray, idt_traj_array:np.ndarray) -> np.ndarray:
     total_frames, _, _ = pred_positions.shape
