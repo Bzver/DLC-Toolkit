@@ -606,11 +606,13 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         df_idt = pd.read_csv(idt_csv, header=0)
         idt_traj_array = duh.parse_idt_df_into_ndarray(df_idt)
 
+        self._save_state_for_undo()
+
         dialog = "Fixing track from idTracker.ai trajectories..."
         title = f"Fix Track Using idTracker.ai"
         progress = dugh.get_progress_dialog(self, 0, self.total_frames, title, dialog)
 
-        self.pred_data_array, changes_applied = dute.idt_track_correction(self.pred_data_array, idt_traj_array, progress)
+        self.pred_data_array, changes_applied = dute.idt_track_correction(self.pred_data_array, idt_traj_array, progress, self.is_debug)
 
         progress.close()
 

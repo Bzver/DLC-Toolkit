@@ -66,6 +66,11 @@ def get_config_from_calculation_mdode(mode:str, frame_idx:int, check_range:int, 
 
     return modes_config[mode]
 
+def log_print(*args, **kwargs):
+    log_file = "D:/Project/debug_log.txt"
+    with open(log_file, 'a', encoding='utf-8') as f:
+        print(*args, file=f, **kwargs)
+
 ###########################################################################################
 
 def get_prev_frame_in_list(frame_list:List[int], current_frame_idx:int) -> Optional[int]:
