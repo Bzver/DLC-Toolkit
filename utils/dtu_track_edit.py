@@ -326,7 +326,7 @@ def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray
         if progress.wasCanceled():
             return pred_data_array, 0
 
-        pred_position_curr = duh.calculate_pose_centroids(pred_data_array, frame_idx)
+        pred_position_curr = duh.calculate_pose_centroids(corrected_pred_data, frame_idx)
 
         if debug_print:
             duh.log_print(f"---------- frame: {frame_idx} ---------- ")
@@ -386,7 +386,7 @@ def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray
 
             for offset in range(1, lookback_limit + 1):
                 cand_idx = frame_idx - offset
-                pos_cand = duh.calculate_pose_centroids(pred_data_array, cand_idx)
+                pos_cand = duh.calculate_pose_centroids(corrected_pred_data, cand_idx)
                 valid_cand = np.all(~np.isnan(pos_cand), axis=1)
 
                 if np.sum(valid_cand) == instance_count:
@@ -407,9 +407,9 @@ def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray
 
             if debug_print:
                 duh.log_print(
-                    f"[TMOD] Using prior DLC frame {ref_frame_idx} as reference for Hungarian matching."
+                    f"[TMOD] Using prior DLC frame {ref_frame_idx} as reference for Hungarian matching.\n"
                     f"x,y in pred: inst 0: ({pred_position_curr[0,0]}, {pred_position_curr[0,1]})"
-                            f" | inst 1: ({pred_position_curr[1,0]}, {pred_position_curr[1,1]})"
+                            f" | inst 1: ({pred_position_curr[1,0]}, {pred_position_curr[1,1]})\n"
                     f"x,y in prev: inst 0: ({pred_position_ref[0,0]}, {pred_position_ref[0,1]})"
                                 f" | inst 1: ({pred_position_ref[1,0]}, {pred_position_ref[1,1]})"
                     )
