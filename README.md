@@ -1,6 +1,11 @@
 ## Purpose of This Toolkit
-DeepLabCut’s napari interface suffers performance issues when the number of frames exceeds a few thousand, making manual frame extraction and track refinement tortuous tasks. This toolkit addresses the problem by handling everything with PySide6 and adding several features absent from the original DeepLabCut implementation.
+DeepLabCut’s napari interface suffers performance issues when the number of frames exceeds a few thousand, making manual frame extraction and track refinement tortuous tasks. This toolkit addresses these limitations by building a high-performance GUI with PySide6 and also introducing several features absent from the original DeepLabCut workflow, such as:
 
+- Interactive 3D Skeleton Plotting (dlc_3D_plotter.py): Visualize synchronized 2D video feeds from multiple cameras alongside a live-rendered 3D skeleton, reconstructed from your 2D predictions and camera calibration data. This provides an immediate, intuitive quality check for your 3D tracking results.
+
+- Automated 3D Track Correction (dlc_3D_plotter.py): The toolkit features an auto-3D-track-correct function that automatically detects and corrects identity swaps in projects with two animals. It analyzes the 3D trajectories to resolve ambiguities that are hard to fix by looking at 2D views alone.
+
+- 2D Track Correction using idtracker.ai (dlc_track_refiner.py): A feature that allows leveraging the robust trajectory data from idtracker.ai to automatically cross-reference with DeepLabCut's pose estimation tracks, and curated integration code to ensure that the correct identity is picked.
 
 ### Prerequisites
 
@@ -38,6 +43,8 @@ A GUI application for visualizing 3D skeleton plots from multiple DeepLabCut pre
 - **Track refinement integration:** Can launch the `DLC_Track_Refiner` tool for selected camera views to correct 2D tracks.
 - **Advanced Detection Features:** Includes options to adjust confidence cutoffs, set deviance thresholds for track analysis, and calculate track swap scores.
 - **Automated Track Correction:** Provides functionality for automatic track swap correction for projects with two animals.
+- **Workspace Management:** Save and load the entire session, including file paths, settings, and progress.
+- **Data Export:** Export Center of Mass (COM) data for use in SDANNCE.
 
 #### Required Folder Structure
 The script expects a specific folder structure for videos and prediction files.
@@ -61,7 +68,7 @@ your_video_folder/
 ### dlc_frame_extract.py
 
 #### Functionality
-A GUI application for manually extracting and marking frames from a video, primarily for DLC labeling purposes.
+A GUI application for manually extracting and marking frames from a video, serving as an orchestrator of workflow and data-io between DLC and track_refiner.
 
 - **Video Loading & Display:** Supports common video formats (`.mp4`, `.avi`, `.mov`, `.mkv`). Displays video frames with real-time updates and a progress slider.
 - **DeepLabCut Integration:**
@@ -117,7 +124,7 @@ A GUI for refining DLC tracking data. It allows for manually correcting, interpo
     - **Purge Instance by Confidence:** Delete all tracks below a set confidence threshold.
     - **Interpolate All Frames for One Instance:** Apply interpolation across all frames for a selected instance.
     - **Remove All Prediction Inside Area:** Define a region of interest to remove all predictions within it.
-    - **Segmental Auto Correct:** Automated correction for segments of tracks in a specific setup.
+    - **Fix Track Using Idtrackerai Trajectories:** Utilizes trajectories from `idtracker.ai` to correct tracking errors.
 - **Preference Settings:** Allows adjustment of point size and plot visibility (opacity).
 - **Undo/Redo functionality:** Enables reverting or reapplying changes.
 - **Mark All as Refined:** A utility to mark all supploed ROI  frames ( from dlc_frame_extract ) as refined.
