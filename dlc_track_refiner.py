@@ -28,7 +28,7 @@ PRED_FILE_DEBUG = "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-convDLC_Hr
 
 class DLC_Track_Refiner(QtWidgets.QMainWindow):
     prediction_saved = Signal(str) # Signal to emit the path of the saved prediction file
-    refined_frames_exported = Signal(list) # New signal to emit the refined_roi_frame_list
+    refined_frames_exported = Signal(list) # ignal to emit the refined_roi_frame_list back to Extractor
 
     def __init__(self):
         super().__init__()
@@ -50,10 +50,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             "Refiner": {
                 "display_name": "Refine",
                 "buttons": [
-                    ("Swap Track On Current Frame (W)", lambda:self._swap_track_wrapper("point")),
-                    ("Delete Selected Track On Current Frame (X)", lambda:self._delete_track_wrapper("point")),
                     ("Interpolate Track (T)", self._interpolate_track_wrapper),
                     ("Generate Instance (G)", self._generate_track_wrapper),
+                    ("Swap Track On Current Frame (W)", lambda:self._swap_track_wrapper("point")),
+                    ("Delete Selected Track On Current Frame (X)", lambda:self._delete_track_wrapper("point")),
                     ("Swap Track Until The End (Shift + W)", lambda:self._swap_track_wrapper("batch")),
                     ("Delete Selected Track Until Next ROI (Shift + X)", lambda:self._delete_track_wrapper("batch")),
                     ("Interpolate Missing Keypoints (Shift + T)", self._interpolate_missing_kp_wrapper)
@@ -66,7 +66,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                     ("Delete All Track Below Set Confidence", self.purge_inst_by_conf),
                     ("Remove All Prediction Inside Area", self.designate_no_mice_zone),
                     ("Interpolate All Frames for One Inst", self.interpolate_all),
-                    ("Fix Track Using Idtrackerai Trajectory", self.correct_track_using_idtrackerai)
+                    ("Fix Track Using Idtrackerai Trajectories", self.correct_track_using_idtrackerai)
                 ]
             },
             "Preference": {
@@ -524,7 +524,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             return
         confidence_threshold, ok = QtWidgets.QInputDialog.getDouble(
             self,"Set Confidence Threshold","Delete all instances below this confidence:",
-            value=0.5,minValue=0.0,maxValue=1.0,decimals=2
+            value=0.5, minValue=0.0, maxValue=1.0, decimals=2
         )
 
         if not ok:
@@ -552,7 +552,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             self._save_state_for_undo()  # Save state before modification
 
             self.pred_data_array, removed_frames_count, removed_instances_count = dute.purge_by_conf_and_bp(
-                self.pred_data_array, self.dlc_data.num_keypoint, confidence_threshold, bodypart_threshold)
+                self.pred_data_array, confidence_threshold, bodypart_threshold)
             QMessageBox.information(self, "Deletion Complete", f"Deleted {removed_instances_count} instances from {removed_frames_count} frames.")
 
             self._on_track_data_changed()
@@ -567,30 +567,20 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         if not self.selected_box:
             QMessageBox.information(self, "No Track Selected", "Please select a track to interpolate all frames for one instance.")
             return
+        
+        max_gap_allowed, ok = QtWidgets.QInputDialog.getInt(
+            self,"Set Max Gap For Interpolation","Will not interpolate gap beyond this limit, set to 0 to ignore the limit.",
+            value=10, minValue=0, maxValue=1000
+        )
+
+        if not ok:
+            QMessageBox.information(self, "Input Cancelled", "Max Gap input cancelled.")
+            return
 
         instance_to_interpolate = self.selected_box.instance_id
         self._save_state_for_undo() # Save state before modification
 
-        for kp_idx in range(self.dlc_data.num_keypoint):
-            # Extract x, y, confidence for the current keypoint and instance across all frames
-            x_coords = self.pred_data_array[:, instance_to_interpolate, kp_idx*3]
-            y_coords = self.pred_data_array[:, instance_to_interpolate, kp_idx*3+1]
-            conf_values = self.pred_data_array[:, instance_to_interpolate, kp_idx*3+2]
-
-            # Convert to pandas Series for interpolation
-            x_series = pd.Series(x_coords)
-            y_series = pd.Series(y_coords)
-            conf_series = pd.Series(conf_values)
-
-            # Interpolate NaNs
-            x_interpolated = x_series.interpolate(method='linear', limit_direction='both').values
-            y_interpolated = y_series.interpolate(method='linear', limit_direction='both').values
-            conf_interpolated = conf_series.interpolate(method='linear', limit_direction='both').values
-
-            # Update the pred_data_array
-            self.pred_data_array[:, instance_to_interpolate, kp_idx*3] = x_interpolated
-            self.pred_data_array[:, instance_to_interpolate, kp_idx*3+1] = y_interpolated
-            self.pred_data_array[:, instance_to_interpolate, kp_idx*3+2] = conf_interpolated
+        self.pred_data_array = dute.interpolate_track_all(self.pred_data_array, instance_to_interpolate, max_gap_allowed)
 
         self._on_track_data_changed()
         self.reset_zoom()
@@ -803,8 +793,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             QMessageBox.information(self, "No Missing Instances", "No missing instances found in the current frame to fill.")
             return
         
-        self.pred_data_array = dute.generate_track(
-            self.pred_data_array, self.current_frame_idx, missing_instances, self.dlc_data.num_keypoint)
+        self.pred_data_array = dute.generate_track(self.pred_data_array, self.current_frame_idx, missing_instances)
         self._on_track_data_changed()
 
     def _interpolate_missing_kp_wrapper(self):

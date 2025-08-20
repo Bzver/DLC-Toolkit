@@ -1,3 +1,4 @@
+import pandas as pd
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
@@ -59,26 +60,29 @@ def interpolate_track(pred_data_array:np.ndarray, frames_to_interpolate:List[int
     
     return pred_data_array
         
-def generate_track(pred_data_array:np.ndarray, current_frame_idx:int, missing_instances:List[int], num_keypoint:int) -> np.ndarray:
+def generate_track(pred_data_array:np.ndarray, current_frame_idx:int, missing_instances:List[int]) -> np.ndarray:
     for instance_idx in missing_instances:
-        avg_pose = get_average_pose(pred_data_array, instance_idx, num_keypoint, frame_idx=current_frame_idx)
+        avg_pose = get_average_pose(pred_data_array, instance_idx, frame_idx=current_frame_idx)
         pred_data_array[current_frame_idx, instance_idx, :] = avg_pose
 
     return pred_data_array
 
 def interpolate_missing_keypoints(pred_data_array:np.ndarray, current_frame_idx:int, selected_instance_idx:int) -> np.ndarray:
-    num_keypoints = pred_data_array.shape[2] // 3
+    num_keypoint = pred_data_array.shape[2] // 3
     missing_keypoints = []
-    for keypoint_idx in range(num_keypoints):
+    for keypoint_idx in range(num_keypoint):
         confidence_idx = keypoint_idx * 3 + 2
         confidence = pred_data_array[current_frame_idx, selected_instance_idx, confidence_idx]
         if np.isnan(confidence) or confidence < 0.1:
             missing_keypoints.append(keypoint_idx)
 
+    if not missing_keypoints:
+        return pred_data_array
+
     # Interpolate keypoint coordinates
     for keypoint_idx in missing_keypoints:
         try:
-            average_pose = get_average_pose(pred_data_array, selected_instance_idx, pred_data_array.shape[2] // 3, frame_idx=current_frame_idx)
+            average_pose = get_average_pose(pred_data_array, selected_instance_idx, frame_idx=current_frame_idx)
             pred_data_array[current_frame_idx, selected_instance_idx, keypoint_idx * 3:keypoint_idx * 3 + 3] = average_pose[keypoint_idx * 3:keypoint_idx * 3 + 3]
         except ValueError:
             # get_average_pose failed, use default values (0, 0, 1)
@@ -89,10 +93,11 @@ def interpolate_missing_keypoints(pred_data_array:np.ndarray, current_frame_idx:
 
 ###################################################################################################################################################
 
-def purge_by_conf_and_bp(pred_data_array:np.ndarray, num_keypoint:int,
-                         confidence_threshold:float, bodypart_threshold:int) -> Tuple[np.ndarray, int, int]:
+def purge_by_conf_and_bp(pred_data_array:np.ndarray, confidence_threshold:float, bodypart_threshold:int
+        ) -> Tuple[np.ndarray, int, int]:
     # Calculate a mask for low confidence instances
-    confidence_scores = pred_data_array[:, :, 2:num_keypoint*3:3]
+    num_keypoint = pred_data_array.shape[2] // 3
+    confidence_scores = pred_data_array[:, :, 2::3]
     inst_conf_all = np.nanmean(confidence_scores, axis=2)
     low_conf_mask = inst_conf_all < confidence_threshold
 
@@ -110,6 +115,77 @@ def purge_by_conf_and_bp(pred_data_array:np.ndarray, num_keypoint:int,
     f_idx, i_idx = np.where(removal_mask)
     pred_data_array[f_idx, i_idx, :] = np.nan
     return pred_data_array, removed_frames_count, removed_instances_count
+
+def interpolate_track_all(pred_data_array:np.ndarray, selected_instance_idx:int, max_gap:int) -> np.ndarray:
+    if max_gap == 0: # Interpolate all gaps regardless of length (no gap limit)
+        return interpolation_pd_operator(pred_data_array, selected_instance_idx, slice(None))
+
+    # First find all nan gaps
+    all_nans = np.isnan(pred_data_array[:, selected_instance_idx, :])
+    all_nan_frames = np.all(all_nans, axis=1)
+    partial_nan_frames = np.any(all_nans, axis=1) & ~all_nan_frames
+    
+    # Interpolate the partial nan frames using average pose
+    partial_nan_indices = np.where(partial_nan_frames)[0]
+    for frame_idx in partial_nan_indices:
+        interpolate_missing_keypoints(pred_data_array, frame_idx, selected_instance_idx)
+    
+    # Identify gap lengths
+    padded = np.concatenate(([False], all_nan_frames, [False]))
+    deltas = np.diff(padded.astype(np.int8))  # or np.int64
+    gap_starts = np.where(deltas == 1)[0]
+    gap_ends = np.where(deltas == -1)[0]
+
+    assert len(gap_starts) == len(gap_ends), f"Mismatched starts and ends. gap_starts: {len(gap_starts)}, gap_ends: {len(gap_ends)}"
+
+    # Build gap DataFrame and filter gaps longer than max_gap
+    gap_data = []
+    for start, end in zip(gap_starts, gap_ends):
+        gap_data.append({'Gap_Start': start, 'Gap_End': end, 'Length': end - start})
+    gaps_df = pd.DataFrame(gap_data)
+
+    if gaps_df.empty:
+        print(f"No gap found for instance {selected_instance_idx}.")
+        return pred_data_array
+        
+    for _, row in gaps_df.iterrows():
+        start, end, length = int(row['Gap_Start']), int(row['Gap_End']), row['Length']
+        if length > max_gap:
+            continue
+
+        total_frames = pred_data_array.shape[0]
+        context = 10
+        window_start = max(0, start - context)
+        window_end   = min(total_frames, end + context)    
+        gap_slice = slice(window_start, window_end)
+        pred_data_array = interpolation_pd_operator(pred_data_array, selected_instance_idx, gap_slice)
+        
+    return pred_data_array
+
+def interpolation_pd_operator(pred_data_array:np.ndarray, selected_instance_idx:int, interpolation_range:slice) -> np.ndarray:
+    num_keypoint = pred_data_array.shape[2] // 3
+    for kp_idx in range(num_keypoint):
+        # Extract x, y, confidence for the current keypoint and instance across all frames
+        x_coords = pred_data_array[interpolation_range, selected_instance_idx, kp_idx*3]
+        y_coords = pred_data_array[interpolation_range, selected_instance_idx, kp_idx*3+1]
+        conf_values = pred_data_array[interpolation_range, selected_instance_idx, kp_idx*3+2]
+
+        # Convert to pandas Series for interpolation
+        x_series = pd.Series(x_coords)
+        y_series = pd.Series(y_coords)
+        conf_series = pd.Series(conf_values)
+
+        # Interpolate NaNs
+        x_interpolated = x_series.interpolate(method='linear', limit_direction='both').values
+        y_interpolated = y_series.interpolate(method='linear', limit_direction='both').values
+        conf_interpolated = conf_series.interpolate(method='linear', limit_direction='both').values
+
+        # Update the pred_data_array
+        pred_data_array[interpolation_range, selected_instance_idx, kp_idx*3] = x_interpolated
+        pred_data_array[interpolation_range, selected_instance_idx, kp_idx*3+1] = y_interpolated
+        pred_data_array[interpolation_range, selected_instance_idx, kp_idx*3+2] = conf_interpolated
+    
+    return pred_data_array
 
 ###################################################################################################################################################
 
@@ -132,13 +208,13 @@ def get_pose_window(frame_idx:int, total_frames:int, pose_range:int):
 
     return list(range(min_frame, max_frame))
 
-def get_average_pose(pred_data_array:np.ndarray, selected_instance_idx:int, num_keypoint:int, frame_idx:int) -> np.ndarray:
+def get_average_pose(pred_data_array:np.ndarray, selected_instance_idx:int, frame_idx:int) -> np.ndarray:
     pose_range = 30
     pose_window = get_pose_window(frame_idx, len(pred_data_array), pose_range)
     inst_array = pred_data_array[pose_window, selected_instance_idx:selected_instance_idx+1, :]
 
     # Purge the data for frames with low confidence or too few body parts
-    inst_array_filtered, removed_frames_count, removed_instances_count = purge_by_conf_and_bp(inst_array, num_keypoint, 0.6, 80)
+    inst_array_filtered, _, _ = purge_by_conf_and_bp(inst_array, 0.6, 80)
     non_purged_frame_count = duh.get_non_completely_nan_slice_count(inst_array_filtered)
 
     max_attempts = 10
@@ -147,19 +223,18 @@ def get_average_pose(pred_data_array:np.ndarray, selected_instance_idx:int, num_
         pose_range *= 2
         pose_window = get_pose_window(frame_idx, len(pred_data_array), pose_range)
         inst_array = pred_data_array[pose_window, selected_instance_idx:selected_instance_idx+1, :]
-        inst_array_filtered, removed_frames_count, removed_instances_count = purge_by_conf_and_bp(inst_array, num_keypoint, 0.6, 80)
+        inst_array_filtered, _, _ = purge_by_conf_and_bp(inst_array, 0.6, 80)
         non_purged_frame_count = duh.get_non_completely_nan_slice_count(inst_array_filtered)
         attempt += 1
 
     if non_purged_frame_count <= 50:
         raise ValueError("Not enough valid frames to compute average pose, even after expanding window.")
 
-    print(f'Ignored {removed_instances_count} instances on {removed_frames_count} frames for pose calculation,')
     inst_array_filtered = np.squeeze(inst_array_filtered)
 
     # Separate coordinates and confidence scores
-    conf_scores = inst_array_filtered[:, 2:num_keypoint*3:3]
-    relative_x, relative_y, centroid_x, centroid_y = normalize_poses_by_centroid(inst_array_filtered, num_keypoint)
+    conf_scores = inst_array_filtered[:, 2::3]
+    relative_x, relative_y, centroid_x, centroid_y = normalize_poses_by_centroid(inst_array_filtered)
     rotated_relative_x, rotated_relative_y, rotation_angles = align_poses_by_vector(relative_x, relative_y)
 
     avg_relative_x = np.nanmean(rotated_relative_x, axis=0)
@@ -176,10 +251,10 @@ def get_average_pose(pred_data_array:np.ndarray, selected_instance_idx:int, num_
     average_pose = np.stack([avg_absolute_x, avg_absolute_y, avg_conf], axis=-1).flatten()
     return average_pose
 
-def normalize_poses_by_centroid(inst_array_filtered: np.ndarray, num_keypoint: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def normalize_poses_by_centroid(inst_array_filtered: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Calculates centroids and normalizes poses relative to them."""
-    x_coords = inst_array_filtered[:, 0:num_keypoint*3:3]
-    y_coords = inst_array_filtered[:, 1:num_keypoint*3:3]
+    x_coords = inst_array_filtered[:, 0::3]
+    y_coords = inst_array_filtered[:, 1::3]
     
     centroid_x = np.nanmean(x_coords, axis=1)
     centroid_y = np.nanmean(y_coords, axis=1) 
@@ -257,7 +332,7 @@ def idt_track_correction(pred_data_array:np.ndarray, idt_traj_array:np.ndarray, 
             corrected_pred_data[frame_idx, :, :] = corrected_pred_data[frame_idx, new_order, :]
             last_order = new_order
             
-            print(f"Swap instance {valid_pred_inst} to instance {valid_idt_inst} from frame {frame_idx} onwards.")
+            print(f"Swap instance {valid_pred_inst} to instance {valid_idt_inst} from frame {frame_idx}.")
 
             changes_applied += 1
             continue
@@ -292,7 +367,7 @@ def idt_track_correction(pred_data_array:np.ndarray, idt_traj_array:np.ndarray, 
         
     return corrected_pred_data, changes_applied
 
-def velocity_track_correction(pred_data_array:np.ndarray, progress) -> np.ndarray:
+def velocity_track_correction(pred_data_array:np.ndarray, progress) -> np.ndarray: # Unused
     total_frames, instance_counts, _ = pred_data_array.shape
     avg_velocity_array = np.full((total_frames, instance_counts), np.nan)
 
