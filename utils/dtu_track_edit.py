@@ -312,15 +312,10 @@ def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray
     assert pred_data_array.shape[1] == idt_traj_array.shape[1], "Instance count must match between prediction and idTracker"
 
     total_frames, instance_count, _ = pred_data_array.shape
-    pred_positions = np.full((total_frames, instance_count, 2), np.nan)
-    x_vals = pred_data_array[:, :, 0::3]
-    y_vals = pred_data_array[:, :, 1::3]
-    pred_positions[:, :, 0] = np.nanmean(x_vals, axis=2)
-    pred_positions[:, :, 1] = np.nanmean(y_vals, axis=2)
+    pred_positions = duh.calculate_pose_centroids(pred_data_array)
 
     remapped_idt = remap_idt_array(pred_positions, idt_traj_array)
     corrected_pred_data = pred_data_array.copy()
-    pred_position_curr = np.full((instance_count, 2), np.nan)
 
     last_order = list(range(instance_count))
     changes_applied = 0
@@ -331,10 +326,7 @@ def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray
         if progress.wasCanceled():
             return pred_data_array, 0
 
-        x_curr = corrected_pred_data[frame_idx, :, 0::3]
-        y_curr = corrected_pred_data[frame_idx, :, 1::3]
-        pred_position_curr[:, 0] = np.nanmean(x_curr, axis=1)
-        pred_position_curr[:, 1] = np.nanmean(y_curr, axis=1)
+        pred_position_curr = duh.calculate_pose_centroids(pred_data_array, frame_idx)
 
         if debug_print:
             duh.log_print(f"---------- frame: {frame_idx} ---------- ")
@@ -394,11 +386,7 @@ def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray
 
             for offset in range(1, lookback_limit + 1):
                 cand_idx = frame_idx - offset
-                x_cand = corrected_pred_data[cand_idx, :, 0::3]
-                y_cand = corrected_pred_data[cand_idx, :, 1::3]
-                pos_cand = np.full((instance_count, 2), np.nan)
-                pos_cand[:, 0] = np.nanmean(x_cand, axis=1)
-                pos_cand[:, 1] = np.nanmean(y_cand, axis=1)
+                pos_cand = duh.calculate_pose_centroids(pred_data_array, cand_idx)
                 valid_cand = np.all(~np.isnan(pos_cand), axis=1)
 
                 if np.sum(valid_cand) == instance_count:
@@ -463,8 +451,8 @@ def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray
         
     return corrected_pred_data, changes_applied
 
-def remap_idt_array(pred_positions:np.ndarray, idt_traj_array:np.ndarray) -> np.ndarray:
-    total_frames, _, _ = pred_positions.shape
+def remap_idt_array(pred_positions:np.ndarray, idt_traj_array:np.ndarray) -> np.ndarray: # Version 2
+    total_frames, instance_count, _ = pred_positions.shape
 
     remapped_idt = idt_traj_array.copy()
     valid_pred = np.all(~np.isnan(pred_positions), axis=2)
@@ -474,27 +462,13 @@ def remap_idt_array(pred_positions:np.ndarray, idt_traj_array:np.ndarray) -> np.
     for frame_idx in range(total_frames):
         n_pred = np.sum(valid_pred[frame_idx])
         n_idt  = np.sum(valid_idt[frame_idx])
-        if n_pred == n_idt and n_pred > 0:
+        if n_pred == n_idt and n_pred == instance_count: # Only use frames with all instances present
             valid_frame_idx = frame_idx
             break
 
     if valid_frame_idx is None:
         raise ValueError("No frame with valid data in both arrays.")
-    
-    valid_pred_indices = np.where(valid_pred[valid_frame_idx])[0]
-    valid_idt_indices = np.where(valid_idt[valid_frame_idx])[0] 
 
-    if np.sum(valid_pred[valid_frame_idx]) == 1:
-        valid_pred_inst = valid_pred_indices[0]
-        valid_idt_inst = valid_idt_indices[0]
-        remapped_idt[:, valid_pred_inst, :], remapped_idt[:, valid_idt_inst, :] = \
-            idt_traj_array[:, valid_idt_inst, :], idt_traj_array[:, valid_pred_inst, :]
-        
-        print(f"Successfully remapped idtracker trajectory using frame {valid_frame_idx}.")
-        print(f"Mapping: idTracker instance {valid_idt_inst} → Prediction instance {valid_pred_inst}")
-
-        return remapped_idt
-        
     p_pred = pred_positions[valid_frame_idx]
     p_idt = idt_traj_array[valid_frame_idx]
 
@@ -502,13 +476,9 @@ def remap_idt_array(pred_positions:np.ndarray, idt_traj_array:np.ndarray) -> np.
     row_ind, col_ind = linear_sum_assignment(cost_matrix)
 
     mapping_details = []
-    for pred_local_idx, idt_local_idx in zip(row_ind, col_ind):
-        pred_global_idx = valid_pred_indices[pred_local_idx]
-        idt_global_idx = valid_idt_indices[idt_local_idx]
-        remapped_idt[:, pred_global_idx, :] = idt_traj_array[:, idt_global_idx, :]
-        mapping_details.append((idt_global_idx, pred_global_idx))
-
-    # Optional: sort by prediction index for cleaner output
+    for pred_inst, idt_inst in zip(row_ind, col_ind):
+        remapped_idt[:, pred_inst, :] = idt_traj_array[:, idt_inst, :]
+        mapping_details.append((pred_inst, idt_inst))
     mapping_details.sort(key=lambda x: x[1])
 
     print(f"Successfully remapped idtracker trajectory using frame {valid_frame_idx}.")

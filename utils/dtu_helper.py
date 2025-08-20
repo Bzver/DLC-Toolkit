@@ -161,35 +161,6 @@ def remove_confidence_score(array:np.ndarray):
         new_array[:,:,1::2] = array[:,:,1::3]
     return new_array
 
-###########################################################################################
-
-def acquire_view_perspective_for_cur_cam(cam_pos:np.ndarray) -> Tuple[float, float]:
-    hypot = np.linalg.norm(cam_pos[:2]) # Length of the vector's projection on the xy plane
-    elevation = np.arctan2(cam_pos[2], hypot)
-    elev_deg = np.degrees(elevation)
-    # Calculate azimuth (angle in the xy plane)
-    azimuth = np.arctan2(cam_pos[1], cam_pos[0])
-    azim_deg = np.degrees(azimuth)
-    return elev_deg, azim_deg
-
-###########################################################################################
-
-def get_non_completely_nan_slice_count(arr_3D:np.ndarray) -> int:
-    if arr_3D.ndim != 3:
-        raise("Error: Input array must be a 3D array!")
-    not_nan = ~np.isnan(arr_3D)
-    has_non_nan = np.any(not_nan, axis=(1,2))
-    count = np.sum(has_non_nan)
-    return count
-
-def circular_mean(angles: np.ndarray) -> float:
-    """Compute mean of angles in radians."""
-    x = np.nanmean(np.cos(angles))
-    y = np.nanmean(np.sin(angles))
-    return np.arctan2(y, x)
-
-###########################################################################################
-
 def parse_idt_df_into_ndarray(df_idtracker:pd.DataFrame) ->np.ndarray:
     """
     Convert a DataFrame with idtracker.ai-like format to a 3D numpy array.
@@ -218,6 +189,33 @@ def parse_idt_df_into_ndarray(df_idtracker:pd.DataFrame) ->np.ndarray:
         coords_array[:, i, 1] = df[y_col].values  # y coordinates
 
     return coords_array
+
+###########################################################################################
+
+def acquire_view_perspective_for_cur_cam(cam_pos:np.ndarray) -> Tuple[float, float]:
+    hypot = np.linalg.norm(cam_pos[:2]) # Length of the vector's projection on the xy plane
+    elevation = np.arctan2(cam_pos[2], hypot)
+    elev_deg = np.degrees(elevation)
+    # Calculate azimuth (angle in the xy plane)
+    azimuth = np.arctan2(cam_pos[1], cam_pos[0])
+    azim_deg = np.degrees(azimuth)
+    return elev_deg, azim_deg
+
+###########################################################################################
+
+def get_non_completely_nan_slice_count(arr_3D:np.ndarray) -> int:
+    if arr_3D.ndim != 3:
+        raise("Error: Input array must be a 3D array!")
+    not_nan = ~np.isnan(arr_3D)
+    has_non_nan = np.any(not_nan, axis=(1,2))
+    count = np.sum(has_non_nan)
+    return count
+
+def circular_mean(angles: np.ndarray) -> float:
+    """Compute mean of angles in radians."""
+    x = np.nanmean(np.cos(angles))
+    y = np.nanmean(np.sin(angles))
+    return np.arctan2(y, x)
 
 #########################################################################################################################################################1
 
@@ -258,8 +256,29 @@ def calculate_identity_swap_score_per_frame(keypoint_data_tr:dict, valid_view:in
         
     return total_diffs_per_pair[deviant_pair_idx]
 
+def calculate_pose_centroids(pred_data_array:np.ndarray, frame_idx:Optional[int]=None) -> np.ndarray:
+    total_frames, instance_count, _ = pred_data_array.shape
+    if frame_idx is None:
+        frame_slice = slice(None)
+        pose_centroids = np.full((total_frames, instance_count, 2), np.nan)
+    else:
+        frame_slice = frame_idx
+        pose_centroids = np.full((instance_count, 2), np.nan)
+    
+    x_vals = pred_data_array[frame_slice, :, 0::3]
+    y_vals = pred_data_array[frame_slice, :, 1::3]
+
+    if frame_idx is None:
+        pose_centroids[:, :, 0] = np.nanmean(x_vals, axis=2)
+        pose_centroids[:, :, 1] = np.nanmean(y_vals, axis=2)
+    else:
+        pose_centroids[:, 0] = np.nanmean(x_vals, axis=1)
+        pose_centroids[:, 1] = np.nanmean(y_vals, axis=1)
+        
+    return pose_centroids
+
 def calculate_temporal_velocity_2d(pred_data_array: np.ndarray, frame_idx: int, check_window: int = 5, 
-    min_valid_frames: int = 2, smoothing: bool = True, sigma: float = 0.8) -> np.ndarray:
+    min_valid_frames: int = 2, smoothing: bool = True, sigma: float = 0.8) -> np.ndarray: # Unused
     """
     Calculates an averaged velocity-based motion score for each instance in 2D,
     using linear regression over recent trajectories within a time window.
