@@ -131,6 +131,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.nav_widget.set_collapsed(True)
 
         # Connect buttons to events
+        self.nav_widget.frame_changed_sig.connect(self.change_frame)
+        self.nav_widget.prev_marked_frame_sig.connect(lambda:self._navigate_marked_frames("prev"))
+        self.nav_widget.next_marked_frame_sig.connect(lambda:self._navigate_marked_frames("next"))
+
         self.undo_button.clicked.connect(self.undo_changes)
         self.redo_button.clicked.connect(self.redo_changes)
         self.magnifier_button.clicked.connect(self.toggle_zoom_mode)
