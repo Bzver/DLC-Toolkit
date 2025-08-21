@@ -684,8 +684,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                     self.skipped_frame_list.append(frame_idx)
                 continue
 
-            swap_score = duh.calculate_identity_swap_score_per_frame(
-                keypoint_data_tr, valid_view, self.dlc_data.instance_count, self.dlc_data.num_keypoint, self.num_cam)
+            swap_score = duh.calculate_identity_swap_score_per_frame(keypoint_data_tr, valid_view, self.dlc_data.instance_count, self.dlc_data.num_keypoint)
             
             self.swap_detection_score_array[frame_idx, 1] = swap_score
             calculated_frame_count += 1
