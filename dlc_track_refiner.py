@@ -198,7 +198,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.dragged_keypoint, self.dragged_bounding_box = None, None
         
         self.undo_stack, self.redo_stack = [], []
-        self.max_undo_stack_size = 50
+        self.max_undo_stack_size = 100
         self.is_saved = True
 
         self.is_zoom_mode = False
@@ -797,7 +797,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         if self.pred_data_array is None:
             QMessageBox.warning(self, "Error", "Prediction data not loaded. Please load a prediction file first.")
             return False
-        
+
+        self._save_state_for_undo()
+
         current_frame_inst = duh.get_current_frame_inst(self.dlc_data, self.pred_data_array, self.current_frame_idx)
         missing_instances = [inst for inst in range(self.dlc_data.instance_count) if inst not in current_frame_inst]
         if not missing_instances:

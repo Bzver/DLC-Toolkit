@@ -11,6 +11,8 @@ def navigate_to_marked_frame(parent:object, frame_list:List[int], current_frame_
     if not frame_list:
         QMessageBox.warning(parent, "No Marked Frames", "No marked frames to navigate.")
         return
+    
+    frame_list.sort()
 
     if mode == "prev":
         dest_frame_idx = duh.get_prev_frame_in_list(frame_list, current_frame_idx)
