@@ -62,9 +62,18 @@ def interpolate_track(pred_data_array:np.ndarray, frames_to_interpolate:List[int
         
 def generate_track(pred_data_array:np.ndarray, current_frame_idx:int, missing_instances:List[int]) -> np.ndarray:
     for instance_idx in missing_instances:
-        avg_pose = get_average_pose(pred_data_array, instance_idx, frame_idx=current_frame_idx)
-        pred_data_array[current_frame_idx, instance_idx, :] = avg_pose
+        average_pose = get_average_pose(pred_data_array, instance_idx, frame_idx=current_frame_idx)
+        pred_data_array[current_frame_idx, instance_idx, :] = average_pose
 
+    return pred_data_array
+
+def rotate_track(pred_data_array:np.ndarray, frame_idx:int, selected_instance_idx:int, angle:float) -> np.ndarray:
+    conf_scores = pred_data_array[frame_idx, selected_instance_idx, 2::3]
+    pose_centroids, local_coords = duh.calculate_pose_centroids(pred_data_array, frame_idx)
+    pose_centroids = pose_centroids[selected_instance_idx, :]
+    local_coords = local_coords[selected_instance_idx, :]
+    pose_rotated = duh.track_rotation_worker(angle, pose_centroids, local_coords, conf_scores)
+    pred_data_array[frame_idx, selected_instance_idx, :] = pose_rotated
     return pred_data_array
 
 def interpolate_missing_keypoints(pred_data_array:np.ndarray, current_frame_idx:int, selected_instance_idx:int) -> np.ndarray:
@@ -82,7 +91,8 @@ def interpolate_missing_keypoints(pred_data_array:np.ndarray, current_frame_idx:
     # Interpolate keypoint coordinates
     for keypoint_idx in missing_keypoints:
         try:
-            average_pose = get_average_pose(pred_data_array, selected_instance_idx, frame_idx=current_frame_idx)
+            average_pose = get_average_pose(pred_data_array, selected_instance_idx, frame_idx=current_frame_idx, 
+                initial_pose_range=5, confidence_threshold=0.3, bodypart_threshold=50, max_attempts=20, valid_frames_threshold=10)
             pred_data_array[current_frame_idx, selected_instance_idx, keypoint_idx * 3:keypoint_idx * 3 + 3] = average_pose[keypoint_idx * 3:keypoint_idx * 3 + 3]
         except ValueError:
             # get_average_pose failed, use default values (0, 0, 1)
@@ -189,7 +199,7 @@ def interpolation_pd_operator(pred_data_array:np.ndarray, selected_instance_idx:
 
 ###################################################################################################################################################
 
-def get_pose_window(frame_idx:int, total_frames:int, pose_range:int):
+def get_pose_window(frame_idx:int, total_frames:int, pose_range:int) -> slice:
     min_frame = frame_idx - pose_range
     max_frame = frame_idx + pose_range + 1
 
@@ -206,79 +216,72 @@ def get_pose_window(frame_idx:int, total_frames:int, pose_range:int):
     min_frame = max(0, min_frame)
     max_frame = min(total_frames, max_frame)
 
-    return list(range(min_frame, max_frame))
+    return slice(min_frame, max_frame)
 
-def get_average_pose(pred_data_array:np.ndarray, selected_instance_idx:int, frame_idx:int) -> np.ndarray:
-    pose_range = 30
-    pose_window = get_pose_window(frame_idx, len(pred_data_array), pose_range)
-    inst_array = pred_data_array[pose_window, selected_instance_idx:selected_instance_idx+1, :]
+def get_average_pose(
+        pred_data_array:np.ndarray, selected_instance_idx:int, frame_idx:int,
+        initial_pose_range:int = 30,
+        confidence_threshold:float = 0.6,
+        bodypart_threshold:int = 80,
+        max_attempts:int = 10,
+        valid_frames_threshold:int = 30
+        ) -> np.ndarray:
+    """
+    Compute a rotation-normalized average pose for a specific instance around a given frame.
 
-    # Purge the data for frames with low confidence or too few body parts
-    inst_array_filtered, _, _ = purge_by_conf_and_bp(inst_array, 0.6, 80)
-    non_purged_frame_count = duh.get_non_completely_nan_slice_count(inst_array_filtered)
+    The pose is aligned using directional consistency (e.g., shoulder-hip vector) and averaged
+    in a canonical orientation.
 
-    max_attempts = 10
+    Args:
+        pred_data_array: (F, I, K*3)
+        selected_instance_idx: Index of the instance to average
+        frame_idx: Center frame of temporal window
+        initial_pose_range: Initial half-window size (± frames)
+        confidence_threshold: Min confidence to count a keypoint
+        bodypart_threshold: Min valid keypoints per frame to keep
+        max_attempts: Max times to double window size
+        valid_frames_threshold: Min number of valid frames required
+    Returns:
+        average_pose: (K*3,) array — mean pose in aligned orientation
+    """
+    pose_range = initial_pose_range
     attempt = 0
-    while non_purged_frame_count <= 50 and attempt < max_attempts:
-        pose_range *= 2
+
+    while attempt < max_attempts:
         pose_window = get_pose_window(frame_idx, len(pred_data_array), pose_range)
-        inst_array = pred_data_array[pose_window, selected_instance_idx:selected_instance_idx+1, :]
-        inst_array_filtered, _, _ = purge_by_conf_and_bp(inst_array, 0.6, 80)
-        non_purged_frame_count = duh.get_non_completely_nan_slice_count(inst_array_filtered)
+        pred_data_sliced = pred_data_array[pose_window]  # Shape: (W, N, D)
+
+        # Filter frames based on confidence and body part count
+        pred_data_filtered, _, _ = purge_by_conf_and_bp(pred_data_sliced, confidence_threshold, bodypart_threshold)
+
+        # Extract only the selected instance for frame validity check
+        inst_slice = pred_data_filtered[:, selected_instance_idx:selected_instance_idx+1, :]
+        non_purged_frame_count = duh.get_non_completely_nan_slice_count(inst_slice)
+
+        if non_purged_frame_count > valid_frames_threshold:
+            break
+
+        pose_range *= 2
         attempt += 1
+    else:
+        raise ValueError(
+            f"Only {non_purged_frame_count} valid frames found for instance {selected_instance_idx} "
+            f"around frame {frame_idx}, less than required {valid_frames_threshold}, "
+            f"even after expanding to ±{initial_pose_range * (2 ** max_attempts)} frames."
+        )
 
-    if non_purged_frame_count <= 50:
-        raise ValueError("Not enough valid frames to compute average pose, even after expanding window.")
+    inst_data = pred_data_filtered[:, selected_instance_idx, :]  # (W', K*3)
+    conf_scores = inst_data[:, 2::3]  # (W', K)
 
-    inst_array_filtered = np.squeeze(inst_array_filtered)
+    centroids, local_coords = duh.calculate_pose_centroids(inst_data[:, np.newaxis, :]) # inst data is already sliced, no need to slice again
 
-    # Separate coordinates and confidence scores
-    conf_scores = inst_array_filtered[:, 2::3]
-    relative_x, relative_y, centroid_x, centroid_y = normalize_poses_by_centroid(inst_array_filtered)
-    rotated_relative_x, rotated_relative_y, rotation_angles = align_poses_by_vector(relative_x, relative_y)
-
-    avg_relative_x = np.nanmean(rotated_relative_x, axis=0)
-    avg_relative_y = np.nanmean(rotated_relative_y, axis=0)
-    avg_conf = np.nanmean(conf_scores, axis=0)
+    centroids = np.squeeze(centroids, axis=1)  # (W', 2)
+    local_coords = np.squeeze(local_coords, axis=1)  # (W', K*2)
+    aligned_local, rotation_angles = duh.align_poses_by_vector(local_coords)
     avg_angle = duh.circular_mean(rotation_angles)
-    cos_a, sin_a = np.cos(avg_angle), np.sin(avg_angle)
+    average_pose = duh.track_rotation_worker(avg_angle, centroids, aligned_local, conf_scores)
 
-    avg_centroid_x, avg_centroid_y = np.nanmean(centroid_x, axis=0), np.nanmean(centroid_y, axis=0)
-
-    avg_absolute_x = avg_relative_x * cos_a - avg_relative_y * sin_a + avg_centroid_x
-    avg_absolute_y = avg_relative_x * sin_a + avg_relative_y * cos_a + avg_centroid_y
-
-    average_pose = np.stack([avg_absolute_x, avg_absolute_y, avg_conf], axis=-1).flatten()
     return average_pose
-
-def normalize_poses_by_centroid(inst_array_filtered: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Calculates centroids and normalizes poses relative to them."""
-    x_coords = inst_array_filtered[:, 0::3]
-    y_coords = inst_array_filtered[:, 1::3]
-    
-    centroid_x = np.nanmean(x_coords, axis=1)
-    centroid_y = np.nanmean(y_coords, axis=1) 
-    
-    relative_x = x_coords - centroid_x[:, np.newaxis]
-    relative_y = y_coords - centroid_y[:, np.newaxis]
-    
-    return relative_x, relative_y, centroid_x, centroid_y
-
-def align_poses_by_vector(relative_x: np.ndarray, relative_y: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Rotates all poses to a common orientation using an anchor-reference vector."""
-    rmse_from_centroid = np.nanmean(np.sqrt(relative_x**2 + relative_y**2), axis=0)
-    anchor_keypoint_idx = np.argmin(rmse_from_centroid)
-    ref_keypoint_idx = np.argmax(rmse_from_centroid)
-    
-    ref_vec_x = relative_x[:, ref_keypoint_idx] - relative_x[:, anchor_keypoint_idx]
-    ref_vec_y = relative_y[:, ref_keypoint_idx] - relative_y[:, anchor_keypoint_idx]
-    angles = np.arctan2(ref_vec_y, ref_vec_x)
-    
-    cos_angles, sin_angles = np.cos(-angles), np.sin(-angles)
-    rotated_relative_x = relative_x * cos_angles[:, np.newaxis] - relative_y * sin_angles[:, np.newaxis]
-    rotated_relative_y = relative_x * sin_angles[:, np.newaxis] + relative_y * cos_angles[:, np.newaxis]
-    
-    return rotated_relative_x, rotated_relative_y, angles
 
 ###################################################################################################################################################
 
@@ -312,7 +315,7 @@ def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray
     assert pred_data_array.shape[1] == idt_traj_array.shape[1], "Instance count must match between prediction and idTracker"
 
     total_frames, instance_count, _ = pred_data_array.shape
-    pred_positions = duh.calculate_pose_centroids(pred_data_array)
+    pred_positions, _ = duh.calculate_pose_centroids(pred_data_array)
 
     remapped_idt = remap_idt_array(pred_positions, idt_traj_array)
     corrected_pred_data = pred_data_array.copy()
@@ -326,7 +329,7 @@ def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray
         if progress.wasCanceled():
             return pred_data_array, 0
 
-        pred_position_curr = duh.calculate_pose_centroids(corrected_pred_data, frame_idx)
+        pred_position_curr, _ = duh.calculate_pose_centroids(corrected_pred_data, frame_idx)
 
         if debug_print:
             duh.log_print(f"---------- frame: {frame_idx} ---------- ")
@@ -386,7 +389,7 @@ def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray
 
             for offset in range(1, lookback_limit + 1):
                 cand_idx = frame_idx - offset
-                pos_cand = duh.calculate_pose_centroids(corrected_pred_data, cand_idx)
+                pos_cand, _ = duh.calculate_pose_centroids(corrected_pred_data, cand_idx)
                 valid_cand = np.all(~np.isnan(pos_cand), axis=1)
 
                 if np.sum(valid_cand) == instance_count:

@@ -10,8 +10,8 @@ from PySide6.QtCore import Qt, QEvent, Signal
 from PySide6.QtGui import QShortcut, QKeySequence, QPainter, QColor, QPen, QCloseEvent
 from PySide6.QtWidgets import QMessageBox, QPushButton, QGraphicsView, QGraphicsRectItem
 
-from utils.dtu_widget import Menu_Widget, Progress_Bar_Widget, Nav_Widget
-from utils.dtu_comp import Selectable_Instance, Draggable_Keypoint, Adjust_Property_Dialog
+from utils.dtu_widget import Menu_Widget, Progress_Bar_Widget, Nav_Widget, Adjust_Property_Dialog, Pose_Rotation_Dialog
+from utils.dtu_comp import Selectable_Instance, Draggable_Keypoint
 from utils.dtu_io import DLC_Loader
 from utils.dtu_dataclass import Export_Settings
 import utils.dtu_io as dio
@@ -50,13 +50,12 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             "Refiner": {
                 "display_name": "Refine",
                 "buttons": [
-                    ("Interpolate Track (T)", self._interpolate_track_wrapper),
+                    ("Interpolate Instance (T)", self._interpolate_track_wrapper),
                     ("Generate Instance (G)", self._generate_track_wrapper),
-                    ("Swap Track On Current Frame (W)", lambda:self._swap_track_wrapper("point")),
-                    ("Delete Selected Track On Current Frame (X)", lambda:self._delete_track_wrapper("point")),
-                    ("Swap Track Until The End (Shift + W)", lambda:self._swap_track_wrapper("batch")),
-                    ("Delete Selected Track Until Next ROI (Shift + X)", lambda:self._delete_track_wrapper("batch")),
-                    ("Interpolate Missing Keypoints (Shift + T)", self._interpolate_missing_kp_wrapper)
+                    ("Rotate Selected Instance (R)", self._rotate_track_wrapper),
+                    ("Swap Instance Track On Current Frame (W)", lambda:self._swap_track_wrapper("point")),
+                    ("Delete Selected Instance On Current Frame (X)", lambda:self._delete_track_wrapper("point")),
+                    ("Interpolate Missing Keypoints for Instance (Shift + T)", self._interpolate_missing_kp_wrapper)
                 ]
             },
             "AdvRefiner": {
@@ -66,7 +65,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                     ("Delete All Track Below Set Confidence", self.purge_inst_by_conf),
                     ("Remove All Prediction Inside Area", self.designate_no_mice_zone),
                     ("Interpolate All Frames for One Inst", self.interpolate_all),
-                    ("Fix Track Using Idtrackerai Trajectories", self.correct_track_using_idtrackerai)
+                    ("Fix Track Using Idtrackerai Trajectories", self.correct_track_using_idtrackerai),
+                    ("Swap Track Until The End (Shift + W)", lambda:self._swap_track_wrapper("batch")),
+                    ("Delete Selected Track Until Next ROI (Shift + X)", lambda:self._delete_track_wrapper("batch"))
                 ]
             },
             "Preference": {
@@ -163,6 +164,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_T), self).activated.connect(self._interpolate_track_wrapper)
         QShortcut(QKeySequence(Qt.Key_T | Qt.ShiftModifier), self).activated.connect(self._interpolate_missing_kp_wrapper)
         QShortcut(QKeySequence(Qt.Key_G), self).activated.connect(self._generate_track_wrapper)
+        QShortcut(QKeySequence(Qt.Key_R), self).activated.connect(self._rotate_track_wrapper)
         QShortcut(QKeySequence(Qt.Key_Q), self).activated.connect(self.direct_keypoint_edit)
         QShortcut(QKeySequence(Qt.Key_Backspace), self).activated.connect(self.delete_dragged_keypoint)
 
@@ -720,7 +722,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         return True
     
     def _delete_track_wrapper(self, mode, deletion_range=None):
-        if not self._track_edit_blocker():
+        if self.pred_data_array is None:
+            QMessageBox.warning(self, "Error", "Prediction data not loaded. Please load a prediction file first.")
             return
 
         current_frame_inst = duh.get_current_frame_inst(self.dlc_data, self.pred_data_array, self.current_frame_idx)
@@ -742,7 +745,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self._on_track_data_changed()
         
     def _swap_track_wrapper(self, mode, swap_range=None):
-        if not self._track_edit_blocker():
+        if self.pred_data_array is None:
+            QMessageBox.warning(self, "Error", "Prediction data not loaded. Please load a prediction file first.")
             return
         
         if self.dlc_data.instance_count > 2:
@@ -760,7 +764,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self._on_track_data_changed()
 
     def _interpolate_track_wrapper(self):
-        if not self._track_edit_blocker():
+        if self.pred_data_array is None:
+            QMessageBox.warning(self, "Error", "Prediction data not loaded. Please load a prediction file first.")
             return
         
         current_frame_inst = duh.get_current_frame_inst(self.dlc_data, self.pred_data_array, self.current_frame_idx)
@@ -802,8 +807,36 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.pred_data_array = dute.generate_track(self.pred_data_array, self.current_frame_idx, missing_instances)
         self._on_track_data_changed()
 
+    def _rotate_track_wrapper(self):
+        if self.pred_data_array is None:
+            QMessageBox.warning(self, "Error", "Prediction data not loaded. Please load a prediction file first.")
+            return
+        
+        current_frame_inst = duh.get_current_frame_inst(self.dlc_data, self.pred_data_array, self.current_frame_idx)
+        if len(current_frame_inst) > 1 and not self.selected_box:
+            QMessageBox.information(self, "Track Not Rotated", "No track is selected.")
+            return
+        
+        selected_instance_idx = self.selected_box.instance_id if self.selected_box else current_frame_inst[0]
+
+        _, local_coords = duh.calculate_pose_centroids(self.pred_data_array, self.current_frame_idx)
+        local_x = local_coords[selected_instance_idx, 0::2]
+        local_y = local_coords[selected_instance_idx, 1::2]
+        current_rotation = np.degrees(duh.calculate_pose_rotations(local_x, local_y))
+        if np.isnan(current_rotation) or np.isinf(current_rotation):
+            current_rotation = 0.0
+        else:
+            current_rotation = current_rotation % 360.0 
+
+        self._save_state_for_undo()
+
+        self.rotation_dialog = Pose_Rotation_Dialog(selected_instance_idx, current_rotation, parent=self)
+        self.rotation_dialog.rotation_changed.connect(self._on_rotation_changed)
+        self.rotation_dialog.show()
+
     def _interpolate_missing_kp_wrapper(self):
-        if not self._track_edit_blocker():
+        if self.pred_data_array is None:
+            QMessageBox.warning(self, "Error", "Prediction data not loaded. Please load a prediction file first.")
             return
         
         current_frame_inst = duh.get_current_frame_inst(self.dlc_data, self.pred_data_array, self.current_frame_idx)
@@ -830,14 +863,17 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.display_current_frame()
         self.navigation_title_controller()
 
+    def _on_rotation_changed(self, selected_instance_idx, angle_delta: float):
+        angle_delta = np.radians(angle_delta)
+        self.pred_data_array = dute.rotate_track(self.pred_data_array, self.current_frame_idx,
+            selected_instance_idx, angle=angle_delta)
+        self._on_track_data_changed()
+
     def _refresh_slider(self):
         self.progress_widget.set_frame_category("Refined frames", self.refined_roi_frame_list, "#009979", priority=7)
         self.progress_widget.set_frame_category("ROI frames", self.roi_frame_list, "#F04C4C") # Update ROI frames
 
     def _handle_box_selection(self, clicked_box):
-        if self.is_kp_edit: # no box select to prevent interference
-            self.selected_box = None
-            return
         if self.selected_box and self.selected_box != clicked_box and self.selected_box.scene() is not None:
             self.selected_box.toggle_selection() # Deselect previously selected box
         clicked_box.toggle_selection() # Toggle selection of the clicked box

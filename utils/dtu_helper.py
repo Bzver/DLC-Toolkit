@@ -6,7 +6,7 @@ from itertools import combinations
 from scipy.ndimage import gaussian_filter1d
 from sklearn.linear_model import LinearRegression
 
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 from .dtu_dataclass import Loaded_DLC_Data, Swap_Calculation_Config
 
 from . import dtu_triangulation as dutri
@@ -219,8 +219,7 @@ def circular_mean(angles: np.ndarray) -> float:
 
 #########################################################################################################################################################1
 
-def calculate_identity_swap_score_per_frame(keypoint_data_tr:dict, valid_view:int,
-        instance_count:int, num_keypoint:int, num_cam:int) -> float:
+def calculate_identity_swap_score_per_frame(keypoint_data_tr:dict, valid_view:int, instance_count:int, num_keypoint:int) -> float:
     
     all_camera_pairs = list(combinations(valid_view, 2))
 
@@ -256,115 +255,135 @@ def calculate_identity_swap_score_per_frame(keypoint_data_tr:dict, valid_view:in
         
     return total_diffs_per_pair[deviant_pair_idx]
 
-def calculate_pose_centroids(pred_data_array:np.ndarray, frame_idx:Optional[int]=None) -> np.ndarray:
-    total_frames, instance_count, _ = pred_data_array.shape
-    if frame_idx is None:
-        frame_slice = slice(None)
-        pose_centroids = np.full((total_frames, instance_count, 2), np.nan)
-    else:
-        frame_slice = frame_idx
-        pose_centroids = np.full((instance_count, 2), np.nan)
+def calculate_pose_centroids(pred_data_array:np.ndarray, frame_slice:Union[slice, int]=slice(None)) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Calculate the centroid (mean x, mean y) of pose keypoints for each instance and frame,
+    and compute the relative position of each keypoint with respect to the centroid.
+
+    Args:
+        pred_data_array (np.ndarray): 3D array of shape (frames, instances, keypoints*3).
+        frame_slice (Union[slice, int]): Slice or index to select specific frames.
     
+    Returns:
+        Tuple[np.ndarray, np.ndarray]:
+            - pose_centroids: Array of shape (instances, 2) or (N, instances, 2) with mean x and y coordinates.
+            - local_coords: Array of shape (instances, keypoints*2) or (N, instances, keypoints*2) with relative positions.
+    """
+    _, instance_count, xyconf = pred_data_array.shape
+    num_keypoint = xyconf // 3
+
     x_vals = pred_data_array[frame_slice, :, 0::3]
     y_vals = pred_data_array[frame_slice, :, 1::3]
 
-    if frame_idx is None:
-        pose_centroids[:, :, 0] = np.nanmean(x_vals, axis=2)
-        pose_centroids[:, :, 1] = np.nanmean(y_vals, axis=2)
+    if isinstance(frame_slice, (int, np.integer)): # Determine output shape
+        output_shape_pose = (instance_count, 2)
+        output_shape_rltv = (instance_count, num_keypoint * 2)
     else:
-        pose_centroids[:, 0] = np.nanmean(x_vals, axis=1)
-        pose_centroids[:, 1] = np.nanmean(y_vals, axis=1)
-        
-    return pose_centroids
+        output_shape_pose = (x_vals.shape[0], instance_count, 2)
+        output_shape_rltv = (x_vals.shape[0], instance_count, num_keypoint * 2)
 
-def calculate_temporal_velocity_2d(pred_data_array: np.ndarray, frame_idx: int, check_window: int = 5, 
-    min_valid_frames: int = 2, smoothing: bool = True, sigma: float = 0.8) -> np.ndarray: # Unused
+    pose_centroids = np.full(output_shape_pose, np.nan, dtype=np.float64)
+    local_coords = np.full(output_shape_rltv, np.nan, dtype=np.float64)
+
+    pose_centroids[..., 0] = np.nanmean(x_vals, axis=-1)
+    pose_centroids[..., 1] = np.nanmean(y_vals, axis=-1)
+
+    local_coords[..., 0::2] = x_vals - pose_centroids[..., 0, np.newaxis]
+    local_coords[..., 1::2] = y_vals - pose_centroids[..., 1, np.newaxis]
+        
+    return pose_centroids, local_coords
+
+def calculate_pose_rotations(local_x: np.ndarray, local_y: np.ndarray) -> Union[np.ndarray, float]:
     """
-    Calculates an averaged velocity-based motion score for each instance in 2D,
-    using linear regression over recent trajectories within a time window.
+    Calculate the rotation angles for poses based on relative keypoint positions.
+    Uses the vector from the most-central keypoint (lowest spread) to the most-peripheral 
+    keypoint (highest spread) as the reference direction to compute orientation.
 
     Args:
-        pred_data_array (np.ndarray): Shape (frame_counts, instance_counts, keypoints * 3)
-                                      containing x, y, confidence for each keypoint.
-        frame_idx (int): Current frame index.
-        check_window (int): Number of past frames to include (excludes current).
-        min_valid_frames (int): Minimum number of valid frames to compute velocity.
-        smoothing (bool): Whether to smooth velocity per keypoint over time.
-        sigma (float): Gaussian smoothing sigma if smoothing is True.
+        local_x (np.ndarray): Relative x-coordinates of keypoints, shape (K,) or (N, K).
+        local_y (np.ndarray): Relative y-coordinates of keypoints, shape (K,) or (N, K).
 
     Returns:
-        np.ndarray: 1D array of shape (instance_counts,) with average speed per instance.
+        Union[np.ndarray, float]: Rotation angle(s) in radians.
+                                  - If input is (K,), returns float.
+                                  - If input is (N, K), returns (N,) array.
     """
-    if check_window < 1:
-        return np.full(pred_data_array.shape[1], np.nan)  # instance_count
+    orig_ndim = local_x.ndim
+    if orig_ndim == 1:
+        local_x = local_x[np.newaxis, :]  # (1, K)
+        local_y = local_y[np.newaxis, :]  # (1, K)
 
-    num_keypoints = pred_data_array.shape[2] // 3
+    N, K = local_x.shape
 
-    instance_count = pred_data_array.shape[1]
-    avg_speeds = np.full(instance_count, np.nan)
+    squared_dist = local_x**2 + local_y**2  # (N, K)
+    avg_dist_per_keypoint = np.nanmean(squared_dist, axis=0)  # (K,)
+    rmse_from_centroid = np.sqrt(avg_dist_per_keypoint)  # (K,)
 
-    start_frame = max(0, frame_idx - check_window)
-    frame_indices = np.arange(start_frame, frame_idx + 1)
-    n_frames = len(frame_indices)
+    # Choose anchor and reference keypoints based on RMSE
+    anchor_keypoint_idx = np.argmin(rmse_from_centroid)
+    ref_keypoint_idx = np.argmax(rmse_from_centroid)
 
-    if n_frames <= 1:
-        return avg_speeds
+    # Compute vector from anchor to reference keypoint in each frame
+    dx = local_x[:, ref_keypoint_idx] - local_x[:, anchor_keypoint_idx]  # (N,)
+    dy = local_y[:, ref_keypoint_idx] - local_y[:, anchor_keypoint_idx]  # (N,)
 
-    # Extract relevant frames: shape (T, instances, K*3)
-    try:
-        data_window = pred_data_array[frame_indices]  # (T, I, K*3)
-    except IndexError:
-        return avg_speeds
+    # Compute angle of this vector
+    angles = np.arctan2(dy, dx)  # (N,)
+    angles = angles.item() if orig_ndim == 1 else angles  # Return as scalar if input was 1D
+    return angles
+    
+def align_poses_by_vector(local_coords:np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Rotates all poses to a common orientation using an anchor-reference vector.
+    
+    Args:
+        local_coords (np.ndarray): Relative positions of keypoints, shape (N, K*2).
 
-    data_reshaped = data_window.reshape(n_frames, instance_count, num_keypoints, 3)
+    Returns:
+        Tuple[np.ndarray, np.ndarray]:
+            - Rotated relative positions, shape (N, K*2).
+            - Angles of rotation used to align the poses in radians, shape (N,).
+    
+    """
+    relative_x, relative_y = local_coords[:, 0::2], local_coords[:, 1::2]
+    angles = calculate_pose_rotations(relative_x, relative_y)
+    
+    cos_angles, sin_angles = np.cos(-angles), np.sin(-angles)
+    rotated_rltv = np.empty(local_coords.shape)
+    rotated_relative_x = relative_x * cos_angles[:, np.newaxis] - relative_y * sin_angles[:, np.newaxis]
+    rotated_relative_y = relative_x * sin_angles[:, np.newaxis] + relative_y * cos_angles[:, np.newaxis]
+    rotated_rltv[:, 0::2], rotated_rltv[:, 1::2] = rotated_relative_x, rotated_relative_y
+    
+    return rotated_rltv, angles
 
-    # Time vector for regression
-    times = np.arange(n_frames).astype(float)
+def track_rotation_worker(angle:float, centroids:np.ndarray, local_coords:np.ndarray, confs:np.ndarray) -> np.ndarray:
+    """
+    Rotate average relative keypoint positions by a given angle around the average centroid, then compute a canonical aligned pose.
+    
+    Args:
+        angle (float): Rotation angle in radians.
+        centroids (np.ndarray): Average centroids of shape (2,) or (N, 2) for same instance across multiple frames.
+        local_coords (np.ndarray): Local coordinates of shape (K*2,) or (N, K*2) for same instance across multiple frames.
+        confs (np.ndarray): Confidence scores of shape (K,) or (N, K) for same instance across multiple frames.
 
-    for inst_idx in range(instance_count):
-        speeds = []  # To collect speed per keypoint
+    Returns:
+        np.ndarray: Averaged & rotated single pose in global coordinates, shape (K*3,).
+    """
+    cos_a, sin_a = np.cos(angle), np.sin(angle)
+    if centroids.ndim == 1:
+        avg_centroid = centroids
+        avg_local_x, avg_local_y = local_coords[..., 0::2], local_coords[..., 1::2]
+        avg_confs = confs
+    else:
+        avg_centroid = np.nanmean(centroids, axis=0)
+        avg_local_x, avg_local_y = np.nanmean(local_coords[..., 0::2], axis=0), np.nanmean(local_coords[..., 1::2], axis=0)
+        avg_confs = np.nanmean(confs, axis=0)
 
-        for kp_idx in range(num_keypoints):
-            # Extract trajectory: (T, 3) -> x, y, conf
-            traj_x = data_reshaped[:, inst_idx, kp_idx, 0]
-            traj_y = data_reshaped[:, inst_idx, kp_idx, 1]
-            conf = data_reshaped[:, inst_idx, kp_idx, 2]
-
-            # Mask for valid values (finite and confidence > 0?)
-            mask = np.isfinite(traj_x) & np.isfinite(traj_y) & (conf > 0)
-            valid_count = np.sum(mask)
-
-            if valid_count < min_valid_frames:
-                continue
-
-            valid_times = times[mask]
-            valid_traj = np.stack([traj_x[mask], traj_y[mask]], axis=1)  # (T_valid, 2)
-
-            # Optional: weight by confidence
-            sample_weights = conf[mask]
-            sample_weights = (sample_weights - sample_weights.min() + 1e-8)  # prevent zero
-
-            # Fit linear model: pos(t) = v * t + b
-            try:
-                model = LinearRegression().fit(
-                    valid_times.reshape(-1, 1),
-                    valid_traj,
-                    sample_weight=sample_weights
-                )
-                velocity_vector = model.coef_  # (2,) -> [vx, vy]
-                speed = np.linalg.norm(velocity_vector)  # scalar speed
-                speeds.append(speed)
-            except Exception as e:
-                continue  # skip failed fits
-
-        # Average across keypoints
-        if speeds:
-            speeds = np.array(speeds)
-            if smoothing:
-                speeds = gaussian_filter1d(speeds, sigma=sigma)
-            avg_speeds[inst_idx] = np.mean(speeds)
-
-    return avg_speeds
+    global_x = avg_local_x * cos_a - avg_local_y * sin_a + avg_centroid[0]
+    global_y = avg_local_x * sin_a + avg_local_y * cos_a + avg_centroid[1]
+    average_pose = np.empty(local_coords.shape[-1] // 2 * 3)
+    average_pose[0::3], average_pose[1::3], average_pose[2::3] = global_x, global_y, avg_confs
+    return average_pose
 
 #########################################################################################################################################################1
 

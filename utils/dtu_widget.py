@@ -313,3 +313,50 @@ class Adjust_Property_Dialog(QtWidgets.QDialog):
         self.property_input.setValue(self.property_val)
         self.property_changed.emit(self.property_val )
 
+###################################################################################################################################################
+
+class Pose_Rotation_Dialog(QtWidgets.QDialog):
+    rotation_changed = QtCore.Signal(int, float)  # (selected_instance_idx, angle_delta)
+
+    def __init__(self, selected_instance_idx: int, initial_angle_deg:float=0.0, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Rotate Instance {selected_instance_idx}")
+        self.selected_instance_idx = selected_instance_idx
+        self.base_angle = initial_angle_deg
+
+        layout = QtWidgets.QVBoxLayout(self)
+
+        # Label
+        self.angle_label = QtWidgets.QLabel(f"Angle: {self.base_angle:.1f}°")
+        layout.addWidget(self.angle_label)
+
+        # Dial
+        self.dial = QtWidgets.QDial()
+        self.dial.setRange(0, 360)
+        self.dial.setValue(self.base_angle)
+        self.dial.setWrapping(True)
+        self.dial.setNotchesVisible(True)
+        layout.addWidget(self.dial)
+
+        self.dial.valueChanged.connect(self._on_dial_change)
+
+        self.setLayout(layout)
+        self.resize(150, 150)
+
+    def _on_dial_change(self, value: int):
+        self.angle = float(value)
+        angle_delta = self.angle - self.base_angle
+        if abs(angle_delta) < 1e-3:
+            return  # Skip tiny changes
+        self.angle_label.setText(f"Angle: {self.angle:.1f}°")
+        self.rotation_changed.emit(self.selected_instance_idx, angle_delta)
+        self.base_angle = self.angle
+
+    def get_angle(self) -> float:
+        return self.angle
+
+    def set_angle(self, angle: float):
+        clamped_angle = angle % 360.0
+        self.dial.setValue(int(clamped_angle))
+        self.angle = clamped_angle
+        self.angle_label.setText(f"Angle: {self.angle:.1f}°")
