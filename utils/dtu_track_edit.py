@@ -82,22 +82,26 @@ def interpolate_missing_keypoints(pred_data_array:np.ndarray, current_frame_idx:
     for keypoint_idx in range(num_keypoint):
         confidence_idx = keypoint_idx * 3 + 2
         confidence = pred_data_array[current_frame_idx, selected_instance_idx, confidence_idx]
-        if np.isnan(confidence) or confidence < 0.1:
+        if np.isnan(confidence):
             missing_keypoints.append(keypoint_idx)
 
     if not missing_keypoints:
         return pred_data_array
 
+    current_frame_centroids, local_coords = duh.calculate_pose_centroids(pred_data_array, current_frame_idx)
+    set_centroid = current_frame_centroids[selected_instance_idx, :]
+    average_pose = get_average_pose(pred_data_array, selected_instance_idx, frame_idx=current_frame_idx, 
+        initial_pose_range=200, max_attempts=20, valid_frames_threshold=200, set_centroid=set_centroid)
+    
     # Interpolate keypoint coordinates
     for keypoint_idx in missing_keypoints:
         try:
-            average_pose = get_average_pose(pred_data_array, selected_instance_idx, frame_idx=current_frame_idx, 
-                initial_pose_range=5, confidence_threshold=0.3, bodypart_threshold=50, max_attempts=20, valid_frames_threshold=10)
-            pred_data_array[current_frame_idx, selected_instance_idx, keypoint_idx * 3:keypoint_idx * 3 + 3] = average_pose[keypoint_idx * 3:keypoint_idx * 3 + 3]
+            pred_data_array[current_frame_idx, selected_instance_idx, keypoint_idx*3:keypoint_idx*3 +3] = average_pose[keypoint_idx*3:keypoint_idx*3 + 3]
         except ValueError:
-            # get_average_pose failed, use default values (0, 0, 1)
-            pred_data_array[current_frame_idx, selected_instance_idx, keypoint_idx * 3 : keypoint_idx * 3 + 2] = 0.0
-            pred_data_array[current_frame_idx, selected_instance_idx, keypoint_idx * 3 + 2] = 1.0
+            # get_average_pose failed, fallback to centroid values
+            pred_data_array[current_frame_idx, selected_instance_idx, keypoint_idx*3] = set_centroid[0]
+            pred_data_array[current_frame_idx, selected_instance_idx, keypoint_idx*3+1] = set_centroid[1]
+            pred_data_array[current_frame_idx, selected_instance_idx, keypoint_idx*3+2] = 1.0
 
     return pred_data_array
 
@@ -224,7 +228,9 @@ def get_average_pose(
         confidence_threshold:float = 0.6,
         bodypart_threshold:int = 80,
         max_attempts:int = 10,
-        valid_frames_threshold:int = 30
+        valid_frames_threshold:int = 30,
+        set_centroid:Optional[np.ndarray]=None,
+        set_angle:Optional[float]=None
         ) -> np.ndarray:
     """
     Compute a rotation-normalized average pose for a specific instance around a given frame.
@@ -238,9 +244,11 @@ def get_average_pose(
         frame_idx: Center frame of temporal window
         initial_pose_range: Initial half-window size (± frames)
         confidence_threshold: Min confidence to count a keypoint
-        bodypart_threshold: Min valid keypoints per frame to keep
+        bodypart_threshold: Min valid keypoints percentage per frame to keep
         max_attempts: Max times to double window size
         valid_frames_threshold: Min number of valid frames required
+        set_centroid: Optional 2D array of shape (2,) to set a specific centroid for alignment
+        set_angle: Optional float to set a specific angle for alignment
     Returns:
         average_pose: (K*3,) array — mean pose in aligned orientation
     """
@@ -249,7 +257,7 @@ def get_average_pose(
 
     while attempt < max_attempts:
         pose_window = get_pose_window(frame_idx, len(pred_data_array), pose_range)
-        pred_data_sliced = pred_data_array[pose_window]  # Shape: (W, N, D)
+        pred_data_sliced = pred_data_array[pose_window].copy()  # Shape: (W, N, D)
 
         # Filter frames based on confidence and body part count
         pred_data_filtered, _, _ = purge_by_conf_and_bp(pred_data_sliced, confidence_threshold, bodypart_threshold)
@@ -264,11 +272,8 @@ def get_average_pose(
         pose_range *= 2
         attempt += 1
     else:
-        raise ValueError(
-            f"Only {non_purged_frame_count} valid frames found for instance {selected_instance_idx} "
-            f"around frame {frame_idx}, less than required {valid_frames_threshold}, "
-            f"even after expanding to ±{initial_pose_range * (2 ** max_attempts)} frames."
-        )
+        raise ValueError(f"Only {non_purged_frame_count} valid frames found for instance {selected_instance_idx} "
+            f"around frame {frame_idx}, less than required {valid_frames_threshold}, ")
 
     inst_data = pred_data_filtered[:, selected_instance_idx, :]  # (W', K*3)
     conf_scores = inst_data[:, 2::3]  # (W', K)
@@ -279,6 +284,10 @@ def get_average_pose(
     local_coords = np.squeeze(local_coords, axis=1)  # (W', K*2)
     aligned_local, rotation_angles = duh.align_poses_by_vector(local_coords)
     avg_angle = duh.circular_mean(rotation_angles)
+    if set_centroid is not None : # If a specific centroid is provided, use it for alignment
+        centroids = set_centroid
+    if set_angle is not None and ~np.isnan(set_angle): # If a specific angle is provided, use it for alignment
+        avg_angle = set_angle
     average_pose = duh.track_rotation_worker(avg_angle, centroids, aligned_local, conf_scores)
 
     return average_pose

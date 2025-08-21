@@ -313,15 +313,13 @@ def calculate_pose_rotations(local_x: np.ndarray, local_y: np.ndarray) -> Union[
         local_x = local_x[np.newaxis, :]  # (1, K)
         local_y = local_y[np.newaxis, :]  # (1, K)
 
-    N, K = local_x.shape
-
     squared_dist = local_x**2 + local_y**2  # (N, K)
     avg_dist_per_keypoint = np.nanmean(squared_dist, axis=0)  # (K,)
     rmse_from_centroid = np.sqrt(avg_dist_per_keypoint)  # (K,)
 
     # Choose anchor and reference keypoints based on RMSE
-    anchor_keypoint_idx = np.argmin(rmse_from_centroid)
-    ref_keypoint_idx = np.argmax(rmse_from_centroid)
+    anchor_keypoint_idx = np.nanargmin(rmse_from_centroid)
+    ref_keypoint_idx = np.nanargmax(rmse_from_centroid)
 
     # Compute vector from anchor to reference keypoint in each frame
     dx = local_x[:, ref_keypoint_idx] - local_x[:, anchor_keypoint_idx]  # (N,)
@@ -370,14 +368,12 @@ def track_rotation_worker(angle:float, centroids:np.ndarray, local_coords:np.nda
         np.ndarray: Averaged & rotated single pose in global coordinates, shape (K*3,).
     """
     cos_a, sin_a = np.cos(angle), np.sin(angle)
-    if centroids.ndim == 1:
-        avg_centroid = centroids
+    avg_centroid = centroids if centroids.ndim == 1 else np.nanmean(centroids, axis=0)
+    avg_confs = confs if confs.ndim == 1 else np.nanmean(confs, axis=0)
+    if local_coords.ndim == 1:
         avg_local_x, avg_local_y = local_coords[..., 0::2], local_coords[..., 1::2]
-        avg_confs = confs
     else:
-        avg_centroid = np.nanmean(centroids, axis=0)
         avg_local_x, avg_local_y = np.nanmean(local_coords[..., 0::2], axis=0), np.nanmean(local_coords[..., 1::2], axis=0)
-        avg_confs = np.nanmean(confs, axis=0)
 
     global_x = avg_local_x * cos_a - avg_local_y * sin_a + avg_centroid[0]
     global_y = avg_local_x * sin_a + avg_local_y * cos_a + avg_centroid[1]
