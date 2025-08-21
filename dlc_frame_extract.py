@@ -14,8 +14,7 @@ from PySide6.QtGui import QShortcut, QKeySequence, QCloseEvent
 from PySide6.QtWidgets import QMessageBox, QFileDialog
 
 from utils.dtu_io import DLC_Loader, DLC_Exporter
-from utils.dtu_widget import Menu_Widget, Progress_Bar_Widget, Nav_Widget
-from utils.dtu_comp import Adjust_Property_Dialog
+from utils.dtu_widget import Menu_Widget, Progress_Bar_Widget, Nav_Widget, Adjust_Property_Dialog
 from utils.dtu_dataclass import Export_Settings
 import utils.dtu_helper as duh
 import utils.dtu_gui_helper as dugh

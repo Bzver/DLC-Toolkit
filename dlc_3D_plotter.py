@@ -18,8 +18,8 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from utils.dtu_io import DLC_Loader
-from utils.dtu_widget import Menu_Widget, Progress_Bar_Widget, Nav_Widget
-from utils.dtu_comp import Clickable_Video_Label, Adjust_Property_Dialog
+from utils.dtu_widget import Menu_Widget, Progress_Bar_Widget, Nav_Widget, Adjust_Property_Dialog
+from utils.dtu_comp import Clickable_Video_Label
 from utils.dtu_helper import Data_Processor_3D
 import utils.dtu_io as dio
 import utils.dtu_helper as duh
