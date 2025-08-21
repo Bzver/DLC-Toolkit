@@ -88,10 +88,10 @@ def interpolate_missing_keypoints(pred_data_array:np.ndarray, current_frame_idx:
     if not missing_keypoints:
         return pred_data_array
 
-    current_frame_centroids, local_coords = duh.calculate_pose_centroids(pred_data_array, current_frame_idx)
+    current_frame_centroids, _ = duh.calculate_pose_centroids(pred_data_array, current_frame_idx)
     set_centroid = current_frame_centroids[selected_instance_idx, :]
     average_pose = get_average_pose(pred_data_array, selected_instance_idx, frame_idx=current_frame_idx, 
-        initial_pose_range=200, max_attempts=20, valid_frames_threshold=200, set_centroid=set_centroid)
+        initial_pose_range=10, max_attempts=20, valid_frames_threshold=10, set_centroid=set_centroid)
     
     # Interpolate keypoint coordinates
     for keypoint_idx in missing_keypoints:
