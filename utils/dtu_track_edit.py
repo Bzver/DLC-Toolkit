@@ -137,12 +137,6 @@ def interpolate_track_all(pred_data_array:np.ndarray, selected_instance_idx:int,
     # First find all nan gaps
     all_nans = np.isnan(pred_data_array[:, selected_instance_idx, :])
     all_nan_frames = np.all(all_nans, axis=1)
-    partial_nan_frames = np.any(all_nans, axis=1) & ~all_nan_frames
-    
-    # Interpolate the partial nan frames using average pose
-    partial_nan_indices = np.where(partial_nan_frames)[0]
-    for frame_idx in partial_nan_indices:
-        interpolate_missing_keypoints(pred_data_array, frame_idx, selected_instance_idx)
     
     # Identify gap lengths
     padded = np.concatenate(([False], all_nan_frames, [False]))
