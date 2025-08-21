@@ -21,7 +21,7 @@ import utils.dtu_track_edit as dute
 
 DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/NTD/config.yaml"
 VIDEO_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/20250709-first3h-S-conv.mp4"
-PRED_FILE_DEBUG = "D:/Project/A-SOID/Data/20250709/20250709-first3h-S-convDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_370_snapshot_150_el.h5"
+PRED_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/20250709-first3h-S-convDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_370_snapshot_150_el_track_refiner_modified_1.h5"
 
 # Todo:
 #   Add support for use cases where individual counts exceed 2
@@ -513,12 +513,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             self.roi_frame_list = list(roi_frames)
 
         self._refresh_slider()
-
-        if self.is_debug:
-            print("\n--- Instance Counting Details ---")
-            f_idx = self.current_frame_idx
-            print(f"Frame {f_idx}: (Expected Count: {self.instance_count_per_frame[f_idx]})")
-            print("-----------------------------------\n")
 
     def _navigate_roi_frames(self, mode):
         dugh.navigate_to_marked_frame(self, self.roi_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, mode)
