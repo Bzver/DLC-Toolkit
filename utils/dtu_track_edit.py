@@ -351,38 +351,40 @@ def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray
         n_pred = np.sum(valid_pred_curr)
         n_idt = np.sum(valid_idt_curr)
 
-        # Case 1: Single valid detection — simple swap if needed
-        if n_pred == 1 and n_idt == 1:
-            valid_pred_inst = np.where(valid_pred_curr)[0][0]
-            valid_idt_inst = np.where(valid_idt_curr)[0][0]
-            if valid_pred_inst == valid_idt_inst:
-                if debug_print:
-                    duh.log_print(f"NO SWAP, valid_pred_inst: {valid_pred_inst}, valid_idt_inst:{valid_idt_inst}")
-                continue
-
-            new_order = list(range(instance_count))
-            new_order[valid_pred_inst] = valid_idt_inst
-            new_order[valid_idt_inst] = valid_pred_inst
-            last_order = new_order
-
-            corrected_pred_data[frame_idx, :, :] = corrected_pred_data[frame_idx, new_order, :]
-
-            changes_applied += 1
-            if debug_print:
-                duh.log_print(f"SWAP, inst {valid_pred_inst} <-> inst {valid_idt_inst}.")
+        # Case 1: No DLC prediction on current frame
+        if n_pred == 0:
+            duh.log_print(f"SKIP, No valid prediction to correct in frame {frame_idx}.")
             continue
 
-        # Case 2: Use idTracker if valid and matches count
-        if n_pred == n_idt and n_pred > 0:
-            valid_positions_pred = pred_position_curr[valid_pred_curr]
-            valid_positions_idt  = remapped_idt[frame_idx][valid_idt_curr]
+        # Case 2: idTrackerai detection valid and counts matched
+        elif n_pred == n_idt:
+            if n_pred == 1: # Single instance, swap if needed
+                valid_pred_inst = np.where(valid_pred_curr)[0][0]
+                valid_idt_inst = np.where(valid_idt_curr)[0][0]
+                if valid_pred_inst == valid_idt_inst:
+                    last_order = list(range(instance_count)) # Reset last order
+                    if debug_print:
+                        duh.log_print(f"NO SWAP, valid_pred_inst: {valid_pred_inst}, valid_idt_inst:{valid_idt_inst}")
+                    continue
 
-        # Case 3: idTracker invalid — use prior DLC as reference
-        if n_pred != n_idt or n_pred == 0 or n_idt == 0:
-            if n_pred == 0:
-                duh.log_print(f"SKIP, No valid prediction to correct in frame {frame_idx}.")
+                new_order = list(range(instance_count))
+                new_order[valid_pred_inst] = valid_idt_inst
+                new_order[valid_idt_inst] = valid_pred_inst
+                last_order = new_order
+
+                corrected_pred_data[frame_idx, :, :] = corrected_pred_data[frame_idx, new_order, :]
+
+                changes_applied += 1
+                if debug_print:
+                    duh.log_print(f"SWAP, inst {valid_pred_inst} <-> inst {valid_idt_inst}.")
                 continue
 
+            else: # Multiple instance pair in DLC and IDT prediction, prepare for Hungarian
+                valid_positions_pred = pred_position_curr[valid_pred_curr]
+                valid_positions_idt  = remapped_idt[frame_idx][valid_idt_curr]
+
+        # Case 3: idTracker invalid — use prior DLC as reference
+        else:
             if debug_print:
                 duh.log_print(f"TEMPORAL MODE: n_pred={n_pred}, n_idt={n_idt}")
 
@@ -394,8 +396,9 @@ def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray
                 cand_idx = frame_idx - offset
                 pos_cand, _ = duh.calculate_pose_centroids(corrected_pred_data, cand_idx)
                 valid_cand = np.all(~np.isnan(pos_cand), axis=1)
+                n_prior = np.sum(valid_cand)
 
-                if np.sum(valid_cand) == instance_count:
+                if n_prior == instance_count:
                     ref_frame_idx = cand_idx
                     pred_position_ref = pos_cand
                     if debug_print:
@@ -403,12 +406,39 @@ def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray
                     break
 
             if pred_position_ref is None:
-                if debug_print: # Trying to apply the last order
-                    corrected_pred_data[frame_idx, :, :] = corrected_pred_data[frame_idx, last_order, :]
+                corrected_pred_data[frame_idx, :, :] = corrected_pred_data[frame_idx, last_order, :]
+                changes_applied += 1
+                if debug_print:
                     duh.log_print("[TMOD] NO TMOD, No valid full frame found in last 5 frames."
-                                f"SWAP, Applying the last order: {last_order}"
-                                )
-                    changes_applied += 1
+                                f"[TMOD] SWAP, Applying the last order: {last_order}")
+                continue
+
+            if n_pred == 1: # Only one mouse detected — assign it to the closest prior mouse
+                curr_pos = pred_position_curr[valid_pred_curr][0]  # (x, y)
+                ref_positions = pred_position_ref  # (I, 2) — both prior positions
+                distances = np.linalg.norm(ref_positions - curr_pos, axis=1)  # (I,)
+
+                closest_ref_idx = np.argmin(distances)
+                current_valid_inst = np.where(valid_pred_curr)[0][0]
+
+                # Build new_order: assign closest prior identity to current valid instance
+                new_order = list(range(instance_count))
+                new_order[closest_ref_idx] = current_valid_inst
+                new_order[current_valid_inst] = closest_ref_idx
+                last_order = new_order
+
+                corrected_pred_data[frame_idx, :, :] = corrected_pred_data[frame_idx, new_order, :]
+                changes_applied += 1
+                if debug_print:
+                    duh.log_print(f"[TMOD] n_pred=1: assigned closest prior identity {closest_ref_idx} to instance {current_valid_inst}")
+                continue
+
+            if n_pred != instance_count:
+                corrected_pred_data[frame_idx, :, :] = corrected_pred_data[frame_idx, last_order, :]
+                changes_applied += 1
+                if debug_print:
+                    duh.log_print("[TMOD] NO TMOD, insufficient current predictions from Hungarian."
+                                f"[TMOD] SWAP, Applying the last order: {last_order}")
                 continue
 
             if debug_print:
@@ -424,37 +454,28 @@ def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray
             valid_positions_idt = pred_position_ref[valid_cand]  # all valid
             valid_idt_curr = valid_cand  # needed for indexing later
 
-        # === RUN HUNGARIAN MATCHING ===
-        distances = np.linalg.norm(valid_positions_pred - valid_positions_idt, axis=1)
+        new_order = hungarian_matching(
+            valid_positions_pred, valid_positions_idt, valid_pred_curr, valid_idt_curr, max_dist)
 
-        if np.all(distances < max_dist):
+        if new_order is None:
+            corrected_pred_data[frame_idx, :, :] = corrected_pred_data[frame_idx, last_order, :]
+            changes_applied += 1
             if debug_print:
-                duh.log_print(f"NO SWAP, distances: {distances}, threshold: {max_dist}.")
+                duh.log_print("[TMOD] NO TMOD, failed to build new order with Hungarian."
+                            f"[TMOD] SWAP, Applying the last order: {last_order}")
             continue
 
-        cost_matrix = np.linalg.norm(valid_positions_pred[:, np.newaxis, :] - valid_positions_idt[np.newaxis, :, :], axis=2)
-        try:
-            row_ind, col_ind = linear_sum_assignment(cost_matrix)
-        except:
-            duh.log_print(f"SKIPPED {frame_idx}, EXCEPTION AT COST MATRIX.")
+        elif new_order == list(range(instance_count)):
+            if debug_print:
+                duh.log_print("[TMOD] Positions within threshold, no need for Hungarian.")
             continue
-
-        duh.log_print(f"Distance above threshold, distances: {distances}, threshold: {max_dist}.")
-        new_order = np.arange(instance_count)
-        pred_indices = np.where(valid_pred_curr)[0]
-        idt_indices  = np.where(valid_idt_curr)[0]
-
-        for i, j in zip(row_ind, col_ind):
-            new_order[idt_indices[j]] = pred_indices[i]
-
-        new_order = new_order.tolist()
-        last_order = new_order
 
         corrected_pred_data[frame_idx, :, :] = corrected_pred_data[frame_idx, new_order, :]
-        if debug_print:
-            duh.log_print(f"SWAP, {new_order}.")
+        last_order = new_order
         changes_applied += 1
-        
+        if debug_print:
+            duh.log_print(f"[TMOD] SWAP, new_order: {new_order}.")
+
     return corrected_pred_data, changes_applied
 
 def remap_idt_array(pred_positions:np.ndarray, idt_traj_array:np.ndarray) -> np.ndarray: # Version 2
@@ -493,6 +514,53 @@ def remap_idt_array(pred_positions:np.ndarray, idt_traj_array:np.ndarray) -> np.
         print(f"  idTracker instance {idt_inst:2d} → Prediction instance {pred_inst:2d}")
 
     return remapped_idt
+
+def hungarian_matching(valid_positions_pred:np.ndarray, valid_positions_idt:np.ndarray, 
+        valid_pred_curr:np.ndarray, valid_idt_curr:np.ndarray, max_dist:float=20.0) -> Optional[np.ndarray]:
+    """
+    Perform identity correction by solving the optimal assignment problem using the Hungarian algorithm.
+    Matches detected instances from DeepLabCut (DLC) predictions to reference instances (from idTracker 
+    or prior DLC frame) based on spatial proximity.
+
+    This function handles partial detections (e.g., one mouse occluded) by only matching valid instances,
+    then reconstructing the full identity permutation for the entire instance set.
+
+    Args:
+    valid_positions_pred / valid_positions_idt:  XY postitions of each valid instance.
+        Shape: (valid_instance_count, 2),
+
+    valid_pred_curr / valid_idt_curr: Boolean mask indicating which instances are valid
+        Shape: (instance_count,) — e.g., (2,) → [True, False] if only instance 0 is valid.
+
+    max_dist: float, optional
+        Maximum average per-instance displacement (in pixels) to skip Hungarian and assume 
+        identities are consistent. If all matched distances are < `max_dist`, no swap is applied.
+
+    Returns:
+    new_order : Optional[List[int]]
+        A list of length `instance_count` representing the new identity mapping:
+            new_order[target_identity] = source_instance_index_in_current_frame
+    """
+    distances = np.linalg.norm(valid_positions_pred - valid_positions_idt, axis=1)
+    instance_count = valid_idt_curr.shape[0]
+
+    if np.all(distances < max_dist):
+        return list(range(instance_count))
+
+    cost_matrix = np.linalg.norm(valid_positions_pred[:, np.newaxis, :] - valid_positions_idt[np.newaxis, :, :], axis=2)
+    try:
+        row_ind, col_ind = linear_sum_assignment(cost_matrix)
+    except:
+        return None
+
+    new_order = list(range(instance_count))
+    pred_indices = np.where(valid_pred_curr)[0]
+    idt_indices  = np.where(valid_idt_curr)[0]
+
+    for i, j in zip(row_ind, col_ind):
+        new_order[idt_indices[j]] = pred_indices[i]
+
+    return new_order
 
 ###################################################################################################################################################
 
