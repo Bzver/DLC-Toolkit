@@ -300,24 +300,17 @@ def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray
 
     Parameters
     ----------
-    pred_data_array : np.ndarray
-        DLC predictions of shape (T, N, 3*keypoints)
-    idt_traj_array : np.ndarray
-        idTracker trajectories of shape (T, N, 2)
+    pred_data_array : np.ndarray, DLC predictions of shape (T, N, 3*keypoints)
+    idt_traj_array : idTracker trajectories of shape (T, N, 2)
     progress : QProgressBar for GUI progress updates
-    debug_status : bool
-        Whether to log detailed debug info
-    max_dist : float
-        Max per-mouse displacement to skip Hungarian (in pixels)
-    lookback_limit : int
-        Max frames to look back for valid prior (default 5)
-
+    debug_status : bool, Whether to log detailed debug info
+    max_dist : float, Max per-mouse displacement to skip Hungarian (in pixels)
+    lookback_limit : int, Max frames to look back for valid prior (default 5)
+        
     Returns
     -------
-    corrected_pred_data : np.ndarray
-        Identity-corrected DLC predictions
-    changes_applied : int
-        Number of frames where identity swap was applied
+    corrected_pred_data : np.ndarray, Identity-corrected DLC predictions
+    changes_applied : int, Number of frames where identity swap was applied
     """
     assert pred_data_array.shape[1] == idt_traj_array.shape[1], "Instance count must match between prediction and idTracker"
 
@@ -387,6 +380,7 @@ def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray
             else: # Multiple instance pair in DLC and IDT prediction, prepare for Hungarian
                 valid_positions_pred = pred_position_curr[valid_pred_curr]
                 valid_positions_idt  = remapped_idt[frame_idx][valid_idt_curr]
+                mode_text = ""
 
         # Case 3: idTracker invalid — use prior DLC as reference
         else:
@@ -458,6 +452,7 @@ def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray
             valid_positions_pred = pred_position_curr[valid_pred_curr]
             valid_positions_idt = pred_position_ref[valid_cand]  # all valid
             valid_idt_curr = valid_cand  # needed for indexing later
+            mode_text = "[TMOD] "
 
         new_order = hungarian_matching(
             valid_positions_pred, valid_positions_idt, valid_pred_curr, valid_idt_curr, max_dist)
@@ -479,11 +474,11 @@ def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray
         last_order = new_order
         changes_applied += 1
         if debug_print:
-            duh.log_print(f"[TMOD] SWAP, new_order: {new_order}.")
+            duh.log_print(f"{mode_text}SWAP, new_order: {new_order}.")
 
     return corrected_pred_data, changes_applied
 
-def remap_idt_array(pred_positions:np.ndarray, idt_traj_array:np.ndarray) -> np.ndarray: # Version 2
+def remap_idt_array(pred_positions:np.ndarray, idt_traj_array:np.ndarray) -> np.ndarray:
     total_frames, instance_count, _ = pred_positions.shape
 
     remapped_idt = idt_traj_array.copy()

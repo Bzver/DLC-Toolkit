@@ -20,8 +20,8 @@ import utils.dtu_gui_helper as dugh
 import utils.dtu_track_edit as dute
 
 DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/NTD/config.yaml"
-VIDEO_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/20250709-first3h-S-conv.mp4"
-PRED_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/20250709-first3h-S-convDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_370_snapshot_150_el_track_refiner_modified_1.h5"
+VIDEO_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/20250716-first3h-D-conv.mp4"
+PRED_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/20250716-first3h-D-convDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_370_snapshot_150_el.h5"
 
 # Todo:
 #   Add support for use cases where individual counts exceed 2
@@ -33,7 +33,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.is_debug = False
+        self.is_debug = True
         self.setWindowTitle(duh.format_title("DLC Track Refiner", self.is_debug))
         self.setGeometry(100, 100, 1200, 960)
 
@@ -606,10 +606,12 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             return
         
         idt_csv = os.path.join(folder_path, "trajectories", "trajectories_csv", "trajectories.csv")
+        conf_csv = os.path.join(folder_path, "trajectories", "trajectories_csv", "id_probabilities.csv")
         if not os.path.isfile(idt_csv):
             QMessageBox.warning(self, "", "")
         df_idt = pd.read_csv(idt_csv, header=0)
-        idt_traj_array = duh.parse_idt_df_into_ndarray(df_idt)
+        df_conf = pd.read_csv(conf_csv, header=0)
+        idt_traj_array = duh.parse_idt_df_into_ndarray(df_idt, df_conf)
 
         self._save_state_for_undo()
 
