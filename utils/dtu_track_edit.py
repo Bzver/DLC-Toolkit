@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict
 
 from . import dtu_helper as duh
 
@@ -60,9 +60,10 @@ def interpolate_track(pred_data_array:np.ndarray, frames_to_interpolate:List[int
     
     return pred_data_array
         
-def generate_track(pred_data_array:np.ndarray, current_frame_idx:int, missing_instances:List[int]) -> np.ndarray:
+def generate_track(pred_data_array:np.ndarray, current_frame_idx:int, missing_instances:List[int],
+        angle_map_data:Dict[str, any]) -> np.ndarray:
     for instance_idx in missing_instances:
-        average_pose = get_average_pose(pred_data_array, instance_idx, frame_idx=current_frame_idx)
+        average_pose = get_average_pose(pred_data_array, instance_idx, angle_map_data=angle_map_data, frame_idx=current_frame_idx)
         pred_data_array[current_frame_idx, instance_idx, :] = average_pose
 
     return pred_data_array
@@ -76,7 +77,8 @@ def rotate_track(pred_data_array:np.ndarray, frame_idx:int, selected_instance_id
     pred_data_array[frame_idx, selected_instance_idx, :] = pose_rotated
     return pred_data_array
 
-def interpolate_missing_keypoints(pred_data_array:np.ndarray, current_frame_idx:int, selected_instance_idx:int) -> np.ndarray:
+def interpolate_missing_keypoints(pred_data_array:np.ndarray, current_frame_idx:int, selected_instance_idx:int,
+        angle_map_data:Dict[str, any]) -> np.ndarray:
     num_keypoint = pred_data_array.shape[2] // 3
     missing_keypoints = []
     for keypoint_idx in range(num_keypoint):
@@ -88,10 +90,14 @@ def interpolate_missing_keypoints(pred_data_array:np.ndarray, current_frame_idx:
     if not missing_keypoints:
         return pred_data_array
 
-    current_frame_centroids, _ = duh.calculate_pose_centroids(pred_data_array, current_frame_idx)
+    current_frame_centroids, local_coords = duh.calculate_pose_centroids(pred_data_array, current_frame_idx)
     set_centroid = current_frame_centroids[selected_instance_idx, :]
-    average_pose = get_average_pose(pred_data_array, selected_instance_idx, frame_idx=current_frame_idx, 
-        initial_pose_range=10, max_attempts=20, valid_frames_threshold=10, set_centroid=set_centroid)
+    local_inst_x = local_coords[selected_instance_idx, 0::2]
+    local_inst_y = local_coords[selected_instance_idx, 1::2]
+    set_rotation = duh.calculate_pose_rotations(local_inst_x, local_inst_y, angle_map_data=angle_map_data)
+    average_pose = get_average_pose(pred_data_array, selected_instance_idx, angle_map_data=angle_map_data, frame_idx=current_frame_idx, 
+        initial_pose_range=10, max_attempts=20, valid_frames_threshold=100, confidence_threshold=0.8, bodypart_threshold=90,
+        set_centroid=set_centroid, set_rotation=set_rotation)
     
     # Interpolate keypoint coordinates
     for keypoint_idx in missing_keypoints:
@@ -217,20 +223,18 @@ def get_pose_window(frame_idx:int, total_frames:int, pose_range:int) -> slice:
     return slice(min_frame, max_frame)
 
 def get_average_pose(
-        pred_data_array:np.ndarray, selected_instance_idx:int, frame_idx:int,
+        pred_data_array:np.ndarray, selected_instance_idx:int, frame_idx:int, 
+        angle_map_data:Dict[str, any],
         initial_pose_range:int = 30,
         confidence_threshold:float = 0.6,
         bodypart_threshold:int = 80,
         max_attempts:int = 10,
         valid_frames_threshold:int = 30,
         set_centroid:Optional[np.ndarray]=None,
-        set_angle:Optional[float]=None
+        set_rotation:Optional[float]=None
         ) -> np.ndarray:
     """
     Compute a rotation-normalized average pose for a specific instance around a given frame.
-
-    The pose is aligned using directional consistency (e.g., shoulder-hip vector) and averaged
-    in a canonical orientation.
 
     Args:
         pred_data_array: (F, I, K*3)
@@ -242,7 +246,7 @@ def get_average_pose(
         max_attempts: Max times to double window size
         valid_frames_threshold: Min number of valid frames required
         set_centroid: Optional 2D array of shape (2,) to set a specific centroid for alignment
-        set_angle: Optional float to set a specific angle for alignment
+        set_rotation: Optional float to set a specific angle for alignment
     Returns:
         average_pose: (K*3,) array — mean pose in aligned orientation
     """
@@ -276,12 +280,12 @@ def get_average_pose(
 
     centroids = np.squeeze(centroids, axis=1)  # (W', 2)
     local_coords = np.squeeze(local_coords, axis=1)  # (W', K*2)
-    aligned_local, rotation_angles = duh.align_poses_by_vector(local_coords)
+    aligned_local, rotation_angles = duh.align_poses_by_vector(local_coords, angle_map_data=angle_map_data)
     avg_angle = duh.circular_mean(rotation_angles)
     if set_centroid is not None : # If a specific centroid is provided, use it for alignment
         centroids = set_centroid
-    if set_angle is not None and ~np.isnan(set_angle): # If a specific angle is provided, use it for alignment
-        avg_angle = set_angle
+    if set_rotation is not None and ~np.isnan(set_rotation): # If a specific angle is provided, use it for alignment
+        avg_angle = set_rotation
     average_pose = duh.track_rotation_worker(avg_angle, centroids, aligned_local, conf_scores)
 
     return average_pose
@@ -353,7 +357,8 @@ def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray
 
         # Case 1: No DLC prediction on current frame
         if n_pred == 0:
-            duh.log_print(f"SKIP, No valid prediction to correct in frame {frame_idx}.")
+            if debug_print:
+                duh.log_print(f"SKIP, No valid prediction to correct in frame {frame_idx}.")
             continue
 
         # Case 2: idTrackerai detection valid and counts matched

@@ -175,7 +175,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
     def reset_state(self):
         self.video_file, self.prediction, self.video_name = None, None, None
-        self.dlc_data, self.keypoint_to_idx = None, None
+        self.dlc_data, self.keypoint_to_idx, self.angle_map_data = None, None, None
         self.instance_count_per_frame, self.pred_data_array = None, None
         self.data_loader = DLC_Loader(None, None)
 
@@ -270,6 +270,11 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.prediction = self.dlc_data.prediction_filepath
         self.pred_data_array = self.dlc_data.pred_data_array
         self.keypoint_to_idx = {name: idx for idx, name in enumerate(self.dlc_data.keypoints)}
+        head_idx, tail_idx = duh.infer_head_tail_indices(self.dlc_data.keypoints)
+        canon_pose, all_frame_pose = duh.calculate_canonical_pose(self.pred_data_array)
+        if head_idx is None or tail_idx is None:
+            head_idx, tail_idx = duh.get_head_tail_indices_from_canon_pose(canon_pose, head_idx, tail_idx)
+        self.angle_map_data = duh.build_angle_map(canon_pose, all_frame_pose, head_idx, tail_idx)
 
         self.check_instance_count_per_frame()
 
@@ -800,7 +805,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             QMessageBox.information(self, "No Missing Instances", "No missing instances found in the current frame to fill.")
             return
         
-        self.pred_data_array = dute.generate_track(self.pred_data_array, self.current_frame_idx, missing_instances)
+        self.pred_data_array = dute.generate_track(self.pred_data_array, self.current_frame_idx, missing_instances,
+            angle_map_data=self.angle_map_data)
         self._on_track_data_changed()
 
     def _rotate_track_wrapper(self):
@@ -818,7 +824,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         _, local_coords = duh.calculate_pose_centroids(self.pred_data_array, self.current_frame_idx)
         local_x = local_coords[selected_instance_idx, 0::2]
         local_y = local_coords[selected_instance_idx, 1::2]
-        current_rotation = np.degrees(duh.calculate_pose_rotations(local_x, local_y))
+        current_rotation = np.degrees(duh.calculate_pose_rotations(local_x, local_y, angle_map_data=self.angle_map_data))
         if np.isnan(current_rotation) or np.isinf(current_rotation):
             current_rotation = 0.0
         else:
@@ -843,7 +849,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         selected_instance_idx = self.selected_box.instance_id if self.selected_box else current_frame_inst[0]
         self._save_state_for_undo()
 
-        self.pred_data_array = dute.interpolate_missing_keypoints(self.pred_data_array, self.current_frame_idx, selected_instance_idx)
+        self.pred_data_array = dute.interpolate_missing_keypoints(self.pred_data_array, self.current_frame_idx, selected_instance_idx,
+            angle_map_data=self.angle_map_data)
         self._on_track_data_changed()
 
     ###################################################################################################################################################  

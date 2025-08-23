@@ -6,7 +6,7 @@ from itertools import combinations
 from scipy.ndimage import gaussian_filter1d
 from sklearn.linear_model import LinearRegression
 
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union, Dict
 from .dtu_dataclass import Loaded_DLC_Data, Swap_Calculation_Config
 
 from . import dtu_triangulation as dutri
@@ -220,7 +220,6 @@ def circular_mean(angles: np.ndarray) -> float:
 #########################################################################################################################################################1
 
 def calculate_identity_swap_score_per_frame(keypoint_data_tr:dict, valid_view:int, instance_count:int, num_keypoint:int) -> float:
-    
     all_camera_pairs = list(combinations(valid_view, 2))
 
     kp_3d_all_pair = np.full((len(all_camera_pairs), instance_count, num_keypoint, 3), np.nan)
@@ -293,15 +292,17 @@ def calculate_pose_centroids(pred_data_array:np.ndarray, frame_slice:Union[slice
         
     return pose_centroids, local_coords
 
-def calculate_pose_rotations(local_x: np.ndarray, local_y: np.ndarray) -> Union[np.ndarray, float]:
+def calculate_pose_rotations(local_x: np.ndarray, local_y: np.ndarray, angle_map_data:Dict[str, any]) -> Union[np.ndarray, float]:
     """
     Calculate the rotation angles for poses based on relative keypoint positions.
     Uses the vector from the most-central keypoint (lowest spread) to the most-peripheral 
     keypoint (highest spread) as the reference direction to compute orientation.
 
     Args:
-        local_x (np.ndarray): Relative x-coordinates of keypoints, shape (K,) or (N, K).
-        local_y (np.ndarray): Relative y-coordinates of keypoints, shape (K,) or (N, K).
+        local_x : Relative x-coordinates of keypoints, shape (K,) or (N, K).
+        local_y : Relative y-coordinates of keypoints, shape (K,) or (N, K).
+        angle_map_data : Dict with 'head_idx', 'tail_idx', 'angle_map'.
+            - angle map: list of (i, j, offset, weight) of each connection
 
     Returns:
         Union[np.ndarray, float]: Rotation angle(s) in radians.
@@ -313,29 +314,74 @@ def calculate_pose_rotations(local_x: np.ndarray, local_y: np.ndarray) -> Union[
         local_x = local_x[np.newaxis, :]  # (1, K)
         local_y = local_y[np.newaxis, :]  # (1, K)
 
-    squared_dist = local_x**2 + local_y**2  # (N, K)
-    avg_dist_per_keypoint = np.nanmean(squared_dist, axis=0)  # (K,)
-    rmse_from_centroid = np.sqrt(avg_dist_per_keypoint)  # (K,)
+    N, K = local_x.shape    
+    angles = np.full(N, np.nan)
 
-    # Choose anchor and reference keypoints based on RMSE
-    anchor_keypoint_idx = np.nanargmin(rmse_from_centroid)
-    ref_keypoint_idx = np.nanargmax(rmse_from_centroid)
+    head_idx = angle_map_data['head_idx']
+    tail_idx = angle_map_data['tail_idx']
 
-    # Compute vector from anchor to reference keypoint in each frame
-    dx = local_x[:, ref_keypoint_idx] - local_x[:, anchor_keypoint_idx]  # (N,)
-    dy = local_y[:, ref_keypoint_idx] - local_y[:, anchor_keypoint_idx]  # (N,)
+    # Use head-tail first
+    xh, yh = local_x[:, head_idx], local_y[:, head_idx]
+    xt, yt = local_x[:, tail_idx], local_y[:, tail_idx]
 
-    # Compute angle of this vector
-    angles = np.arctan2(dy, dx)  # (N,)
-    angles = angles.item() if orig_ndim == 1 else angles  # Return as scalar if input was 1D
-    return angles
+    valid = np.isfinite(xh) & np.isfinite(yh) & np.isfinite(xt) & np.isfinite(yt)
+    if np.any(valid): # Compute angle from tail to head (anterior direction)
+        dx = xh[valid] - xt[valid]
+        dy = yh[valid] - yt[valid]
+        head_tail_angles = np.arctan2(dy, dx)
+        angles[valid] = head_tail_angles
+
+    # Fill gaps using angle map with weight voting
+    total_weights = np.zeros(N)
+    weighted_sum = np.zeros(N)
+
+    for entry in angle_map_data.get('angle_map', []):
+        i, j = entry['i'], entry['j']
+        offset = entry['offset']
+        weight = entry['weight']
+
+        if not (0 <= i < K and 0 <= j < K):
+            continue
+
+        xi, yi = local_x[:, i], local_y[:, i]
+        xj, yj = local_y[:, j], local_y[:, j]
+        connection_valid_mask = np.isfinite(xi) & np.isfinite(yi) & np.isfinite(xj) & np.isfinite(yj)
+        if not np.any(connection_valid_mask):
+            continue
+
+        # Compute observed vector angle (from i to j) for valid connections
+        obs_angle_subset = np.arctan2(yj[connection_valid_mask] - yi[connection_valid_mask],
+                                      xj[connection_valid_mask] - xi[connection_valid_mask])
+        inferred_angle_subset = obs_angle_subset - offset
+        inferred_angle_subset = np.arctan2(np.sin(inferred_angle_subset), np.cos(inferred_angle_subset))
+
+        # Use weighted averaging in complex space to avoid angle wrapping issues
+        inferred_angle_complex_subset = np.exp(1j * inferred_angle_subset)
+        temp_inferred_complex_full = np.full(N, np.nan + 0j, dtype=complex)
+        temp_inferred_complex_full[connection_valid_mask] = inferred_angle_complex_subset
+
+        global_target_mask = connection_valid_mask & np.isnan(angles)
+
+        if np.any(global_target_mask):
+            weighted_sum[global_target_mask] += weight * np.angle(temp_inferred_complex_full[global_target_mask])
+            total_weights[global_target_mask] += weight
+
+    # Apply weighted average for frames that were filled via consensus
+    final_mask = (total_weights > 0) & np.isnan(angles)
+    angles[final_mask] = np.arctan2(
+        np.sin(weighted_sum[final_mask] / total_weights[final_mask]),
+        np.cos(weighted_sum[final_mask] / total_weights[final_mask])
+    )
+
+    return angles[0].item() if orig_ndim == 1 else angles
     
-def align_poses_by_vector(local_coords:np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+def align_poses_by_vector(local_coords:np.ndarray, angle_map_data:Dict[str, any]) -> Tuple[np.ndarray, np.ndarray]:
     """
     Rotates all poses to a common orientation using an anchor-reference vector.
     
     Args:
         local_coords (np.ndarray): Relative positions of keypoints, shape (N, K*2).
+        angle_map_data : Dict with 'head_idx', 'tail_idx', 'angle_map'.
 
     Returns:
         Tuple[np.ndarray, np.ndarray]:
@@ -344,7 +390,7 @@ def align_poses_by_vector(local_coords:np.ndarray) -> Tuple[np.ndarray, np.ndarr
     
     """
     relative_x, relative_y = local_coords[:, 0::2], local_coords[:, 1::2]
-    angles = calculate_pose_rotations(relative_x, relative_y)
+    angles = calculate_pose_rotations(relative_x, relative_y, angle_map_data=angle_map_data)
     
     cos_angles, sin_angles = np.cos(-angles), np.sin(-angles)
     rotated_rltv = np.empty(local_coords.shape)
@@ -356,7 +402,7 @@ def align_poses_by_vector(local_coords:np.ndarray) -> Tuple[np.ndarray, np.ndarr
 
 def track_rotation_worker(angle:float, centroids:np.ndarray, local_coords:np.ndarray, confs:np.ndarray) -> np.ndarray:
     """
-    Rotate average relative keypoint positions by a given angle around the average centroid, then compute a canonical aligned pose.
+    Rotate average relative keypoint positions by a given angle around the average centroid, then compute an aligned pose.
     
     Args:
         angle (float): Rotation angle in radians.
@@ -380,6 +426,148 @@ def track_rotation_worker(angle:float, centroids:np.ndarray, local_coords:np.nda
     average_pose = np.empty(local_coords.shape[-1] // 2 * 3)
     average_pose[0::3], average_pose[1::3], average_pose[2::3] = global_x, global_y, avg_confs
     return average_pose
+
+def calculate_canonical_pose(pred_data_array:np.ndarray):
+    F, I, XYCONF = pred_data_array.shape
+    pred_data_combined = pred_data_array.reshape(F*I, 1, XYCONF)
+    _, local_coords = calculate_pose_centroids(pred_data_combined)
+    all_frame_poses = np.squeeze(local_coords)
+    average_pose = np.nanmean((all_frame_poses), axis=0)
+    canon_pose = average_pose.reshape(XYCONF//3, 2) # (kp,2)
+    return canon_pose, all_frame_poses
+
+#########################################################################################################################################################1
+
+def infer_head_tail_indices(keypoint_names:List[str]) -> Tuple[int,int]:
+    """
+    Infer head and tail keypoint indices from keypoint names with robust handling
+    of capitalization, underscores, and common anatomical naming patterns.
+    
+    Args:
+        keypoint_names: list of all the keypoint names
+
+    Returns:
+        idx of supposed head and tail keypoint
+    """
+    # Define priority-ordered keywords (lowercase, without underscores)
+    head_keywords_priority = [
+        'nose', 'head', 'forehead', 'front', 'snout', 'face', 'mouth', 'muzzle', 'spinF', 'neck', 'eye', 'ear', 'cheek', 'chin'
+    ]
+    tail_keywords_priority = [
+        'tailbase', 'base_tail', 'tail_base', 'butt', 'hip', 'rump', 'thorax_back', 'ass', 'pelvis', 'tail', 'spineM', 'cent'
+    ]
+
+    def normalize(name): # Normalize keypoint names: lowercase, remove non-alphanumeric, collapse underscores
+        return ''.join(c.lower() for c in name if c.isalnum())
+
+    normalized_names = [normalize(name) for name in keypoint_names]
+
+    # Search with priority: return first match in priority list
+    head_idx = None
+    for kw in head_keywords_priority:
+        normalized_kw = normalize(kw)
+        for idx, norm_name in enumerate(normalized_names):
+            if normalized_kw in norm_name:
+                head_idx = idx
+                break
+        if head_idx is not None:
+            break
+
+    tail_idx = None
+    for kw in tail_keywords_priority:
+        normalized_kw = normalize(kw)
+        for idx, norm_name in enumerate(normalized_names):
+            if normalized_kw in norm_name:
+                tail_idx = idx
+                break
+        if tail_idx is not None:
+            break
+
+    if head_idx is None:
+        print("Warning: Could not infer head keypoint from keypoint names.")
+    if tail_idx is None:
+        print("Warning: Could not infer tail keypoint from keypoint names.")
+
+    return head_idx, tail_idx
+
+def get_head_tail_indices_from_canon_pose(canon_pose:np.ndarray, head_idx:int, tail_idx:int) -> Tuple[int,int]:
+    if head_idx is None and tail_idx is None: # PCA fallback
+        valid = ~np.isnan(canon_pose).all(axis=1)
+        points = canon_pose[valid]
+        if len(points) == 2:
+            head_idx, tail_idx = 0, 1
+        else:
+            cov = np.cov(points.T)
+            _, eigvecs = np.linalg.eigh(cov)
+            axis = eigvecs[:, -1]
+            proj = canon_pose @ axis
+            head_idx = int(np.nanargmax(proj))
+            tail_idx = int(np.nanargmin(proj))
+    elif head_idx is None: # Take d
+        tail_vec = canon_pose[head_idx]
+        dist_sq = np.sum((canon_pose - tail_vec)**2, axis=1)
+        tail_idx = int(np.nanargmax(dist_sq))
+    elif tail_idx is None:
+        head_vec = canon_pose[tail_idx]
+        dist_sq = np.sum((canon_pose - head_vec)**2, axis=1)
+        head_idx = int(np.nanargmax(dist_sq))
+
+    if head_idx == tail_idx:
+        raise ValueError("Could not resolve valid head/tail indices")
+
+    return head_idx, tail_idx
+
+def build_angle_map(canon_pose:np.ndarray, all_frame_poses:np.ndarray , head_idx:int, tail_idx:int) -> dict:
+    canonical_vec = canon_pose[head_idx] - canon_pose[tail_idx]
+    num_keypoint = canon_pose.shape[0]
+    if np.linalg.norm(canonical_vec) < 1e-6:
+        canonical_body_angle = 0.0
+    else:
+        canonical_body_angle = np.arctan2(canonical_vec[1], canonical_vec[0])
+
+    # Build angle map for every possible connection
+    angle_map = []  # (i, j, expected_offset, weight)
+    all_angles = np.arctan2(all_frame_poses[:, 1::2], all_frame_poses[:, 0::2])  # (N, K)
+
+    for i in range(num_keypoint):
+        for j in range(num_keypoint):
+            if i == j:
+                continue
+
+            # Vector from i to j in canon pose
+            vec = canon_pose[j] - canon_pose[i]
+            if np.linalg.norm(vec) < 1e-6:
+                continue
+
+            # Expected angle of this vector
+            raw_angle = np.arctan2(vec[1], vec[0])
+
+            # Offset relative to canonical body angle
+            offset = np.arctan2(
+                np.sin(raw_angle - canonical_body_angle),
+                np.cos(raw_angle - canonical_body_angle)
+            )  # Wrap to [-π, π]
+
+            # Measure angular variation (in radians)
+            ij_angles = all_angles[:, j] - all_angles[:, i]  # (N,)
+            ij_angles = np.arctan2(np.sin(ij_angles), np.cos(ij_angles))  # Unwrap
+            var = np.nanvar(ij_angles)
+
+            # Weight: high if stable and aligned with body
+            length = np.linalg.norm(vec)
+            stability = 1.0 / (1.0 + var) if var > 0 else 1.0
+            alignment = abs(np.dot(vec / np.linalg.norm(vec), canonical_vec / np.linalg.norm(canonical_vec)))
+
+            weight = length * stability * alignment
+
+            angle_map.append({"i": i, "j": j,"offset": offset,"weight": weight})
+
+    # Sort by weight (most reliable first)
+    angle_map.sort(key=lambda x: x["weight"], reverse=True)
+    
+    angle_map_data = {"head_idx": head_idx, "tail_idx": tail_idx, "angle_map": angle_map}
+
+    return angle_map_data
 
 #########################################################################################################################################################1
 
