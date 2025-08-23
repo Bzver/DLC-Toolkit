@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from scipy.optimize import linear_sum_assignment
+from itertools import combinations
 
 from typing import List, Optional, Tuple, Dict
 
@@ -293,7 +294,7 @@ def get_average_pose(
 ###################################################################################################################################################
 
 def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray, progress,
-    debug_status: bool = False, max_dist: float = 20.0, lookback_limit: int = 5) -> Tuple[np.ndarray, int]:
+    debug_status: bool = False, max_dist: float = 10.0, lookback_limit: int = 5) -> Tuple[np.ndarray, int]:
     """
     Correct instance identities in DLC predictions using idTracker trajectories,
     with fallback to temporal coherence from prior DLC frames when idTracker fails.
@@ -323,6 +324,18 @@ def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray
     last_order = list(range(instance_count))
     changes_applied = 0
     debug_print = debug_status
+    if debug_print:
+        duh.log_print("----------  Starting IDT Autocorrection  ----------")
+
+    # Filter out the "ghost" prediction: i.e. identical predictions in the same place
+    instances = list(range(instance_count))
+    for inst_1_idx, inst_2_idx in combinations(instances, 2):
+        pose_diff_all_frames = pred_data_array[:, inst_1_idx, :] - pred_data_array[:, inst_2_idx, :]
+        ghost_mask = np.all(pose_diff_all_frames <= 1, axis=1)
+        pred_data_array[ghost_mask, inst_2_idx, :] = np.nan
+        if debug_print and np.any(ghost_mask):
+            ghost_frame_indices = np.where(ghost_mask)[0]
+            duh.log_print(f"Ghost prediction detected: instances {inst_1_idx} and {inst_2_idx} identical in frames {ghost_frame_indices}")
 
     for frame_idx in range(total_frames):
         progress.setValue(frame_idx)
@@ -461,13 +474,13 @@ def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray
             corrected_pred_data[frame_idx, :, :] = corrected_pred_data[frame_idx, last_order, :]
             changes_applied += 1
             if debug_print:
-                duh.log_print("[TMOD] NO TMOD, failed to build new order with Hungarian."
-                            f"[TMOD] SWAP, Applying the last order: {last_order}")
+                duh.log_print(f"{mode_text}failed to build new order with Hungarian."
+                            f"{mode_text}SWAP, Applying the last order: {last_order}")
             continue
 
         elif new_order == list(range(instance_count)):
             if debug_print:
-                duh.log_print("[TMOD] Positions within threshold, no need for Hungarian.")
+                duh.log_print(f"{mode_text}NO SWAP, already the best solution in Hungarian.")
             continue
 
         corrected_pred_data[frame_idx, :, :] = corrected_pred_data[frame_idx, new_order, :]

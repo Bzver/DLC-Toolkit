@@ -33,7 +33,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.is_debug = True
+        self.is_debug = False
         self.setWindowTitle(duh.format_title("DLC Track Refiner", self.is_debug))
         self.setGeometry(100, 100, 1200, 960)
 
