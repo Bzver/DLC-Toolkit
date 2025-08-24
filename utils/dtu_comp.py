@@ -8,9 +8,9 @@ class Slider_With_Marks(QtWidgets.QSlider):
 
     def __init__(self, orientation):
         super().__init__(orientation)
-        self.frame_categories = {} # Stores {category_name: set_of_frames}
-        self.category_colors = {} # Stores {category_name: color_string}
-        self.category_priorities = {} # Stores {category_name: priority_int}
+        self.frame_categories = {} # {category_name: set_of_frames}
+        self.category_colors = {} # {category_name: color_string}
+        self.category_priorities = {} # {category_name: priority_int}
         self.setStyleSheet("""
             QSlider::groove:horizontal {
                 border: 1px solid #999999;
@@ -108,8 +108,7 @@ class Slider_With_Marks(QtWidgets.QSlider):
 #######################################################################################################################################################
 
 class Draggable_Keypoint(QtCore.QObject, QGraphicsEllipseItem):
-    # Signal to emit when the keypoint is moved
-    keypoint_moved = Signal(int, int, float, float) # instance_id, keypoint_id, new_x, new_y
+    keypoint_moved = Signal(int, int, float, float) # instance_id, keypoint_id, new_x, new_y, emit when the keypoint is moved
     keypoint_drag_started = Signal(object) # Emits the Draggable_Keypoint object itself
 
     def __init__(self, x, y, width, height, instance_id, keypoint_id, default_color_rgb, parent=None):
@@ -157,9 +156,8 @@ class Draggable_Keypoint(QtCore.QObject, QGraphicsEllipseItem):
 #######################################################################################################################################################
 
 class Selectable_Instance(QtCore.QObject, QGraphicsRectItem):
-    clicked = Signal(object) # Signal to emit when this box is clicked
-    # Signal to emit when the bounding box is moved
-    bounding_box_moved = Signal(int, float, float) # instance_id, dx, dy
+    bounding_box_clicked = Signal(object)                        # Signal to emit when this box is clicked
+    bounding_box_moved = Signal(int, float, float)  # Signal to emit when the bounding box is moved, instance_id, dx, dy
 
     def __init__(self, x, y, width, height, instance_id, default_color_rgb, parent=None):
         QtCore.QObject.__init__(self, parent)
@@ -180,7 +178,7 @@ class Selectable_Instance(QtCore.QObject, QGraphicsRectItem):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            self.clicked.emit(self) # Emit the signal for selection
+            self.bounding_box_clicked.emit(self) # Emit the signal for selection
             if self.flags() & QGraphicsRectItem.ItemIsMovable:
                 self.last_mouse_pos = event.scenePos() # Store the initial mouse position for dragging
         super().mousePressEvent(event)

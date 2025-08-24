@@ -237,17 +237,23 @@ def calculate_snapping_zoom_level(current_frame_data:np.ndarray, view_width:floa
     if np.all(np.isnan(x_vals_current_frame)):
         return
     
-    min_x, max_x = np.nanmin(x_vals_current_frame), np.nanmax(x_vals_current_frame)
-    min_y, max_y = np.nanmin(y_vals_current_frame), np.nanmax(y_vals_current_frame)
+    min_x = np.nanmin(x_vals_current_frame)
+    max_x = np.nanmax(x_vals_current_frame)
+    min_y = np.nanmin(y_vals_current_frame)
+    max_y = np.nanmax(y_vals_current_frame)
 
-    padding_factor = 1.1 # 10% padding
-    width, height = max(1.0, max_x - min_x), max(1.0, max_y - min_y)
-    padded_width, padded_height = width * padding_factor, height * padding_factor
-    center_x, center_y = (min_x + max_x) / 2, (min_y + max_y) / 2
+    padding_factor = 1.25 # 25% padding
+    width = max(1.0, max_x - min_x)
+    height = max(1.0, max_y - min_y)
+    padded_width = width * padding_factor
+    padded_height = height * padding_factor
+    center_x = (min_x + max_x) / 2
+    center_y = (min_y + max_y) / 2
 
     # Calculate new zoom level
     if padded_width > 0 and padded_height > 0:
-        zoom_x, zoom_y = view_width / padded_width, view_height / padded_height
+        zoom_x = view_width / padded_width
+        zoom_y = view_height / padded_height
         new_zoom_level = min(zoom_x, zoom_y)
     else:
         new_zoom_level = 1.0

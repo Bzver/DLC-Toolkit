@@ -12,23 +12,24 @@ from PySide6.QtWidgets import QMessageBox, QPushButton, QGraphicsView, QGraphics
 
 from utils.dtu_widget import Menu_Widget, Progress_Bar_Widget, Nav_Widget, Adjust_Property_Dialog, Pose_Rotation_Dialog
 from utils.dtu_comp import Selectable_Instance, Draggable_Keypoint
+from utils.dtu_plotter import DLC_Plotter
 from utils.dtu_io import DLC_Loader
-from utils.dtu_dataclass import Export_Settings
+from utils.dtu_dataclass import Export_Settings, Plot_Config, Refiner_Plotter_Callbacks
 import utils.dtu_io as dio
 import utils.dtu_helper as duh
 import utils.dtu_gui_helper as dugh
 import utils.dtu_track_edit as dute
 
 DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/NTD/config.yaml"
-VIDEO_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/20250716-first3h-D-conv.mp4"
-PRED_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/20250716-first3h-D-convDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_370_snapshot_150_el.h5"
+VIDEO_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/jobs/view3/20250626C1-first3h-D.mp4"
+PRED_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/jobs/view3/20250626C1-first3h-DDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_090_snapshot_080_el.h5"
 
 # Todo:
 #   Add support for use cases where individual counts exceed 2
 
 class DLC_Track_Refiner(QtWidgets.QMainWindow):
-    prediction_saved = Signal(str) # Signal to emit the path of the saved prediction file
-    refined_frames_exported = Signal(list) # ignal to emit the refined_roi_frame_list back to Extractor
+    prediction_saved = Signal(str)          # Signal to emit the path of the saved prediction file
+    refined_frames_exported = Signal(list)  # Signal to emit the refined_roi_frame_list back to Extractor
 
     def __init__(self):
         super().__init__()
@@ -73,10 +74,11 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             "Preference": {
                 "display_name": "Preference",
                 "buttons": [
-                    ("Snap to Instances", self.toggle_snap_to_instances, {"checkable": True, "checked": False}),
                     ("Reset Zoom", self.reset_zoom),
                     ("Adjust Point Size", self.adjust_point_size),
-                    ("Adjust Plot Visibility", self.adjust_plot_opacity)
+                    ("Adjust Plot Visibility", self.adjust_plot_opacity),
+                    ("Hide Text Labels", self.toggle_hide_text_labels, {"checkable": True, "checked": False}),
+                    ("Snap to Instances", self.toggle_snap_to_instances, {"checkable": True, "checked": False})
                 ]
             },
             "Save": {
@@ -177,37 +179,31 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
     def reset_state(self):
         self.video_file, self.prediction, self.video_name = None, None, None
-        self.dlc_data, self.keypoint_to_idx, self.angle_map_data = None, None, None
+        self.dlc_data, self.angle_map_data = None, None
         self.instance_count_per_frame, self.pred_data_array = None, None
         self.data_loader = DLC_Loader(None, None)
 
         self.roi_frame_list, self.marked_roi_frame_list, self.refined_roi_frame_list = [], [], []
-
         self.cap, self.current_frame = None, None
-
-        self.is_playing = False
-
-        self.nav_widget.set_collapsed(True)
-        self.plot_opacity = 1.0
-        self.point_size = 6
-
-        self.selected_box = None
-
-        self.is_drawing_zone = False
+        self.selected_box, self.dragged_keypoint = None, None
         self.start_point, self.current_rect_item = None, None
 
-        self.is_kp_edit = False
-        self.dragged_keypoint, self.dragged_bounding_box = None, None
-        
+        self.is_playing, self.is_kp_edit, self.is_drawing_zone, self.is_zoom_mode = False, False, False, False
+
         self.undo_stack, self.redo_stack = [], []
         self.max_undo_stack_size = 100
         self.is_saved = True
 
-        self.is_zoom_mode = False
+        self.plot_config = Plot_Config(plot_opacity=1.0, point_size = 6.0, hide_text_labels = False, edit_mode = False)
+        self.plotter_callback = Refiner_Plotter_Callbacks(
+            keypoint_coords_callback = self._update_keypoint_position, keypoint_object_callback = self.set_dragged_keypoint,
+            box_coords_callback = self._update_instance_position, box_object_callback = self._handle_box_selection
+        )
         self.zoom_factor = 1.0
 
         self.auto_snapping = False
 
+        self.nav_widget.set_collapsed(True)
         self._refresh_slider()
 
     def load_video(self):
@@ -273,7 +269,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
     def initialize_loaded_data(self):
         self.prediction = self.dlc_data.prediction_filepath
         self.pred_data_array = self.dlc_data.pred_data_array
-        self.keypoint_to_idx = {name: idx for idx, name in enumerate(self.dlc_data.keypoints)}
         head_idx, tail_idx = duh.infer_head_tail_indices(self.dlc_data.keypoints)
         canon_pose, all_frame_pose = duh.calculate_canonical_pose(self.pred_data_array)
         if head_idx is None or tail_idx is None:
@@ -281,6 +276,11 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.angle_map_data = duh.build_angle_map(canon_pose, all_frame_pose, head_idx, tail_idx)
 
         self.check_instance_count_per_frame()
+
+        self.plotter = DLC_Plotter(
+            dlc_data=self.dlc_data,
+            current_frame_data=self.pred_data_array[self.current_frame_idx, ...],
+            graphics_scene=self.graphics_scene, plot_config=self.plot_config, plot_callback=self.plotter_callback)
 
         if self.dlc_data.pred_frame_count != self.total_frames:
             QMessageBox.warning(self, "Error: Frame Mismatch",
@@ -329,10 +329,11 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
                 # Plot predictions (keypoints, bounding boxes, skeleton)
                 if self.pred_data_array is not None:
-                    self.plot_predictions(frame.copy())
+                    self.plotter.current_frame_data = self.pred_data_array[self.current_frame_idx, ...]
+                    self.plotter.plot_config = self.plot_config
+                    self.plotter.plot_predictions()
 
                 self.graphics_view.update() # Force update of the graphics view
-
                 self.progress_widget.set_current_frame(self.current_frame_idx) # Update slider handle's position
 
             else: # If video frame cannot be read, clear scene and display error
@@ -340,119 +341,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 error_text_item = self.graphics_scene.addText("Error: Could not read frame")
                 error_text_item.setDefaultTextColor(QColor(255, 255, 255)) # White text
                 self.graphics_view.fitInView(error_text_item.boundingRect(), Qt.KeepAspectRatio)
-
-    def plot_predictions(self, frame):
-        self.current_selectable_boxes = [] # Store selectable boxes for the current frame
-        color_rgb = [(255, 165, 0), (51, 255, 51), (51, 153, 255), (255, 51, 51), (255, 255, 102)]
-
-        # Iterate over each individual (animal)
-        for inst in range(self.dlc_data.instance_count):
-            color = color_rgb[inst % len(color_rgb)]
-            
-            # Initiate an empty dict for storing coordinates
-            keypoint_coords = dict()
-            for kp_idx in range(self.dlc_data.num_keypoint):
-                kp = self.pred_data_array[self.current_frame_idx,inst,kp_idx*3:kp_idx*3+3]
-                if pd.isna(kp[0]):
-                    continue
-                x, y, conf = kp[0], kp[1], kp[2]
-                keypoint_coords[kp_idx] = (float(x),float(y),float(conf))
-                # Draw the dot representing the keypoints
-                keypoint_item = Draggable_Keypoint(x - self.point_size / 2, y - self.point_size / 2, self.point_size, self.point_size, inst, kp_idx, default_color_rgb=color)
-                keypoint_item.setOpacity(self.plot_opacity)
-
-                if isinstance(keypoint_item, Draggable_Keypoint):
-                    keypoint_item.setFlag(QtWidgets.QGraphicsEllipseItem.ItemIsMovable, self.is_kp_edit)
-
-                self.graphics_scene.addItem(keypoint_item)
-                keypoint_item.setZValue(1) # Ensure keypoints are on top of the video frame
-                keypoint_item.keypoint_moved.connect(self.update_keypoint_position)
-                keypoint_item.keypoint_drag_started.connect(self.set_dragged_keypoint)
-
-            self.plot_keypoint_label(keypoint_coords, frame, color)
-
-            if self.dlc_data.individuals is not None and len(keypoint_coords) >= 2:
-                self.plot_bounding_box(keypoint_coords, frame, color, inst)
-            if self.dlc_data.skeleton:
-                self.plot_skeleton(keypoint_coords, frame, color)
-
-        return frame
-    
-    def plot_bounding_box(self, keypoint_coords, frame, color, inst):
-        # Calculate bounding box coordinates
-        x_coords = [keypoint_coords[p][0] for p in keypoint_coords if keypoint_coords[p] is not None]
-        y_coords = [keypoint_coords[p][1] for p in keypoint_coords if keypoint_coords[p] is not None]
-        kp_confidence = [keypoint_coords[p][2] for p in keypoint_coords if keypoint_coords[p] is not None]
-
-        if not x_coords or not y_coords: # Skip if the mice has no keypoint
-            return frame
-            
-        kp_inst_mean = sum(kp_confidence) / len(kp_confidence)
-        min_x, max_x = min(x_coords), max(x_coords)
-        min_y, max_y = min(y_coords), max(y_coords)
-
-        padding = 10
-        min_x = max(0, min_x - padding)
-        min_y = max(0, min_y - padding)
-        max_x = min(frame.shape[1] - 1, max_x + padding)
-        max_y = min(frame.shape[0] - 1, max_y + padding)
-
-        # Draw bounding box using QGraphicsRectItem
-        rect_item = Selectable_Instance(min_x, min_y, max_x - min_x, max_y - min_y, inst, default_color_rgb=color)
-        rect_item.setOpacity(self.plot_opacity)
-        if isinstance(rect_item, Selectable_Instance):
-                rect_item.setFlag(QGraphicsRectItem.ItemIsMovable, self.is_kp_edit)
-        self.graphics_scene.addItem(rect_item)
-        self.current_selectable_boxes.append(rect_item)
-        rect_item.clicked.connect(self._handle_box_selection) # Connect the signal
-        # Connect the bounding_box_moved signal to the update method in DLC_Track_Refiner
-        rect_item.bounding_box_moved.connect(self.update_instance_position)
-
-        # Add individual label and keypoint labels
-        text_item_inst = QtWidgets.QGraphicsTextItem(f"Inst: {self.dlc_data.individuals[inst]} | Conf:{kp_inst_mean:.4f}")
-        text_item_inst.setPos(min_x, min_y - 20) # Adjust position to be above the bounding box
-        text_item_inst.setDefaultTextColor(QtGui.QColor(*color))
-        text_item_inst.setOpacity(self.plot_opacity)
-        text_item_inst.setFlag(QtWidgets.QGraphicsTextItem.ItemIgnoresTransformations) # Keep text size constant
-        self.graphics_scene.addItem(text_item_inst)
-
-    def plot_keypoint_label(self, keypoint_coords, frame, color):
-        # Plot keypoint labels
-        for kp_idx, (x, y, conf) in keypoint_coords.items():
-            keypoint_label = self.dlc_data.keypoints[kp_idx]
-
-            text_item = QtWidgets.QGraphicsTextItem(f"{keypoint_label}")
-
-            font = text_item.font() # Get the default font of the QGraphicsTextItem
-            fm = QtGui.QFontMetrics(font)
-            text_rect = fm.boundingRect(keypoint_label)
-            
-            text_width = text_rect.width()
-            text_height = text_rect.height()
-
-            text_x = x - text_width / 2 + 5
-            text_y = y - text_height / 2 + 5
-
-            text_item.setPos(text_x, text_y)
-            text_item.setDefaultTextColor(QtGui.QColor(*color))
-            text_item.setOpacity(self.plot_opacity)
-            text_item.setFlag(QtWidgets.QGraphicsTextItem.ItemIgnoresTransformations) # Keep text size constant
-            self.graphics_scene.addItem(text_item)
-
-        return frame
-    
-    def plot_skeleton(self, keypoint_coords, frame, color):
-        for start_kp, end_kp in self.dlc_data.skeleton:
-            start_kp_idx = self.keypoint_to_idx[start_kp]
-            end_kp_idx = self.keypoint_to_idx[end_kp]
-            start_coord = keypoint_coords.get(start_kp_idx)
-            end_coord = keypoint_coords.get(end_kp_idx)
-            if start_coord and end_coord:
-                line = QtWidgets.QGraphicsLineItem(start_coord[0], start_coord[1], end_coord[0], end_coord[1])
-                line.setPen(QtGui.QPen(QtGui.QColor(*color), self.point_size / 3))
-                line.setOpacity(self.plot_opacity)
-                self.graphics_scene.addItem(line)
-        return frame
 
     ###################################################################################################################################################
 
@@ -500,24 +388,28 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.auto_snapping = not self.auto_snapping
         self.display_current_frame()
 
+    def toggle_hide_text_labels(self):
+        self.plot_config.hide_text_labels = not self.plot_config.hide_text_labels
+        self.display_current_frame()
+
     def adjust_point_size(self):
         dialog = Adjust_Property_Dialog(
-            property_name="Point Size", property_val=self.point_size, range=(0.1, 5), parent=self)
+            property_name="Point Size", property_val=self.plot_config.point_size, range=(0.1, 10.0), parent=self)
         dialog.property_changed.connect(self._update_point_size)
         dialog.show()
 
     def adjust_plot_opacity(self):
         dialog = Adjust_Property_Dialog(
-            property_name="Point Opacity", property_val=self.point_size, range=(0.00, 1.00), parent=self)
+            property_name="Point Opacity", property_val=self.plot_config.plot_opacity, range=(0.00, 1.00), parent=self)
         dialog.property_changed.connect(self._update_plot_opacity)
         dialog.show()
 
     def _update_point_size(self, value):
-        self.point_size = value
+        self.plot_config.point_size = value
         self.display_current_frame()
 
     def _update_plot_opacity(self, value):
-        self.plot_opacity = value
+        self.plot_config.plot_opacity = value
         self.display_current_frame()
 
     ###################################################################################################################################################
@@ -654,6 +546,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             return
         
         self.is_kp_edit = not self.is_kp_edit # Toggle the mode
+        self.plot_config.edit_mode = self.is_kp_edit
         self.navigation_title_controller() # Update title to reflect mode
         
         # Enable/disable draggable property of items based on self.is_kp_edit
@@ -672,8 +565,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             self.statusBar().showMessage("Keypoint editing mode is OFF.")
 
         self.navigation_title_controller()
+        self.display_current_frame() # Refresh the frame to get the kp edit status through to plotter
 
-    def update_keypoint_position(self, instance_id, keypoint_id, new_x, new_y):
+    def _update_keypoint_position(self, instance_id, keypoint_id, new_x, new_y):
         self._save_state_for_undo()
         if self.current_frame_idx in self.marked_roi_frame_list and self.current_frame_idx not in self.refined_roi_frame_list:
             self.refined_roi_frame_list.append(self.current_frame_idx)
@@ -689,22 +583,20 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self._refresh_slider()
         self.navigation_title_controller()
 
-    def update_instance_position(self, instance_id, dx, dy):
+    def _update_instance_position(self, instance_id, dx, dy):
         self._save_state_for_undo()
         if self.current_frame_idx in self.marked_roi_frame_list and self.current_frame_idx not in self.refined_roi_frame_list:
             self.refined_roi_frame_list.append(self.current_frame_idx)
-        # Update all keypoints for the given instance in the current frame
-        for kp_idx in range(self.dlc_data.num_keypoint):
-
-            x_coord_idx = kp_idx * 3
-            y_coord_idx = kp_idx * 3 + 1
-            
+        
+        for kp_idx in range(self.dlc_data.num_keypoint): # Update all keypoints for the given instance in the current frame
+            x_coord_idx, y_coord_idx = kp_idx * 3, kp_idx * 3 + 1
             current_x = self.pred_data_array[self.current_frame_idx, instance_id, x_coord_idx]
             current_y = self.pred_data_array[self.current_frame_idx, instance_id, y_coord_idx]
 
             if not pd.isna(current_x) and not pd.isna(current_y):
                 self.pred_data_array[self.current_frame_idx, instance_id, x_coord_idx] = current_x + dx
                 self.pred_data_array[self.current_frame_idx, instance_id, y_coord_idx] = current_y + dy
+
         print(f"Instance {instance_id} moved by ({dx}, {dy})")
         self.is_saved = False
         QtCore.QTimer.singleShot(0, self.display_current_frame)
@@ -725,7 +617,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             self._refresh_slider()
             self.display_current_frame()
 
-    def set_dragged_keypoint(self, keypoint_item):
+    def set_dragged_keypoint(self, keypoint_item:Draggable_Keypoint):
         self.dragged_keypoint = keypoint_item
 
     ###################################################################################################################################################
@@ -895,7 +787,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.progress_widget.set_frame_category("Refined frames", self.refined_roi_frame_list, "#009979", priority=7)
         self.progress_widget.set_frame_category("ROI frames", self.roi_frame_list, "#F04C4C") # Update ROI frames
 
-    def _handle_box_selection(self, clicked_box):
+    def _handle_box_selection(self, clicked_box:Selectable_Instance):
         if self.selected_box and self.selected_box != clicked_box and self.selected_box.scene() is not None:
             self.selected_box.toggle_selection() # Deselect previously selected box
         clicked_box.toggle_selection() # Toggle selection of the clicked box
