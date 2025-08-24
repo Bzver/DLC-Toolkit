@@ -73,7 +73,8 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                     ("Change Marked Frame View Mode", self.change_mark_view_mode),
                     ("Reset Marked Frames", self.reset_marked_frames),
                     ("Check Camera Geometry", self.plot_camera_geometry),
-                    ("Auto 3D View Perspective", self.toggle_auto_3d_perspective, {"checkable": True, "checked": True})
+                    ("Auto 3D View Perspective", self.toggle_auto_3d_perspective, {"checkable": True, "checked": True}),
+                    ("Toogle Persistent 3D Skeleton Rendering", self.toggle_persistent_3d_render, {"checkable": True, "checked": False})
                 ]
             },
             "Track": {
@@ -149,7 +150,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_Right | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(10))
         QShortcut(QKeySequence(Qt.Key_Up), self).activated.connect(lambda:self._navigate_marked_frames("prev"))
         QShortcut(QKeySequence(Qt.Key_Down), self).activated.connect(lambda:self._navigate_marked_frames("next"))
-        QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.progress_widget.toggle_playback)
+        QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.toggle_playback_wrapper)
         QShortcut(QKeySequence(Qt.Key_S | Qt.ControlModifier), self).activated.connect(self.save_workspace)
         QShortcut(QKeySequence(Qt.Key_X), self).activated.connect(self.manual_swap_frame_view)
         self.canvas.mpl_connect("scroll_event", self.on_scroll_3d_plot)
@@ -193,8 +194,8 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.view_mode_choice = ["ROI Frames", "Failed Frames", "Skipped Frames"]
         self.current_view_mode_idx = 0
 
-        self.is_saved = True
-        self.auto_perspective = True
+        self.is_saved, self.auto_perspective = True, True
+        self.is_playing, self.persist_3D_render = False, False
 
         self.roi_frame_list, self.failed_frame_list, self.skipped_frame_list = [], [], []
         self.check_range = 100
@@ -512,7 +513,12 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             
             self.progress_widget.set_current_frame(self.current_frame_idx) # Update slider handle's position
 
-        self.plot_3d_points()
+        if not self.is_playing or self.persist_3D_render:
+            self.canvas.setVisible(True)
+            self.plot_3d_points()
+        else:
+            self.canvas.setVisible(False)
+
         self._refresh_selected_cam()
     
     def plot_3d_points(self):
@@ -939,6 +945,18 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.auto_perspective = not self.auto_perspective
         self.ax.view_init(elev=30, azim=-60)
         self.canvas.draw_idle()
+
+    def toggle_persistent_3d_render(self):
+        self.persist_3D_render = not self.persist_3D_render
+        self.canvas.setVisible(True)
+        self.plot_3d_points()
+
+    def toggle_playback_wrapper(self):
+        self.progress_widget.toggle_playback()
+        self.is_playing = not self.is_playing
+        if not self.is_playing:
+            self.canvas.setVisible(True)
+            self.plot_3d_points()
 
     def show_confidence_dialog(self):
         if self.pred_data_array is None:
