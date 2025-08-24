@@ -1,5 +1,6 @@
 import numpy as np
 
+import cv2
 from PySide6 import QtGui
 from PySide6.QtWidgets import QGraphicsRectItem, QGraphicsEllipseItem, QGraphicsTextItem, QGraphicsLineItem, QGraphicsScene
 
@@ -9,43 +10,58 @@ from .dtu_dataclass import Loaded_DLC_Data, Plot_Config, Refiner_Plotter_Callbac
 from .dtu_comp import Selectable_Instance, Draggable_Keypoint
 
 class DLC_Plotter:
-    def __init__(self, dlc_data:Loaded_DLC_Data, current_frame_data:np.ndarray, graphics_scene:QGraphicsScene,
-            plot_config:Plot_Config, plot_callback:Optional[Refiner_Plotter_Callbacks]=None):
+    def __init__(self, dlc_data:Loaded_DLC_Data, current_frame_data:np.ndarray, plot_config:Plot_Config, frame_cv2:Optional[np.ndarray]=None,
+            graphics_scene:Optional[QGraphicsScene]=None, plot_callback:Optional[Refiner_Plotter_Callbacks]=None):
         
         self.dlc_data = dlc_data
         self.current_frame_data = current_frame_data
+        self.frame_cv2 = frame_cv2
         self.graphics_scene = graphics_scene
         self.plot_config = plot_config
         self.plot_callback = plot_callback
 
-        self.color = [(255, 165, 0), (51, 255, 51), (51, 153, 255), (255, 51, 51), (255, 255, 102)]
+        self.color = [(255, 165, 0), (51, 255, 51), (51, 153, 255), (255, 51, 51), (255, 255, 102)] # RGB
+
+        if frame_cv2 is None and graphics_scene is not None:
+            self.mode = "GS"
+        elif graphics_scene is None and frame_cv2 is not None:
+            self.mode = "CV"
+            self.color = [color[::-1] for color in self.color] # RGB to BGR
+        else:
+            raise ValueError("Either 'frame_cv2' or 'graphics_scene' must be provided, but not both.")
+
         self.keypoint_coords = {}
 
-    def plot_predictions(self):
+    def plot_predictions(self) -> Optional[np.ndarray]:
         for inst in range(self.dlc_data.instance_count):
-            self.keypoint_coords = {} # Cleanup the keypoint coords
+            self.keypoint_coords = {} # Cleanup the keypoint coords of other insts
             color = self.color[inst % len(self.color)]
             
             for kp_idx in range(self.dlc_data.num_keypoint):
                 kp = self.current_frame_data[inst,kp_idx*3:kp_idx*3+3]
-                if np.isnan(kp[0]):
-                    continue
                 x, y, conf = kp[0], kp[1], kp[2]
-                self.keypoint_coords[kp_idx] = (float(x),float(y),float(conf))
 
-                # QGraphicsEllipseItem dot representing the keypoints 
-                keypoint_item = Draggable_Keypoint(
-                    x - self.plot_config.point_size / 2, y - self.plot_config.point_size / 2,
-                    self.plot_config.point_size, self.plot_config.point_size, inst, kp_idx, default_color_rgb=color)
-                keypoint_item.setOpacity(self.plot_config.plot_opacity)
+                if np.isnan(x) or conf <= self.plot_config.confidence_cutoff:
+                    continue
 
-                if isinstance(keypoint_item, Draggable_Keypoint):
-                    keypoint_item.setFlag(QGraphicsEllipseItem.ItemIsMovable, self.plot_config.edit_mode)
+                if self.mode == "GS": # QGraphicsEllipseItem dot representing the keypoints 
+                    self.keypoint_coords[kp_idx] = (float(x),float(y),float(conf))
+                    keypoint_item = Draggable_Keypoint(
+                        x - self.plot_config.point_size / 2, y - self.plot_config.point_size / 2,
+                        self.plot_config.point_size, self.plot_config.point_size, inst, kp_idx, default_color_rgb=color)
+                    keypoint_item.setOpacity(self.plot_config.plot_opacity)
 
-                self.graphics_scene.addItem(keypoint_item)
-                keypoint_item.setZValue(1) # Ensure keypoints are on top of the video frame
-                keypoint_item.keypoint_moved.connect(self.plot_callback.keypoint_coords_callback)
-                keypoint_item.keypoint_drag_started.connect(self.plot_callback.keypoint_object_callback)
+                    if isinstance(keypoint_item, Draggable_Keypoint):
+                        keypoint_item.setFlag(QGraphicsEllipseItem.ItemIsMovable, self.plot_config.edit_mode)
+
+                    self.graphics_scene.addItem(keypoint_item)
+                    keypoint_item.setZValue(1) # Ensure keypoints are on top of the video frame
+                    keypoint_item.keypoint_moved.connect(self.plot_callback.keypoint_coords_callback)
+                    keypoint_item.keypoint_drag_started.connect(self.plot_callback.keypoint_object_callback)
+
+                elif self.mode == "CV": # Draw the dot representing the keypoints
+                    self.keypoint_coords[kp_idx] = (int(x),int(y),float(conf))
+                    cv2.circle(self.frame_cv2, (int(x), int(y)), int(self.plot_config.point_size//2), color, -1) 
 
             if not self.plot_config.hide_text_labels:
                 self._plot_keypoint_label(color)
@@ -55,6 +71,9 @@ class DLC_Plotter:
 
             if self.dlc_data.skeleton:
                 self._plot_skeleton(color)
+
+        if self.mode == "CV":
+            return self.frame_cv2
 
     def _plot_bounding_box(self, color, inst, padding = 10):
         x_coords = [self.keypoint_coords[p][0] for p in self.keypoint_coords if self.keypoint_coords[p] is not None]
@@ -70,53 +89,72 @@ class DLC_Plotter:
         min_y = min(y_coords)
         max_y = max(y_coords)
 
-        view_width = self.graphics_scene.sceneRect().width()
-        view_height = self.graphics_scene.sceneRect().height()
+        if self.mode == "GS":
+            view_width = self.graphics_scene.sceneRect().width()
+            view_height = self.graphics_scene.sceneRect().height()
+        elif self.mode == "CV":
+            view_width = self.frame_cv2.shape[1]
+            view_height = self.frame_cv2.shape[0]
+
         min_x = max(0, min_x - padding)
         min_y = max(0, min_y - padding)
         max_x = min(view_width - 1, max_x + padding)
-        max_y = min(view_height - 1, max_y + padding) # Or use frame.shape[0]
+        max_y = min(view_height - 1, max_y + padding)
 
-        # Draw bounding box using QGraphicsRectItem
-        rect_item = Selectable_Instance(min_x, min_y, max_x - min_x, max_y - min_y, inst, default_color_rgb=color)
-        rect_item.setOpacity(self.plot_config.plot_opacity)
+        bounding_box_label = f"Inst: {self.dlc_data.individuals[inst]} | Conf:{kp_inst_mean:.4f}"
 
-        if isinstance(rect_item, Selectable_Instance):
-            rect_item.setFlag(QGraphicsRectItem.ItemIsMovable, self.plot_config.edit_mode)
+        if self.mode == "GS": # Draw bounding box using QGraphicsRectItem
+            rect_item = Selectable_Instance(min_x, min_y, max_x - min_x, max_y - min_y, inst, default_color_rgb=color)
+            rect_item.setOpacity(self.plot_config.plot_opacity)
 
-        self.graphics_scene.addItem(rect_item)
-        rect_item.bounding_box_moved.connect(self.plot_callback.box_coords_callback)
-        rect_item.bounding_box_clicked.connect(self.plot_callback.box_object_callback)
+            if isinstance(rect_item, Selectable_Instance):
+                rect_item.setFlag(QGraphicsRectItem.ItemIsMovable, self.plot_config.edit_mode)
 
-        if not self.plot_config.hide_text_labels: # Add individual label and keypoint labels
-            text_item_inst = QGraphicsTextItem(f"Inst: {self.dlc_data.individuals[inst]} | Conf:{kp_inst_mean:.4f}")
-            text_item_inst.setPos(min_x, min_y - 20) # Adjust position to be above the bounding box
-            text_item_inst.setDefaultTextColor(QtGui.QColor(*color))
-            text_item_inst.setOpacity(self.plot_config.plot_opacity)
-            text_item_inst.setFlag(QGraphicsTextItem.ItemIgnoresTransformations) # Keep text size constant
-            self.graphics_scene.addItem(text_item_inst)
+            self.graphics_scene.addItem(rect_item)
+            rect_item.bounding_box_moved.connect(self.plot_callback.box_coords_callback)
+            rect_item.bounding_box_clicked.connect(self.plot_callback.box_object_callback)
+
+            if not self.plot_config.hide_text_labels:
+                text_item_inst = QGraphicsTextItem(f"{bounding_box_label}")
+                text_item_inst.setPos(min_x, min_y - 20) # Adjust position to be above the bounding box
+                text_item_inst.setDefaultTextColor(QtGui.QColor(*color))
+                text_item_inst.setOpacity(self.plot_config.plot_opacity)
+                text_item_inst.setFlag(QGraphicsTextItem.ItemIgnoresTransformations) # Keep text size constant
+                self.graphics_scene.addItem(text_item_inst)
+        
+        elif self.mode == "CV":
+            cv2.rectangle(self.frame_cv2, (min_x, min_y), (max_x, max_y), color, 1) # Draw the bounding box
+            
+            if not self.plot_config.hide_text_labels:
+                cv2.putText(self.frame_cv2, f"{bounding_box_label}", (min_x, min_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, self.plot_config.point_size/20, color, 1, cv2.LINE_AA)
 
     def _plot_keypoint_label(self, color):
         for kp_idx, (x, y, conf) in self.keypoint_coords.items():
             keypoint_label = self.dlc_data.keypoints[kp_idx]
 
-            text_item = QGraphicsTextItem(f"{keypoint_label}")
+            if self.mode == "GS":
+                text_item = QGraphicsTextItem(f"{keypoint_label}")
 
-            font = text_item.font() # Get the default font of the QGraphicsTextItem
-            fm = QtGui.QFontMetrics(font)
-            text_rect = fm.boundingRect(keypoint_label)
+                font = text_item.font() # Get the default font of the QGraphicsTextItem
+                fm = QtGui.QFontMetrics(font)
+                text_rect = fm.boundingRect(keypoint_label)
+                
+                text_width = text_rect.width()
+                text_height = text_rect.height()
+
+                text_x = x - text_width / 2 + 5
+                text_y = y - text_height / 2 + 5
+
+                text_item.setPos(text_x, text_y)
+                text_item.setDefaultTextColor(QtGui.QColor(*color))
+                text_item.setOpacity(self.plot_config.plot_opacity)
+                text_item.setFlag(QGraphicsTextItem.ItemIgnoresTransformations) # Keep text size constant
+                self.graphics_scene.addItem(text_item)
             
-            text_width = text_rect.width()
-            text_height = text_rect.height()
-
-            text_x = x - text_width / 2 + 5
-            text_y = y - text_height / 2 + 5
-
-            text_item.setPos(text_x, text_y)
-            text_item.setDefaultTextColor(QtGui.QColor(*color))
-            text_item.setOpacity(self.plot_config.plot_opacity)
-            text_item.setFlag(QGraphicsTextItem.ItemIgnoresTransformations) # Keep text size constant
-            self.graphics_scene.addItem(text_item)
+            elif self.mode == "CV":
+                cv2.putText(self.frame_cv2, str(keypoint_label), (int(x), int(y)),
+                    cv2.FONT_HERSHEY_SIMPLEX, self.plot_config.point_size/20, color, 1, cv2.LINE_AA)
 
     def _plot_skeleton(self, color):
         for start_kp, end_kp in self.dlc_data.skeleton:
@@ -125,8 +163,17 @@ class DLC_Plotter:
             start_coord = self.keypoint_coords.get(start_kp_idx)
             end_coord = self.keypoint_coords.get(end_kp_idx)
 
-            if start_coord and end_coord:
+            if not start_coord or not end_coord:
+                return
+            
+            if self.mode == "GS":
                 line = QGraphicsLineItem(start_coord[0], start_coord[1], end_coord[0], end_coord[1])
-                line.setPen(QtGui.QPen(QtGui.QColor(*color), self.plot_config.point_size / 3))
+                line.setPen(QtGui.QPen(QtGui.QColor(*color), self.plot_config.point_size/3))
                 line.setOpacity(self.plot_config.plot_opacity)
                 self.graphics_scene.addItem(line)
+
+            elif self.mode == "CV":
+                start_coord = start_coord[:2]
+                end_coord = end_coord[:2]
+                line_thick = 1 if self.plot_config.point_size < 5 else 2
+                cv2.line(self.frame_cv2, start_coord, end_coord, color, line_thick)

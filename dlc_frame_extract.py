@@ -7,7 +7,6 @@ import pandas as pd
 import numpy as np
 
 import cv2
-
 from PySide6 import QtWidgets, QtGui
 from PySide6.QtCore import Qt, QEvent
 from PySide6.QtGui import QShortcut, QKeySequence, QCloseEvent
@@ -15,7 +14,8 @@ from PySide6.QtWidgets import QMessageBox, QFileDialog
 
 from utils.dtu_io import DLC_Loader, DLC_Exporter
 from utils.dtu_widget import Menu_Widget, Progress_Bar_Widget, Nav_Widget, Adjust_Property_Dialog
-from utils.dtu_dataclass import Export_Settings
+from utils.dtu_dataclass import Export_Settings, Plot_Config
+from utils.dtu_plotter import DLC_Plotter
 import utils.dtu_helper as duh
 import utils.dtu_gui_helper as dugh
 import utils.dtu_io as dio
@@ -99,19 +99,19 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.dlc_data = None
 
         self.data_loader = DLC_Loader(None, None) # Initialize the data loader
-        self.exp_set = Export_Settings(
-            video_filepath=None, video_name=None, save_path=None, export_mode=None
-        ) # Initialize export_settings
+        self.exp_set = Export_Settings(video_filepath=None, video_name=None, save_path=None, export_mode=None)
 
         self.labeled_frame_list, self.frame_list, self.refined_frame_list = [], [], []
         self.label_data_array = None
 
         self.cap, self.current_frame = None, None
-        self.confidence_cutoff = 0
 
         self.is_playing = False
         self.is_saved = True
         self.last_saved = []
+
+        self.plot_config = Plot_Config(
+            plot_opacity=1.0, point_size = 6.0, confidence_cutoff = 0.0, hide_text_labels = False, edit_mode = False)
 
         self.nav_widget.set_collapsed(True)
         self.refiner_window = None
@@ -149,7 +149,6 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         print(f"Video loaded: {self.video_file}")
 
     def load_prediction(self):
-
         if self.current_frame is None:
             QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
             return
@@ -244,7 +243,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
                 labeled_data_flattened = lbf["df_with_missing"]["block0_values"]
                 self.labeled_frame_list.extend(labeled_frame_list)
                 
-                rows, cols = labeled_data_flattened.shape # Check if labeled_data_flattened already have conf or not
+                cols = labeled_data_flattened.shape[1] # Check if labeled_data_flattened already have conf or not
                 if cols / self.dlc_data.num_keypoint == 3 * self.dlc_data.instance_count:
                     labeled_data_with_conf = labeled_data_flattened
                 else:
@@ -260,146 +259,53 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.progress_widget.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7", priority=9)
         self.navigation_title_controller()
 
+    def initialize_plotter(self):
+        current_frame_data = np.full((self.dlc_data.instance_count, self.dlc_data.num_keypoint*3), np.nan)
+        self.plotter = DLC_Plotter(
+            dlc_data = self.dlc_data,
+            current_frame_data = current_frame_data,
+            plot_config = self.plot_config,
+            frame_cv2 = self.current_frame)
+
     ###################################################################################################################################################
 
     def display_current_frame(self):
-        if self.cap and self.cap.isOpened():
-            self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame_idx)
-            ret, frame = self.cap.read()
-            if ret:
-                self.current_frame = frame
-                frame = self.plot_predictions(frame) if self.dlc_data is not None else frame
-                # Convert OpenCV image to QPixmap
-                rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                h, w, ch = rgb_image.shape
-                bytes_per_line = ch * w
-                qt_image = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
-                pixmap = QtGui.QPixmap.fromImage(qt_image)
-                # Scale pixmap to fit label
-                scaled_pixmap = pixmap.scaled(self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                self.video_label.setPixmap(scaled_pixmap)
-                self.video_label.setText("")
-                self.progress_widget.set_current_frame(self.current_frame_idx) # Update slider handle's position
-            else:
-                self.video_label.setText("Error: Could not read frame")
-        else:
+        if not self.cap or self.cap.isOpened():
             self.video_label.setText("No video loaded")
 
-    def plot_predictions(self, frame):
-        if self.dlc_data is None:
-            return frame
-        try:
-            if self.current_frame_idx in self.labeled_frame_list: # Use labeled data first
-                current_frame_data = self.label_data_array[self.current_frame_idx,:,:]
-            else:
-                current_frame_data = self.dlc_data.pred_data_array[self.current_frame_idx,:,:]
-        except IndexError:
-            print(f"Frame index {self.current_frame_idx} out of bounds for prediction data.")
-            return frame
-        colors_rgb = [(0, 165, 255), (51, 255, 51), (255, 153, 51), (51, 51, 255), (102, 255, 255)]
-        num_keypoint = self.dlc_data.num_keypoint
-        num_instance = self.dlc_data.instance_count
+        self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame_idx)
+        ret, frame = self.cap.read()
 
-        if num_keypoint != current_frame_data.size // num_instance // 3:
-            QMessageBox.warning(
-                self, "Error: Keypoint Mismatch",
-                "Keypoints in config and in prediction do not match!\n"
-                f"Keypoints in config: {self.dlc_data.keypoints} \n"
-                f"Keypoints in prediction: {current_frame_data.size // num_instance * 2 // 3}"
-                )
-            return
-        
-        for inst in range(num_instance):
-            color = colors_rgb[inst % len(colors_rgb)]
+        if not ret:
+            self.video_label.setText("Error: Could not read frame")
 
-            # Initiate an empty dict for storing coordinates
-            keypoint_coords = {}
-            for i in range(num_keypoint):  # x, y, confidence triplet
-                x = current_frame_data[inst, i * 3]
-                y = current_frame_data[inst, i * 3 + 1]
-                confidence = current_frame_data[inst, i * 3 + 2]
-
-                keypoint = self.dlc_data.keypoints[i]
-
-                if pd.isna(x) or pd.isna(y) or confidence <= self.confidence_cutoff: # Apply confidence cutoff
-                    keypoint_coords[keypoint] = None
-                    continue # Skip plotting empty coords
-                else:
-                    keypoint_coords[keypoint] = (int(x),int(y)) # int required by cv2
+        self.current_frame = frame
+        if self.dlc_data is not None:
+            if not hasattr(self, "plotter"):
+                self.initialize_plotter()
                 
-                cv2.circle(frame, (int(x), int(y)), 3, color, -1) # Draw the dot representing the keypoints
+            self.plotter.frame_cv2 = frame
 
-            if self.dlc_data.individuals is not None and len(keypoint_coords) >= 2:
-                self.plot_bounding_box(keypoint_coords, frame, color, inst)
-            if self.dlc_data.skeleton:
-                self.plot_skeleton(keypoint_coords, frame, color)
+            if self.current_frame_idx in self.labeled_frame_list: # Use labeled data first
+                self.plotter.current_frame_data = self.label_data_array[self.current_frame_idx,:,:]
+            else:
+                self.plotter.current_frame_data = self.dlc_data.pred_data_array[self.current_frame_idx,:,:]
 
-        return frame
-    
-    def plot_bounding_box(self, keypoint_coords, frame, color, inst):
-        # Calculate bounding box coordinates
-        x_coords = [keypoint_coords[p][0] for p in keypoint_coords if keypoint_coords[p] is not None]
-        y_coords = [keypoint_coords[p][1] for p in keypoint_coords if keypoint_coords[p] is not None]
+            frame = self.plotter.plot_predictions()
 
-        if not x_coords or not y_coords: # Skip if the mice has no keypoint
-            return frame
-            
-        min_x, max_x = min(x_coords), max(x_coords)
-        min_y, max_y = min(y_coords), max(y_coords)
+        # Convert OpenCV image to QPixmap
+        rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        h, w, ch = rgb_image.shape
+        bytes_per_line = ch * w
+        qt_image = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
+        pixmap = QtGui.QPixmap.fromImage(qt_image)
 
-        padding = 10
-        min_x = max(0, min_x - padding)
-        min_y = max(0, min_y - padding)
-        max_x = min(frame.shape[1] - 1, max_x + padding)
-        max_y = min(frame.shape[0] - 1, max_y + padding)
-            
-        cv2.rectangle(frame, (min_x, min_y), (max_x, max_y), color, 1) # Draw the bounding box
+        # Scale pixmap to fit label
+        scaled_pixmap = pixmap.scaled(self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.video_label.setPixmap(scaled_pixmap)
+        self.video_label.setText("")
+        self.progress_widget.set_current_frame(self.current_frame_idx) # Update slider handle's position
 
-        # Add individual label
-        cv2.putText(frame, f"Instance: {self.dlc_data.individuals[inst]}", (min_x, min_y), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1, cv2.LINE_AA)
-
-        center_x = min_x + max_x / 2
-        center_y = min_y + max_y / 2
-
-        # Plot keypoint labels
-        text_size = 0.3
-        text_color = color
-
-        for keypoint in keypoint_coords:
-            if keypoint_coords[keypoint] is None: # Skip empty keypoint
-                return
-
-            (x, y) = keypoint_coords[keypoint]
-            keypoint_label = keypoint
-            
-            # Calculate vector from mouse center to keypoint
-            vec_x = x - center_x
-            vec_y = y - center_y
-            
-            # Normalize vector
-            norm = (vec_x**2 + vec_y**2)**0.5
-            if norm == 0: # Avoid division by zero if keypoint is at the center
-                norm = 1
-            unit_vec_x = vec_x / norm
-            unit_vec_y = vec_y / norm
-
-            # Position text label away from keypoint and center
-            offset_distance = 20 # Distance from keypoint to text label
-            text_x = x + unit_vec_x * offset_distance
-            text_y = y + unit_vec_y * offset_distance
-
-            cv2.putText(frame, str(keypoint_label), (int(text_x), int(text_y)), cv2.FONT_HERSHEY_SIMPLEX, text_size, text_color, 1, cv2.LINE_AA) # Add the label
-
-        return frame
-    
-    def plot_skeleton(self, keypoint_coords, frame, color):
-        for start_kp, end_kp in self.dlc_data.skeleton:
-            start_coord = keypoint_coords.get(start_kp)
-            end_coord = keypoint_coords.get(end_kp)
-            if start_coord and end_coord:
-                cv2.line(frame, start_coord, end_coord, color, 2)
-        return frame
-            
     ###################################################################################################################################################
 
     def change_frame(self, delta):
@@ -470,12 +376,12 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             return
         
         dialog = Adjust_Property_Dialog(
-            property_name="Confidence Cutoff", property_val=self.confidence_cutoff, range=(0.00, 1.00), parent=self)
+            property_name="Confidence Cutoff", property_val=self.plot_config.confidence_cutoff, range=(0.00, 1.00), parent=self)
         dialog.property_changed.connect(self._update_application_cutoff)
         dialog.show() # .show() instead of .exec() for a non-modal dialog
 
     def _update_application_cutoff(self, new_cutoff):
-        self.confidence_cutoff = new_cutoff
+        self.plot_config.confidence_cutoff = new_cutoff
         self.display_current_frame() # Redraw with the new cutoff
 
     ###################################################################################################################################################
@@ -506,7 +412,6 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         if not self.frame_list:
             QMessageBox.warning(self, "No Marked Frame", "No frame has been marked, please mark some frames first.")
             return False
-        
         return True
 
     def save_workspace(self):
