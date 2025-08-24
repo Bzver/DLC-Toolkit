@@ -106,7 +106,6 @@ class DLC_Extractor(QtWidgets.QMainWindow):
 
         self.cap, self.current_frame = None, None
 
-        self.is_playing = False
         self.is_saved = True
         self.last_saved = []
 

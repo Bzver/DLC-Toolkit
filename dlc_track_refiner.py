@@ -188,7 +188,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.selected_box, self.dragged_keypoint = None, None
         self.start_point, self.current_rect_item = None, None
 
-        self.is_playing, self.is_kp_edit, self.is_drawing_zone, self.is_zoom_mode = False, False, False, False
+        self.is_kp_edit, self.is_drawing_zone, self.is_zoom_mode = False, False, False
 
         self.undo_stack, self.redo_stack = [], []
         self.max_undo_stack_size = 100
