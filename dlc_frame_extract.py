@@ -51,6 +51,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
                 "buttons": [
                     ("Save the Current Workspace", self.save_workspace),
                     ("Export to DLC", self.save_to_dlc),
+                    ("Export Marked Frame Indices to Clipboard", self.export_marked_to_clipboard),
                     ("Merge with Existing Label in DLC", self.merge_data)
                 ]
             }
@@ -431,8 +432,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             return
         
         if self.current_frame_idx in self.labeled_frame_list:
-            QMessageBox.information(self, "Already Labeled", 
-                "The frame is already in the labeled dataset, skipping...")
+            QMessageBox.information(self, "Already Labeled", "The frame is already in the labeled dataset, skipping...")
             return
 
         if self.current_frame_idx in self.refined_frame_list:
@@ -526,7 +526,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         with open(output_filepath, 'w') as file:
             yaml.dump(save_yaml, file)
             
-        QMessageBox.information(self, "Success", f"Current workplace files have been saved to {output_filepath}")
+        self.statusBar().showMessage(f"Current workplace files have been saved to {output_filepath}")
         return True
 
     def call_refiner(self, track_only=False):
@@ -535,7 +535,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             QMessageBox.warning(self, "Video Not Loaded", "No video is loaded, load a video first!")
             return
         if not self.dlc_data:
-            QMessageBox.information(self, "DLC Data Not Loaded", "No DLC data has been loaded, load them to export to Refiner.")
+            QMessageBox.warning(self, "DLC Data Not Loaded", "No DLC data has been loaded, load them to export to Refiner.")
             return
         try:
             self.refiner_window = DLC_Track_Refiner()
@@ -563,13 +563,18 @@ class DLC_Extractor(QtWidgets.QMainWindow):
     def reload_prediction(self, prediction_path):
         """Reload prediction data from file and update visualization"""
         self.data_loader.prediction_filepath = prediction_path
-        self.dlc_data, msg = self.data_loader.load_data()
+        self.dlc_data, _ = self.data_loader.load_data()
         self.display_current_frame()
-        QMessageBox.information(self, "Success", msg)
+        self.statusBar().showMessage("Prediction successfully reloaded")
 
         if hasattr(self, 'refiner_window') and self.refiner_window: # Clean refiner windows
             self.refiner_window.close()
             self.refiner_window = None
+
+    def export_marked_to_clipboard(self):
+        df = pd.DataFrame([self.frame_list])
+        df.to_clipboard(sep=',', index=False, header=False)
+        self.statusBar().showMessage("Marked frames exported to clipboard.")
 
     def save_to_dlc(self):
         if not self.pre_saving_sanity_check():

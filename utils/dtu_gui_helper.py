@@ -40,6 +40,8 @@ def load_and_show_message(parent, data_loader: DLC_Loader, metadata_only=False, 
         QMessageBox.critical(parent, "Error", str(msg))
     elif not mute:
         QMessageBox.information(parent, "Success", str(msg))
+    else:
+        parent.statusBar().showMessage(msg)
     
     return loaded_data
 
@@ -50,6 +52,8 @@ def export_and_show_message(parent, exporter: DLC_Exporter, frame_only=False, mu
         QMessageBox.critical(parent, "Error", str(msg))
     elif not mute:
         QMessageBox.information(parent, "Success", str(msg))
+    else:
+        parent.statusBar().showMessage(msg)
 
     return status
 
