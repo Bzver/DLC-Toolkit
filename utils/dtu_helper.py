@@ -1,5 +1,3 @@
-import os
-
 import pandas as pd
 import numpy as np
 import bisect
@@ -69,11 +67,12 @@ def get_config_from_calculation_mdode(mode:str, frame_idx:int, check_range:int, 
     return modes_config[mode]
 
 def log_print(*args, **kwargs):
-    if not os.path.isdir("D:/Project"):
+    try:
+        log_file = "D:/Project/debug_log.txt"
+        with open(log_file, 'a', encoding='utf-8') as f:
+            print(*args, file=f, **kwargs)
+    except:
         return
-    log_file = "D:/Project/debug_log.txt"
-    with open(log_file, 'a', encoding='utf-8') as f:
-        print(*args, file=f, **kwargs)
 
 ###########################################################################################
 
