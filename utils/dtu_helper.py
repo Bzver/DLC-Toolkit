@@ -230,6 +230,34 @@ def circular_mean(angles: np.ndarray) -> float:
     y = np.nanmean(np.sin(angles))
     return np.arctan2(y, x)
 
+def calculate_snapping_zoom_level(current_frame_data:np.ndarray, view_width:float, view_height:float
+        )->Tuple[float,float,float]:
+    x_vals_current_frame = current_frame_data[:, 0::3]
+    y_vals_current_frame = current_frame_data[:, 1::3]
+
+    if np.all(np.isnan(x_vals_current_frame)):
+        return
+    
+    min_x, max_x = np.nanmin(x_vals_current_frame), np.nanmax(x_vals_current_frame)
+    min_y, max_y = np.nanmin(y_vals_current_frame), np.nanmax(y_vals_current_frame)
+
+    padding_factor = 1.1 # 10% padding
+    width, height = max(1.0, max_x - min_x), max(1.0, max_y - min_y)
+    padded_width, padded_height = width * padding_factor, height * padding_factor
+    center_x, center_y = (min_x + max_x) / 2, (min_y + max_y) / 2
+
+    # Calculate new zoom level
+    if padded_width > 0 and padded_height > 0:
+        zoom_x, zoom_y = view_width / padded_width, view_height / padded_height
+        new_zoom_level = min(zoom_x, zoom_y)
+    else:
+        new_zoom_level = 1.0
+
+    # Apply zoom limits
+    new_zoom_level = max(0.1, min(new_zoom_level, 10.0))
+
+    return new_zoom_level, center_x, center_y
+
 #########################################################################################################################################################1
 
 def calculate_identity_swap_score_per_frame(keypoint_data_tr:dict, valid_view:int, instance_count:int, num_keypoint:int) -> float:

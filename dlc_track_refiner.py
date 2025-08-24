@@ -73,6 +73,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             "Preference": {
                 "display_name": "Preference",
                 "buttons": [
+                    ("Snap to Instances", self.toggle_snap_to_instances, {"checkable": True, "checked": False}),
+                    ("Reset Zoom", self.reset_zoom),
                     ("Adjust Point Size", self.adjust_point_size),
                     ("Adjust Plot Visibility", self.adjust_plot_opacity)
                 ]
@@ -204,6 +206,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.is_zoom_mode = False
         self.zoom_factor = 1.0
 
+        self.auto_snapping = False
+
         self._refresh_slider()
 
     def load_video(self):
@@ -310,6 +314,15 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
                 self.graphics_scene.setSceneRect(0, 0, w, h)
                 
+                if self.auto_snapping:
+                    view_width = self.graphics_scene.sceneRect().width()
+                    view_height = self.graphics_scene.sceneRect().height()
+                    current_frame_data = self.pred_data_array[self.current_frame_idx, ...]
+                    if not np.all(np.isnan(current_frame_data)):
+                        self.zoom_factor, center_x, center_y = \
+                            duh.calculate_snapping_zoom_level(current_frame_data, view_width, view_height)
+                        self.graphics_view.centerOn(center_x, center_y)
+
                 new_transform = QtGui.QTransform()
                 new_transform.scale(self.zoom_factor, self.zoom_factor)
                 self.graphics_view.setTransform(new_transform)
@@ -482,6 +495,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.graphics_view.fitInView(self.graphics_scene.sceneRect(), Qt.KeepAspectRatio)
 
     ###################################################################################################################################################
+
+    def toggle_snap_to_instances(self):
+        self.auto_snapping = not self.auto_snapping
+        self.display_current_frame()
 
     def adjust_point_size(self):
         dialog = Adjust_Property_Dialog(
