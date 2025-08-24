@@ -21,6 +21,8 @@ from utils.dtu_io import DLC_Loader
 from utils.dtu_widget import Menu_Widget, Progress_Bar_Widget, Nav_Widget, Adjust_Property_Dialog
 from utils.dtu_comp import Clickable_Video_Label
 from utils.dtu_helper import Data_Processor_3D
+from utils.dtu_plotter import DLC_Plotter
+from utils.dtu_dataclass import Plot_Config
 import utils.dtu_io as dio
 import utils.dtu_helper as duh
 import utils.dtu_gui_helper as dugh
@@ -157,7 +159,6 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
     def reset_state(self):
         self.num_cam = None
 
-        self.confidence_cutoff = 0.6
         self.deviance_threshold = 50
         self.velocity_threshold = 20
 
@@ -176,6 +177,9 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.num_cam_from_calib = None
         self.correction_progress = None
 
+        self.plot_config = Plot_Config(
+            plot_opacity=1.0, point_size = 6.0, confidence_cutoff = 0.6, hide_text_labels = False, edit_mode = False)
+        
         self.plot_lim = 150
         self.instance_color = [
             (255, 165, 0), (51, 255, 51), (51, 153, 255), (255, 51, 51), (255, 255, 102)] # RGB
@@ -470,101 +474,46 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
     def display_current_frame(self):
         for i, cap in enumerate(self.cap_list):
-            if cap and cap.isOpened():
-                cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame_idx)
-                ret, frame = cap.read()
-                if ret:
-                    # Check if pred_data_array is initialized and has data for the current frame and camera
-                    if self.pred_data_array is not None and \
-                       not np.all(np.isnan(self.pred_data_array[self.current_frame_idx, i, :, :])):
-                        frame = self.plot_2d_points(frame, i) 
-
-                    target_width = self.video_labels[i].width() # Get the target size from the QLabel
-                    target_height = self.video_labels[i].height()
-
-                    # Resize the frame to the target size
-                    resized_frame = cv2.resize(frame, (target_width, target_height), interpolation=cv2.INTER_AREA)
-
-                    rgb_image = cv2.cvtColor(resized_frame, cv2.COLOR_BGR2RGB)
-                    h, w, ch = rgb_image.shape
-                    bytes_per_line = ch * w
-                    qt_image = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
-                    pixmap = QtGui.QPixmap.fromImage(qt_image)
-                    self.video_labels[i].setPixmap(pixmap)
-                    self.video_labels[i].setText("")
-                else:
-                    self.video_labels[i].setText(f"End of Video {i+1} / Error")
-                    self.video_labels[i].setPixmap(QtGui.QPixmap()) # Clear any previous image
-            else:
+            if not cap or not cap.isOpened():
                 self.video_labels[i].setText(f"Video {i+1} Not Loaded/Available")
                 self.video_labels[i].setPixmap(QtGui.QPixmap())
+
+            cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame_idx)
+            ret, frame = cap.read()
+
+            if not ret:
+                self.video_labels[i].setText(f"End of Video {i+1} / Error")
+                self.video_labels[i].setPixmap(QtGui.QPixmap()) # Clear any previous image
+
+            # Check if pred_data_array is initialized and has data for the current frame and camera
+            if self.pred_data_array is not None:
+                if not hasattr(self, "plotter"):
+                    self.initialize_2d_plotter(frame)
+                
+                current_frame_data = self.pred_data_array[self.current_frame_idx, i, :, :]
+                if not np.all(np.isnan(current_frame_data)):
+                    self.plotter.frame_cv2 = frame
+                    self.plotter.current_frame_data = current_frame_data
+                    frame = self.plotter.plot_predictions()
+
+            target_width = self.video_labels[i].width() # Get the target size from the QLabel
+            target_height = self.video_labels[i].height()
+
+            # Resize the frame to the target size
+            resized_frame = cv2.resize(frame, (target_width, target_height), interpolation=cv2.INTER_AREA)
+
+            rgb_image = cv2.cvtColor(resized_frame, cv2.COLOR_BGR2RGB)
+            h, w, ch = rgb_image.shape
+            bytes_per_line = ch * w
+            qt_image = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
+            pixmap = QtGui.QPixmap.fromImage(qt_image)
+            self.video_labels[i].setPixmap(pixmap)
+            self.video_labels[i].setText("")
             
             self.progress_widget.set_current_frame(self.current_frame_idx) # Update slider handle's position
 
         self.plot_3d_points()
         self._refresh_selected_cam()
-
-    def plot_2d_points(self, frame, cam_idx):
-        if self.dlc_data is None:
-            return frame # Cannot plot if DLC data is not loaded
-
-        for inst in range(self.dlc_data.instance_count):
-            color_rgb = self.instance_color[inst % len(self.instance_color)]
-            # Convert RGB to BGR for OpenCV
-            color_bgr = (color_rgb[2], color_rgb[1], color_rgb[0])
-            keypoint_coords = dict()
-            for kp_idx in range(self.dlc_data.num_keypoint):
-                kp = self.pred_data_array[self.current_frame_idx,cam_idx,inst,kp_idx*3:kp_idx*3+3]
-                if pd.isna(kp[0]) or kp[2] < self.confidence_cutoff:
-                    continue
-                x, y = kp[0], kp[1]
-                keypoint_coords[kp_idx] = (int(x),int(y))
-                cv2.circle(frame, (int(x), int(y)), 3, color_bgr, -1) # Draw the dot representing the keypoints
-
-            if self.dlc_data.individuals is not None and len(keypoint_coords) >= 2: # Only plot bounding box with more than one points
-                self.plot_bounding_box(keypoint_coords, frame, color_bgr, inst)
-            if self.dlc_data.skeleton:
-                self.plot_2d_skeleton(keypoint_coords, frame, color_bgr)
-        return frame
-
-    def plot_bounding_box(self, keypoint_coords, frame, color, inst):
-        # Calculate bounding box coordinates
-        x_coords = [int(keypoint_coords[p][0]) for p in keypoint_coords if keypoint_coords[p] is not None]
-        y_coords = [int(keypoint_coords[p][1]) for p in keypoint_coords if keypoint_coords[p] is not None]
-
-        if not x_coords or not y_coords: # Skip if the mice has no keypoint
-            return frame
-            
-        min_x, max_x = min(x_coords), max(x_coords)
-        min_y, max_y = min(y_coords), max(y_coords)
-
-        padding = 10
-        min_x = max(0, min_x - padding)
-        min_y = max(0, min_y - padding)
-        max_x = min(frame.shape[1] - 1, max_x + padding)
-        max_y = min(frame.shape[0] - 1, max_y + padding)
-            
-        cv2.rectangle(frame, (min_x, min_y), (max_x, max_y), color, 1) # Draw the bounding box
-
-        #Add individual label
-        if self.dlc_data.individuals: # Check if individuals list exists
-            cv2.putText(frame, f"Instance: {self.dlc_data.individuals[inst]}", (min_x, min_y), cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1, cv2.LINE_AA)
-        return frame
-    
-    def plot_2d_skeleton(self, keypoint_coords, frame, color):
-        if self.dlc_data is None:
-            return frame # Cannot plot if DLC data is not loaded
-
-        for start_kp, end_kp in self.dlc_data.skeleton:
-            start_kp_idx = self.keypoint_to_idx.get(start_kp)
-            end_kp_idx = self.keypoint_to_idx.get(end_kp)
-            
-            if start_kp_idx is not None and end_kp_idx is not None:
-                start_coord = keypoint_coords.get(start_kp_idx)
-                end_coord = keypoint_coords.get(end_kp_idx)
-                if start_coord and end_coord:
-                    cv2.line(frame, start_coord, end_coord, color, 2)
-        return frame
     
     def plot_3d_points(self):
         if self.dlc_data is None:
@@ -577,7 +526,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             point_3d_array = np.full((1, 1, 3), np.nan)
         else:
             data_processor_3d = Data_Processor_3D(
-                self.dlc_data, self.camera_params, self.pred_data_array, self.confidence_cutoff, self.num_cam)
+                self.dlc_data, self.camera_params, self.pred_data_array, self.plot_config.confidence_cutoff, self.num_cam)
             point_3d_array = data_processor_3d.get_3d_pose_array(self.current_frame_idx, return_confidence=False)
 
         if point_3d_array is None:
@@ -637,7 +586,15 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         X, Y = np.meshgrid(np.linspace(xlim[0], xlim[1], 10), np.linspace(ylim[0], ylim[1], 10))
         Z = np.zeros_like(X)
         self.ax.plot_surface(X, Y, Z, alpha=0.1, color='gray')
-        self.canvas.draw_idle() 
+        self.canvas.draw_idle()
+
+    def initialize_2d_plotter(self, frame):
+        current_frame_data = np.full((self.dlc_data.instance_count, self.dlc_data.num_keypoint*3), np.nan)
+        self.plotter = DLC_Plotter(
+            dlc_data = self.dlc_data,
+            current_frame_data = current_frame_data,
+            plot_config = self.plot_config,
+            frame_cv2 = frame)
 
     ###################################################################################################################################################
 
@@ -675,7 +632,8 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
             QtWidgets.QApplication.processEvents()  # Keep UI responsive
         
-            data_processor_3d = Data_Processor_3D(self.dlc_data, self.camera_params, self.pred_data_array, self.confidence_cutoff, self.num_cam)
+            data_processor_3d = Data_Processor_3D(
+                self.dlc_data, self.camera_params, self.pred_data_array, self.plot_config.confidence_cutoff, self.num_cam)
             keypoint_data_tr, valid_view = data_processor_3d.get_keypoint_data_for_frame(
                 frame_idx, instance_threshold=self.dlc_data.instance_count, view_threshold=3)
 
@@ -711,7 +669,8 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             title = f"Calculating Temporal Velocity"
             progress = dugh.get_progress_dialog(self, 0, self.total_frames, title, dialog)
 
-        data_processor_3d = Data_Processor_3D(self.dlc_data, self.camera_params, self.pred_data_array, self.confidence_cutoff, self.num_cam)
+        data_processor_3d = Data_Processor_3D(
+            self.dlc_data, self.camera_params, self.pred_data_array, self.plot_config.confidence_cutoff, self.num_cam)
 
         if progress:
             for frame_idx in range(self.total_frames):
@@ -987,7 +946,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             return
         
         dialog = Adjust_Property_Dialog(
-            property_name="Confidence Cutoff", property_val=self.confidence_cutoff, range=(0.00, 1.00), parent=self)
+            property_name="Confidence Cutoff", property_val=self.plot_config.confidence_cutoff, range=(0.00, 1.00), parent=self)
         dialog.property_changed.connect(self._update_confidence_cutoff)
         dialog.show() # .show() instead of .exec() for a non-modal dialog
 
@@ -1014,7 +973,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         dialog.show() # .show() instead of .exec() for a non-modal dialog
 
     def _update_confidence_cutoff(self, new_cutoff):
-        self.confidence_cutoff = new_cutoff
+        self.plot_config.confidence_cutoff = new_cutoff
         self.display_current_frame() # Redraw with the new cutoff
 
     def _update_deviance_threshold(self, new_threshold):
@@ -1072,7 +1031,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             'dlc_config_filepath': self.dlc_config_filepath,
             'pred_data_array': self.pred_data_array,
             'current_frame_idx': self.current_frame_idx,
-            'confidence_cutoff': self.confidence_cutoff,
+            'confidence_cutoff': self.plot_config.confidence_cutoff,
             'deviance_threshold': self.deviance_threshold,
             'velocity_threshold': self.velocity_threshold,
             'roi_frame_list': self.roi_frame_list,
@@ -1144,7 +1103,8 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         title = f"Gather 3D COM Data For Export"
         progress = dugh.get_progress_dialog(self, 0, self.total_frames, title, dialog)
 
-        data_processor_3d = Data_Processor_3D(self.dlc_data, self.camera_params, self.pred_data_array, self.confidence_cutoff, self.num_cam)
+        data_processor_3d = Data_Processor_3D(
+            self.dlc_data, self.camera_params, self.pred_data_array, self.plot_config.confidence_cutoff, self.num_cam)
         com_for_export = np.full((self.total_frames, 3, self.dlc_data.instance_count), np.nan)
         for frame_idx in range(self.total_frames):
             point_3d_array_current_frame = data_processor_3d.get_3d_pose_array(frame_idx, return_confidence=False)
