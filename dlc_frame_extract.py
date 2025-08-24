@@ -42,8 +42,8 @@ class DLC_Extractor(QtWidgets.QMainWindow):
                 "buttons": [
                     ("Mark / Unmark Current Frame (X)", self.toggle_frame_status),
                     ("Adjust Confidence Cutoff", self.show_confidence_dialog),
-                    ("Call Refiner - Track Edit Only", lambda: self.call_refiner(track_only=True)),
-                    ("Call Refiner - Pose Refining", lambda: self.call_refiner(track_only=False))
+                    ("Call Refiner - Track Correction", lambda: self.call_refiner(track_only=True)),
+                    ("Call Refiner - Edit Marked Frames", lambda: self.call_refiner(track_only=False))
                 ]
             },
             "Export": {
