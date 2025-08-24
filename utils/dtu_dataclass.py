@@ -38,6 +38,7 @@ class Swap_Calculation_Config:
 class Plot_Config:
     plot_opacity:float
     point_size:float
+    confidence_cutoff: float
     hide_text_labels:bool
     edit_mode:bool
 

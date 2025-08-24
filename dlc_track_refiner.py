@@ -194,7 +194,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.max_undo_stack_size = 100
         self.is_saved = True
 
-        self.plot_config = Plot_Config(plot_opacity=1.0, point_size = 6.0, hide_text_labels = False, edit_mode = False)
+        self.plot_config = Plot_Config(
+            plot_opacity=1.0, point_size = 6.0, confidence_cutoff = None, hide_text_labels = False, edit_mode = False)
         self.plotter_callback = Refiner_Plotter_Callbacks(
             keypoint_coords_callback = self._update_keypoint_position, keypoint_object_callback = self.set_dragged_keypoint,
             box_coords_callback = self._update_instance_position, box_object_callback = self._handle_box_selection
