@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Dict
 from numpy.typing import NDArray
 
 @dataclass
@@ -13,6 +13,7 @@ class Loaded_DLC_Data:
     individuals: Optional[List[str]]
     instance_count: int
     num_keypoint: int
+    keypoint_to_idx = Dict[str, int]
     
     prediction_filepath: Optional[str]
     pred_data_array: Optional[NDArray]

@@ -279,6 +279,7 @@ class DLC_Loader:
             keypoints = cfg.get("bodyparts", []) if not multi_animal else cfg.get("multianimalbodyparts", [])
             individuals = cfg.get("individuals")
             instance_count = len(individuals) if individuals else 1
+            keypoint_to_idx = {name: idx for idx, name in enumerate(keypoints)}
             
             config_dict = {
                 "dlc_config_filepath": self.dlc_config_filepath,
@@ -288,8 +289,10 @@ class DLC_Loader:
                 "skeleton": cfg.get("skeleton", []),
                 "individuals": individuals,
                 "instance_count": instance_count,
-                "num_keypoint": len(keypoints)
+                "num_keypoint": len(keypoints),
+                "keypoint_to_idx": keypoint_to_idx
             }
+
             return config_dict, "Success"
         except Exception as e:
             return None, f"Error loading DLC config: {e}"
