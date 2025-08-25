@@ -5,6 +5,8 @@ from PySide6.QtGui import QFont
 
 from utils.dtu_comp import Slider_With_Marks
 
+from typing import List, Optional
+
 class Menu_Widget(QtWidgets.QMenuBar):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -54,6 +56,7 @@ class Menu_Widget(QtWidgets.QMenuBar):
 
 class Progress_Bar_Widget(QtWidgets.QWidget):
     frame_changed = Signal(int)
+    HexColor = str
 
     def __init__(self):
         super().__init__()
@@ -80,42 +83,53 @@ class Progress_Bar_Widget(QtWidgets.QWidget):
         self.playback_timer.setInterval(int(1000/50)) # ~50 FPS
         self.playback_timer.timeout.connect(self.advance_frame)
 
-    def set_frame_category(self, category_name, frames, color=None, priority=0): # Public API to pass the slider mark properties
-        self.progress_slider.set_frame_category(category_name, frames, color, priority)
+    def set_frame_category(self, category_name:str, frame_list:List[int], color:Optional[HexColor]=None, priority:int=0):
+        """
+        Public API to pass the slider mark properties
 
-    def set_slider_range(self, total_frames):
+        Args:
+            category_name (str): The name of the category to assign to the specified frames.
+            frame_list (List[int]): A list of frame indices to be associated with the category.
+            color (Optional[HexColor]): The hexadecimal color code (e.g., '#FF55A3') used to style the frames in this category
+            priority (int): The rendering priority of the category. 
+                The higher the priority, the more prominently the category will be displayed.
+
+        """
+        self.progress_slider.set_frame_category(category_name, frame_list, color, priority)
+
+    def set_slider_range(self, total_frames:int):
         self.total_frames = total_frames
         self.progress_slider.setRange(0, self.total_frames - 1)
     
-    def set_current_frame(self, frame_number):
-        self.current_frame = frame_number
+    def set_current_frame(self, frame_idx:int):
+        self.current_frame = frame_idx
         self.progress_slider.setValue(self.current_frame)
 
-    def handle_slider_move(self, value):
+    def handle_slider_move(self, value:int):
         self.current_frame = value
         self.frame_changed.emit(self.current_frame)
-    
+
+    def toggle_playback(self):
+        if not self.is_playing:
+            self._start_playback()
+        else:
+            self._stop_playback()
+        
     def advance_frame(self):
         if self.current_frame < self.total_frames - 1:
             self.current_frame += 1
             self.set_current_frame(self.current_frame)
             self.frame_changed.emit(self.current_frame)
         else:
-            self.stop_playback()
-
-    def toggle_playback(self):
-        if not self.is_playing:
-            self.start_playback()
-        else:
-            self.stop_playback()
-    
-    def start_playback(self):
+            self._stop_playback()
+            
+    def _start_playback(self):
         if self.playback_timer:
             self.is_playing = True
             self.play_button.setText("■")
             self.playback_timer.start()
 
-    def stop_playback(self):
+    def _stop_playback(self):
         if self.playback_timer:
             self.is_playing = False
             self.play_button.setText("▶")
@@ -300,14 +314,14 @@ class Adjust_Property_Dialog(QtWidgets.QDialog):
         self.slider.valueChanged.connect(self._slider_changed)
         self.property_input.valueChanged.connect(self._spinbox_changed)
 
-    def _spinbox_changed(self, value):
+    def _spinbox_changed(self, value:int):
         self.property_val = value
         slider_value = int((value - self.range[0]) / self.slider_mult)
         slider_value = max(0, min(100, slider_value))
         self.slider.setValue(slider_value)
         self.property_changed.emit(self.property_val)
 
-    def _slider_changed(self, value):
+    def _slider_changed(self, value:int):
         # Map slider (0–100) to actual value
         self.property_val = self.range[0] + value * self.slider_mult
         self.property_input.setValue(self.property_val)
@@ -343,7 +357,7 @@ class Pose_Rotation_Dialog(QtWidgets.QDialog):
         self.setLayout(layout)
         self.resize(150, 150)
 
-    def _on_dial_change(self, value: int):
+    def _on_dial_change(self, value:int):
         self.angle = float(value)
         angle_delta = self.angle - self.base_angle
         if abs(angle_delta) < 1e-3:
@@ -355,7 +369,7 @@ class Pose_Rotation_Dialog(QtWidgets.QDialog):
     def get_angle(self) -> float:
         return self.angle
 
-    def set_angle(self, angle: float):
+    def set_angle(self, angle:float):
         clamped_angle = angle % 360.0
         self.dial.setValue(int(clamped_angle))
         self.angle = clamped_angle
