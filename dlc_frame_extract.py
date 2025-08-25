@@ -40,19 +40,20 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             "Edit": {
                 "display_name": "Edit",
                 "buttons": [
-                    ("Mark / Unmark Current Frame (X)", self.toggle_frame_status),
                     ("Adjust Confidence Cutoff", self.show_confidence_dialog),
+                    ("Mark / Unmark Current Frame (X)", self.toggle_frame_status),
                     ("Call Refiner - Track Correction", lambda: self.call_refiner(track_only=True)),
-                    ("Call Refiner - Edit Marked Frames", lambda: self.call_refiner(track_only=False))
+                    ("Call Refiner - Edit Marked Frames", lambda: self.call_refiner(track_only=False)),
+                    ("Call DeepLabCut - Rerun Predictions of Marked Frames", self.dlc_rerun)
                 ]
             },
             "Export": {
                 "display_name": "Save",
                 "buttons": [
                     ("Save the Current Workspace", self.save_workspace),
-                    ("Export to DLC", self.save_to_dlc),
+                    ("Export to DeepLabCut", self.save_to_dlc),
                     ("Export Marked Frame Indices to Clipboard", self.export_marked_to_clipboard),
-                    ("Merge with Existing Label in DLC", self.merge_data)
+                    ("Merge with Existing Label in DeepLabCut", self.merge_data)
                 ]
             }
         }
@@ -113,7 +114,6 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             plot_opacity=1.0, point_size = 6.0, confidence_cutoff = 0.0, hide_text_labels = False, edit_mode = False)
 
         self.nav_widget.set_collapsed(True)
-        self.refiner_window = None
 
     def load_video(self):
         self.reset_state()
@@ -434,13 +434,15 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         return True
 
     def call_refiner(self, track_only=False):
-        from dlc_track_refiner import DLC_Track_Refiner
         if not self.video_file:
             QMessageBox.warning(self, "Video Not Loaded", "No video is loaded, load a video first!")
             return
         if not self.dlc_data:
             QMessageBox.warning(self, "DLC Data Not Loaded", "No DLC data has been loaded, load them to export to Refiner.")
             return
+        
+        from dlc_track_refiner import DLC_Track_Refiner
+
         try:
             self.refiner_window = DLC_Track_Refiner()
             self.refiner_window.video_file = self.video_file
@@ -462,6 +464,26 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             
         except Exception as e:
             QMessageBox.warning(self, "Refiner Failed", f"Refiner failed to initialize. Exception: {e}")
+            return
+
+    def dlc_rerun(self):
+        if not self.video_file:
+            QMessageBox.warning(self, "Video Not Loaded", "No video is loaded, load a video first!")
+            return
+        if not self.dlc_data:
+            QMessageBox.warning(self, "DLC Data Not Loaded", "No DLC data has been loaded, load them to export to Refiner.")
+            return
+        if not self.frame_list:
+            QMessageBox.warning(self, "No Marked Frame", "No frame has been marked, please mark some frames first.")
+            return
+        
+        from utils.dtu_rerun import DLC_RERUN
+
+        try:
+            self.rerunner = DLC_RERUN(dlc_data=self.dlc_data, frame_list=self.frame_list, video_filepath=self.video_file, parent=self)
+            self.rerunner.show()
+        except Exception as e:
+            QMessageBox.warning(self, "Rerunner Failed", f"Rerunner failed to initialize. Exception: {e}")
             return
 
     def reload_prediction(self, prediction_path):
