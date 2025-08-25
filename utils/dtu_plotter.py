@@ -10,17 +10,22 @@ from .dtu_dataclass import Loaded_DLC_Data, Plot_Config, Refiner_Plotter_Callbac
 from .dtu_comp import Selectable_Instance, Draggable_Keypoint
 
 class DLC_Plotter:
-    def __init__(self, dlc_data:Loaded_DLC_Data, current_frame_data:np.ndarray, plot_config:Plot_Config, frame_cv2:Optional[np.ndarray]=None,
+    def __init__(self, dlc_data:Loaded_DLC_Data, current_frame_data:np.ndarray, plot_config:Optional[Plot_Config]=None, frame_cv2:Optional[np.ndarray]=None,
             graphics_scene:Optional[QGraphicsScene]=None, plot_callback:Optional[Refiner_Plotter_Callbacks]=None):
         
         self.dlc_data = dlc_data
         self.current_frame_data = current_frame_data
         self.frame_cv2 = frame_cv2
         self.graphics_scene = graphics_scene
-        self.plot_config = plot_config
         self.plot_callback = plot_callback
 
         self.color = [(255, 165, 0), (51, 255, 51), (51, 153, 255), (255, 51, 51), (255, 255, 102)] # RGB
+
+        if plot_config is None: # Defualt plot config
+            self.plot_config = Plot_Config(
+                plot_opacity=1.0, point_size = 5.0, confidence_cutoff = 0.0, hide_text_labels = False, edit_mode = False)
+        else:
+            self.plot_config = plot_config
 
         if frame_cv2 is None and graphics_scene is not None:
             self.mode = "GS"
