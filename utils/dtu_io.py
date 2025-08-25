@@ -316,12 +316,19 @@ class DLC_Loader:
                 pred_header = ["tracks", "df_with_missing", "predictions"]
                 found_keys = [key for key in pred_header if key in pred_file]
                 if not found_keys:
-                    return None, f"Error: Prediction file not valid, no key found. Accepted keys: {pred_header} ."
+                    return None, f"Error: Prediction file not valid, no key found. Acceptable keys: {pred_header} ."
 
                 key = found_keys[-1]
-                prediction_raw = pred_file[key]["table"]
-                pred_data_values = np.array([item[1] for item in prediction_raw])
-                pred_frame_count = len(prediction_raw)
+                subkey = "block0_values" if key == "predictions" else "table"
+
+                prediction_raw = pred_file[key][subkey]
+
+                if key == "predictions": # Already an array
+                    pred_data_values = np.array(prediction_raw)
+                    pred_frame_count = prediction_raw.shape[0]
+                else:
+                    pred_data_values = np.array([item[1] for item in prediction_raw])
+                    pred_frame_count = len(prediction_raw)
 
                 expected_cols = instance_count * num_keypoint * 3
                 if pred_data_values.shape[1] != expected_cols:
