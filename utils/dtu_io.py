@@ -313,10 +313,13 @@ class DLC_Loader:
 
         try:
             with h5py.File(self.prediction_filepath, "r") as pred_file:
-                if "tracks" not in pred_file:
-                    return None, "Error: Prediction file not valid, no 'tracks' key found."
+                pred_header = ["tracks", "df_with_missing", "predictions"]
+                found_keys = [key for key in pred_header if key in pred_file]
+                if not found_keys:
+                    return None, f"Error: Prediction file not valid, no key found. Accepted keys: {pred_header} ."
 
-                prediction_raw = pred_file["tracks"]["table"]
+                key = found_keys[-1]
+                prediction_raw = pred_file[key]["table"]
                 pred_data_values = np.array([item[1] for item in prediction_raw])
                 pred_frame_count = len(prediction_raw)
 
