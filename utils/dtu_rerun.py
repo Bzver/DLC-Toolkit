@@ -43,13 +43,17 @@ class DLC_RERUN(QtWidgets.QDialog):
         self.setup_container = self.build_setup_container()
         if self.setup_container is None:
             return
+        
+        self.wait_container = self.build_wait_container()
 
         self.video_container = self.build_video_container()
         if self.setup_container is None:
             return
 
         layout.addWidget(self.setup_container)
+        layout.addWidget(self.wait_container)
         layout.addWidget(self.video_container)
+        self.wait_container.setVisible(False)
         self.video_container.setVisible(False)
 
         self.setLayout(layout)
@@ -426,6 +430,41 @@ class DLC_RERUN(QtWidgets.QDialog):
 
     #######################################################################################################################
 
+    def build_wait_container(self):
+        wait_container = QtWidgets.QWidget()
+        wait_layout = QHBoxLayout(wait_container)
+        wait_layout.setContentsMargins(10, 10, 10, 10)
+        wait_layout.setSpacing(10)
+
+        icon_label = QtWidgets.QLabel()
+        icon = QtWidgets.QApplication.style().standardIcon(QtWidgets.QStyle.SP_MessageBoxInformation)
+        pixmap = icon.pixmap(48, 48)
+        icon_label.setPixmap(pixmap)
+        icon_label.setAlignment(Qt.AlignTop)
+        icon_label.setSizePolicy(QtWidgets.QSizePolicy.Fixed, QtWidgets.QSizePolicy.Fixed)
+        wait_layout.addWidget(icon_label)
+
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(4)
+
+        title_label = QtWidgets.QLabel("<b>DeepLabCut Analysis Started</b>")
+        title_label.setWordWrap(True)
+
+        info_label = QtWidgets.QLabel(
+            "This action usually takes between a few seconds and one minute, "
+            "depending on number of marked frames. "
+            "Check out the terminal if it is taking longer than usual."
+        )
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet("QLabel { color: gray; }")
+
+        text_layout.addWidget(title_label)
+        text_layout.addWidget(info_label)
+        text_layout.addStretch()
+        wait_layout.addLayout(text_layout)
+
+        return wait_container
+
     def update_button_states(self):
         current_status = self.frame_status[self.current_frame_idx]
         self.approve_button.setEnabled(current_status != "Approved")
@@ -470,13 +509,19 @@ class DLC_RERUN(QtWidgets.QDialog):
 
     def rerun_workflow(self):
         extract_success = self.extract_marked_frame_images()
+
+        self.setup_container.setVisible(False)
+        self.wait_container.setVisible(True)
+        self.center()
+        QtWidgets.QApplication.processEvents()
+
         analyze_success = self.analyze_frame_images()
         if not extract_success or not analyze_success:
             QMessageBox(self, "Error", 
                 "Error during frame image extraction and analysis, check terminal for detail.")
             self.emergency_exit()
         
-        self.setup_container.setVisible(False)
+        self.wait_container.setVisible(False)
         self.video_container.setVisible(True)
         self.center()
 
