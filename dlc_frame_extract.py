@@ -440,7 +440,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.is_saved = True
         if self.dlc_data:
             save_yaml = {'video_path': self.video_file,  'frame_list': self.last_saved, 'dlc_config': self.dlc_data.dlc_config_filepath,
-                'prediction': self.dlc_data.prediction_filepath, 'refined_frame_list': self.refined_frame_list}
+                'prediction': self.dlc_data.prediction_filepath, 'refined_frame_list': self.refined_frame_list, 'approved_frame_list': self.approved_frame_list}
         else:
             save_yaml = {'video_path': self.video_file,  'frame_list': self.last_saved, 'dlc_config': None,
                 'prediction': None, 'refined_frame_list': self.refined_frame_list, 'approved_frame_list': self.approved_frame_list}

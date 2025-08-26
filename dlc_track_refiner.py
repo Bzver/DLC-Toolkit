@@ -279,8 +279,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.check_instance_count_per_frame()
 
         self.plotter = DLC_Plotter(
-            dlc_data=self.dlc_data,
-            current_frame_data=self.pred_data_array[self.current_frame_idx, ...],
+            dlc_data=self.dlc_data, current_frame_data=self.pred_data_array[self.current_frame_idx, ...],
             graphics_scene=self.graphics_scene, plot_config=self.plot_config, plot_callback=self.plotter_callback)
 
         if self.dlc_data.pred_frame_count != self.total_frames:

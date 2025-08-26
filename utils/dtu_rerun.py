@@ -7,7 +7,7 @@ import cv2
 
 from PySide6 import QtWidgets, QtGui
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QShortcut, QKeySequence
+from PySide6.QtGui import QShortcut, QKeySequence, QGuiApplication
 from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QHBoxLayout
 
 from typing import List, Literal
@@ -221,6 +221,7 @@ class DLC_RERUN(QtWidgets.QDialog):
         self.selected_frame_label.setFont(font)
         self.global_frame_label.setStyleSheet("color: black;")
         self.selected_frame_label.setStyleSheet("color: #1E90FF;")  # Dodger blue for emphasis
+        frame_info_layout.addStretch()
         frame_info_layout.addWidget(self.global_frame_label)
         frame_info_layout.addWidget(self.selected_frame_label)
         frame_info_layout.addStretch()
@@ -392,7 +393,6 @@ class DLC_RERUN(QtWidgets.QDialog):
         self._refresh_lists()
 
         if self.unprocessed_list:
-            # Show a warning with emphasis on consequences
             msg_box = QMessageBox(self)
             msg_box.setIcon(QMessageBox.Warning)
             msg_box.setWindowTitle("Unprocessed Frames - Save and Exit?")
@@ -478,6 +478,7 @@ class DLC_RERUN(QtWidgets.QDialog):
         
         self.setup_container.setVisible(False)
         self.video_container.setVisible(True)
+        self.center()
 
         self.load_and_remap_new_prediction()
         self.correct_new_prediction_track()
@@ -561,6 +562,11 @@ class DLC_RERUN(QtWidgets.QDialog):
                 self.new_data_array[frame_idx, :, :] = self.new_data_array[frame_idx, new_order, :]
 
     #######################################################################################################################
+
+    def center(self):
+        screen = QGuiApplication.primaryScreen().geometry()
+        size = self.geometry()
+        self.move((screen.width() - size.width()) // 2, (screen.height() - size.height()) // 2)
 
     def emergency_exit(self, reason:str):
         QMessageBox.warning(self, "Rerun Not Possible", reason)
