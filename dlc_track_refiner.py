@@ -85,7 +85,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 "display_name": "Save",
                 "buttons": [
                     ("Mark All As Refined", self.mark_all_as_refined),
-                    ("Remove Current Frame From Refine Task", self.this_frame_is_beyond_savable)
+                    ("Remove Current Frame From Refine Task", self.this_frame_is_beyond_savable),
                     ("Save Prediction", self.save_prediction),
                     ("Save Prediction Into CSV", self.save_prediction_as_csv)
                 ]
