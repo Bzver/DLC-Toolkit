@@ -83,7 +83,7 @@ class Progress_Bar_Widget(QtWidgets.QWidget):
         self.playback_timer.setInterval(int(1000/50)) # ~50 FPS
         self.playback_timer.timeout.connect(self.advance_frame)
 
-    def set_frame_category(self, category_name:str, frame_list:List[int], color:Optional[HexColor]=None, priority:int=0):
+    def set_frame_category(self, category_name:str, frame_list:List[int], color:Optional[HexColor]="#183539", priority:int=0):
         """
         Public API to pass the slider mark properties
 

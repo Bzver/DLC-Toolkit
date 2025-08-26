@@ -30,10 +30,7 @@ class Slider_With_Marks(QtWidgets.QSlider):
 
     def set_frame_category(self, category_name, frames, color, priority):
         self.frame_categories[category_name] = set(frames)
-        if color:
-            self.category_colors[category_name] = color
-        elif category_name not in self.category_colors:
-            self.category_colors[category_name] = "#183539"  # default color if None
+        self.category_colors[category_name] = color
         self.category_priorities[category_name] = priority # Store the priority
         self.update() # Request a repaint
 
@@ -59,6 +56,8 @@ class Slider_With_Marks(QtWidgets.QSlider):
             min_val = self.minimum()
             max_val = self.maximum()
             available_width = groove_rect.width()
+            total_frames = max_val - min_val + 1
+            mark_width = max(1, int(available_width / total_frames))
 
             frame_colors_to_plot = {}
 
@@ -83,9 +82,9 @@ class Slider_With_Marks(QtWidgets.QSlider):
 
                 painter.setBrush(QtGui.QColor(color))
                 painter.drawRect(
-                    int(pos) - 1,
+                    int(pos) - mark_width // 2, # Center the mark
                     groove_rect.top(),
-                    1,  # Width of mark
+                    mark_width,  # Width of mark
                     groove_rect.height()
                 )
 
@@ -241,7 +240,7 @@ class Clickable_Video_Label(QtWidgets.QLabel):
     def __init__(self, cam_idx, parent=None):
         super().__init__(parent)
         self.cam_idx = cam_idx
-        self.setMouseTracking(True) # Enable mouse tracking for hover effects if needed
+        self.setMouseTracking(True) # Enable mouse tracking for hover effects
 
     def mousePressEvent(self, event: QtGui.QMouseEvent):
         if event.button() == Qt.LeftButton:
