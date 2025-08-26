@@ -78,7 +78,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                     ("Adjust Point Size", self.adjust_point_size),
                     ("Adjust Plot Visibility", self.adjust_plot_opacity),
                     ("Hide Text Labels", self.toggle_hide_text_labels, {"checkable": True, "checked": False}),
-                    ("Snap to Instances", self.toggle_snap_to_instances, {"checkable": True, "checked": False})
+                    ("Snap to Instances (E)", self.toggle_snap_to_instances, {"checkable": True, "checked": False})
                 ]
             },
             "Save": {
@@ -177,6 +177,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_Y | Qt.ControlModifier), self).activated.connect(self.redo_changes)
         QShortcut(QKeySequence(Qt.Key_S | Qt.ControlModifier), self).activated.connect(self.save_prediction)
         QShortcut(QKeySequence(Qt.Key_Z), self).activated.connect(self.toggle_zoom_mode)
+        QShortcut(QKeySequence(Qt.Key_E), self).activated.connect(self.toggle_snap_to_instances)
 
     def reset_state(self):
         self.video_file, self.prediction, self.video_name = None, None, None
