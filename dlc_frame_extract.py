@@ -16,6 +16,7 @@ from utils.dtu_io import DLC_Loader, DLC_Exporter
 from utils.dtu_widget import Menu_Widget, Progress_Bar_Widget, Nav_Widget, Adjust_Property_Dialog
 from utils.dtu_dataclass import Export_Settings, Plot_Config
 from utils.dtu_plotter import DLC_Plotter
+from utils.dtu_rerun import DLC_RERUN
 import utils.dtu_helper as duh
 import utils.dtu_gui_helper as dugh
 import utils.dtu_io as dio
@@ -102,7 +103,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.data_loader = DLC_Loader(None, None) # Initialize the data loader
         self.exp_set = Export_Settings(video_filepath=None, video_name=None, save_path=None, export_mode=None)
 
-        self.labeled_frame_list, self.frame_list, self.refined_frame_list = [], [], []
+        self.labeled_frame_list, self.frame_list, self.refined_frame_list, self.approved_frame_list = [], [], [], []
         self.label_data_array = None
 
         self.cap, self.current_frame = None, None
@@ -142,6 +143,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.progress_widget.set_frame_category("marked_frames", self.frame_list, "#E28F13")
         self.progress_widget.set_frame_category("refined_frames", self.refined_frame_list, "#009979", priority=7)
         self.progress_widget.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7", priority=9)
+        self.progress_widget.set_frame_category("approved_frames", self.approved_frame_list, "#68b3ff", priority=7)
         self.display_current_frame()
         self.navigation_title_controller()
         self.nav_widget.set_collapsed(False)
@@ -211,9 +213,13 @@ class DLC_Extractor(QtWidgets.QMainWindow):
 
             if "refined_frame_list" in fmk.keys():
                 self.refined_frame_list = fmk["refined_frame_list"]
+            
+            if "approved_frame_list" in fmk.keys():
+                self.approved_frame_list = fmk["approved_frame_list"]
                 
             self.progress_widget.set_frame_category("marked_frames", self.frame_list, "#E28F13")
             self.progress_widget.set_frame_category("refined_frames", self.refined_frame_list, "#009979", priority=7)
+            self.progress_widget.set_frame_category("approved_frames", self.approved_frame_list, "#68b3ff", priority=7)
             self.determine_save_status()
             self.process_labeled_frame()
             self.display_current_frame()
@@ -253,6 +259,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         
         self.frame_list = list(set(self.frame_list) - set(self.labeled_frame_list)) # Clean up the already labeled marked frames
         self.refined_frame_list = list(set(self.refined_frame_list) - set(self.labeled_frame_list))
+        self.approved_frame_list = list(set(self.approved_frame_list) - set(self.labeled_frame_list))
         self.frame_list.sort()
 
         self.progress_widget.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7", priority=9)
@@ -323,7 +330,9 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         if self.current_frame_idx in self.labeled_frame_list:
             self.nav_widget.setTitleColor("#1F32D7")  # Blue
         elif self.current_frame_idx in self.refined_frame_list:
-            self.nav_widget.setTitleColor("#009979")  # Teal/Green
+            self.nav_widget.setTitleColor("#009979")  # Teal/Green 
+        elif self.current_frame_idx in self.approved_frame_list:
+            self.nav_widget.setTitleColor("#68b3ff")  # Sky Blue
         elif self.current_frame_idx in self.frame_list:
             self.nav_widget.setTitleColor("#E28F13")  # Amber/Orange
         else:
@@ -355,6 +364,8 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             self.frame_list.append(self.current_frame_idx)
         else: # Remove the mark status if already marked
             self.frame_list.remove(self.current_frame_idx)
+            if self.current_frame_idx in self.approved_frame_list:
+                self.approved_frame_list.remove(self.current_frame_idx)
 
         self.determine_save_status()
         self.progress_widget.set_frame_category("marked_frames", self.frame_list, "#E28F13")
@@ -391,6 +402,12 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.display_current_frame()
         self.determine_save_status()
 
+    def _handle_approved_frames_exported(self, approved_frames):
+        self.approved_frame_list = approved_frames
+        self.progress_widget.set_frame_category("approved_frames", self.approved_frame_list, "#68b3ff", priority=7)
+        self.display_current_frame()
+        self.determine_save_status()
+
     def _handle_frame_change_from_comp(self, new_frame_idx: int):
         self.current_frame_idx = new_frame_idx
         self.display_current_frame()
@@ -424,7 +441,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
                 'prediction': self.dlc_data.prediction_filepath, 'refined_frame_list': self.refined_frame_list}
         else:
             save_yaml = {'video_path': self.video_file,  'frame_list': self.last_saved, 'dlc_config': None,
-                'prediction': None, 'refined_frame_list': self.refined_frame_list}
+                'prediction': None, 'refined_frame_list': self.refined_frame_list, 'approved_frame_list': self.approved_frame_list}
         output_filepath = os.path.join(os.path.dirname(self.video_file), f"{self.video_name}_frame_extractor.yaml")
 
         with open(output_filepath, 'w') as file:
@@ -477,11 +494,13 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             QMessageBox.warning(self, "No Marked Frame", "No frame has been marked, please mark some frames first.")
             return
         
-        from utils.dtu_rerun import DLC_RERUN
+        rerun_list = list(set(self.frame_list) - set(self.approved_frame_list))
 
         try:
-            self.rerunner = DLC_RERUN(dlc_data=self.dlc_data, frame_list=self.frame_list, video_filepath=self.video_file, parent=self)
-            self.rerunner.show()
+            self.rerunner_window = DLC_RERUN(dlc_data=self.dlc_data, frame_list=rerun_list, video_filepath=self.video_file, parent=self)
+            self.rerunner_window.show()
+            self.rerunner_window.approved_frames_exported.connect(self._handle_approved_frames_exported)
+            self.rerunner_window.prediction_saved.connect(self.reload_prediction)
         except Exception as e:
             QMessageBox.warning(self, "Rerunner Failed", f"Rerunner failed to initialize. Exception: {e}")
             return
@@ -490,12 +509,18 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         """Reload prediction data from file and update visualization"""
         self.data_loader.prediction_filepath = prediction_path
         self.dlc_data, _ = self.data_loader.load_data()
+        self.approved_frame_list = list(set(self.approved_frame_list) - set(self.refined_frame_list))
+
         self.display_current_frame()
         self.statusBar().showMessage("Prediction successfully reloaded")
 
         if hasattr(self, 'refiner_window') and self.refiner_window: # Clean refiner windows
             self.refiner_window.close()
             self.refiner_window = None
+        
+        if hasattr(self, "rerunner_window") and self.rerunner_window:
+            self.rerunner_window.close()
+            self.rerunner_window = None
 
     def export_marked_to_clipboard(self):
         df = pd.DataFrame([self.frame_list])

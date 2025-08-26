@@ -10,25 +10,28 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QShortcut, QKeySequence
 from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QHBoxLayout
 
-from typing import List
+from typing import List, Literal
 
-from .dtu_widget import Progress_Bar_Widget, Nav_Widget
+from .dtu_widget import Progress_Bar_Widget
 from .dtu_comp import Clickable_Video_Label
 from .dtu_dataclass import Loaded_DLC_Data, Export_Settings
 from .dtu_io import DLC_Exporter, DLC_Loader
 from .dtu_plotter import DLC_Plotter
 from . import dtu_gui_helper as dugh
+from . import dtu_track_edit as dute
+from . import dtu_helper as duh
 from . import dtu_io as dio
 
 class DLC_RERUN(QtWidgets.QDialog):
     prediction_saved = Signal(str)
-    approved_frames_exported = Signal(List[int])
+    approved_frames_exported = Signal(list)
 
     def __init__(self, dlc_data:Loaded_DLC_Data, frame_list:List[int], video_filepath:str, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Re-run Predictions With Selected Frames in DLC")
         self.dlc_data = dlc_data
         self.frame_list = frame_list
+        self.frame_list.sort()
         self.is_saved = True
 
         self.temp_directory = tempfile.TemporaryDirectory()
@@ -198,6 +201,7 @@ class DLC_RERUN(QtWidgets.QDialog):
         self.total_marked_frames = len(self.frame_list)
         self.total_frames = self.dlc_data.pred_data_array.shape[0]
 
+        self.backup_data_array = self.dlc_data.pred_data_array.copy()
         self.frame_status = ["Unprocessed"] * self.total_marked_frames
         self.unprocessed_list = list(range(self.total_marked_frames))
         self.approved_list, self.rejected_list = [], []
@@ -208,8 +212,8 @@ class DLC_RERUN(QtWidgets.QDialog):
 
         # Frame info display
         frame_info_layout = QHBoxLayout()
-        self.global_frame_label = QtWidgets.QLabel(f"Global: 0 / {self.total_frames}")
-        self.selected_frame_label = QtWidgets.QLabel(f"Selected: 0 / {self.total_marked_frames}")
+        self.global_frame_label = QtWidgets.QLabel(f"Global: {self.frame_list[0]} / {self.total_frames-1}")
+        self.selected_frame_label = QtWidgets.QLabel(f"Selected: 0 / {self.total_marked_frames-1}")
 
         font = QtGui.QFont()
         font.setBold(True)
@@ -217,7 +221,6 @@ class DLC_RERUN(QtWidgets.QDialog):
         self.selected_frame_label.setFont(font)
         self.global_frame_label.setStyleSheet("color: black;")
         self.selected_frame_label.setStyleSheet("color: #1E90FF;")  # Dodger blue for emphasis
-        frame_info_layout.addStretch()
         frame_info_layout.addWidget(self.global_frame_label)
         frame_info_layout.addWidget(self.selected_frame_label)
         frame_info_layout.addStretch()
@@ -265,60 +268,42 @@ class DLC_RERUN(QtWidgets.QDialog):
         self.progress_widget.set_frame_category("Unprocessed", self.unprocessed_list)
         self.progress_widget.frame_changed.connect(self._handle_frame_change_from_comp)
         container_layout.addWidget(self.progress_widget)
-        
-        # Navigation controls
-        self.nav_widget = Nav_Widget("Unprocessed")
-        self.nav_widget.frame_changed_sig.connect(self.change_frame)
-        self.nav_widget.prev_marked_frame_sig.connect(lambda:self._navigate_marked_frames("prev"))
-        self.nav_widget.next_marked_frame_sig.connect(lambda:self._navigate_marked_frames("next"))
-        container_layout.addWidget(self.nav_widget)
 
         # Approval controls
+        approval_box = QtWidgets.QGroupBox("Frame Approval")
         approval_layout = QHBoxLayout()
 
-        self.reject_button = QtWidgets.QPushButton("Reject")
-        self.approve_button = QtWidgets.QPushButton("Approve")
-        self.apply_button = QtWidgets.QPushButton("Apply Changes")
-        self.approve_all_button = QtWidgets.QPushButton("Approve All")
+        self.reject_button = QtWidgets.QPushButton("Reject (R)")
+        self.approve_button = QtWidgets.QPushButton("Approve (A)")
+        self.approve_all_button = QtWidgets.QPushButton("Approve All (Ctrl + A)")
+        self.apply_button = QtWidgets.QPushButton("Apply Changes (Ctrl + S)")
         self.approve_all_button.setToolTip("Mark all remaining unprocessed frames as Approved")
         self.apply_button.setEnabled(False)
 
         self.reject_button.clicked.connect(lambda: self.mark_frame_status("Rejected"))
         self.approve_button.clicked.connect(lambda: self.mark_frame_status("Approved"))
-        self.apply_button.clicked.connect(self.apply_approved_predictions)
         self.approve_all_button.clicked.connect(self.approve_all_remaining_frames)
+        self.apply_button.clicked.connect(self.save_prediction)
 
         approval_layout.addWidget(self.reject_button)
         approval_layout.addWidget(self.approve_button)
-        approval_layout.addWidget(self.apply_button)
         approval_layout.addWidget(self.approve_all_button)
-        container_layout.addLayout(approval_layout)
+        approval_layout.addWidget(self.apply_button)
+        approval_box.setLayout(approval_layout)
+        container_layout.addWidget(approval_box)
 
         self.build_shortcut()
 
         return video_container
 
     def build_shortcut(self):
-        QShortcut(QKeySequence(Qt.Key_Left | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(-10))
         QShortcut(QKeySequence(Qt.Key_Left), self).activated.connect(lambda: self.change_frame(-1))
         QShortcut(QKeySequence(Qt.Key_Right), self).activated.connect(lambda: self.change_frame(1))
-        QShortcut(QKeySequence(Qt.Key_Right | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(10))
-        QShortcut(QKeySequence(Qt.Key_Up), self).activated.connect(lambda:self._navigate_marked_frames("prev"))
-        QShortcut(QKeySequence(Qt.Key_Down), self).activated.connect(lambda:self._navigate_marked_frames("next"))
         QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.progress_widget.toggle_playback)
         QShortcut(QKeySequence(Qt.Key_A), self).activated.connect(lambda: self.mark_frame_status("Approved"))
         QShortcut(QKeySequence(Qt.Key_R), self).activated.connect(lambda: self.mark_frame_status("Rejected"))
         QShortcut(QKeySequence(Qt.CTRL | Qt.Key_A), self).activated.connect(self.approve_all_remaining_frames)
-
-    def load_and_remap_new_prediction(self):
-        h5_files = [f for f in os.listdir(self.temp_dir) if f.endswith(".h5")]
-        pred_filepath = os.path.join(self.temp_dir, h5_files[-1])
-        dlc_config_filepath = self.dlc_data.dlc_config_filepath
-        loader = DLC_Loader(dlc_config_filepath, pred_filepath)
-        loaded_data, _ = loader.load_data()
-        new_data_array = np.full_like(self.dlc_data.pred_data_array, np.nan)
-        new_data_array[self.frame_list, :, :] = loaded_data.pred_data_array
-        self.new_data_array = new_data_array
+        QShortcut(QKeySequence(Qt.CTRL | Qt.Key_S), self).activated.connect(self.save_prediction)
     
     def display_current_frame(self):
         global_frame_idx = self.frame_list[self.current_frame_idx]
@@ -377,41 +362,53 @@ class DLC_RERUN(QtWidgets.QDialog):
             self.navigation_title_controller()
             self.update_button_states()
 
-    def mark_frame_status(self, status: str):
+    def mark_frame_status(self, status:Literal["Rejected","Approved"]):
         if self.current_frame_idx < 0 or self.current_frame_idx >= len(self.frame_status):
             return
 
         self.frame_status[self.current_frame_idx] = status
-        self.progress_widget.set_frame_category(status, [i for i, s in enumerate(self.frame_status) if s == status])
         self.apply_button.setEnabled("Approved" in self.frame_status)
+        global_frame_idx = self.frame_list[self.current_frame_idx]
+        
+        pred_data_to_use = self.new_data_array if status == "Approved" else self.backup_data_array
+        self.dlc_data.pred_data_array[global_frame_idx, :, :] = pred_data_to_use[global_frame_idx, :, :]
+
+        self.display_current_frame()
         self.update_button_states()
-
-    def apply_approved_predictions(self):
-        approved_indices = [i for i, status in enumerate(self.frame_status) if status == "Approved"]
-        if not approved_indices:
-            return
-
-        for local_idx in approved_indices:
-            global_frame_idx = self.frame_list[local_idx]
-            self.dlc_data.pred_data_array[global_frame_idx, :, :] = self.new_data_array[global_frame_idx, :, :]
-
-        if self.current_frame_idx in approved_indices:
-            self.display_current_frame()
-
-        self.apply_button.setEnabled(False)
         self._refresh_lists()
 
     def approve_all_remaining_frames(self):
         for i in range(len(self.frame_status)):
             if self.frame_status[i] == "Unprocessed":
                 self.frame_status[i] = "Approved"
+                self.dlc_data.pred_data_array[self.frame_list[i], :, :] = self.new_data_array[self.frame_list[i], :, :]
 
-        self._refresh_lists()
         self.apply_button.setEnabled(True)
-        self.update_button_states()
         self.display_current_frame()
+        self.update_button_states()
+        self._refresh_lists()
 
     def save_prediction(self):
+        self._refresh_lists()
+
+        if self.unprocessed_list:
+            # Show a warning with emphasis on consequences
+            msg_box = QMessageBox(self)
+            msg_box.setIcon(QMessageBox.Warning)
+            msg_box.setWindowTitle("Unprocessed Frames - Save and Exit?")
+            msg_box.setText(
+                f"You have {len(self.unprocessed_list)} unprocessed frame(s).\n\n"
+                "This action will save your progress and close the window.\n"
+                "All unprocessed frames will remain as original and will not be marked as approved.\n\n"
+                "Are you sure you want to continue?"
+            )
+            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            msg_box.setDefaultButton(QMessageBox.No)
+            reply = msg_box.exec_()
+
+            if reply == QMessageBox.No:
+                return False 
+
         pred_file_to_save_path = dio.determine_save_path(self.dlc_data.prediction_filepath, suffix="_rerun_")
         status, msg = dio.save_prediction_to_h5(pred_file_to_save_path, self.dlc_data.pred_data_array)
         
@@ -421,8 +418,9 @@ class DLC_RERUN(QtWidgets.QDialog):
             return False
 
         self.is_saved = True
-        self.prediction_saved.emit(self.dlc_data.prediction_filepath) # Emit the signal with the saved file path
-        self.approved_frames_exported.emit(self.approved_list)
+        approve_list_global = [self.frame_list[idx] for idx in self.approved_list]
+        self.prediction_saved.emit(pred_file_to_save_path)
+        self.approved_frames_exported.emit(approve_list_global)
 
         return True
 
@@ -432,7 +430,7 @@ class DLC_RERUN(QtWidgets.QDialog):
         current_status = self.frame_status[self.current_frame_idx]
         self.approve_button.setEnabled(current_status != "Approved")
         self.reject_button.setEnabled(current_status != "Rejected")
-        self.approve_all_button.setEnabled(not any(s == "Unprocessed" for s in self.frame_status))
+        self.approve_all_button.setEnabled(any(s == "Unprocessed" for s in self.frame_status))
 
     def navigation_title_controller(self):
         global_frame_idx = self.frame_list[self.current_frame_idx]
@@ -446,9 +444,6 @@ class DLC_RERUN(QtWidgets.QDialog):
                 self.video_labels[i].setStyleSheet("border: 2px solid red;")
             else:
                 self.video_labels[i].setStyleSheet("border: 1px solid gray;")
-
-    def _navigate_marked_frames(self, mode):
-        dugh.navigate_to_marked_frame(self, self.frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, mode)
 
     def _handle_frame_change_from_comp(self, new_frame_idx:int):
         self.current_frame_idx = new_frame_idx
@@ -467,8 +462,8 @@ class DLC_RERUN(QtWidgets.QDialog):
             else:
                 self.unprocessed_list.append(frame_idx)
 
-        self.progress_widget.set_frame_category("Approved", self.approved_list, color="#01FF23", priority=6)
-        self.progress_widget.set_frame_category("Rejected", self.rejected_list, color="#F749EE", priority=6)
+        self.progress_widget.set_frame_category("Approved", self.approved_list, color="#0066cc", priority=6)
+        self.progress_widget.set_frame_category("Rejected", self.rejected_list, color="#F749C6", priority=6)
         self.progress_widget.set_frame_category("Unprocessed", self.unprocessed_list)
 
     #######################################################################################################################
@@ -485,6 +480,7 @@ class DLC_RERUN(QtWidgets.QDialog):
         self.video_container.setVisible(True)
 
         self.load_and_remap_new_prediction()
+        self.correct_new_prediction_track()
         self.display_current_frame()
 
     def extract_marked_frame_images(self):
@@ -508,6 +504,61 @@ class DLC_RERUN(QtWidgets.QDialog):
         except Exception as e:
             print(f"Failed to analyze extracted frame images using deeplabcut. Exception: {e}.")
             return False
+
+    def load_and_remap_new_prediction(self):
+        h5_files = [f for f in os.listdir(self.temp_dir) if f.endswith(".h5")]
+        pred_filepath = os.path.join(self.temp_dir, h5_files[-1])
+        dlc_config_filepath = self.dlc_data.dlc_config_filepath
+        loader = DLC_Loader(dlc_config_filepath, pred_filepath)
+        loaded_data, _ = loader.load_data()
+        new_data_array = np.full_like(self.dlc_data.pred_data_array, np.nan)
+        new_data_array[self.frame_list, :, :] = loaded_data.pred_data_array
+        self.new_data_array = new_data_array
+
+    def correct_new_prediction_track(self, max_dist: float = 10.0):
+        instance_count = self.new_data_array.shape[1]
+
+        for frame_idx in self.frame_list:
+
+            pred_centroids, _ = duh.calculate_pose_centroids(self.new_data_array, frame_idx)
+            ref_centroids, _ = duh.calculate_pose_centroids(self.dlc_data.pred_data_array, frame_idx)
+
+            valid_pred_mask = np.all(~np.isnan(pred_centroids), axis=1)
+            valid_ref_mask = np.all(~np.isnan(ref_centroids), axis=1)
+
+            n_pred = np.sum(valid_pred_mask)
+            n_ref = np.sum(valid_ref_mask)
+
+            if n_pred == 1:
+                curr_pos = pred_centroids[valid_pred_mask][0]
+                distances = np.linalg.norm(ref_centroids - curr_pos, axis=1)
+
+                closest_ref_idx = np.argmin(distances)
+                closest_dist = distances[closest_ref_idx]
+
+                if closest_dist > max_dist:
+                    continue
+
+                current_valid_inst = np.where(valid_pred_mask)[0][0]
+
+                new_order = list(range(instance_count))
+                new_order[closest_ref_idx] = current_valid_inst
+                new_order[current_valid_inst] = closest_ref_idx
+
+                self.new_data_array[frame_idx, :, :] = self.new_data_array[frame_idx, new_order, :]
+
+            elif n_pred > 1 and n_pred == n_ref:
+
+                valid_pred_centroids = pred_centroids[valid_pred_mask]
+                valid_ref_centroids = ref_centroids[valid_ref_mask]
+
+                new_order = dute.hungarian_matching(
+                    valid_pred_centroids, valid_ref_centroids, valid_pred_mask, valid_ref_mask, max_dist)
+
+                if new_order is None:
+                    continue
+
+                self.new_data_array[frame_idx, :, :] = self.new_data_array[frame_idx, new_order, :]
 
     #######################################################################################################################
 

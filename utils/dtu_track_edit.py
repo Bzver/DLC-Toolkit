@@ -430,6 +430,12 @@ def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray
                 distances = np.linalg.norm(ref_centroids - curr_pos, axis=1)  # (I,)
 
                 closest_ref_idx = np.argmin(distances)
+                closest_dist = distances[closest_ref_idx]
+                if closest_dist > max_dist:
+                    corrected_pred_data[frame_idx, :, :] = corrected_pred_data[frame_idx, last_order, :]
+                    if debug_print:
+                        duh.log_print(f"[TMOD] n_pred=1: closet dist is larger than threshold. Applying last swap instead.")
+                    continue
                 current_valid_inst = np.where(valid_pred_mask)[0][0]
 
                 # Build new_order: assign closest prior identity to current valid instance
@@ -533,6 +539,7 @@ def hungarian_matching(valid_pred_centroids:np.ndarray, valid_idt_centroids:np.n
     Perform identity correction by solving the optimal assignment problem using the Hungarian algorithm.
     Matches detected instances from DeepLabCut (DLC) predictions to reference instances (from idTracker 
     or prior DLC frame) based on spatial proximity.
+    #### ASSUMES INSTANCE COUNT IS 2, WILL BREAK IF OTHERWISE! ####
 
     This function handles partial detections (e.g., one mouse occluded) by only matching valid instances,
     then reconstructing the full identity permutation for the entire instance set.
