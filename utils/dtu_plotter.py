@@ -4,14 +4,20 @@ import cv2
 from PySide6 import QtGui
 from PySide6.QtWidgets import QGraphicsRectItem, QGraphicsEllipseItem, QGraphicsTextItem, QGraphicsLineItem, QGraphicsScene
 
-from typing import Optional
+from typing import Optional, Tuple
 
 from .dtu_dataclass import Loaded_DLC_Data, Plot_Config, Refiner_Plotter_Callbacks
 from .dtu_comp import Selectable_Instance, Draggable_Keypoint
 
 class DLC_Plotter:
-    def __init__(self, dlc_data:Loaded_DLC_Data, current_frame_data:np.ndarray, plot_config:Optional[Plot_Config]=None, frame_cv2:Optional[np.ndarray]=None,
-            graphics_scene:Optional[QGraphicsScene]=None, plot_callback:Optional[Refiner_Plotter_Callbacks]=None):
+    def __init__(
+            self, dlc_data:Loaded_DLC_Data,
+            current_frame_data:np.ndarray,
+            plot_config:Optional[Plot_Config]=None,
+            frame_cv2:Optional[np.ndarray]=None,
+            graphics_scene:Optional[QGraphicsScene]=None,
+            plot_callback:Optional[Refiner_Plotter_Callbacks]=None
+            ):
         
         self.dlc_data = dlc_data
         self.current_frame_data = current_frame_data
@@ -80,7 +86,7 @@ class DLC_Plotter:
         if self.mode == "CV":
             return self.frame_cv2
 
-    def _plot_bounding_box(self, color, inst, padding = 10):
+    def _plot_bounding_box(self, color:Tuple[int, int, int], inst_idx:int, padding:int=10):
         x_coords = [self.keypoint_coords[p][0] for p in self.keypoint_coords if self.keypoint_coords[p] is not None]
         y_coords = [self.keypoint_coords[p][1] for p in self.keypoint_coords if self.keypoint_coords[p] is not None]
         kp_confidence = [self.keypoint_coords[p][2] for p in self.keypoint_coords if self.keypoint_coords[p] is not None]
@@ -106,10 +112,10 @@ class DLC_Plotter:
         max_x = min(view_width - 1, max_x + padding)
         max_y = min(view_height - 1, max_y + padding)
 
-        bounding_box_label = f"Inst: {self.dlc_data.individuals[inst]} | Conf:{kp_inst_mean:.4f}"
+        bounding_box_label = f"Inst: {self.dlc_data.individuals[inst_idx]} | Conf:{kp_inst_mean:.4f}"
 
         if self.mode == "GS": # Draw bounding box using QGraphicsRectItem
-            rect_item = Selectable_Instance(min_x, min_y, max_x - min_x, max_y - min_y, inst, default_color_rgb=color)
+            rect_item = Selectable_Instance(min_x, min_y, max_x - min_x, max_y - min_y, inst_idx, default_color_rgb=color)
             rect_item.setOpacity(self.plot_config.plot_opacity)
 
             if isinstance(rect_item, Selectable_Instance):
@@ -134,7 +140,7 @@ class DLC_Plotter:
                 cv2.putText(self.frame_cv2, f"{bounding_box_label}", (min_x, min_y),
                     cv2.FONT_HERSHEY_SIMPLEX, self.plot_config.point_size/20, color, 1, cv2.LINE_AA)
 
-    def _plot_keypoint_label(self, color):
+    def _plot_keypoint_label(self, color:Tuple[int, int, int]):
         for kp_idx, (x, y, conf) in self.keypoint_coords.items():
             keypoint_label = self.dlc_data.keypoints[kp_idx]
 
@@ -161,7 +167,7 @@ class DLC_Plotter:
                 cv2.putText(self.frame_cv2, str(keypoint_label), (int(x), int(y)),
                     cv2.FONT_HERSHEY_SIMPLEX, self.plot_config.point_size/20, color, 1, cv2.LINE_AA)
 
-    def _plot_skeleton(self, color):
+    def _plot_skeleton(self, color:Tuple[int, int, int]):
         for start_kp, end_kp in self.dlc_data.skeleton:
             start_kp_idx = self.dlc_data.keypoint_to_idx[start_kp]
             end_kp_idx = self.dlc_data.keypoint_to_idx[end_kp]
@@ -169,7 +175,7 @@ class DLC_Plotter:
             end_coord = self.keypoint_coords.get(end_kp_idx)
 
             if not start_coord or not end_coord:
-                return
+                continue
             
             if self.mode == "GS":
                 line = QGraphicsLineItem(start_coord[0], start_coord[1], end_coord[0], end_coord[1])
