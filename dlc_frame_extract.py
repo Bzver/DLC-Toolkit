@@ -106,7 +106,8 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.data_loader = DLC_Loader(None, None) # Initialize the data loader
         self.exp_set = Export_Settings(video_filepath=None, video_name=None, save_path=None, export_mode=None)
 
-        self.labeled_frame_list, self.frame_list, self.refined_frame_list, self.approved_frame_list = [], [], [], []
+        self.labeled_frame_list, self.frame_list = [], []
+        self.refined_frame_list, self.approved_frame_list, self.rejected_frame_list = [], [], []
         self.label_data_array = None
 
         self.cap, self.current_frame = None, None
@@ -216,6 +217,9 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             
             if "approved_frame_list" in fmk.keys():
                 self.approved_frame_list = fmk["approved_frame_list"]
+
+            if "rejected_frame_list" in fmk.keys():
+                self.rejected_frame_list = fmk["rejected_frame_list"]
                 
             self._refresh_slider()
             self.determine_save_status()
@@ -258,6 +262,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.frame_list = list(set(self.frame_list) - set(self.labeled_frame_list)) # Clean up the already labeled marked frames
         self.refined_frame_list = list(set(self.refined_frame_list) - set(self.labeled_frame_list))
         self.approved_frame_list = list(set(self.approved_frame_list) - set(self.labeled_frame_list))
+        self.rejected_frame_list = list(set(self.rejected_frame_list) - set(self.labeled_frame_list))
         self.frame_list.sort()
 
         self._refresh_slider()
@@ -331,6 +336,8 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             self.nav_widget.setTitleColor("#009979")  # Teal/Green 
         elif self.current_frame_idx in self.approved_frame_list:
             self.nav_widget.setTitleColor("#68b3ff")  # Sky Blue
+        elif self.current_frame_idx in self.rejected_frame_list:
+            self.nav_widget.setTitleColor("#F749C6")  # Pink
         elif self.current_frame_idx in self.frame_list:
             self.nav_widget.setTitleColor("#E28F13")  # Amber/Orange
         else:
@@ -340,6 +347,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.progress_widget.set_frame_category("marked_frames", self.frame_list, "#E28F13")
         self.progress_widget.set_frame_category("refined_frames", self.refined_frame_list, "#009979", priority=7)
         self.progress_widget.set_frame_category("approved_frames", self.approved_frame_list, "#68b3ff", priority=7)
+        self.progress_widget.set_frame_category("rejected_frames", self.rejected_frame_list, "#F749C6", priority=7)
         self.progress_widget.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7", priority=9)
 
     ###################################################################################################################################################
@@ -370,6 +378,8 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             self.frame_list.remove(self.current_frame_idx)
             if self.current_frame_idx in self.approved_frame_list:
                 self.approved_frame_list.remove(self.current_frame_idx)
+            if self.current_frame_idx in self.rejected_frame_list:
+                self.rejected_frame_list.remove(self.current_frame_idx)
 
         self.determine_save_status()
         self._refresh_slider()
@@ -377,6 +387,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
 
     def clear_approved_list(self):
         self.approved_frame_list = []
+        self.rejected_frame_list = []
         self._refresh_slider()
 
     def _navigate_marked_frames(self, mode):
@@ -410,8 +421,8 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.display_current_frame()
         self.determine_save_status()
 
-    def _handle_approved_frames_exported(self, approved_frames):
-        self.approved_frame_list = approved_frames
+    def _handle_rerun_frames_exported(self, frame_tuple):
+        self.approved_frame_list, self.rejected_frame_list = frame_tuple
         self._refresh_slider()
         self.display_current_frame()
         self.determine_save_status()
@@ -446,10 +457,12 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.is_saved = True
         if self.dlc_data:
             save_yaml = {'video_path': self.video_file,  'frame_list': self.last_saved, 'dlc_config': self.dlc_data.dlc_config_filepath,
-                'prediction': self.dlc_data.prediction_filepath, 'refined_frame_list': self.refined_frame_list, 'approved_frame_list': self.approved_frame_list}
+                'prediction': self.dlc_data.prediction_filepath, 'refined_frame_list': self.refined_frame_list,
+                'approved_frame_list': self.approved_frame_list, 'rejected_frame_list': self.rejected_frame_list}
         else:
             save_yaml = {'video_path': self.video_file,  'frame_list': self.last_saved, 'dlc_config': None,
-                'prediction': None, 'refined_frame_list': self.refined_frame_list, 'approved_frame_list': self.approved_frame_list}
+                'prediction': None, 'refined_frame_list': self.refined_frame_list,
+                'approved_frame_list': self.approved_frame_list, 'rejected_frame_list': self.rejected_frame_list }
         output_filepath = os.path.join(os.path.dirname(self.video_file), f"{self.video_name}_frame_extractor.yaml")
 
         with open(output_filepath, 'w') as file:
@@ -503,12 +516,12 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             QMessageBox.warning(self, "No Marked Frame", "No frame has been marked, please mark some frames first.")
             return
         
-        rerun_list = list(set(self.frame_list) - set(self.approved_frame_list))
+        rerun_list = list(set(self.frame_list) - set(self.approved_frame_list) - set(self.rejected_frame_list) - set(self.refined_frame_list))
 
         try:
             self.rerunner_window = DLC_RERUN(dlc_data=self.dlc_data, frame_list=rerun_list, video_filepath=self.video_file, parent=self)
             self.rerunner_window.show()
-            self.rerunner_window.approved_frames_exported.connect(self._handle_approved_frames_exported)
+            self.rerunner_window.frames_exported.connect(self._handle_rerun_frames_exported)
             self.rerunner_window.prediction_saved.connect(self.reload_prediction)
         except Exception as e:
             QMessageBox.warning(self, "Rerunner Failed", f"Rerunner failed to initialize. Exception: {e}")
@@ -519,6 +532,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.data_loader.prediction_filepath = prediction_path
         self.dlc_data, _ = self.data_loader.load_data()
         self.approved_frame_list = list(set(self.approved_frame_list) - set(self.refined_frame_list))
+        self.rejected_frame_list = list(set(self.rejected_frame_list) - set(self.refined_frame_list))
 
         self.display_current_frame()
         self.statusBar().showMessage("Prediction successfully reloaded")

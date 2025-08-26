@@ -24,7 +24,7 @@ from . import dtu_io as dio
 
 class DLC_RERUN(QtWidgets.QDialog):
     prediction_saved = Signal(str)
-    approved_frames_exported = Signal(list)
+    frames_exported = Signal(tuple)
 
     def __init__(self, dlc_data:Loaded_DLC_Data, frame_list:List[int], video_filepath:str, parent=None):
         super().__init__(parent)
@@ -423,8 +423,10 @@ class DLC_RERUN(QtWidgets.QDialog):
 
         self.is_saved = True
         approve_list_global = [self.frame_list[idx] for idx in self.approved_list]
+        rejected_list_global = [self.frame_list[idx] for idx in self.rejected_list]
+        list_tuple = (approve_list_global, rejected_list_global)
         self.prediction_saved.emit(pred_file_to_save_path)
-        self.approved_frames_exported.emit(approve_list_global)
+        self.frames_exported.emit(list_tuple)
 
         return True
 
