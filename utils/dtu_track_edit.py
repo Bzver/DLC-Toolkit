@@ -342,24 +342,24 @@ def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray
         if progress.wasCanceled():
             return pred_data_array, 0
 
-        pred_position_curr, _ = duh.calculate_pose_centroids(corrected_pred_data, frame_idx)
+        pred_centroids, _ = duh.calculate_pose_centroids(corrected_pred_data, frame_idx)
 
         if debug_print:
             duh.log_print(f"---------- frame: {frame_idx} ---------- ")
             duh.log_print(
-                f"x,y in pred: inst 0: ({pred_position_curr[0,0]}, {pred_position_curr[0,1]})"
-                            f" | inst 1: ({pred_position_curr[1,0]}, {pred_position_curr[1,1]})"
+                f"x,y in pred: inst 0: ({pred_centroids[0,0]}, {pred_centroids[0,1]})"
+                            f" | inst 1: ({pred_centroids[1,0]}, {pred_centroids[1,1]})"
                 )
             duh.log_print(
                 f"x,y in idt: inst 0: ({remapped_idt[frame_idx,0,0]}, {remapped_idt[frame_idx,0,1]})"
                             f" | inst 1: ({remapped_idt[frame_idx,1,0]}, {remapped_idt[frame_idx,1,1]})"
                 )
 
-        valid_pred_curr = np.all(~np.isnan(pred_position_curr), axis=1)
-        valid_idt_curr = np.all(~np.isnan(remapped_idt[frame_idx]), axis=1) 
+        valid_pred_mask = np.all(~np.isnan(pred_centroids), axis=1)
+        valid_idt_mask = np.all(~np.isnan(remapped_idt[frame_idx]), axis=1) 
 
-        n_pred = np.sum(valid_pred_curr)
-        n_idt = np.sum(valid_idt_curr)
+        n_pred = np.sum(valid_pred_mask)
+        n_idt = np.sum(valid_idt_mask)
 
         # Case 1: No DLC prediction on current frame
         if n_pred == 0:
@@ -370,8 +370,8 @@ def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray
         # Case 2: idTrackerai detection valid and counts matched
         elif n_pred == n_idt:
             if n_pred == 1: # Single instance, swap if needed
-                valid_pred_inst = np.where(valid_pred_curr)[0][0]
-                valid_idt_inst = np.where(valid_idt_curr)[0][0]
+                valid_pred_inst = np.where(valid_pred_mask)[0][0]
+                valid_idt_inst = np.where(valid_idt_mask)[0][0]
                 if valid_pred_inst == valid_idt_inst:
                     last_order = list(range(instance_count)) # Reset last order
                     if debug_print:
@@ -391,8 +391,8 @@ def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray
                 continue
 
             else: # Multiple instance pair in DLC and IDT prediction, prepare for Hungarian
-                valid_positions_pred = pred_position_curr[valid_pred_curr]
-                valid_positions_idt  = remapped_idt[frame_idx][valid_idt_curr]
+                valid_pred_centroids = pred_centroids[valid_pred_mask]
+                valid_idt_centroids  = remapped_idt[frame_idx][valid_idt_mask]
                 mode_text = ""
 
         # Case 3: idTracker invalid — use prior DLC as reference
@@ -402,22 +402,22 @@ def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray
 
             lookback_limit = min(lookback_limit, frame_idx)  # don't go before 0
             ref_frame_idx = None
-            pred_position_ref = None
+            ref_centroids = None
 
             for offset in range(1, lookback_limit + 1):
                 cand_idx = frame_idx - offset
-                pos_cand, _ = duh.calculate_pose_centroids(corrected_pred_data, cand_idx)
-                valid_cand = np.all(~np.isnan(pos_cand), axis=1)
+                candidate_centroids, _ = duh.calculate_pose_centroids(corrected_pred_data, cand_idx)
+                valid_cand = np.all(~np.isnan(candidate_centroids), axis=1)
                 n_prior = np.sum(valid_cand)
 
                 if n_prior == instance_count:
                     ref_frame_idx = cand_idx
-                    pred_position_ref = pos_cand
+                    ref_centroids = candidate_centroids
                     if debug_print:
                         duh.log_print(f"[TMOD] Found valid reference frame at t={cand_idx} (offset {offset})")
                     break
 
-            if pred_position_ref is None:
+            if ref_centroids is None:
                 corrected_pred_data[frame_idx, :, :] = corrected_pred_data[frame_idx, last_order, :]
                 changes_applied += 1
                 if debug_print:
@@ -426,12 +426,11 @@ def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray
                 continue
 
             if n_pred == 1: # Only one mouse detected — assign it to the closest prior mouse
-                curr_pos = pred_position_curr[valid_pred_curr][0]  # (x, y)
-                ref_positions = pred_position_ref  # (I, 2) — both prior positions
-                distances = np.linalg.norm(ref_positions - curr_pos, axis=1)  # (I,)
+                curr_pos = pred_centroids[valid_pred_mask][0]  # (x, y)
+                distances = np.linalg.norm(ref_centroids - curr_pos, axis=1)  # (I,)
 
                 closest_ref_idx = np.argmin(distances)
-                current_valid_inst = np.where(valid_pred_curr)[0][0]
+                current_valid_inst = np.where(valid_pred_mask)[0][0]
 
                 # Build new_order: assign closest prior identity to current valid instance
                 new_order = list(range(instance_count))
@@ -456,19 +455,19 @@ def idt_track_correction(pred_data_array: np.ndarray, idt_traj_array: np.ndarray
             if debug_print:
                 duh.log_print(
                     f"[TMOD] Using prior DLC frame {ref_frame_idx} as reference for Hungarian matching.\n"
-                    f"x,y in pred: inst 0: ({pred_position_curr[0,0]}, {pred_position_curr[0,1]})"
-                            f" | inst 1: ({pred_position_curr[1,0]}, {pred_position_curr[1,1]})\n"
-                    f"x,y in prev: inst 0: ({pred_position_ref[0,0]}, {pred_position_ref[0,1]})"
-                                f" | inst 1: ({pred_position_ref[1,0]}, {pred_position_ref[1,1]})"
+                    f"x,y in pred: inst 0: ({pred_centroids[0,0]}, {pred_centroids[0,1]})"
+                            f" | inst 1: ({pred_centroids[1,0]}, {pred_centroids[1,1]})\n"
+                    f"x,y in prev: inst 0: ({ref_centroids[0,0]}, {ref_centroids[0,1]})"
+                                f" | inst 1: ({ref_centroids[1,0]}, {ref_centroids[1,1]})"
                     )
 
-            valid_positions_pred = pred_position_curr[valid_pred_curr]
-            valid_positions_idt = pred_position_ref[valid_cand]  # all valid
-            valid_idt_curr = valid_cand  # needed for indexing later
+            valid_pred_centroids = pred_centroids[valid_pred_mask]
+            valid_idt_centroids = ref_centroids[valid_cand]  # all valid
+            valid_idt_mask = valid_cand  # needed for indexing later
             mode_text = "[TMOD] "
 
         new_order = hungarian_matching(
-            valid_positions_pred, valid_positions_idt, valid_pred_curr, valid_idt_curr, max_dist)
+            valid_pred_centroids, valid_idt_centroids, valid_pred_mask, valid_idt_mask, max_dist)
 
         if new_order is None:
             corrected_pred_data[frame_idx, :, :] = corrected_pred_data[frame_idx, last_order, :]
@@ -528,8 +527,8 @@ def remap_idt_array(pred_positions:np.ndarray, idt_traj_array:np.ndarray) -> np.
 
     return remapped_idt
 
-def hungarian_matching(valid_positions_pred:np.ndarray, valid_positions_idt:np.ndarray, 
-        valid_pred_curr:np.ndarray, valid_idt_curr:np.ndarray, max_dist:float=20.0) -> Optional[np.ndarray]:
+def hungarian_matching(valid_pred_centroids:np.ndarray, valid_idt_centroids:np.ndarray, 
+        valid_pred_mask:np.ndarray, valid_idt_mask:np.ndarray, max_dist:float=10.0) -> Optional[np.ndarray]:
     """
     Perform identity correction by solving the optimal assignment problem using the Hungarian algorithm.
     Matches detected instances from DeepLabCut (DLC) predictions to reference instances (from idTracker 
@@ -539,10 +538,10 @@ def hungarian_matching(valid_positions_pred:np.ndarray, valid_positions_idt:np.n
     then reconstructing the full identity permutation for the entire instance set.
 
     Args:
-    valid_positions_pred / valid_positions_idt:  XY postitions of each valid instance.
+    valid_pred_centroids / valid_idt_centroids:  XY postitions of each valid instance.
         Shape: (valid_instance_count, 2),
 
-    valid_pred_curr / valid_idt_curr: Boolean mask indicating which instances are valid
+    valid_pred_mask / valid_idt_mask: Boolean mask indicating which instances are valid
         Shape: (instance_count,) — e.g., (2,) → [True, False] if only instance 0 is valid.
 
     max_dist: float, optional
@@ -554,21 +553,21 @@ def hungarian_matching(valid_positions_pred:np.ndarray, valid_positions_idt:np.n
         A list of length `instance_count` representing the new identity mapping:
             new_order[target_identity] = source_instance_index_in_current_frame
     """
-    distances = np.linalg.norm(valid_positions_pred - valid_positions_idt, axis=1)
-    instance_count = valid_idt_curr.shape[0]
+    distances = np.linalg.norm(valid_pred_centroids - valid_idt_centroids, axis=1)
+    instance_count = valid_idt_mask.shape[0]
 
     if np.all(distances < max_dist):
         return list(range(instance_count))
 
-    cost_matrix = np.linalg.norm(valid_positions_pred[:, np.newaxis, :] - valid_positions_idt[np.newaxis, :, :], axis=2)
+    cost_matrix = np.linalg.norm(valid_pred_centroids[:, np.newaxis, :] - valid_idt_centroids[np.newaxis, :, :], axis=2)
     try:
         row_ind, col_ind = linear_sum_assignment(cost_matrix)
     except:
         return None
 
     new_order = list(range(instance_count))
-    pred_indices = np.where(valid_pred_curr)[0]
-    idt_indices  = np.where(valid_idt_curr)[0]
+    pred_indices = np.where(valid_pred_mask)[0]
+    idt_indices  = np.where(valid_idt_mask)[0]
 
     for i, j in zip(row_ind, col_ind):
         new_order[idt_indices[j]] = pred_indices[i]
