@@ -12,6 +12,8 @@ from PySide6.QtCore import Qt, QEvent
 from PySide6.QtGui import QShortcut, QKeySequence, QCloseEvent
 from PySide6.QtWidgets import QMessageBox, QFileDialog
 
+import traceback
+
 from utils.dtu_io import DLC_Loader, DLC_Exporter
 from utils.dtu_widget import Menu_Widget, Progress_Bar_Widget, Nav_Widget, Adjust_Property_Dialog
 from utils.dtu_dataclass import Export_Settings, Plot_Config
@@ -480,8 +482,9 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             self.refiner_window.prediction_saved.connect(self.reload_prediction) # Reload from prediction provided by Refiner
             
         except Exception as e:
-            QMessageBox.warning(self, "Refiner Failed", f"Refiner failed to initialize. Exception: {e}")
-            return
+            error_message = f"Refiner failed to initialize. Error: {str(e)}"
+            detailed_message = f"{error_message}\n\nTraceback:\n{traceback.format_exc()}"
+            QMessageBox.warning(self, "Refiner Failed", detailed_message)
 
     def dlc_rerun(self):
         if not self.video_file:
