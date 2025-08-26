@@ -44,7 +44,8 @@ class DLC_Extractor(QtWidgets.QMainWindow):
                 "display_name": "Edit",
                 "buttons": [
                     ("Adjust Confidence Cutoff", self.show_confidence_dialog),
-                    ("Mark / Unmark Current Frame (X)", self.toggle_frame_status),
+                    ("Mark / Unmark Current Frame (X)", self.toggle_frame_status), # Todo - Implement automatic mark generation (stride, random, ...)
+                    ("Clear All Approved Frames", self.clear_approved_list),
                     ("Call Refiner - Track Correction", lambda: self.call_refiner(track_only=True)),
                     ("Call Refiner - Edit Marked Frames", lambda: self.call_refiner(track_only=False)),
                     ("Call DeepLabCut - Rerun Predictions of Marked Frames", self.dlc_rerun)
@@ -142,10 +143,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.current_frame_idx = 0
         self.progress_widget.set_slider_range(self.total_frames)
-        self.progress_widget.set_frame_category("marked_frames", self.frame_list, "#E28F13")
-        self.progress_widget.set_frame_category("refined_frames", self.refined_frame_list, "#009979", priority=7)
-        self.progress_widget.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7", priority=9)
-        self.progress_widget.set_frame_category("approved_frames", self.approved_frame_list, "#68b3ff", priority=7)
+        self._refresh_slider()
         self.display_current_frame()
         self.navigation_title_controller()
         self.nav_widget.set_collapsed(False)
@@ -219,9 +217,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             if "approved_frame_list" in fmk.keys():
                 self.approved_frame_list = fmk["approved_frame_list"]
                 
-            self.progress_widget.set_frame_category("marked_frames", self.frame_list, "#E28F13")
-            self.progress_widget.set_frame_category("refined_frames", self.refined_frame_list, "#009979", priority=7)
-            self.progress_widget.set_frame_category("approved_frames", self.approved_frame_list, "#68b3ff", priority=7)
+            self._refresh_slider()
             self.determine_save_status()
             self.process_labeled_frame()
             self.display_current_frame()
@@ -264,7 +260,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.approved_frame_list = list(set(self.approved_frame_list) - set(self.labeled_frame_list))
         self.frame_list.sort()
 
-        self.progress_widget.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7", priority=9)
+        self._refresh_slider()
         self.navigation_title_controller()
 
     def initialize_plotter(self):
@@ -340,6 +336,12 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         else:
             self.nav_widget.setTitleColor("black")
 
+    def _refresh_slider(self):
+        self.progress_widget.set_frame_category("marked_frames", self.frame_list, "#E28F13")
+        self.progress_widget.set_frame_category("refined_frames", self.refined_frame_list, "#009979", priority=7)
+        self.progress_widget.set_frame_category("approved_frames", self.approved_frame_list, "#68b3ff", priority=7)
+        self.progress_widget.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7", priority=9)
+
     ###################################################################################################################################################
 
     def toggle_frame_status(self):
@@ -370,8 +372,12 @@ class DLC_Extractor(QtWidgets.QMainWindow):
                 self.approved_frame_list.remove(self.current_frame_idx)
 
         self.determine_save_status()
-        self.progress_widget.set_frame_category("marked_frames", self.frame_list, "#E28F13")
+        self._refresh_slider()
         self.navigation_title_controller()
+
+    def clear_approved_list(self):
+        self.approved_frame_list = []
+        self._refresh_slider()
 
     def _navigate_marked_frames(self, mode):
         dugh.navigate_to_marked_frame(self, self.frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, mode)
@@ -400,13 +406,13 @@ class DLC_Extractor(QtWidgets.QMainWindow):
 
     def _handle_refined_frames_exported(self, refined_frames):
         self.refined_frame_list = refined_frames
-        self.progress_widget.set_frame_category("refined_frames", self.refined_frame_list, "#009979", priority=7)
+        self._refresh_slider()
         self.display_current_frame()
         self.determine_save_status()
 
     def _handle_approved_frames_exported(self, approved_frames):
         self.approved_frame_list = approved_frames
-        self.progress_widget.set_frame_category("approved_frames", self.approved_frame_list, "#68b3ff", priority=7)
+        self._refresh_slider()
         self.display_current_frame()
         self.determine_save_status()
 
