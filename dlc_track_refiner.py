@@ -85,6 +85,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 "display_name": "Save",
                 "buttons": [
                     ("Mark All As Refined", self.mark_all_as_refined),
+                    ("Remove Current Frame From Refine Task", self.this_frame_is_beyond_savable)
                     ("Save Prediction", self.save_prediction),
                     ("Save Prediction Into CSV", self.save_prediction_as_csv)
                 ]
@@ -137,8 +138,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         # Connect buttons to events
         self.nav_widget.frame_changed_sig.connect(self.change_frame)
-        self.nav_widget.prev_marked_frame_sig.connect(lambda:self._navigate_marked_frames("prev"))
-        self.nav_widget.next_marked_frame_sig.connect(lambda:self._navigate_marked_frames("next"))
+        self.nav_widget.prev_marked_frame_sig.connect(lambda:self._navigate_roi_frames("prev"))
+        self.nav_widget.next_marked_frame_sig.connect(lambda:self._navigate_roi_frames("next"))
 
         self.undo_button.clicked.connect(self.undo_changes)
         self.redo_button.clicked.connect(self.redo_changes)
@@ -900,6 +901,24 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
     ###################################################################################################################################################
     
     def mark_all_as_refined(self):
+        if not self.manual_refinement_check():
+            return
+
+        self.refined_roi_frame_list = self.marked_roi_frame_list
+        self._refresh_slider()
+        self.navigation_title_controller()
+
+    def this_frame_is_beyond_savable(self):
+        if not self.manual_refinement_check():
+            return
+        
+        if self.current_frame_idx in self.marked_roi_frame_list:
+            self.marked_roi_frame_list.remove(self.current_frame_idx)
+            self.roi_frame_list.remove(self.current_frame_idx)
+            self._refresh_slider()
+            self.navigation_title_controller()
+
+    def manual_refinement_check(self):
         if not self.marked_roi_frame_list:
             QMessageBox.information(
                 self,  "Action Not Available", 
@@ -908,11 +927,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                 "refinement, which uses the automatically tagged frames to assist with track " \
                 "swapping, interpolation, and other tracking tasks."
             )
-            return
+            return False
 
-        self.refined_roi_frame_list = self.marked_roi_frame_list
-        self._refresh_slider()
-        self.navigation_title_controller()
+        return True
 
     def undo_changes(self):
         if self.undo_stack:
