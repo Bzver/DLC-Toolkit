@@ -916,8 +916,12 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         if self.current_frame_idx in self.marked_roi_frame_list:
             self.marked_roi_frame_list.remove(self.current_frame_idx)
             self.roi_frame_list.remove(self.current_frame_idx)
-            self._refresh_slider()
-            self.navigation_title_controller()
+        
+        if self.current_frame_idx in self.refined_roi_frame_list:
+            self.refined_roi_frame_list.remove(self.current_frame_idx)
+
+        self._refresh_slider()
+        self.navigation_title_controller()
 
     def manual_refinement_check(self):
         if not self.marked_roi_frame_list:
