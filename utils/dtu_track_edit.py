@@ -114,26 +114,82 @@ def interpolate_missing_keypoints(pred_data_array:np.ndarray, current_frame_idx:
 
 ###################################################################################################################################################
 
-def purge_by_conf_and_bp(pred_data_array:np.ndarray, confidence_threshold:float, bodypart_threshold:int
-        ) -> Tuple[np.ndarray, int, int]:
+def get_instance_count_per_frame(pred_data_array:np.ndarray) -> np.ndarray:
+    """
+    Count the number of non-empty instances per frame.
+    
+    Args:
+        pred_data_array: Shape (n_frames, n_individuals, n_keypoints * 3)
+                         Last dim: [x, y, confidence, ...]
+    
+    Returns:
+        Array of shape (n_frames,) with count of valid instances per frame.
+    """
+    nan_mask = np.isnan(pred_data_array)
+    empty_instance = np.all(nan_mask, axis=2)
+    non_empty_instance_numerical = (~empty_instance) * 1
+    instance_count_per_frame = non_empty_instance_numerical.sum(axis=1)
+    return instance_count_per_frame
+
+def filter_by_conf_bp_instance(pred_data_array:np.ndarray, confidence_threshold:float, bodypart_threshold:int,
+        instance_threshold:int, use_or:Optional[bool]=False):
+    """
+    Filter frames where detection quality is low.
+    
+    Conditions:
+      - Low average confidence
+      - Too few body parts detected (below bodypart_threshold %)
+      - Too few animal instances (below instance_threshold)
+
+    Logic:
+      - use_or=True: mark if ANY condition is True (weaker filter)
+      - use_or=False: mark if ALL conditions are True (stricter filter)
+
+    Args:
+        pred_data_array: Shape (n_frames, n_individuals, n_keypoints * 3)
+        confidence_threshold: e.g., 0.5 → avg confidence < 0.5 → low
+        bodypart_threshold: percentage (0–100), below which frame is flagged
+        instance_threshold: minimum number of instances expected per frame
+        use_or: If True, use OR logic; else use AND
+
+    Returns:
+        Boolean array: shape (n_frames, n_instances), True for the instances that fits the criteria.
+    """
+
+    _, I, K = pred_data_array.shape()
+    n_keypoints = K//3
+    n_individuals = I
+
     # Calculate a mask for low confidence instances
-    num_keypoint = pred_data_array.shape[2] // 3
     confidence_scores = pred_data_array[:, :, 2::3]
     inst_conf_all = np.nanmean(confidence_scores, axis=2)
     low_conf_mask = inst_conf_all < confidence_threshold
-
+    
     # Calculate a mask for instances with too few body parts
     discovered_bodyparts = np.sum(confidence_scores > 0.0, axis=2)
-    discovery_perc = discovered_bodyparts / num_keypoint
+    discovery_perc = discovered_bodyparts / n_keypoints
     low_bodypart_mask = np.logical_and(discovery_perc * 100 < bodypart_threshold, discovery_perc > 0)
 
-    # Combine the two masks with a logical OR
-    removal_mask = np.logical_or(low_conf_mask, low_bodypart_mask)
+    # Calculate a frame-level mask for frames with too little instance spotted
+    instance_count_per_frame = get_instance_count_per_frame(pred_data_array)
+    low_instance_mask_frame = instance_count_per_frame < instance_threshold
+    # Broadcast to all instances: if frame is bad, all instances are flagged
+    low_instance_mask = np.tile(low_instance_mask_frame[:, np.newaxis], (1, n_individuals)) 
+    
+    if use_or:
+        combined_mask = low_conf_mask | low_bodypart_mask | low_instance_mask
+    else:
+        combined_mask = low_conf_mask & low_bodypart_mask & low_instance_mask
+
+    return combined_mask
+
+def purge_by_conf_and_bp(pred_data_array:np.ndarray, confidence_threshold:float, bodypart_threshold:int
+        ) -> Tuple[np.ndarray, int, int]:
+    removal_mask = filter_by_conf_bp_instance(pred_data_array, confidence_threshold, bodypart_threshold, 0)
     removed_frames_count = np.sum(np.any(removal_mask, axis=1))
     removed_instances_count = np.sum(removal_mask.flatten())
 
-    # Apply the combined mask to set the data to NaN
-    f_idx, i_idx = np.where(removal_mask)
+    f_idx, i_idx = np.where(removal_mask)  # Apply the combined mask to set the data to NaN
     pred_data_array[f_idx, i_idx, :] = np.nan
     return pred_data_array, removed_frames_count, removed_instances_count
 

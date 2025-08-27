@@ -278,7 +278,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             head_idx, tail_idx = duh.get_head_tail_indices_from_canon_pose(canon_pose, head_idx, tail_idx)
         self.angle_map_data = duh.build_angle_map(canon_pose, all_frame_pose, head_idx, tail_idx)
 
-        self.check_instance_count_per_frame()
+        self._update_roi_list()
 
         self.plotter = DLC_Plotter(
             dlc_data=self.dlc_data, current_frame_data=self.pred_data_array[self.current_frame_idx, ...],
@@ -416,12 +416,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
     ###################################################################################################################################################
 
-    def check_instance_count_per_frame(self):
-        nan_mask = np.isnan(self.pred_data_array)
-        empty_instance = np.all(nan_mask, axis=2)
-        # Convert the boolean mask to numerical (0 for empty, 1 for non-empty) and sum per frame
-        non_empty_instance_numerical = (~empty_instance) * 1
-        self.instance_count_per_frame = non_empty_instance_numerical.sum(axis=1)
+    def _update_roi_list(self):
+        self.instance_count_per_frame = dute.get_instance_count_per_frame(self.pred_data_array)
         if self.marked_roi_frame_list:
             self.roi_frame_list = list(self.marked_roi_frame_list)
         else:
@@ -771,7 +767,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
     def _on_track_data_changed(self):
         self.selected_box = None
         self.is_saved = False
-        self.check_instance_count_per_frame()
+        self._update_roi_list()
         self.display_current_frame()
 
     def _handle_frame_change_from_comp(self, new_frame_idx: int):
@@ -865,7 +861,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             self.pred_data_array[np.repeat(points_in_bbox_mask, 3, axis=-1)] = np.nan
             
             self.is_saved = False
-            self.check_instance_count_per_frame()
+            self._update_roi_list()
             self.display_current_frame()
             QMessageBox.information(self, "No Mice Zone Applied", "Keypoints within the selected zone have been set to NaN.")
         
@@ -940,7 +936,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         if self.undo_stack:
             self.redo_stack.append(self.pred_data_array.copy())
             self.pred_data_array = self.undo_stack.pop()
-            self.check_instance_count_per_frame()
+            self._update_roi_list()
             self.display_current_frame()
             self.is_saved = False
             print("Undo performed.")
@@ -951,7 +947,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         if self.redo_stack:
             self.undo_stack.append(self.pred_data_array.copy())
             self.pred_data_array = self.redo_stack.pop()
-            self.check_instance_count_per_frame()
+            self._update_roi_list()
             self.display_current_frame()
             self.is_saved = False
             print("Redo performed.")
