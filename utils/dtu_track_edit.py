@@ -155,7 +155,7 @@ def filter_by_conf_bp_instance(pred_data_array:np.ndarray, confidence_threshold:
             else return instance-specific mask (n_frames, n_instances)
     """
 
-    _, I, K = pred_data_array.shape()
+    _, I, K = pred_data_array.shape
     n_keypoints = K//3
     n_individuals = I
 
