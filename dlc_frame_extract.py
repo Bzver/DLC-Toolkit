@@ -15,7 +15,7 @@ from PySide6.QtWidgets import QMessageBox, QFileDialog
 import traceback
 
 from utils.dtu_io import DLC_Loader, DLC_Exporter
-from utils.dtu_widget import Menu_Widget, Progress_Bar_Widget, Nav_Widget, Adjust_Property_Dialog
+from utils.dtu_widget import Menu_Widget, Progress_Bar_Widget, Nav_Widget, Adjust_Property_Dialog, Generate_Mark_Dialog, Clear_Mark_Dialog
 from utils.dtu_dataclass import Export_Settings, Plot_Config
 from utils.dtu_plotter import DLC_Plotter
 from utils.dtu_rerun import DLC_RERUN
@@ -40,12 +40,18 @@ class DLC_Extractor(QtWidgets.QMainWindow):
                     ("Load Workplace", self.load_workplace)
                 ]
             },
+            "Mark": {
+                "display_name": "Mark",
+                "buttons": [
+                    ("Adjust Confidence Cutoff", self.show_confidence_dialog),
+                    ("Mark / Unmark Current Frame (X)", self.toggle_frame_status),
+                    ("Automatic Mark Generation", self.show_mark_generation_dialog),
+                    ("Clear Frame Marks of Category", self.show_clear_mark_dialog)
+                ]
+            },
             "Edit": {
                 "display_name": "Edit",
                 "buttons": [
-                    ("Adjust Confidence Cutoff", self.show_confidence_dialog),
-                    ("Mark / Unmark Current Frame (X)", self.toggle_frame_status), # Todo - Implement automatic mark generation (stride, random, ...)
-                    ("Clear All Approved Frames", self.clear_approved_list),
                     ("Call Refiner - Track Correction", lambda: self.call_refiner(track_only=True)),
                     ("Call Refiner - Edit Marked Frames", lambda: self.call_refiner(track_only=False)),
                     ("Call DeepLabCut - Rerun Predictions of Marked Frames", self.dlc_rerun)
@@ -407,11 +413,85 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         dialog = Adjust_Property_Dialog(
             property_name="Confidence Cutoff", property_val=self.plot_config.confidence_cutoff, range=(0.00, 1.00), parent=self)
         dialog.property_changed.connect(self._update_application_cutoff)
-        dialog.show() # .show() instead of .exec() for a non-modal dialog
+        dialog.show()
 
     def _update_application_cutoff(self, new_cutoff):
         self.plot_config.confidence_cutoff = new_cutoff
         self.display_current_frame() # Redraw with the new cutoff
+
+    def show_mark_generation_dialog(self):
+        if self.current_frame is None:
+            QtWidgets.QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
+            return
+        
+        mark_gen_dialog = Generate_Mark_Dialog(self.total_frames, self.dlc_data, parent=self)
+        mark_gen_dialog.clear_old.connect(self._on_clear_old_command)
+        mark_gen_dialog.frame_list_new.connect(self._handle_frame_marks_from_comp)
+        mark_gen_dialog.exec()
+
+    def show_clear_mark_dialog(self):
+        frame_set = set(self.frame_list)
+        refined_set = set(self.refined_frame_list)
+        approved_set = set(self.approved_frame_list)
+        rejected_set = set(self.rejected_frame_list)
+        marked_set = refined_set | approved_set | rejected_set
+        
+        frame_options = {
+            "All Marked Frames": self.frame_list,
+            "Refined Frames": self.refined_frame_list,
+            "Approved Frames": self.approved_frame_list,
+            "Rejected Frames": self.rejected_frame_list,
+        }
+
+        frame_categories = [label for label, frame_list in frame_options.items() if frame_list]
+        marked_set = set(self.refined_frame_list) | set(self.approved_frame_list) | set(self.rejected_frame_list)
+
+        if refined_set:
+            all_except_refined = frame_set - refined_set
+            if all_except_refined:
+                frame_categories.append("All Marked Frames (Except For Refined)")
+
+        if marked_set:
+            remaining_frames = frame_set - marked_set
+            if remaining_frames:
+                frame_categories.append("Remaining Frames")
+
+        if not frame_categories:
+            return
+
+        mark_clear_dialog = Clear_Mark_Dialog(frame_categories, parent=self)
+        mark_clear_dialog.frame_category_to_clear.connect(self._clear_category)
+        mark_clear_dialog.exec()
+
+    def _clear_category(self, frame_category):
+        actions = {
+            "All Marked Frames": lambda: (
+                self.frame_list.clear(),
+                self.refined_frame_list.clear(),
+                self.approved_frame_list.clear(),
+                self.rejected_frame_list.clear()
+            ),
+            "Refined Frames": self.refined_frame_list.clear,
+            "Approved Frames": self.approved_frame_list.clear,
+            "Rejected Frames": self.rejected_frame_list.clear,
+        }
+
+        if frame_category in actions:
+            actions[frame_category]()
+        elif frame_category == "Remaining Frames":
+            kept_frames = set(self.refined_frame_list) | set(self.approved_frame_list) | set(self.rejected_frame_list)
+            self.frame_list[:] = list(kept_frames)
+        elif frame_category == "All Marked Frames (Except for Refined)":
+            self.frame_list[:] = self.refined_frame_list.copy()
+            self.approved_frame_list.clear()
+            self.rejected_frame_list.clear()
+
+        self._refresh_slider()
+        self.navigation_title_controller()
+
+    def _on_clear_old_command(self, clear_old:bool):
+        if clear_old:
+            self._clear_category("All Marked Frames (Except for Refined)")
 
     ###################################################################################################################################################
 
@@ -419,18 +499,29 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.refined_frame_list = refined_frames
         self._refresh_slider()
         self.display_current_frame()
+        self.navigation_title_controller()
         self.determine_save_status()
 
     def _handle_rerun_frames_exported(self, frame_tuple):
         self.approved_frame_list, self.rejected_frame_list = frame_tuple
         self._refresh_slider()
         self.display_current_frame()
+        self.navigation_title_controller()
         self.determine_save_status()
 
     def _handle_frame_change_from_comp(self, new_frame_idx: int):
         self.current_frame_idx = new_frame_idx
         self.display_current_frame()
         self.navigation_title_controller()
+        self.determine_save_status()
+
+    def _handle_frame_marks_from_comp(self, frame_list):
+        frame_set = set(self.frame_list) | set(frame_list) - set(self.labeled_frame_list)
+        self.frame_list[:] = list(frame_set)
+        self._refresh_slider()
+        self.display_current_frame()
+        self.navigation_title_controller()
+        self.determine_save_status()
 
     ###################################################################################################################################################
 
@@ -531,8 +622,8 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         """Reload prediction data from file and update visualization"""
         self.data_loader.prediction_filepath = prediction_path
         self.dlc_data, _ = self.data_loader.load_data()
-        self.approved_frame_list = list(set(self.approved_frame_list) - set(self.refined_frame_list))
-        self.rejected_frame_list = list(set(self.rejected_frame_list) - set(self.refined_frame_list))
+        self.approved_frame_list[:] = list(set(self.approved_frame_list) - set(self.refined_frame_list))
+        self.rejected_frame_list[:] = list(set(self.rejected_frame_list) - set(self.refined_frame_list))
 
         self.display_current_frame()
         self.statusBar().showMessage("Prediction successfully reloaded")
