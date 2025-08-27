@@ -132,7 +132,7 @@ def get_instance_count_per_frame(pred_data_array:np.ndarray) -> np.ndarray:
     return instance_count_per_frame
 
 def filter_by_conf_bp_instance(pred_data_array:np.ndarray, confidence_threshold:float, bodypart_threshold:int,
-        instance_threshold:int, use_or:Optional[bool]=False):
+        instance_threshold:int, use_or:Optional[bool]=False, return_frame_list:Optional[bool]=False):
     """
     Filter frames where detection quality is low.
     
@@ -151,9 +151,8 @@ def filter_by_conf_bp_instance(pred_data_array:np.ndarray, confidence_threshold:
         bodypart_threshold: percentage (0–100), below which frame is flagged
         instance_threshold: minimum number of instances expected per frame
         use_or: If True, use OR logic; else use AND
-
-    Returns:
-        Boolean array: shape (n_frames, n_instances), True for the instances that fits the criteria.
+        return_frame_list: If True, return list of frames that fits the criteria,
+            else return instance-specific mask (n_frames, n_instances)
     """
 
     _, I, K = pred_data_array.shape()
@@ -180,6 +179,10 @@ def filter_by_conf_bp_instance(pred_data_array:np.ndarray, confidence_threshold:
         combined_mask = low_conf_mask | low_bodypart_mask | low_instance_mask
     else:
         combined_mask = low_conf_mask & low_bodypart_mask & low_instance_mask
+
+    if return_frame_list:
+        frame_mask = np.any(combined_mask, axis=1)
+        return np.where(frame_mask)[0].tolist() 
 
     return combined_mask
 
