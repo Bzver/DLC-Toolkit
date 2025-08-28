@@ -22,7 +22,7 @@ from . import dtu_track_edit as dute
 from . import dtu_helper as duh
 from . import dtu_io as dio
 
-class DLC_RERUN(QtWidgets.QDialog):
+class DLC_Inference(QtWidgets.QDialog):
     prediction_saved = Signal(str)
     frames_exported = Signal(tuple)
 

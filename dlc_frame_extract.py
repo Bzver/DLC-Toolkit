@@ -18,7 +18,6 @@ from utils.dtu_io import DLC_Loader, DLC_Exporter
 from utils.dtu_widget import Menu_Widget, Progress_Bar_Widget, Nav_Widget, Adjust_Property_Dialog, Generate_Mark_Dialog, Clear_Mark_Dialog
 from utils.dtu_dataclass import Export_Settings, Plot_Config
 from utils.dtu_plotter import DLC_Plotter
-from utils.dtu_rerun import DLC_RERUN
 import utils.dtu_helper as duh
 import utils.dtu_gui_helper as dugh
 import utils.dtu_io as dio
@@ -609,8 +608,9 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         
         rerun_list = list(set(self.frame_list) - set(self.approved_frame_list) - set(self.rejected_frame_list) - set(self.refined_frame_list))
 
+        from utils.dtu_inference import DLC_Inference
         try:
-            self.rerunner_window = DLC_RERUN(dlc_data=self.dlc_data, frame_list=rerun_list, video_filepath=self.video_file, parent=self)
+            self.rerunner_window = DLC_Inference(dlc_data=self.dlc_data, frame_list=rerun_list, video_filepath=self.video_file, parent=self)
             self.rerunner_window.show()
             self.rerunner_window.frames_exported.connect(self._handle_rerun_frames_exported)
             self.rerunner_window.prediction_saved.connect(self.reload_prediction)
