@@ -1,3 +1,5 @@
+from functools import partial
+
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, QTimer, Signal, QPropertyAnimation, QEasingCurve
 from PySide6.QtWidgets import QPushButton, QHBoxLayout, QVBoxLayout, QFrame, QDialog, QLabel, QLineEdit, QMessageBox
@@ -637,7 +639,7 @@ class Clear_Mark_Dialog(QDialog):
         for category_text in frame_category:
             button = QPushButton(category_text)
             button_frame.addWidget(button)
-            button.clicked.connect(lambda:self._on_button_clicked(category_text))
+            button.clicked.connect(partial(self._on_button_clicked, category_text))
         layout.addLayout(button_frame)
 
     def _on_button_clicked(self, category_text:str):
