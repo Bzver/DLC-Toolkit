@@ -24,7 +24,7 @@ def navigate_to_marked_frame(parent:object, frame_list:List[int], current_frame_
         QMessageBox.warning(parent, "Invalid Mode", "Expected mode: 'prev' or 'next'.")
         return
     
-    if not dest_frame_idx:
+    if dest_frame_idx is None:
         QMessageBox.warning(parent, "Navigation", no_frame_message)
         return
 
