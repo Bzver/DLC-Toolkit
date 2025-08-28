@@ -31,30 +31,39 @@ class DLC_Inference(QtWidgets.QDialog):
         self.setWindowTitle("Re-run Predictions With Selected Frames in DLC")
         self.dlc_data = dlc_data
         self.frame_list = frame_list
+        self.video_filepath = video_filepath
+        video_name = os.path.basename(self.video_filepath).split(".")[0]
+
         self.frame_list.sort()
         self.is_saved = True
 
         self.temp_directory = tempfile.TemporaryDirectory()
         self.temp_dir = self.temp_directory.name
         self.export_set = Export_Settings(
-            video_filepath=video_filepath, video_name="", save_path=self.temp_dir, export_mode="Append")
+            video_filepath=self.video_filepath, video_name=video_name, save_path=self.temp_dir, export_mode="Append")
+        
+        if self.dlc_data.pred_data_array is None:
+            self.fresh_pred = True
+        else:
+            self.fresh_pred = False
 
         layout = QVBoxLayout(self)
         self.setup_container = self.build_setup_container()
         if self.setup_container is None:
             return
+        layout.addWidget(self.setup_container)
         
         self.wait_container = self.build_wait_container()
-
-        self.video_container = self.build_video_container()
-        if self.setup_container is None:
-            return
-
-        layout.addWidget(self.setup_container)
         layout.addWidget(self.wait_container)
-        layout.addWidget(self.video_container)
+
+        if not self.fresh_pred:
+            self.video_container = self.build_video_container()
+            if self.setup_container is None:
+                return
+            layout.addWidget(self.video_container)
+            self.video_container.setVisible(False)
+
         self.wait_container.setVisible(False)
-        self.video_container.setVisible(False)
 
         self.setLayout(layout)
 
@@ -113,7 +122,7 @@ class DLC_Inference(QtWidgets.QDialog):
 
         # Button for start
         self.start_button = QtWidgets.QPushButton("Extract Frames and Rerun Predictions in DLC")
-        self.start_button.clicked.connect(self.rerun_workflow)
+        self.start_button.clicked.connect(self.inference_workflow)
         container_layout.addWidget(self.start_button)
 
         return setup_container
@@ -414,7 +423,7 @@ class DLC_Inference(QtWidgets.QDialog):
                 return False 
 
         pred_file_to_save_path = dio.determine_save_path(self.dlc_data.prediction_filepath, suffix="_rerun_")
-        status, msg = dio.save_prediction_to_h5(pred_file_to_save_path, self.dlc_data.pred_data_array)
+        status, msg = dio.save_prediction_to_existing_h5(pred_file_to_save_path, self.dlc_data.pred_data_array)
         
         if not status:
             QMessageBox.critical(self, "Saving Error", f"An error occurred during saving: {msg}")
@@ -429,6 +438,40 @@ class DLC_Inference(QtWidgets.QDialog):
         self.frames_exported.emit(list_tuple)
 
         return True
+
+    def navigation_title_controller(self):
+        global_frame_idx = self.frame_list[self.current_frame_idx]
+        self.global_frame_label.setText(f"Global: {global_frame_idx} / {self.total_frames}")
+        self.selected_frame_label.setText(f"Selected: {self.current_frame_idx} / {self.total_marked_frames}")
+        
+    def _set_selected_camera(self, cam_idx):
+        self.selected_cam = cam_idx
+        for i in range(2):
+            if i == self.selected_cam:
+                self.video_labels[i].setStyleSheet("border: 2px solid red;")
+            else:
+                self.video_labels[i].setStyleSheet("border: 1px solid gray;")
+
+    def _handle_frame_change_from_comp(self, new_frame_idx:int):
+        self.current_frame_idx = new_frame_idx
+        self.display_current_frame()
+        self.navigation_title_controller()
+        self.update_button_states()
+
+    def _refresh_lists(self):
+        self.is_saved = False
+        self.approved_list, self.rejected_list, self.unprocessed_list = [], [], []
+        for frame_idx in range(len(self.frame_list)):
+            if self.frame_status[frame_idx] == "Approved":
+                self.approved_list.append(frame_idx)
+            elif self.frame_status[frame_idx] == "Rejected":
+                self.rejected_list.append(frame_idx)
+            else:
+                self.unprocessed_list.append(frame_idx)
+
+        self.progress_widget.set_frame_category("Approved", self.approved_list, color="#0066cc", priority=6)
+        self.progress_widget.set_frame_category("Rejected", self.rejected_list, color="#F749C6", priority=6)
+        self.progress_widget.set_frame_category("Unprocessed", self.unprocessed_list)
 
     #######################################################################################################################
 
@@ -473,43 +516,9 @@ class DLC_Inference(QtWidgets.QDialog):
         self.reject_button.setEnabled(current_status != "Rejected")
         self.approve_all_button.setEnabled(any(s == "Unprocessed" for s in self.frame_status))
 
-    def navigation_title_controller(self):
-        global_frame_idx = self.frame_list[self.current_frame_idx]
-        self.global_frame_label.setText(f"Global: {global_frame_idx} / {self.total_frames}")
-        self.selected_frame_label.setText(f"Selected: {self.current_frame_idx} / {self.total_marked_frames}")
-        
-    def _set_selected_camera(self, cam_idx):
-        self.selected_cam = cam_idx
-        for i in range(2):
-            if i == self.selected_cam:
-                self.video_labels[i].setStyleSheet("border: 2px solid red;")
-            else:
-                self.video_labels[i].setStyleSheet("border: 1px solid gray;")
-
-    def _handle_frame_change_from_comp(self, new_frame_idx:int):
-        self.current_frame_idx = new_frame_idx
-        self.display_current_frame()
-        self.navigation_title_controller()
-        self.update_button_states()
-
-    def _refresh_lists(self):
-        self.is_saved = False
-        self.approved_list, self.rejected_list, self.unprocessed_list = [], [], []
-        for frame_idx in range(len(self.frame_list)):
-            if self.frame_status[frame_idx] == "Approved":
-                self.approved_list.append(frame_idx)
-            elif self.frame_status[frame_idx] == "Rejected":
-                self.rejected_list.append(frame_idx)
-            else:
-                self.unprocessed_list.append(frame_idx)
-
-        self.progress_widget.set_frame_category("Approved", self.approved_list, color="#0066cc", priority=6)
-        self.progress_widget.set_frame_category("Rejected", self.rejected_list, color="#F749C6", priority=6)
-        self.progress_widget.set_frame_category("Unprocessed", self.unprocessed_list)
-
     #######################################################################################################################
 
-    def rerun_workflow(self):
+    def inference_workflow(self):
         extract_success = self.extract_marked_frame_images()
 
         self.setup_container.setVisible(False)
@@ -523,11 +532,37 @@ class DLC_Inference(QtWidgets.QDialog):
                 "Error during frame image extraction and analysis, check terminal for detail.")
             self.emergency_exit()
         
+        if self.fresh_pred:
+            temp_pred_filename = self.load_and_remap_new_prediction()
+            video_path = os.path.dirname(self.video_filepath)
+            pred_filename = temp_pred_filename.replace("image_predictions_", self.export_set.video_name)
+            pred_filepath = os.path.join(video_path, pred_filename)
+            self.dlc_data.prediction_filepath = pred_filepath # So that it will be picked up by prediction_to_csv later
+            self.export_set.save_path = video_path
+            status, msg = dio.save_predictions_to_new_h5(
+                dlc_data=self.dlc_data,
+                pred_data_array=self.new_data_array,
+                export_settings=self.export_set)
+        
+            if not status:
+                QMessageBox.critical(self, "Saving Error", f"An error occurred during saving: {msg}")
+                print(f"An error occurred during saving: {msg}")
+                return
+            
+            print(f"Prediction saved to {pred_filepath}")
+            
+            list_tuple = (self.frame_list, [])
+            self.prediction_saved.emit(pred_filepath)
+            self.frames_exported.emit(list_tuple)
+            self.accept()
+            return
+
         self.wait_container.setVisible(False)
         self.video_container.setVisible(True)
         self.center()
 
         self.load_and_remap_new_prediction()
+
         self.correct_new_prediction_track()
         self.display_current_frame()
 
@@ -559,9 +594,11 @@ class DLC_Inference(QtWidgets.QDialog):
         dlc_config_filepath = self.dlc_data.dlc_config_filepath
         loader = DLC_Loader(dlc_config_filepath, pred_filepath)
         loaded_data, _ = loader.load_data()
-        new_data_array = np.full_like(self.dlc_data.pred_data_array, np.nan)
+        new_data_array = np.full(
+            (self.dlc_data.pred_frame_count, self.dlc_data.instance_count, self.dlc_data.num_keypoint*3), np.nan)
         new_data_array[self.frame_list, :, :] = loaded_data.pred_data_array
         self.new_data_array = new_data_array
+        return h5_files[-1]
 
     def correct_new_prediction_track(self, max_dist: float = 10.0):
         instance_count = self.new_data_array.shape[1]

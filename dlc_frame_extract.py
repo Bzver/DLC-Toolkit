@@ -53,7 +53,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
                 "buttons": [
                     ("Call Refiner - Track Correction", lambda: self.call_refiner(track_only=True)),
                     ("Call Refiner - Edit Marked Frames", lambda: self.call_refiner(track_only=False)),
-                    ("Call DeepLabCut - Rerun Predictions of Marked Frames", self.dlc_rerun)
+                    ("Call DeepLabCut - Run Predictions of Marked Frames", self.dlc_inference)
                 ]
             },
             "Export": {
@@ -126,10 +126,10 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.nav_widget.set_collapsed(True)
 
     def load_video(self):
-        self.reset_state()
         file_dialog = QFileDialog(self)
         video_path, _ = file_dialog.getOpenFileName(self, "Load Video", "", "Video Files (*.mp4 *.avi *.mov *.mkv);;All Files (*)")
         if video_path:
+            self.reset_state()
             self.video_file = video_path
             self.exp_set.video_filepath = video_path
             self.initialize_loaded_video()
@@ -184,11 +184,11 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.display_current_frame()
 
     def load_workplace(self):
-        self.reset_state()
         file_dialog = QFileDialog(self)
         marked_frame_path, _ = file_dialog.getOpenFileName(self, "Load Status", "", "YAML Files (*.yaml);;All Files (*)")
 
         if marked_frame_path:
+            self.reset_state()
             with open(marked_frame_path, "r") as fmkf:
                 fmk = yaml.safe_load(fmkf)
 
@@ -249,10 +249,11 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.label_data_array = np.full_like(self.dlc_data.pred_data_array, np.nan)
         for label_data_file in label_data_files:
             with h5py.File(os.path.join(self.project_dir, label_data_file), "r") as lbf:
-                labeled_frame_list = lbf["df_with_missing"]["axis1_level2"].asstr()[()]
+                key = "df_with_missing" if "df_with_missing" in lbf else "keypoints"
+                labeled_frame_list = lbf[key]["axis1_level2"].asstr()[()]
                 labeled_frame_list = [int(f.split("img")[1].split(".")[0]) for f in labeled_frame_list]
                 labeled_frame_list.sort()
-                labeled_data_flattened = lbf["df_with_missing"]["block0_values"]
+                labeled_data_flattened = lbf[key]["block0_values"]
                 self.labeled_frame_list.extend(labeled_frame_list)
                 
                 cols = labeled_data_flattened.shape[1] # Check if labeled_data_flattened already have conf or not
@@ -591,31 +592,48 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             self.refiner_window.prediction_saved.connect(self.reload_prediction) # Reload from prediction provided by Refiner
             
         except Exception as e:
-            error_message = f"Refiner failed to initialize. Error: {str(e)}"
+            error_message = f"Refiner failed to initialize. Error: {e}"
             detailed_message = f"{error_message}\n\nTraceback:\n{traceback.format_exc()}"
             QMessageBox.warning(self, "Refiner Failed", detailed_message)
 
-    def dlc_rerun(self):
+    def dlc_inference(self):
         if not self.video_file:
             QMessageBox.warning(self, "Video Not Loaded", "No video is loaded, load a video first!")
-            return
-        if not self.dlc_data:
-            QMessageBox.warning(self, "DLC Data Not Loaded", "No DLC data has been loaded, load them to export to Refiner.")
             return
         if not self.frame_list:
             QMessageBox.warning(self, "No Marked Frame", "No frame has been marked, please mark some frames first.")
             return
         
-        rerun_list = list(set(self.frame_list) - set(self.approved_frame_list) - set(self.rejected_frame_list) - set(self.refined_frame_list))
+        inference_list = list(set(self.frame_list) - set(self.approved_frame_list) - set(self.rejected_frame_list) - set(self.refined_frame_list))
+
+        if not inference_list:
+            self.statusBar().showMessage("No unapproved / unrejected/ unrefined marked frames to inference.")
+            return
+
+        if self.dlc_data is None:
+            QMessageBox.information(self, "Load DLC Config", "You need to load DLC config to inference with DLC models.")
+
+            file_dialog = QFileDialog(self)
+            dlc_config, _ = file_dialog.getOpenFileName(self, "Load DLC Config", "", "YAML Files (config.yaml);;All Files (*)")
+
+            if not dlc_config:
+                return
+
+            self.data_loader.dlc_config_filepath = dlc_config
+
+            self.dlc_data = dugh.load_and_show_message(self, self.data_loader, metadata_only=True)
+            self.dlc_data.pred_frame_count = self.total_frames
 
         from utils.dtu_inference import DLC_Inference
         try:
-            self.rerunner_window = DLC_Inference(dlc_data=self.dlc_data, frame_list=rerun_list, video_filepath=self.video_file, parent=self)
-            self.rerunner_window.show()
-            self.rerunner_window.frames_exported.connect(self._handle_rerun_frames_exported)
-            self.rerunner_window.prediction_saved.connect(self.reload_prediction)
+            self.inference_window = DLC_Inference(dlc_data=self.dlc_data, frame_list=inference_list, video_filepath=self.video_file, parent=self)
+            self.inference_window.show()
+            self.inference_window.frames_exported.connect(self._handle_rerun_frames_exported)
+            self.inference_window.prediction_saved.connect(self.reload_prediction)
         except Exception as e:
-            QMessageBox.warning(self, "Rerunner Failed", f"Rerunner failed to initialize. Exception: {e}")
+            error_message = f"Inference Process failed to initialize. Exception: {e}"
+            detailed_message = f"{error_message}\n\nTraceback:\n{traceback.format_exc()}"
+            QMessageBox.warning(self, "Inference Failed", detailed_message)
             return
 
     def reload_prediction(self, prediction_path):
@@ -632,9 +650,9 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             self.refiner_window.close()
             self.refiner_window = None
         
-        if hasattr(self, "rerunner_window") and self.rerunner_window:
-            self.rerunner_window.close()
-            self.rerunner_window = None
+        if hasattr(self, "inference_window") and self.inference_window:
+            self.inference_window.close()
+            self.inference_window = None
 
     def export_marked_to_clipboard(self):
         df = pd.DataFrame([self.frame_list])
@@ -725,7 +743,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             self.process_labeled_frame()
 
     def changeEvent(self, event):
-        if event.type() == QEvent.Type.WindowStateChange:
+        if event.type() == QEvent.Type.WindowStateChange and self.cap:
             self.display_current_frame()
         super().changeEvent(event)
 
