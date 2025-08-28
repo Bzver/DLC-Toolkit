@@ -1089,7 +1089,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             pred_file_to_save_path = dio.determine_save_path(prediction, suffix="_3D_plotter_")
 
             pred_data_array = self.pred_data_array[:, prediction_idx, :, :].copy() # Extract the prediction data for this camera
-            status, msg = dio.save_prediction_to_h5(pred_file_to_save_path, pred_data_array)
+            status, msg = dio.save_prediction_to_existing_h5(pred_file_to_save_path, pred_data_array)
             if not status:
                 error_views.append((prediction_idx, msg))
 

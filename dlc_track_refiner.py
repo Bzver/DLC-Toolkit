@@ -968,7 +968,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             return
         
         pred_file_to_save_path = dio.determine_save_path(self.prediction, suffix="_track_refiner_modified_")
-        status, msg = dio.save_prediction_to_h5(pred_file_to_save_path, self.pred_data_array)
+        status, msg = dio.save_prediction_to_existing_h5(pred_file_to_save_path, self.pred_data_array)
         
         if not status:
             QMessageBox.critical(self, "Saving Error", f"An error occurred during saving: {msg}")

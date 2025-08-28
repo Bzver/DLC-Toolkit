@@ -81,16 +81,29 @@ def csv_to_h5(project_dir:str, multi_animal:bool, scorer:str="machine-labeled", 
     try:
         fn = os.path.join(project_dir, f"{csv_name}.csv")
         with open(fn) as datafile:
+            total_lines = sum(1 for _ in datafile)
             head = list(islice(datafile, 0, 5))
         if multi_animal:
             header = list(range(4))
         else:
             header = list(range(3))
+            
         if head[-1].split(",")[0] == "labeled-data":
             index_col = [0, 1, 2]
         else:
             index_col = 0
+        
         data = pd.read_csv(fn, index_col=index_col, header=header)
+        
+        expected_rows = total_lines - len(header)
+        if len(data) == expected_rows - 1: # First nan frame is dropped, add it back
+            print("Adding missing first frame with NaN values...")
+            nan_row = pd.DataFrame(
+                np.nan, index=[data.index[0] - 1] if index_col != False else [0], columns=data.columns
+            )
+            data = pd.concat([nan_row, data])
+            data.sort_index(inplace=True)
+
         data.columns = data.columns.set_levels([f"{scorer}"], level="scorer")
         guarantee_multiindex_rows(data)
         data.to_hdf(fn.replace(".csv", ".h5"), key="df_with_missing", mode="w")
@@ -190,14 +203,39 @@ def convert_prediction_array_to_save_format(pred_data_array: np.ndarray) -> List
 
     return new_data
 
-def save_prediction_to_h5(prediction_filepath: str, pred_data_array: np.ndarray) -> Tuple[bool, str]:
+def save_prediction_to_existing_h5(prediction_filepath: str, pred_data_array: np.ndarray) -> Tuple[bool, str]:
     try:
         with h5py.File(prediction_filepath, "a") as pred_file:
-            if 'tracks/table' in pred_file:
-                pred_file['tracks/table'][...] = convert_prediction_array_to_save_format(pred_data_array)
+            key, subkey = validate_h5_keys(pred_file)
+            if not key or not subkey:
+                return False, f"Error: No valid key in the {prediction_filepath}."
+            if subkey == "table":
+                pred_file[key][subkey][...] = convert_prediction_array_to_save_format(pred_data_array)
             else:
-                return False, f"No 'tracks' key in the {prediction_filepath}? How is it possible!!?"
+                F = pred_data_array.shape[0]
+                pred_file[key][subkey][...] = pred_data_array.reshape(F, -1)
         return True, f"Successfully saved prediction to {prediction_filepath}."
+    except Exception as e:
+        print(f"Error saving prediction to HDF5: {e}")
+        traceback.print_exc()
+        return False, e
+    
+def save_predictions_to_new_h5(dlc_data:Loaded_DLC_Data, pred_data_array:np.ndarray, export_settings:Export_Settings):
+    export_settings.export_mode = "CSV"
+    try:
+        prediction_to_csv(
+            dlc_data=dlc_data,
+            pred_data_array=pred_data_array,
+            export_settings=export_settings
+            )
+        prediction_filename = os.path.basename(dlc_data.prediction_filepath).split(".")[0]
+        csv_to_h5(
+            project_dir=export_settings.save_path,
+            multi_animal=dlc_data.multi_animal,
+            scorer=dlc_data.scorer,
+            csv_name=prediction_filename
+            )
+        return True, "Prediction successfully saved to new HDF5 file!"
     except Exception as e:
         print(f"Error saving prediction to HDF5: {e}")
         traceback.print_exc()
@@ -228,6 +266,21 @@ def append_new_video_to_dlc_config(config_path, video_name):
     with open(config_path, 'w') as file:
         yaml.dump(config_org, file, default_flow_style=False, sort_keys=False)
         print(f"DeepLabCut config in {config_path} has been updated.")
+
+def validate_h5_keys(pred_file:dict):
+    pred_header = ["tracks", "df_with_missing", "predictions"]
+    found_keys = [key for key in pred_header if key in pred_file]
+    if not found_keys:
+        return None, None
+    key = found_keys[-1]
+
+    subkey_header = ["block0_values", "table"]
+    found_subkeys = [subkey for subkey in subkey_header if subkey in pred_file[key]]
+    if not found_subkeys:
+        return key, None
+    subkey = found_subkeys[-1]
+
+    return key, subkey
 
 ######################################################################################################################################
 
@@ -313,17 +366,13 @@ class DLC_Loader:
 
         try:
             with h5py.File(self.prediction_filepath, "r") as pred_file:
-                pred_header = ["tracks", "df_with_missing", "predictions"]
-                found_keys = [key for key in pred_header if key in pred_file]
-                if not found_keys:
-                    return None, f"Error: Prediction file not valid, no key found. Acceptable keys: {pred_header} ."
-
-                key = found_keys[-1]
-                subkey = "block0_values" if key == "predictions" else "table"
-
+                key, subkey = validate_h5_keys(pred_file)
+                if not key or not subkey:
+                    return False, f"Error: No valid key in the {self.prediction_filepath}."
+                
                 prediction_raw = pred_file[key][subkey]
 
-                if key == "predictions": # Already an array
+                if subkey == "block0_values": # Already an array
                     pred_data_values = np.array(prediction_raw)
                     pred_frame_count = prediction_raw.shape[0]
                 else:
@@ -347,7 +396,7 @@ class DLC_Loader:
             return pred_data_dict, "Success"
         except Exception as e:
             return None, f"Error loading prediction data: {e}"
-    
+
 ######################################################################################################################################
     
 class DLC_Exporter:
