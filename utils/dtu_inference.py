@@ -22,6 +22,8 @@ from . import dtu_track_edit as dute
 from . import dtu_helper as duh
 from . import dtu_io as dio
 
+DEBUG = False
+
 class DLC_Inference(QtWidgets.QDialog):
     prediction_saved = Signal(str)
     frames_exported = Signal(tuple)
@@ -608,10 +610,13 @@ class DLC_Inference(QtWidgets.QDialog):
             valid_pred_mask = np.all(~np.isnan(pred_centroids), axis=1)
             valid_ref_mask = np.all(~np.isnan(ref_centroids), axis=1)
             
-            valid_pred_centroids = pred_centroids(valid_pred_mask)
-            valid_ref_centroids = ref_centroids(valid_ref_mask)
+            valid_pred_centroids = pred_centroids[valid_pred_mask]
+            valid_ref_centroids = ref_centroids[valid_ref_mask]
+
+            if DEBUG:
+                duh.log_print(f"------ Processing Frame {frame_idx} ------")
             corrected_order = dute.hungarian_matching(
-                valid_pred_centroids, valid_ref_centroids, valid_pred_mask, valid_ref_mask, max_dist)
+                valid_pred_centroids, valid_ref_centroids, valid_pred_mask, valid_ref_mask, max_dist, debug_print=DEBUG)
             
             if corrected_order:
                 self.new_data_array[frame_idx, :, :] = self.new_data_array[frame_idx, corrected_order, :]

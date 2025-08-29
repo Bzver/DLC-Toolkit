@@ -609,8 +609,6 @@ def hungarian_matching(valid_pred_centroids:np.ndarray, valid_idt_centroids:np.n
         
     # Build cost matrix
     cost_matrix = np.linalg.norm(valid_pred_centroids[:, np.newaxis] - valid_idt_centroids[np.newaxis, :], axis=2)
-    if debug_print:
-        duh.log_print(f"[HUN] Cost matrix before threshold:\n{cost_matrix}")
 
     try:
         row_ind, col_ind = linear_sum_assignment(cost_matrix)
@@ -623,6 +621,8 @@ def hungarian_matching(valid_pred_centroids:np.ndarray, valid_idt_centroids:np.n
     else:
         current_order = list(range(instance_count))
         if not compare_assignment_costs(cost_matrix, current_order, row_ind, col_ind, improvement_threshold=0.1):
+            if debug_print:
+                duh.log_print(f"[HUN] Hungarian failed to improve the assognment costs. Returning None.")
             return None
 
     # Filter matches by max_dist
