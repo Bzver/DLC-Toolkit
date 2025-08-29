@@ -79,8 +79,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                             ("Swap Until The End (Shift + W)", lambda:self._swap_track_wrapper("batch"))
                         ]
                     },
-                    ("Generate Instance (G)", self._generate_track_wrapper),
-                    ("Rotate Selected Instance (R)", self._rotate_track_wrapper),
                     {
                         "submenu": "Correct",
                         "display_name": "Correct",
@@ -89,6 +87,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                             ("Correct Track Using Idtrackerai Trajectories", self.correct_track_using_idtrackerai),
                         ]
                     },
+                    ("Generate Instance (G)", self._generate_track_wrapper),
+                    ("Rotate Selected Instance (R)", self._rotate_track_wrapper),
                 ]
             },
             "Preference": {
