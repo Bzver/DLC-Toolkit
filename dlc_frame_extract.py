@@ -36,7 +36,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
                 "buttons": [
                     ("Load Video", self.load_video),
                     ("Load Prediction", self.load_prediction),
-                    ("Load Workplace", self.load_workplace)
+                    ("Load Workspace", self.load_workspace)
                 ]
             },
             "Mark": {
@@ -181,7 +181,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self.process_labeled_frame()
         self.display_current_frame()
 
-    def load_workplace(self):
+    def load_workspace(self):
         file_dialog = QFileDialog(self)
         marked_frame_path, _ = file_dialog.getOpenFileName(self, "Load Status", "", "YAML Files (*.yaml);;All Files (*)")
 
@@ -557,7 +557,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         with open(output_filepath, 'w') as file:
             yaml.dump(save_yaml, file)
             
-        self.statusBar().showMessage(f"Current workplace files have been saved to {output_filepath}")
+        self.statusBar().showMessage(f"Current workspace files have been saved to {output_filepath}")
         return True
 
     def call_refiner(self, track_only=False):
