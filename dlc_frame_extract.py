@@ -25,7 +25,7 @@ import utils.dtu_io as dio
 class DLC_Extractor(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("DLC Manual Frame Extractor")
+        self.setWindowTitle("DLC Frame Extractor")
         self.setGeometry(100, 100, 1200, 960)
 
         self.menu_widget = Menu_Widget(self)
@@ -133,7 +133,6 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             self.video_file = video_path
             self.exp_set.video_filepath = video_path
             self.initialize_loaded_video()
-            self.nav_widget.set_collapsed(False)
 
     def initialize_loaded_video(self):
         self.video_name = os.path.basename(self.video_file).split(".")[0]
@@ -152,7 +151,6 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self._refresh_slider()
         self.display_current_frame()
         self.navigation_title_controller()
-        self.nav_widget.set_collapsed(False)
         print(f"Video loaded: {self.video_file}")
 
     def load_prediction(self):
