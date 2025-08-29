@@ -132,7 +132,7 @@ def get_instance_count_per_frame(pred_data_array:np.ndarray) -> np.ndarray:
     return instance_count_per_frame
 
 def filter_by_conf_bp_instance(pred_data_array:np.ndarray, confidence_threshold:float, bodypart_threshold:int,
-        instance_threshold:int, use_or:Optional[bool]=False, return_frame_list:Optional[bool]=False):
+        instance_threshold:int, use_or:Optional[bool]=True, return_frame_list:Optional[bool]=False):
     """
     Filter frames where detection quality is low.
     
@@ -390,7 +390,7 @@ def track_correction(pred_data_array: np.ndarray, idt_traj_array: Optional[np.nd
     if debug_print:
         duh.log_print("----------  Starting IDT Autocorrection  ----------")
 
-    corrected_pred_data = ghost_prediction_buster(corrected_pred_data, instance_count)
+    corrected_pred_data = ghost_prediction_buster(corrected_pred_data)
 
     for frame_idx in range(total_frames):
         progress.setValue(frame_idx)
@@ -417,14 +417,14 @@ def track_correction(pred_data_array: np.ndarray, idt_traj_array: Optional[np.nd
             valid_idt_mask = np.all(~np.isnan(remapped_idt[frame_idx]), axis=1)
             idt_centroids = remapped_idt[frame_idx].copy()
 
+        if idt_mode and np.sum(valid_pred_mask) == np.sum(valid_idt_mask):
             if debug_print:
                 for i in range(instance_count):
                     if valid_idt_mask[i]:
                         duh.log_print(f"x,y in idt: inst {i}: ({idt_centroids[i,0]:.1f}, {idt_centroids[i,1]:.1f})")
 
         # Case 2: idTracker invalid — use prior DLC as reference
-        else:
-            # # Build last_known_centroids from prior frames
+        else: # # Build last_known_centroids from prior frames
             idt_centroids = np.full((instance_count,2),np.nan)
             valid_idt_mask = np.zeros(instance_count, dtype=bool)
 
@@ -432,8 +432,8 @@ def track_correction(pred_data_array: np.ndarray, idt_traj_array: Optional[np.nd
                 cand_idx = frame_idx
                 while cand_idx > 0:
                     cand_idx -= 1
-                    cand_centroids, _ = duh.calculate_pose_centroids(corrected_pred_data, cand_idx)
-                    if np.any(~np.isnan(cand_centroids[inst_idx, :])):
+                    if np.any(~np.isnan(corrected_pred_data[cand_idx, inst_idx, :])):
+                        cand_centroids, _ = duh.calculate_pose_centroids(corrected_pred_data, cand_idx)
                         idt_centroids[inst_idx, :] = cand_centroids[inst_idx, :]
                         valid_idt_mask[inst_idx] = True
                         break
@@ -545,7 +545,6 @@ def hungarian_matching(valid_pred_centroids:np.ndarray, valid_idt_centroids:np.n
     if K == 1 and M == 1:
         dist = np.linalg.norm(valid_pred_centroids[0] - valid_idt_centroids[0])
         if dist < max_dist:
-            # Identity preserved: ref identity idt_indices[0] ← pred instance pred_indices[0]
             new_order = list(range(instance_count))
             new_order[idt_indices[0]] = pred_indices[0]
             return new_order
@@ -578,21 +577,42 @@ def hungarian_matching(valid_pred_centroids:np.ndarray, valid_idt_centroids:np.n
     col_ind = col_ind[valid_match]
 
     # Build new_order
-    new_order = list(range(instance_count))
+    all_inst = range(instance_count)
 
+    processed = {}
     for r, c in zip(row_ind, col_ind):
         target_identity = idt_indices[c]
         source_instance = pred_indices[r]
-        new_order[target_identity] = source_instance
+        processed[target_identity] = source_instance
+
+    unprocessed = [inst_idx for inst_idx in all_inst if inst_idx not in processed.keys()]
+    unassigned = [inst_idx for inst_idx in all_inst if inst_idx not in processed.values()]
+
+    for target_identity in unprocessed:  # First loop, find remaining pair without idx change
+        if target_identity in unassigned:
+            source_instance = target_identity
+            processed[target_identity] = source_instance
+            unassigned.remove(source_instance)
+    
+    unprocessed[:] = [inst_idx for inst_idx in all_inst if inst_idx not in processed.keys()]
+
+    for target_identity in unprocessed:  # Second loop, arbitarily reassign
+        source_instance = unassigned[-1]
+        processed[target_identity] = source_instance
+        unassigned.remove(source_instance)
+        
+    sorted_processed = {k: processed[k] for k in sorted(processed)}
+    new_order = list(sorted_processed.values())
 
     return new_order
 
-def ghost_prediction_buster(pred_data_array:np.ndarray, instance_count:int) -> np.ndarray:
+def ghost_prediction_buster(pred_data_array:np.ndarray) -> np.ndarray:
     """Filter out ghost predictions: i.e. identical predictions in the exact same coordinates"""
+    instance_count = pred_data_array.shape[1]
     instances = list(range(instance_count))
     for inst_1_idx, inst_2_idx in combinations(instances, 2):
         pose_diff_all_frames = pred_data_array[:, inst_1_idx, :] - pred_data_array[:, inst_2_idx, :]
-        ghost_mask = np.all(pose_diff_all_frames <= 1, axis=1)
+        ghost_mask = np.all(np.abs(pose_diff_all_frames) <= 1, axis=1)
         pred_data_array[ghost_mask, inst_2_idx, :] = np.nan
         if np.any(ghost_mask):
             ghost_num = np.sum(ghost_mask)

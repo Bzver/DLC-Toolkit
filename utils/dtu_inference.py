@@ -601,49 +601,20 @@ class DLC_Inference(QtWidgets.QDialog):
         return h5_files[-1]
 
     def correct_new_prediction_track(self, max_dist: float = 10.0):
-        instance_count = self.new_data_array.shape[1]
-
         for frame_idx in self.frame_list:
-
             pred_centroids, _ = duh.calculate_pose_centroids(self.new_data_array, frame_idx)
             ref_centroids, _ = duh.calculate_pose_centroids(self.dlc_data.pred_data_array, frame_idx)
 
             valid_pred_mask = np.all(~np.isnan(pred_centroids), axis=1)
             valid_ref_mask = np.all(~np.isnan(ref_centroids), axis=1)
-
-            n_pred = np.sum(valid_pred_mask)
-            n_ref = np.sum(valid_ref_mask)
-
-            if n_pred == 1:
-                curr_pos = pred_centroids[valid_pred_mask][0]
-                distances = np.linalg.norm(ref_centroids - curr_pos, axis=1)
-
-                closest_ref_idx = np.argmin(distances)
-                closest_dist = distances[closest_ref_idx]
-
-                if closest_dist > max_dist:
-                    continue
-
-                current_valid_inst = np.where(valid_pred_mask)[0][0]
-
-                new_order = list(range(instance_count))
-                new_order[closest_ref_idx] = current_valid_inst
-                new_order[current_valid_inst] = closest_ref_idx
-
-                self.new_data_array[frame_idx, :, :] = self.new_data_array[frame_idx, new_order, :]
-
-            elif n_pred > 1 and n_pred == n_ref:
-
-                valid_pred_centroids = pred_centroids[valid_pred_mask]
-                valid_ref_centroids = ref_centroids[valid_ref_mask]
-
-                new_order = dute.hungarian_matching(
-                    valid_pred_centroids, valid_ref_centroids, valid_pred_mask, valid_ref_mask, max_dist)
-
-                if new_order is None:
-                    continue
-
-                self.new_data_array[frame_idx, :, :] = self.new_data_array[frame_idx, new_order, :]
+            
+            valid_pred_centroids = pred_centroids(valid_pred_mask)
+            valid_ref_centroids = ref_centroids(valid_ref_mask)
+            corrected_order = dute.hungarian_matching(
+                valid_pred_centroids, valid_ref_centroids, valid_pred_mask, valid_ref_mask, max_dist)
+            
+            if corrected_order:
+                self.new_data_array[frame_idx, :, :] = self.new_data_array[frame_idx, corrected_order, :]
 
     #######################################################################################################################
 
