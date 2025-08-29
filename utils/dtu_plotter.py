@@ -52,7 +52,7 @@ class DLC_Plotter:
                 kp = self.current_frame_data[inst,kp_idx*3:kp_idx*3+3]
                 x, y, conf = kp[0], kp[1], kp[2]
 
-                if np.isnan(x) or conf <= self.plot_config.confidence_cutoff:
+                if np.isnan(x) or np.isnan(y) or conf <= self.plot_config.confidence_cutoff:
                     continue
 
                 if self.mode == "GS": # QGraphicsEllipseItem dot representing the keypoints 
