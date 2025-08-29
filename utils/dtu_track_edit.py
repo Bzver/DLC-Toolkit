@@ -586,7 +586,8 @@ def hungarian_matching(valid_pred_centroids:np.ndarray, valid_idt_centroids:np.n
             return list(range(instance_count))  # no swap
 
     # All pairs on board, validate before Hungarian
-    if (np.array_equal(pred_indices, idt_indices) and K == instance_count and M == instance_count):
+    if K == instance_count and M == instance_count:
+        full_set = True
         distances = np.linalg.norm(valid_pred_centroids - valid_idt_centroids, axis=1)
         if debug_print:
             duh.log_print(f"[HUN] All instances present and masks match. Distances: {distances}, Max_dist: {max_dist}")
@@ -594,6 +595,8 @@ def hungarian_matching(valid_pred_centroids:np.ndarray, valid_idt_centroids:np.n
             if debug_print:
                 duh.log_print(f"[HUNG] All identities stable. Returning default order.")
             return list(range(instance_count))  # identities stable
+    else:
+        full_set = False
         
     # Build cost matrix
     cost_matrix = np.linalg.norm(valid_pred_centroids[:, np.newaxis] - valid_idt_centroids[np.newaxis, :], axis=2)
@@ -607,25 +610,12 @@ def hungarian_matching(valid_pred_centroids:np.ndarray, valid_idt_centroids:np.n
             duh.log_print(f"[HUN] Hungarian failed: {e}. Returning None.")
         return None  # Hungarian failed
     else:
-        current_order = list(range(instance_count))
-        if not compare_assignment_costs(cost_matrix, current_order, row_ind, col_ind, improvement_threshold=0.1):
-            if debug_print:
-                duh.log_print(f"[HUN] Hungarian failed to improve the assognment costs. Returning None.")
-            return None
-
-    # Filter matches by max_dist
-    valid_match = cost_matrix[row_ind, col_ind] < 1e6
-    if debug_print:
-        duh.log_print(f"[HUNG] Valid matches after cost matrix filter: {valid_match}")
-    if not np.any(valid_match):
-        if debug_print:
-            duh.log_print(f"[HUNG] No valid match after filtering. Returning default order.")
-        return list(range(instance_count))  # no valid match
-
-    row_ind = row_ind[valid_match]
-    col_ind = col_ind[valid_match]
-    if debug_print:
-        duh.log_print(f"[HUN] Filtered row_ind={row_ind}, col_ind={col_ind}")
+        if full_set: # Only do the comparison with full set
+            current_order = list(range(instance_count))
+            if not compare_assignment_costs(cost_matrix, current_order, row_ind, col_ind, improvement_threshold=0.1):
+                if debug_print:
+                    duh.log_print(f"[HUN] Hungarian failed to improve the assognment costs.")
+                return list(range(instance_count))  # already stable
 
     # Build new_order
     all_inst = range(instance_count)
