@@ -34,7 +34,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.is_debug = False
+        self.is_debug = True
         self.setWindowTitle(duh.format_title("DLC Track Refiner", self.is_debug))
         self.setGeometry(100, 100, 1200, 960)
 
@@ -51,24 +51,44 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             "Refiner": {
                 "display_name": "Refine",
                 "buttons": [
-                    ("Interpolate Instance (T)", self._interpolate_track_wrapper),
+                    ("Direct Keypoint Edit (Q)", self.direct_keypoint_edit),
+                    {
+                        "submenu": "Interpolate",
+                        "display_name": "Interpolate",
+                        "items": [
+                            ("Interpolate Selected Instance on Current Frame (T)", self._interpolate_track_wrapper),
+                            ("Interpolate Missing Keypoints for Selected Instance (Shift + T)", self._interpolate_missing_kp_wrapper),
+                            ("Interpolate Selected Instances Across All Frames", self.interpolate_all),     
+                        ]
+                    },
+                    {
+                        "submenu": "Delete",
+                        "display_name": "Delete",
+                        "items": [
+                            ("Delete Selected Instance On Current Frame (X)", lambda:self._delete_track_wrapper("point")),
+                            ("Delete Selected Track Until Next ROI (Shift + X)", lambda:self._delete_track_wrapper("batch")),
+                            ("Delete Instances Below Set Confidence Across All Frames ", self.purge_inst_by_conf),
+                            ("Delete All Prediction Inside Selected Area", self.designate_no_mice_zone),
+                        ]
+                    },
+                    {
+                        "submenu": "Swap",
+                        "display_name": "Swap",
+                        "items": [
+                            ("Swap Instances On Current Frame (W)", lambda:self._swap_track_wrapper("point")),
+                            ("Swap Until The End (Shift + W)", lambda:self._swap_track_wrapper("batch"))
+                        ]
+                    },
                     ("Generate Instance (G)", self._generate_track_wrapper),
                     ("Rotate Selected Instance (R)", self._rotate_track_wrapper),
-                    ("Swap Instance Track On Current Frame (W)", lambda:self._swap_track_wrapper("point")),
-                    ("Delete Selected Instance On Current Frame (X)", lambda:self._delete_track_wrapper("point")),
-                    ("Interpolate Missing Keypoints for Instance (Shift + T)", self._interpolate_missing_kp_wrapper)
-                ]
-            },
-            "AdvRefiner": {
-                "display_name": "Adv. Refine",
-                "buttons": [
-                    ("Direct Keypoint Edit (Q)", self.direct_keypoint_edit),
-                    ("Delete All Track Below Set Confidence", self.purge_inst_by_conf),
-                    ("Remove All Prediction Inside Area", self.designate_no_mice_zone),
-                    ("Interpolate All Frames for One Inst", self.interpolate_all),
-                    ("Fix Track Using Idtrackerai Trajectories", self.correct_track_using_idtrackerai),
-                    ("Swap Track Until The End (Shift + W)", lambda:self._swap_track_wrapper("batch")),
-                    ("Delete Selected Track Until Next ROI (Shift + X)", lambda:self._delete_track_wrapper("batch"))
+                    {
+                        "submenu": "Correct",
+                        "display_name": "Correct",
+                        "items": [
+                            ("Correct Track Using Temporal Consistency", self.correct_track_using_temporal),
+                            ("Correct Track Using Idtrackerai Trajectories", self.correct_track_using_idtrackerai),
+                        ]
+                    },
                 ]
             },
             "Preference": {
@@ -84,8 +104,8 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             "Save": {
                 "display_name": "Save",
                 "buttons": [
-                    ("Mark All As Refined", self.mark_all_as_refined),
                     ("Remove Current Frame From Refine Task", self.this_frame_is_beyond_savable),
+                    ("Mark All As Refined", self.mark_all_as_refined),
                     ("Save Prediction", self.save_prediction),
                     ("Save Prediction Into CSV", self.save_prediction_as_csv)
                 ]
@@ -219,7 +239,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             
     def initialize_loaded_video(self):
         self.video_name = os.path.basename(self.video_file).split(".")[0]
-        self.nav_widget.set_collapsed(False)
         self.cap = cv2.VideoCapture(self.video_file)
         
         if not self.cap.isOpened():
@@ -505,6 +524,32 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.graphics_view.setCursor(Qt.CrossCursor)
         QMessageBox.information(self, "Designate No Mice Zone", "Click and drag on the video to select a zone. Release to apply.")
 
+    def correct_track_using_temporal(self):
+        if not self._track_edit_blocker():
+            return
+
+        self._save_state_for_undo()
+
+        dialog = "Fixing track using temporal consistency..."
+        title = f"Fix Track Using Temporal"
+        progress = dugh.get_progress_dialog(self, 0, self.total_frames, title, dialog)
+
+        self.pred_data_array, changes_applied = dute.track_correction(
+            pred_data_array=self.pred_data_array,
+            idt_traj_array=None,
+            progress=progress,
+            debug_status=self.is_debug
+            )
+        progress.close()
+
+        if not changes_applied:
+            QMessageBox.information(self, "No Changes Applied", "No changes were applied.")
+            return
+
+        QMessageBox.information(self, "Track Correction Finished", f"Applied {changes_applied} changes to the current track.")
+
+        self._on_track_data_changed()
+
     def correct_track_using_idtrackerai(self):
         if not self._track_edit_blocker():
             return
@@ -526,7 +571,12 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         title = f"Fix Track Using idTracker.ai"
         progress = dugh.get_progress_dialog(self, 0, self.total_frames, title, dialog)
 
-        self.pred_data_array, changes_applied = dute.idt_track_correction(self.pred_data_array, idt_traj_array, progress, self.is_debug)
+        self.pred_data_array, changes_applied = dute.track_correction(
+            pred_data_array=self.pred_data_array,
+            idt_traj_array=idt_traj_array,
+            progress=progress,
+            debug_status=self.is_debug,
+            )
 
         progress.close()
 
