@@ -352,6 +352,28 @@ def get_average_pose(
 
 ###################################################################################################################################################
 
+
+def ghost_prediction_buster(pred_data_array:np.ndarray) -> np.ndarray:
+    """Filter out ghost predictions: i.e. identical predictions in the exact same coordinates"""
+    instance_count = pred_data_array.shape[1]
+    instances = list(range(instance_count))
+    for inst_1_idx, inst_2_idx in combinations(instances, 2):
+        pose_diff_all_frames = pred_data_array[:, inst_1_idx, :] - pred_data_array[:, inst_2_idx, :]
+        ghost_mask = np.all(np.abs(pose_diff_all_frames) <= 1, axis=1)
+        pred_data_array[ghost_mask, inst_2_idx, :] = np.nan
+        if np.any(ghost_mask):
+            ghost_num = np.sum(ghost_mask)
+            print(f"Ghost prediction detected: instances {inst_1_idx} and {inst_2_idx} identical in {ghost_num} frames")
+    return pred_data_array
+
+def applying_last_order(last_order:List[int], corrected_pred_data:np.ndarray, frame_idx:int, changes_applied:int, debug_print:bool):
+    if last_order:
+        corrected_pred_data[frame_idx, :, :] = corrected_pred_data[frame_idx, last_order, :]
+        changes_applied += 1
+        if debug_print:
+            duh.log_print(f"[TMOD] SWAP, Applying the last order: {last_order}")
+    return changes_applied
+
 def track_correction(pred_data_array: np.ndarray, idt_traj_array: Optional[np.ndarray], progress,
     debug_status: bool = False, max_dist: float = 10.0) -> Tuple[np.ndarray, int]:
     """
@@ -410,6 +432,7 @@ def track_correction(pred_data_array: np.ndarray, idt_traj_array: Optional[np.nd
         if np.sum(valid_pred_mask) == 0:
             if debug_print:
                 duh.log_print("SKIP, No valid prediction.")
+            changes_applied = applying_last_order(last_order, corrected_pred_data, frame_idx, changes_applied, debug_print)
             continue
 
         # Case 1: idTrackerai detection valid and active
@@ -421,7 +444,7 @@ def track_correction(pred_data_array: np.ndarray, idt_traj_array: Optional[np.nd
             if debug_print:
                 for i in range(instance_count):
                     if valid_idt_mask[i]:
-                        duh.log_print(f"x,y in idt: inst {i}: ({idt_centroids[i,0]:.1f}, {idt_centroids[i,1]:.1f})")
+                        print(f"x,y in idt: inst {i}: ({idt_centroids[i,0]:.1f}, {idt_centroids[i,1]:.1f})")
 
         # Case 2: idTracker invalid — use prior DLC as reference
         else: # # Build last_known_centroids from prior frames
@@ -470,7 +493,22 @@ def track_correction(pred_data_array: np.ndarray, idt_traj_array: Optional[np.nd
 
         if debug_print:
             duh.log_print(f"{mode_text} SWAP, new_order: {new_order}.")
+            if debug_print:
+                duh.log_print(f"{mode_text} Failed to build new order with Hungarian.")
+            changes_applied = applying_last_order(last_order, corrected_pred_data, frame_idx, changes_applied, debug_print)
+            continue
+        elif new_order == list(range(instance_count)):
+            if debug_print:
+                last_order = None # Reset last order
+                duh.log_print(f"{mode_text} NO SWAP, already the best solution in Hungarian.")
+            continue
 
+        corrected_pred_data[frame_idx, :, :] = corrected_pred_data[frame_idx, new_order, :]
+        last_order = new_order
+        changes_applied += 1
+
+        if debug_print:
+            duh.log_print(f"{mode_text} SWAP, new_order: {new_order}.")
     return corrected_pred_data, changes_applied
 
 def remap_idt_array(pred_positions:np.ndarray, idt_traj_array:np.ndarray) -> np.ndarray:
@@ -510,8 +548,8 @@ def remap_idt_array(pred_positions:np.ndarray, idt_traj_array:np.ndarray) -> np.
 
     return remapped_idt
 
-def hungarian_matching(valid_pred_centroids:np.ndarray, valid_idt_centroids:np.ndarray, 
-        valid_pred_mask:np.ndarray, valid_idt_mask:np.ndarray, max_dist:float=10.0) -> Optional[np.ndarray]:
+def hungarian_matching(valid_pred_centroids:np.ndarray, valid_idt_centroids:np.ndarray,
+        valid_pred_mask:np.ndarray, valid_idt_mask:np.ndarray, max_dist:float=10.0, debug_print:bool=False) -> Optional[np.ndarray]:
     """
     Perform identity correction using Hungarian algorithm.
 
@@ -535,6 +573,8 @@ def hungarian_matching(valid_pred_centroids:np.ndarray, valid_idt_centroids:np.n
 
     # Case: no valid data
     if K == 0 or M == 0:
+        if debug_print:
+            duh.log_print(f"[HUN] No valid data for Hungarian matching (K={K}, M={M}). Returning default order.")
         return list(range(instance_count))
 
     # Reconstruct global indices
@@ -544,37 +584,60 @@ def hungarian_matching(valid_pred_centroids:np.ndarray, valid_idt_centroids:np.n
     # Single valid pair — skip Hungarian
     if K == 1 and M == 1:
         dist = np.linalg.norm(valid_pred_centroids[0] - valid_idt_centroids[0])
+        if debug_print:
+            duh.log_print(f"[HUN] Single pair matching. Distance: {dist:.2f}, Max_dist: {max_dist}")
         if dist < max_dist:
             new_order = list(range(instance_count))
             new_order[idt_indices[0]] = pred_indices[0]
+            if debug_print:
+                duh.log_print(f"[HUN] Single pair matched. New order: {new_order}")
             return new_order
         else:
+            if debug_print:
+                duh.log_print(f"[HUN] Single pair not matched (distance too high). Returning default order.")
             return list(range(instance_count))  # no swap
 
     # All pairs on board, validate before Hungarian
     if (np.array_equal(pred_indices, idt_indices) and K == instance_count and M == instance_count):
         distances = np.linalg.norm(valid_pred_centroids - valid_idt_centroids, axis=1)
+        if debug_print:
+            duh.log_print(f"[HUN] All instances present and masks match. Distances: {distances}, Max_dist: {max_dist}")
         if np.all(distances < max_dist):
+            if debug_print:
+                duh.log_print(f"[HUNG] All identities stable. Returning default order.")
             return list(range(instance_count))  # identities stable
         
     # Build cost matrix
     cost_matrix = np.linalg.norm(valid_pred_centroids[:, np.newaxis] - valid_idt_centroids[np.newaxis, :], axis=2)
-
-    # Apply max_dist threshold
-    cost_matrix = np.where(cost_matrix <= max_dist, cost_matrix, 1e6)
+    if debug_print:
+        duh.log_print(f"[HUN] Cost matrix before threshold:\n{cost_matrix}")
 
     try:
         row_ind, col_ind = linear_sum_assignment(cost_matrix)
-    except Exception:
+        if debug_print:
+            duh.log_print(f"[HUN] Hungarian assignment: row_ind={row_ind}, col_ind={col_ind}")
+    except Exception as e:
+        if debug_print:
+            duh.log_print(f"[HUN] Hungarian failed: {e}. Returning None.")
         return None  # Hungarian failed
+    else:
+        current_order = list(range(instance_count))
+        if not compare_assignment_costs(cost_matrix, current_order, row_ind, col_ind, improvement_threshold=0.1):
+            return None
 
     # Filter matches by max_dist
     valid_match = cost_matrix[row_ind, col_ind] < 1e6
+    if debug_print:
+        duh.log_print(f"[HUNG] Valid matches after cost matrix filter: {valid_match}")
     if not np.any(valid_match):
+        if debug_print:
+            duh.log_print(f"[HUNG] No valid match after filtering. Returning default order.")
         return list(range(instance_count))  # no valid match
 
     row_ind = row_ind[valid_match]
     col_ind = col_ind[valid_match]
+    if debug_print:
+        duh.log_print(f"[HUN] Filtered row_ind={row_ind}, col_ind={col_ind}")
 
     # Build new_order
     all_inst = range(instance_count)
@@ -584,48 +647,80 @@ def hungarian_matching(valid_pred_centroids:np.ndarray, valid_idt_centroids:np.n
         target_identity = idt_indices[c]
         source_instance = pred_indices[r]
         processed[target_identity] = source_instance
+    if debug_print:
+        duh.log_print(f"[HUN] Processed matches: {processed}")
 
     unprocessed = [inst_idx for inst_idx in all_inst if inst_idx not in processed.keys()]
     unassigned = [inst_idx for inst_idx in all_inst if inst_idx not in processed.values()]
+    if debug_print:
+        duh.log_print(f"[HUN] Unprocessed identities: {unprocessed}, Unassigned instances: {unassigned}")
 
     for target_identity in unprocessed:  # First loop, find remaining pair without idx change
         if target_identity in unassigned:
             source_instance = target_identity
             processed[target_identity] = source_instance
             unassigned.remove(source_instance)
+    if debug_print:
+        duh.log_print(f"[HUN] Processed after first loop (self-assignment): {processed}")
     
     unprocessed[:] = [inst_idx for inst_idx in all_inst if inst_idx not in processed.keys()]
+    if debug_print:
+        duh.log_print(f"[HUN] Unprocessed identities after first loop: {unprocessed}")
 
     for target_identity in unprocessed:  # Second loop, arbitarily reassign
         source_instance = unassigned[-1]
         processed[target_identity] = source_instance
         unassigned.remove(source_instance)
+    if debug_print:
+        duh.log_print(f"[HUN] Processed after second loop (arbitrary assignment): {processed}")
         
     sorted_processed = {k: processed[k] for k in sorted(processed)}
     new_order = list(sorted_processed.values())
+    if debug_print:
+        duh.log_print(f"[HUN] Final new_order: {new_order}")
 
     return new_order
 
-def ghost_prediction_buster(pred_data_array:np.ndarray) -> np.ndarray:
-    """Filter out ghost predictions: i.e. identical predictions in the exact same coordinates"""
-    instance_count = pred_data_array.shape[1]
-    instances = list(range(instance_count))
-    for inst_1_idx, inst_2_idx in combinations(instances, 2):
-        pose_diff_all_frames = pred_data_array[:, inst_1_idx, :] - pred_data_array[:, inst_2_idx, :]
-        ghost_mask = np.all(np.abs(pose_diff_all_frames) <= 1, axis=1)
-        pred_data_array[ghost_mask, inst_2_idx, :] = np.nan
-        if np.any(ghost_mask):
-            ghost_num = np.sum(ghost_mask)
-            print(f"Ghost prediction detected: instances {inst_1_idx} and {inst_2_idx} identical in {ghost_num} frames")
-    return pred_data_array
+def compare_assignment_costs(cost_matrix: np.ndarray, current_order: list, 
+        new_row_ind: np.ndarray, new_col_ind: np.ndarray, improvement_threshold: float = 0.1) -> bool:
+    """
+    Decide whether to apply the new Hungarian assignment by comparing total costs.
 
-def applying_last_order(last_order:List[int], corrected_pred_data:np.ndarray, frame_idx:int, changes_applied:int, debug_print:bool):
-    if last_order:
-        corrected_pred_data[frame_idx, :, :] = corrected_pred_data[frame_idx, last_order, :]
-        changes_applied += 1
-        if debug_print:
-            duh.log_print(f"[TMOD] SWAP, Applying the last order: {last_order}")
-    return changes_applied
+    Args:
+        cost_matrix: (K, M) matrix of distances between current detections and prior positions
+        current_order: list of length N, current identity mapping (e.g., [0,1] or [1,0])
+        new_row_ind: Hungarian result - assigned detection indices
+        new_col_ind: Hungarian result - assigned prior (identity) indices
+        improvement_threshold: float, minimum relative improvement to accept swap
+                             e.g., 0.1 = 10% better cost required
+
+    Returns:
+        bool: True if new assignment is significantly better
+    """
+    K, M = cost_matrix.shape
+    N = len(current_order)
+
+    # Build current assignment cost
+    current_cost = 0.0
+    count = 0
+    for j in range(N):
+        i = current_order[j] 
+        if i < K and j < M and not np.isnan(cost_matrix[i, j]):
+            current_cost += cost_matrix[i, j]
+            count += 1
+
+    current_cost = current_cost / count if count > 0 else 1e6
+
+    # Build new assignment cost
+    new_cost = cost_matrix[new_row_ind, new_col_ind].sum()
+    new_count = len(new_row_ind)
+    new_cost = new_cost / new_count if new_count > 0 else 1e6
+
+    # Only apply if new assignment is significantly better
+    if new_cost < current_cost * (1 - improvement_threshold):
+        return True
+    else:
+        return False
 
 ###################################################################################################################################################
 
