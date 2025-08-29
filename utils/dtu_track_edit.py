@@ -413,6 +413,8 @@ def track_correction(pred_data_array: np.ndarray, idt_traj_array: Optional[np.nd
         duh.log_print("----------  Starting IDT Autocorrection  ----------")
 
     corrected_pred_data = ghost_prediction_buster(corrected_pred_data)
+    corrected_pred_data, _, _ = purge_by_conf_and_bp(
+        corrected_pred_data, confidence_threshold=0.5, bodypart_threshold=0)
 
     for frame_idx in range(total_frames):
         progress.setValue(frame_idx)
@@ -474,7 +476,8 @@ def track_correction(pred_data_array: np.ndarray, idt_traj_array: Optional[np.nd
             changes_applied = applying_last_order(last_order, corrected_pred_data, frame_idx, changes_applied, debug_print)
             continue
 
-        new_order = hungarian_matching(valid_pred_centroids, valid_idt_centroids, valid_pred_mask, valid_idt_mask, max_dist)
+        new_order = hungarian_matching(
+            valid_pred_centroids, valid_idt_centroids, valid_pred_mask, valid_idt_mask, max_dist, debug_print)
 
         if new_order is None:
             if debug_print:
@@ -493,22 +496,7 @@ def track_correction(pred_data_array: np.ndarray, idt_traj_array: Optional[np.nd
 
         if debug_print:
             duh.log_print(f"{mode_text} SWAP, new_order: {new_order}.")
-            if debug_print:
-                duh.log_print(f"{mode_text} Failed to build new order with Hungarian.")
-            changes_applied = applying_last_order(last_order, corrected_pred_data, frame_idx, changes_applied, debug_print)
-            continue
-        elif new_order == list(range(instance_count)):
-            if debug_print:
-                last_order = None # Reset last order
-                duh.log_print(f"{mode_text} NO SWAP, already the best solution in Hungarian.")
-            continue
 
-        corrected_pred_data[frame_idx, :, :] = corrected_pred_data[frame_idx, new_order, :]
-        last_order = new_order
-        changes_applied += 1
-
-        if debug_print:
-            duh.log_print(f"{mode_text} SWAP, new_order: {new_order}.")
     return corrected_pred_data, changes_applied
 
 def remap_idt_array(pred_positions:np.ndarray, idt_traj_array:np.ndarray) -> np.ndarray:
