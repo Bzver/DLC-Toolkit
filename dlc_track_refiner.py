@@ -21,8 +21,8 @@ import utils.dtu_gui_helper as dugh
 import utils.dtu_track_edit as dute
 
 DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/NTD/config.yaml"
-VIDEO_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/jobs/view3/20250626C1-first3h-D.mp4"
-PRED_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/jobs/view3/20250626C1-first3h-DDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_090_snapshot_080_el.h5"
+VIDEO_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/job/20250626D-340.mp4"
+PRED_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/job/20250626D-340DLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle3_detector_510_snapshot_390_el.h5"
 
 # Todo:
 #   Add support for use cases where individual counts exceed 2

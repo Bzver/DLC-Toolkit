@@ -428,13 +428,13 @@ def track_correction(pred_data_array: np.ndarray, idt_traj_array: Optional[np.nd
             idt_centroids = np.full((instance_count,2),np.nan)
             valid_idt_mask = np.zeros(instance_count, dtype=bool)
 
-            cand_idx = frame_idx
             for inst_idx in range(instance_count):
+                cand_idx = frame_idx
                 while cand_idx > 0:
                     cand_idx -= 1
-                    cand_centroids = duh.calculate_pose_centroids(corrected_pred_data, cand_idx)
-                    if np.any(~np.isnan(cand_centroids[inst_idx])):
-                        idt_centroids = cand_centroids[inst_idx]
+                    cand_centroids, _ = duh.calculate_pose_centroids(corrected_pred_data, cand_idx)
+                    if np.any(~np.isnan(cand_centroids[inst_idx, :])):
+                        idt_centroids[inst_idx, :] = cand_centroids[inst_idx, :]
                         valid_idt_mask[inst_idx] = True
                         break
 
@@ -541,7 +541,7 @@ def hungarian_matching(valid_pred_centroids:np.ndarray, valid_idt_centroids:np.n
     pred_indices = np.where(valid_pred_mask)[0]  # global IDs of valid preds
     idt_indices  = np.where(valid_idt_mask)[0]   # global IDs of valid ref instances
 
-    # Case: single valid pair — skip Hungarian
+    # Single valid pair — skip Hungarian
     if K == 1 and M == 1:
         dist = np.linalg.norm(valid_pred_centroids[0] - valid_idt_centroids[0])
         if dist < max_dist:
@@ -552,9 +552,15 @@ def hungarian_matching(valid_pred_centroids:np.ndarray, valid_idt_centroids:np.n
         else:
             return list(range(instance_count))  # no swap
 
+    # All pairs on board, validate before Hungarian
+    if (np.array_equal(pred_indices, idt_indices) and K == instance_count and M == instance_count):
+        distances = np.linalg.norm(valid_pred_centroids - valid_idt_centroids, axis=1)
+        if np.all(distances < max_dist):
+            return list(range(instance_count))  # identities stable
+        
     # Build cost matrix
     cost_matrix = np.linalg.norm(valid_pred_centroids[:, np.newaxis] - valid_idt_centroids[np.newaxis, :], axis=2)
-    
+
     # Apply max_dist threshold
     cost_matrix = np.where(cost_matrix <= max_dist, cost_matrix, 1e6)
 
@@ -589,8 +595,8 @@ def ghost_prediction_buster(pred_data_array:np.ndarray, instance_count:int) -> n
         ghost_mask = np.all(pose_diff_all_frames <= 1, axis=1)
         pred_data_array[ghost_mask, inst_2_idx, :] = np.nan
         if np.any(ghost_mask):
-            ghost_frame_indices = np.where(ghost_mask)[0]
-            print(f"Ghost prediction detected: instances {inst_1_idx} and {inst_2_idx} identical in frames {ghost_frame_indices}")
+            ghost_num = np.sum(ghost_mask)
+            print(f"Ghost prediction detected: instances {inst_1_idx} and {inst_2_idx} identical in {ghost_num} frames")
     return pred_data_array
 
 def applying_last_order(last_order:List[int], corrected_pred_data:np.ndarray, frame_idx:int, changes_applied:int, debug_print:bool):
