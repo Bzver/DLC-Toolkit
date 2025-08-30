@@ -1,6 +1,7 @@
 import os
 import tempfile
 import yaml
+import subprocess
 
 import numpy as np
 import cv2
@@ -122,12 +123,29 @@ class DLC_Inference(QtWidgets.QDialog):
         individual_frame.addWidget(self.max_individual_spinbox)
         container_layout.addLayout(individual_frame)
 
-        # Button for start
+        # Button for start and pytorch_config edit
+        button_frame = QHBoxLayout()
         self.start_button = QtWidgets.QPushButton("Extract Frames and Rerun Predictions in DLC")
         self.start_button.clicked.connect(self.inference_workflow)
-        container_layout.addWidget(self.start_button)
+        config_button = QtWidgets.QPushButton("Edit Pytorch Config")
+        config_button.clicked.connect(self.show_pytorch_config_menu)
+        button_frame.addWidget(config_button)
+        button_frame.addWidget(self.start_button)
+        container_layout.addLayout(button_frame)
 
         return setup_container
+
+    def show_pytorch_config_menu(self):
+        shuffle_folder = self._get_shuffle_folder()
+        pytorch_yaml_path = os.path.join(shuffle_folder, "train", "pytorch_config.yaml")
+        
+        if os.path.exists(pytorch_yaml_path):
+            if os.name == 'nt':
+                subprocess.run(['explorer', '/select,', pytorch_yaml_path.replace('/', '\\')])
+            elif sys.platform == 'darwin':
+                subprocess.run(['open', '-R', pytorch_yaml_path])
+            else:
+                subprocess.run(['xdg-open', os.path.dirname(pytorch_yaml_path)])
 
     def check_iteration_integrity(self):
         dlc_config_filepath = self.dlc_data.dlc_config_filepath
@@ -151,11 +169,8 @@ class DLC_Inference(QtWidgets.QDialog):
     def check_shuffle_metadata(self):
         available_detector_models = []
         available_models = []
-        for f in os.listdir(self.iteration_folder):
-            fullpath = os.path.join(self.iteration_folder, f)
-            if f"shuffle{self.shuffle_idx}" in f and os.path.isdir(fullpath):
-                shuffle_folder = fullpath
 
+        shuffle_folder = self._get_shuffle_folder()
         if not shuffle_folder:
             return f"This shuffle does not exist in {self.iteration_folder}!", False
 
@@ -194,6 +209,13 @@ class DLC_Inference(QtWidgets.QDialog):
             config_text += f" | Detector Type: {dectector_type}"
 
         return config_text, True
+
+    def _get_shuffle_folder(self):
+        for f in os.listdir(self.iteration_folder):
+            fullpath = os.path.join(self.iteration_folder, f)
+            if f"shuffle{self.shuffle_idx}" in f and os.path.isdir(fullpath):
+                shuffle_folder = fullpath
+        return shuffle_folder
 
     def _shuffle_spinbox_changed(self, value):
         self.shuffle_idx = value
