@@ -58,7 +58,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                         "items": [
                             ("Interpolate Selected Instance on Current Frame (T)", self._interpolate_track_wrapper),
                             ("Interpolate Missing Keypoints for Selected Instance (Shift + T)", self._interpolate_missing_kp_wrapper),
-                            ("Interpolate Selected Instances Across All Frames", self.interpolate_all),     
+                            ("Interpolate Selected Instance Across All Frames", self.interpolate_all),     
                         ]
                     },
                     {
@@ -66,9 +66,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                         "display_name": "Delete",
                         "items": [
                             ("Delete Selected Instance On Current Frame (X)", lambda:self._delete_track_wrapper("point")),
-                            ("Delete Selected Track Until Next ROI (Shift + X)", lambda:self._delete_track_wrapper("batch")),
+                            ("Delete Selected Instance Until Next ROI (Shift + X)", lambda:self._delete_track_wrapper("batch")),
                             ("Delete Instances Below Set Confidence Across All Frames ", self.purge_inst_by_conf),
                             ("Delete All Prediction Inside Selected Area", self.designate_no_mice_zone),
+                            ("Delete Abnormal Instances", self.purge_ghost_tracks)
                         ]
                     },
                     {
@@ -81,7 +82,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                     },
                     {
                         "submenu": "Correct",
-                        "display_name": "Correct",
+                        "display_name": "Auto Correction",
                         "items": [
                             ("Correct Track Using Temporal Consistency", self.correct_track_using_temporal),
                             ("Correct Track Using Idtrackerai Trajectories", self.correct_track_using_idtrackerai),
@@ -491,12 +492,20 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         else:
             QMessageBox.information(self, "Deletion Cancelled", "Deletion cancelled by user.")
 
+    def purge_ghost_tracks(self):
+        if not self._track_edit_blocker():
+            return
+    
+        self.pred_data_array = dute.ghost_prediction_buster(self.pred_data_array)
+        self._on_track_data_changed()
+        self.reset_zoom()
+
     def interpolate_all(self):
         if not self._track_edit_blocker():
             return
         
         if not self.selected_box:
-            QMessageBox.information(self, "No Track Selected", "Please select a track to interpolate all frames for one instance.")
+            QMessageBox.information(self, "No Instance Selected", "Please select a track to interpolate all frames for one instance.")
             return
         
         max_gap_allowed, ok = QtWidgets.QInputDialog.getInt(
@@ -686,7 +695,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         current_frame_inst = duh.get_current_frame_inst(self.dlc_data, self.pred_data_array, self.current_frame_idx)
         if len(current_frame_inst) > 1 and not self.selected_box:
-            QMessageBox.information(self, "No Track Seleted",
+            QMessageBox.information(self, "No Instance Seleted",
                 "When there are more than one instance present, "
                 "you need to click one of the instance bounding box to specify which to delete.")
             return
@@ -728,7 +737,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         
         current_frame_inst = duh.get_current_frame_inst(self.dlc_data, self.pred_data_array, self.current_frame_idx)
         if len(current_frame_inst) > 1 and not self.selected_box:
-            QMessageBox.information(self, "Track Not Interpolated", "No track is selected.")
+            QMessageBox.information(self, "Track Not Interpolated", "No Instance is selected.")
             return
         
         selected_instance_idx = self.selected_box.instance_id if self.selected_box else current_frame_inst[0]
@@ -775,7 +784,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         
         current_frame_inst = duh.get_current_frame_inst(self.dlc_data, self.pred_data_array, self.current_frame_idx)
         if len(current_frame_inst) > 1 and not self.selected_box:
-            QMessageBox.information(self, "Track Not Rotated", "No track is selected.")
+            QMessageBox.information(self, "Track Not Rotated", "No Instance is selected.")
             return
         
         selected_instance_idx = self.selected_box.instance_id if self.selected_box else current_frame_inst[0]
@@ -802,7 +811,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         
         current_frame_inst = duh.get_current_frame_inst(self.dlc_data, self.pred_data_array, self.current_frame_idx)
         if len(current_frame_inst) > 1 and not self.selected_box:
-            QMessageBox.information(self, "Track Not Interpolated", "No track is selected.")
+            QMessageBox.information(self, "Track Not Interpolated", "No Instance is selected.")
             return
         
         selected_instance_idx = self.selected_box.instance_id if self.selected_box else current_frame_inst[0]

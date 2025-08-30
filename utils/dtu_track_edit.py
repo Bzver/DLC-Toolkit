@@ -352,18 +352,105 @@ def get_average_pose(
 
 ###################################################################################################################################################
 
-
-def ghost_prediction_buster(pred_data_array:np.ndarray) -> np.ndarray:
-    """Filter out ghost predictions: i.e. identical predictions in the exact same coordinates"""
-    instance_count = pred_data_array.shape[1]
+def ghost_prediction_buster(
+        pred_data_array:np.ndarray,
+        ghost_threshold_bp:float=0.5,
+        ghost_threshold_dist:float=3.0,
+        ) -> np.ndarray:
+    """
+    Filter out ghost predictions: i.e. identical predictions in the exact same coordinates.
+    And those suspicious bunch which has high possibility of being stemmed from the same instance.
+    """
+    total_frames, instance_count, xyconf = pred_data_array.shape
+    num_keypoints = xyconf // 3
     instances = list(range(instance_count))
+    xy_indices = [i for i in range(num_keypoints*3) if i % 3 != 2]
+
+    # Step 1: Trial the most brazenly guilty
     for inst_1_idx, inst_2_idx in combinations(instances, 2):
-        pose_diff_all_frames = pred_data_array[:, inst_1_idx, :] - pred_data_array[:, inst_2_idx, :]
-        ghost_mask = np.all(np.abs(pose_diff_all_frames) <= 1, axis=1)
-        pred_data_array[ghost_mask, inst_2_idx, :] = np.nan
-        if np.any(ghost_mask):
-            ghost_num = np.sum(ghost_mask)
-            print(f"Ghost prediction detected: instances {inst_1_idx} and {inst_2_idx} identical in {ghost_num} frames")
+        inst_1_coords = pred_data_array[:, inst_1_idx, xy_indices]
+        inst_2_coords = pred_data_array[:, inst_2_idx, xy_indices]
+
+        if np.all(np.isnan(inst_1_coords)) or np.all(np.isnan(inst_2_coords)):
+            continue
+
+        inst_1_conf = np.nanmean(pred_data_array[:, inst_1_idx, 2::3], axis=1)
+        inst_2_conf = np.nanmean(pred_data_array[:, inst_2_idx, 2::3], axis=1)
+
+        pose_diff_all_frames = inst_1_coords - inst_2_coords
+
+        matching_keypoints = np.sum(np.abs(pose_diff_all_frames) <= ghost_threshold_dist, axis=1)
+        ghost_mask = matching_keypoints >= int(num_keypoints * ghost_threshold_bp)
+        ghost_list = np.where(ghost_mask)[0].tolist()
+
+        for frame_idx in ghost_list:
+            inst_to_delete = inst_2_idx if inst_1_conf[frame_idx] >= inst_2_conf[frame_idx] else inst_1_idx
+            pred_data_array[frame_idx, inst_to_delete, :] = np.nan
+
+        if ghost_list:
+            print(f"Ghost prediction detected: instances {inst_1_idx} and {inst_2_idx} "
+                f"likely stem from the same instance in frame {ghost_list}")
+
+    # Step 2: Due process for the remaining suspects, three criteria must be met simultaneously to ensure fair judgment
+    detected_instance_count = get_instance_count_per_frame(pred_data_array)
+    canon_pos, _ = duh.calculate_canonical_pose(pred_data_array)
+    canon_bbox_parameters = duh.calculate_bbox(canon_pos.flatten()) # min_x, min_y, max_x, max_y, size
+
+    for frame_idx in range(total_frames):
+        if detected_instance_count[frame_idx] < 2:
+            continue
+
+        bbox_parameters = np.full((instance_count, 5), np.nan)
+
+        # Check for small instances
+        small_instances = []
+        for inst_idx in instances:
+            inst_keypoint_array = pred_data_array[frame_idx, inst_idx, xy_indices]
+            bbox_parameters[inst_idx, :] = duh.calculate_bbox(inst_keypoint_array)
+            if bbox_parameters[inst_idx, 4] <= canon_bbox_parameters[4]:
+                small_instances.append(inst_idx)
+        
+        if not small_instances:
+            continue
+
+        other_instances = [inst_idx for inst_idx in instances \
+            if inst_idx not in small_instances and not np.isnan(bbox_parameters[inst_idx][4])]
+        if not other_instances: # Case dismissed due to no witnesses
+            continue
+
+        # Check for flickering
+        for small_idx in small_instances:
+            prev_frame_present, next_frame_present = True, True
+            if frame_idx > 0:
+                prev_frame_present = not np.all(np.isnan(pred_data_array[frame_idx - 1, small_idx, :]))
+            if frame_idx < total_frames - 1:
+                next_frame_present = not np.all(np.isnan(pred_data_array[frame_idx + 1, small_idx, :]))
+            
+            flickering = not(prev_frame_present and next_frame_present)
+            if not flickering: # Skip the envoloped check to avoid unnecessary calculation, not flickering == not guilty already
+                continue
+            
+            # Check for envoloped
+            current_frame_data = pred_data_array[frame_idx]
+            for inst_idx in other_instances:
+                min_x, min_y, max_x, max_y, _ = bbox_parameters[inst_idx]
+
+                small_kp_x = current_frame_data[small_idx, 0::3]
+                small_kp_y = current_frame_data[small_idx, 1::3]
+                valid_mask = ~(np.isnan(small_kp_x) | np.isnan(small_kp_y))
+
+                enveloped_x_mask = np.logical_and(small_kp_x > min_x, small_kp_x < max_x)
+                enveloped_y_mask = np.logical_and(small_kp_y > min_y, small_kp_y < max_y)
+                enveloped_mask = np.logical_and(enveloped_x_mask, enveloped_y_mask)
+                enveloped_mask = np.logical_and(enveloped_mask, valid_mask)  # Only count valid keypoints
+
+                enveloped_kp_num = np.sum(enveloped_mask)
+                total_valid_kp = np.sum(valid_mask)
+
+                if total_valid_kp > 0 and (enveloped_kp_num / total_valid_kp) > 0.8:
+                    pred_data_array[frame_idx, small_idx, :] = np.nan
+                    break
+    
     return pred_data_array
 
 def applying_last_order(last_order:List[int], corrected_pred_data:np.ndarray, frame_idx:int, changes_applied:int, debug_print:bool):

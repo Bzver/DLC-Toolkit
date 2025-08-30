@@ -473,7 +473,7 @@ def track_rotation_worker(angle:float, centroids:np.ndarray, local_coords:np.nda
     average_pose[0::3], average_pose[1::3], average_pose[2::3] = global_x, global_y, avg_confs
     return average_pose
 
-def calculate_canonical_pose(pred_data_array:np.ndarray):
+def calculate_canonical_pose(pred_data_array:np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     F, I, XYCONF = pred_data_array.shape
     pred_data_combined = pred_data_array.reshape(F*I, 1, XYCONF)
     _, local_coords = calculate_pose_centroids(pred_data_combined)
@@ -481,6 +481,12 @@ def calculate_canonical_pose(pred_data_array:np.ndarray):
     average_pose = np.nanmean((all_frame_poses), axis=0)
     canon_pose = average_pose.reshape(XYCONF//3, 2) # (kp,2)
     return canon_pose, all_frame_poses
+
+def calculate_bbox(inst_keypoint_array:np.ndarray) -> Tuple[float, float, float, float, float]: # drown, drown, drown, drown, drown
+    min_x, min_y = np.nanmin(inst_keypoint_array[0::2]), np.nanmin(inst_keypoint_array[1::2])
+    max_x, max_y = np.nanmax(inst_keypoint_array[0::2]), np.nanmax(inst_keypoint_array[1::2])
+    size = (max_x - min_x) * (max_y - min_y)
+    return min_x, min_y, max_x, max_y, size
 
 #########################################################################################################################################################1
 
