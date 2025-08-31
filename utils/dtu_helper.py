@@ -482,11 +482,10 @@ def calculate_canonical_pose(pred_data_array:np.ndarray) -> Tuple[np.ndarray, np
     canon_pose = average_pose.reshape(XYCONF//3, 2) # (kp,2)
     return canon_pose, all_frame_poses
 
-def calculate_bbox(inst_keypoint_array:np.ndarray, padding:float=10.0) -> Tuple[float, float, float, float, float]: # drown, drown, drown, drown, drown
-    min_x, min_y = np.nanmin(inst_keypoint_array[0::2]) - padding, np.nanmin(inst_keypoint_array[1::2]) - padding
-    max_x, max_y = np.nanmax(inst_keypoint_array[0::2]) + padding, np.nanmax(inst_keypoint_array[1::2]) + padding
-    size = (max_x - min_x) * (max_y - min_y)
-    return min_x, min_y, max_x, max_y, size
+def calculate_bbox(inst_x:np.ndarray, inst_y:np.ndarray, padding:float=10.0) -> Tuple[float, float, float, float]:
+    min_x, min_y = np.nanmin(inst_x) - padding, np.nanmin(inst_y) - padding
+    max_x, max_y = np.nanmax(inst_x) + padding, np.nanmax(inst_y) + padding
+    return min_x, min_y, max_x, max_y
 
 #########################################################################################################################################################1
 
