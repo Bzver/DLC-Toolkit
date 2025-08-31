@@ -1,16 +1,16 @@
 import os
-
+import ast
 import pandas as pd
 import numpy as np
-
 import cv2
 
 from PySide6 import QtWidgets, QtGui, QtCore
 from PySide6.QtCore import Qt, QEvent, Signal
 from PySide6.QtGui import QShortcut, QKeySequence, QPainter, QColor, QPen, QCloseEvent
-from PySide6.QtWidgets import QMessageBox, QPushButton, QGraphicsView, QGraphicsRectItem
+from PySide6.QtWidgets import QMessageBox, QGraphicsView, QGraphicsRectItem
 
-from utils.dtu_widget import Menu_Widget, Progress_Bar_Widget, Nav_Widget, Adjust_Property_Dialog, Pose_Rotation_Dialog
+from utils.dtu_widget import Menu_Widget, Progress_Bar_Widget, Nav_Widget
+from utils.dtu_dialog import Adjust_Property_Dialog, Pose_Rotation_Dialog, Canonical_Pose_Dialog, Head_Tail_Dialog
 from utils.dtu_comp import Selectable_Instance, Draggable_Keypoint
 from utils.dtu_plotter import DLC_Plotter
 from utils.dtu_io import DLC_Loader
@@ -21,8 +21,8 @@ import utils.dtu_gui_helper as dugh
 import utils.dtu_track_edit as dute
 
 DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/NTD/config.yaml"
-VIDEO_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/job/20250626D-340.mp4"
-PRED_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/job/20250626D-340DLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle3_detector_510_snapshot_390_el.h5"
+VIDEO_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/job/20250709S-340.mp4"
+PRED_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/job/20250709S-340DLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle3_detector_510_snapshot_390_el.h5"
 
 # Todo:
 #   Add support for use cases where individual counts exceed 2
@@ -38,11 +38,35 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.setWindowTitle(duh.format_title("DLC Track Refiner", self.is_debug))
         self.setGeometry(100, 100, 1200, 960)
 
+        self.setup_menu()
+
+        self.central_widget = QtWidgets.QWidget()
+        self.setCentralWidget(self.central_widget)
+        self.layout = QtWidgets.QVBoxLayout(self.central_widget)
+
+        self.setup_graphicscene()
+
+        self.progress_widget = Progress_Bar_Widget()
+        self.progress_widget.frame_changed.connect(self._handle_frame_change_from_comp)
+        self.layout.addWidget(self.progress_widget)
+
+        self.nav_widget = Nav_Widget(mark_name="ROI Frame")
+        self.layout.addWidget(self.nav_widget)
+        self.nav_widget.set_collapsed(True)
+
+        # Connect buttons to events
+        self.nav_widget.frame_changed_sig.connect(self.change_frame)
+        self.nav_widget.prev_marked_frame_sig.connect(lambda:self._navigate_roi_frames("prev"))
+        self.nav_widget.next_marked_frame_sig.connect(lambda:self._navigate_roi_frames("next"))
+
+        self.setup_shortcut()
+        self.reset_state()
+
+    def setup_menu(self):
         self.menu_widget = Menu_Widget(self)
         self.setMenuBar(self.menu_widget)
         refiner_menu_config = {
             "File": {
-                "display_name": "File",
                 "buttons": [
                     ("Load Video", self.load_video),
                     ("Load Prediction", self.load_prediction)
@@ -92,35 +116,50 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
                     ("Rotate Selected Instance (R)", self._rotate_track_wrapper),
                 ]
             },
-            "Preference": {
-                "display_name": "Preference",
+            "View": {
                 "buttons": [
+                    ("Toggle Zoom Mode (Z)", self.toggle_zoom_mode, {"checkable": True, "checked": False}),
+                    ("Toggle Snap to Instances (E)", self.toggle_snap_to_instances, {"checkable": True, "checked": False}),
                     ("Reset Zoom", self.reset_zoom),
-                    ("Adjust Point Size", self.adjust_point_size),
-                    ("Adjust Plot Visibility", self.adjust_plot_opacity),
                     ("Hide Text Labels", self.toggle_hide_text_labels, {"checkable": True, "checked": False}),
-                    ("Snap to Instances (E)", self.toggle_snap_to_instances, {"checkable": True, "checked": False})
+                    ("View Canonical Pose", self.view_canonical_pose)
+                ]
+            },
+            "Preference": {
+                "buttons": [
+                    ("Undo Changes", self.undo_changes),
+                    ("Redo Changes", self.redo_changes),
+                    ("Remove Current Frame From Refine Task", self.this_frame_is_beyond_savable),
+                    ("Mark All As Refined", self.mark_all_as_refined),
+                    {
+                        "submenu": "Adjust",
+                        "display_name": "Adjust",
+                        "items": [
+                            ("Point Size", self.adjust_point_size),
+                            ("Plot Visibility", self.adjust_plot_opacity)
+                        ]
+                    },
                 ]
             },
             "Save": {
-                "display_name": "Save",
                 "buttons": [
-                    ("Remove Current Frame From Refine Task", self.this_frame_is_beyond_savable),
-                    ("Mark All As Refined", self.mark_all_as_refined),
                     ("Save Prediction", self.save_prediction),
                     ("Save Prediction Into CSV", self.save_prediction_as_csv)
                 ]
             }
         }
         if self.is_debug:
-            refiner_menu_config["File"]["buttons"].append(("Debug Load", self.debug_load))
+            refiner_menu_config["DEBUG"] = {
+                "buttons": [
+                    ("Debug Load", self.debug_load),
+                    ("Paste Frame Marks From Clipboard", self.load_marked_roi_from_clipboard),
+                    ("Empty Marked ROI", self.clear_marked_roi)
+                ]
+            }
         self.menu_widget.add_menu_from_config(refiner_menu_config)
 
-        self.central_widget = QtWidgets.QWidget()
-        self.setCentralWidget(self.central_widget)
-        self.layout = QtWidgets.QVBoxLayout(self.central_widget)
-
-        # Graphics view for interactive elements and video display
+    def setup_graphicscene(self):
+        """Graphics view for interactive elements and video display"""
         self.graphics_scene = QtWidgets.QGraphicsScene(self)
         self.graphics_view = QGraphicsView(self.graphics_scene)
         self.graphics_view.setRenderHint(QPainter.Antialiasing)
@@ -132,47 +171,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.graphics_view.setStyleSheet("background-color: black;")
         self.layout.addWidget(self.graphics_view, 1)
 
-        # Progress bar
-        self.progress_layout = QtWidgets.QHBoxLayout()
-        self.progress_widget = Progress_Bar_Widget()
-        self.progress_layout.addWidget(self.progress_widget)
-        self.progress_widget.frame_changed.connect(self._handle_frame_change_from_comp)
-
-        self.magnifier_button = QPushButton("🔍︎")
-        self.magnifier_button.setToolTip("Toggle zoom mode (Z)")
-        self.magnifier_button.setFixedWidth(20)
-        self.undo_button = QPushButton("↻")
-        self.undo_button.setToolTip("Undo (Ctrl + Z)")
-        self.undo_button.setFixedWidth(20)
-        self.redo_button = QPushButton("↺")
-        self.redo_button.setToolTip("Redo (Ctrl + Y)")
-        self.redo_button.setFixedWidth(20)
-
-        self.progress_layout.addWidget(self.magnifier_button)
-        self.progress_layout.addWidget(self.undo_button)
-        self.progress_layout.addWidget(self.redo_button)
-        self.layout.addLayout(self.progress_layout)
-
-        self.nav_widget = Nav_Widget(mark_name="ROI Frame")
-        self.layout.addWidget(self.nav_widget)
-        self.nav_widget.set_collapsed(True)
-
-        # Connect buttons to events
-        self.nav_widget.frame_changed_sig.connect(self.change_frame)
-        self.nav_widget.prev_marked_frame_sig.connect(lambda:self._navigate_roi_frames("prev"))
-        self.nav_widget.next_marked_frame_sig.connect(lambda:self._navigate_roi_frames("next"))
-
-        self.undo_button.clicked.connect(self.undo_changes)
-        self.redo_button.clicked.connect(self.redo_changes)
-        self.magnifier_button.clicked.connect(self.toggle_zoom_mode)
-
         self.graphics_view.mousePressEvent = self.graphics_view_mouse_press_event
         self.graphics_view.mouseMoveEvent = self.graphics_view_mouse_move_event
         self.graphics_view.mouseReleaseEvent = self.graphics_view_mouse_release_event
         self.graphics_scene.parent = lambda: self # Allow items to access the main window
-
-        self.setup_shortcut()
-        self.reset_state()
 
     def setup_shortcut(self):
         QShortcut(QKeySequence(Qt.Key_Left | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(-10))
@@ -202,7 +204,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
     def reset_state(self):
         self.video_file, self.prediction, self.video_name = None, None, None
-        self.dlc_data, self.angle_map_data = None, None
+        self.dlc_data, self.canon_pose, self.angle_map_data = None, None, None
         self.instance_count_per_frame, self.pred_data_array = None, None
         self.data_loader = DLC_Loader(None, None)
 
@@ -293,10 +295,14 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.prediction = self.dlc_data.prediction_filepath
         self.pred_data_array = self.dlc_data.pred_data_array
         head_idx, tail_idx = duh.infer_head_tail_indices(self.dlc_data.keypoints)
-        canon_pose, all_frame_pose = duh.calculate_canonical_pose(self.pred_data_array)
+
         if head_idx is None or tail_idx is None:
-            head_idx, tail_idx = duh.get_head_tail_indices_from_canon_pose(canon_pose, head_idx, tail_idx)
-        self.angle_map_data = duh.build_angle_map(canon_pose, all_frame_pose, head_idx, tail_idx)
+            dialog = Head_Tail_Dialog(self.dlc_data.keypoints)
+            if dialog.exec() == QtWidgets.QDialog.Accepted:
+                head_idx, tail_idx = dialog.get_selected_indices()
+
+        self.canon_pose, all_frame_pose = duh.calculate_canonical_pose(self.pred_data_array, head_idx, tail_idx)
+        self.angle_map_data = duh.build_angle_map(self.canon_pose, all_frame_pose, head_idx, tail_idx)
 
         self._update_roi_list()
 
@@ -446,6 +452,32 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         self._refresh_slider()
 
+    def load_marked_roi_from_clipboard(self):
+        df = pd.read_clipboard(header=None, sep='\0', engine='python', names=['data'])
+        if pd.isna(df['data'].iloc[0]):
+            return
+        
+        raw_text = str(df['data'].iloc[0]).strip()
+
+        if not raw_text.startswith("["):
+            raw_text = "[" + raw_text
+        if not raw_text.endswith("]"):
+            raw_text += "]"
+
+        frame_list = ast.literal_eval(raw_text)
+        if not frame_list:
+            return
+        
+        new_frame_set = set([int(x) for x in frame_list if isinstance(x, (int, float)) and not pd.isna(x)])
+        self.marked_roi_frame_list[:] = list(new_frame_set)
+        self._update_roi_list()
+        self._refresh_slider()
+
+    def clear_marked_roi(self):
+        self.marked_roi_frame_list.clear()
+        self._update_roi_list()
+        self._refresh_slider()
+
     def _navigate_roi_frames(self, mode):
         dugh.navigate_to_marked_frame(self, self.roi_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, mode)
         
@@ -495,8 +527,9 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
     def purge_ghost_tracks(self):
         if not self._track_edit_blocker():
             return
-    
-        self.pred_data_array = dute.ghost_prediction_buster(self.pred_data_array)
+        
+        self._save_state_for_undo()
+        self.pred_data_array = dute.ghost_prediction_buster(self.pred_data_array, self.canon_pose, debug_print=self.is_debug)
         self._on_track_data_changed()
         self.reset_zoom()
 
@@ -542,6 +575,10 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         dialog = "Fixing track using temporal consistency..."
         title = f"Fix Track Using Temporal"
         progress = dugh.get_progress_dialog(self, 0, self.total_frames, title, dialog)
+
+        self.pred_data_array = dute.ghost_prediction_buster(self.pred_data_array, self.canon_pose)
+        self.pred_data_array, _, _ = dute.purge_by_conf_and_bp(
+            self.pred_data_array, confidence_threshold=0.5, bodypart_threshold=0)
 
         self.pred_data_array, changes_applied = dute.track_correction(
             pred_data_array=self.pred_data_array,
@@ -955,7 +992,11 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             super(QGraphicsView, self.graphics_view).wheelEvent(event)
 
     ###################################################################################################################################################
-    
+
+    def view_canonical_pose(self):
+        dialog = Canonical_Pose_Dialog(self.dlc_data, self.canon_pose)
+        dialog.exec()
+
     def mark_all_as_refined(self):
         if not self.manual_refinement_check():
             return
