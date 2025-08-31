@@ -340,7 +340,8 @@ def get_average_pose(
 
     centroids = np.squeeze(centroids, axis=1)  # (W', 2)
     local_coords = np.squeeze(local_coords, axis=1)  # (W', K*2)
-    aligned_local, rotation_angles = duh.align_poses_by_vector(local_coords, angle_map_data=angle_map_data)
+    rotation_angles = duh.calculate_pose_rotations(local_coords[:, 0::2], local_coords[:, 1::2], angle_map_data=angle_map_data)
+    aligned_local = duh.align_poses_by_vector(local_coords, rotation_angles)
     avg_angle = duh.circular_mean(rotation_angles)
     if set_centroid is not None : # If a specific centroid is provided, use it for alignment
         centroids = set_centroid
@@ -352,10 +353,8 @@ def get_average_pose(
 
 ###################################################################################################################################################
 
-def ghost_prediction_buster(
-        pred_data_array:np.ndarray,
-        ghost_threshold_bp:float=0.5,
-        ghost_threshold_dist:float=3.0,
+def ghost_prediction_buster(pred_data_array:np.ndarray, canon_pose:np.ndarray,
+        ghost_threshold_bp:float=0.7, ghost_threshold_dist:float=5.0, debug_print:Optional[bool]=False
         ) -> np.ndarray:
     """
     Filter out ghost predictions: i.e. identical predictions in the exact same coordinates.
@@ -377,9 +376,12 @@ def ghost_prediction_buster(
         inst_1_conf = np.nanmean(pred_data_array[:, inst_1_idx, 2::3], axis=1)
         inst_2_conf = np.nanmean(pred_data_array[:, inst_2_idx, 2::3], axis=1)
 
-        pose_diff_all_frames = inst_1_coords - inst_2_coords
+        pose_diff_x = inst_1_coords[:, 0::2] - inst_2_coords[:, 0::2]
+        pose_diff_y = inst_1_coords[:, 1::2] - inst_2_coords[:, 1::2]
 
-        matching_keypoints = np.sum(np.abs(pose_diff_all_frames) <= ghost_threshold_dist, axis=1)
+        euclidean_dist = np.sqrt(pose_diff_x**2 + pose_diff_y**2)
+
+        matching_keypoints = np.sum(euclidean_dist <= ghost_threshold_dist, axis=1)
         ghost_mask = matching_keypoints >= int(num_keypoints * ghost_threshold_bp)
         ghost_list = np.where(ghost_mask)[0].tolist()
 
@@ -387,35 +389,37 @@ def ghost_prediction_buster(
             inst_to_delete = inst_2_idx if inst_1_conf[frame_idx] >= inst_2_conf[frame_idx] else inst_1_idx
             pred_data_array[frame_idx, inst_to_delete, :] = np.nan
 
-        if ghost_list:
+        if ghost_list: # Get matching stats for the guilty frames
             print(f"Ghost prediction detected: instances {inst_1_idx} and {inst_2_idx} "
                 f"likely stem from the same instance in frame {ghost_list}")
 
     # Step 2: Due process for the remaining suspects, three criteria must be met simultaneously to ensure fair judgment
     detected_instance_count = get_instance_count_per_frame(pred_data_array)
-    canon_pos, _ = duh.calculate_canonical_pose(pred_data_array)
-    canon_bbox_parameters = duh.calculate_bbox(canon_pos.flatten()) # min_x, min_y, max_x, max_y, size
+    mean_radius = np.mean(np.sqrt(canon_pose[0]**2 + canon_pose[1]**2))
 
     for frame_idx in range(total_frames):
         if detected_instance_count[frame_idx] < 2:
             continue
 
-        bbox_parameters = np.full((instance_count, 5), np.nan)
-
         # Check for small instances
         small_instances = []
+        inst_radius = np.full(instance_count, np.nan)
+        _, local_coords = duh.calculate_pose_centroids(pred_data_array, frame_idx)
         for inst_idx in instances:
-            inst_keypoint_array = pred_data_array[frame_idx, inst_idx, xy_indices]
-            bbox_parameters[inst_idx, :] = duh.calculate_bbox(inst_keypoint_array)
-            if bbox_parameters[inst_idx, 4] <= canon_bbox_parameters[4]:
-                small_instances.append(inst_idx)
-        
+            inst_radius[inst_idx] = np.nanmean(
+                np.sqrt(local_coords[inst_idx, 0::2]**2 + local_coords[inst_idx, 1::2]**2))
+
+        if inst_radius[inst_idx] < mean_radius * 0.9:
+            small_instances.append(inst_idx)
+
         if not small_instances:
             continue
 
         other_instances = [inst_idx for inst_idx in instances \
-            if inst_idx not in small_instances and not np.isnan(bbox_parameters[inst_idx][4])]
-        if not other_instances: # Case dismissed due to no witnesses
+            if inst_idx not in small_instances and np.any(~np.isnan(pred_data_array[frame_idx, inst_idx, :]))]
+        if not other_instances:
+            if debug_print:
+                duh.log_print(f"Frame {frame_idx}: Case dismissed due to insufficient witnesses ----------------\n")
             continue
 
         # Check for flickering
@@ -433,7 +437,10 @@ def ghost_prediction_buster(
             # Check for envoloped
             current_frame_data = pred_data_array[frame_idx]
             for inst_idx in other_instances:
-                min_x, min_y, max_x, max_y, _ = bbox_parameters[inst_idx]
+                inst_kp_x = current_frame_data[inst_idx, 0::3]
+                inst_kp_y = current_frame_data[inst_idx, 1::3]
+
+                min_x, min_y, max_x, max_y = duh.calculate_bbox(inst_kp_x, inst_kp_y)
 
                 small_kp_x = current_frame_data[small_idx, 0::3]
                 small_kp_y = current_frame_data[small_idx, 1::3]
@@ -447,7 +454,15 @@ def ghost_prediction_buster(
                 enveloped_kp_num = np.sum(enveloped_mask)
                 total_valid_kp = np.sum(valid_mask)
 
-                if total_valid_kp > 0 and (enveloped_kp_num / total_valid_kp) > 0.8:
+                if total_valid_kp > 0 and (enveloped_kp_num / total_valid_kp) > ghost_threshold_bp:
+                    if debug_print:
+                        duh.log_print(f"----------------- Ghost Prediction Court: Frame {frame_idx} ----------------\n"
+                            f"About to NaNified inst {small_idx}. Verdict GUILTY due to following transgressions:\n"
+                            f"1. TOO SMALL: Radius {inst_radius[small_idx]} vs orthodox radius {mean_radius}\n"
+                            f"2. FLICKERING: Present at prior frame: {prev_frame_present}; Present at later frame: {next_frame_present}\n"
+                            f"3. ENVOLOPED: Total valid keypoints: {total_valid_kp}; Enveloped ones: {enveloped_kp_num}."
+                            )
+
                     pred_data_array[frame_idx, small_idx, :] = np.nan
                     break
     
@@ -498,10 +513,6 @@ def track_correction(pred_data_array: np.ndarray, idt_traj_array: Optional[np.nd
     debug_print = debug_status
     if debug_print:
         duh.log_print("----------  Starting IDT Autocorrection  ----------")
-
-    corrected_pred_data = ghost_prediction_buster(corrected_pred_data)
-    corrected_pred_data, _, _ = purge_by_conf_and_bp(
-        corrected_pred_data, confidence_threshold=0.5, bodypart_threshold=0)
 
     for frame_idx in range(total_frames):
         progress.setValue(frame_idx)
