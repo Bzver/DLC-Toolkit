@@ -421,30 +421,25 @@ def calculate_pose_rotations(local_x: np.ndarray, local_y: np.ndarray, angle_map
 
     return angles[0].item() if orig_ndim == 1 else angles
     
-def align_poses_by_vector(local_coords:np.ndarray, angle_map_data:Dict[str, any]) -> Tuple[np.ndarray, np.ndarray]:
+def align_poses_by_vector(local_coords:np.ndarray, angles:np.ndarray) -> np.ndarray:
     """
     Rotates all poses to a common orientation using an anchor-reference vector.
     
     Args:
         local_coords (np.ndarray): Relative positions of keypoints, shape (N, K*2).
-        angle_map_data : Dict with 'head_idx', 'tail_idx', 'angle_map'.
+        angles (np.ndarray): Angles of rotation used to align the poses in radians, shape (N,).
 
     Returns:
-        Tuple[np.ndarray, np.ndarray]:
-            - Rotated relative positions, shape (N, K*2).
-            - Angles of rotation used to align the poses in radians, shape (N,).
-    
+        - Rotated relative positions, shape (N, K*2).
     """
     relative_x, relative_y = local_coords[:, 0::2], local_coords[:, 1::2]
-    angles = calculate_pose_rotations(relative_x, relative_y, angle_map_data=angle_map_data)
-    
     cos_angles, sin_angles = np.cos(-angles), np.sin(-angles)
     rotated_rltv = np.empty(local_coords.shape)
     rotated_relative_x = relative_x * cos_angles[:, np.newaxis] - relative_y * sin_angles[:, np.newaxis]
     rotated_relative_y = relative_x * sin_angles[:, np.newaxis] + relative_y * cos_angles[:, np.newaxis]
     rotated_rltv[:, 0::2], rotated_rltv[:, 1::2] = rotated_relative_x, rotated_relative_y
     
-    return rotated_rltv, angles
+    return rotated_rltv
 
 def track_rotation_worker(angle:float, centroids:np.ndarray, local_coords:np.ndarray, confs:np.ndarray) -> np.ndarray:
     """
@@ -473,14 +468,39 @@ def track_rotation_worker(angle:float, centroids:np.ndarray, local_coords:np.nda
     average_pose[0::3], average_pose[1::3], average_pose[2::3] = global_x, global_y, avg_confs
     return average_pose
 
-def calculate_canonical_pose(pred_data_array:np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+def calculate_canonical_pose(pred_data_array:np.ndarray, head_idx:int, tail_idx:int) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Compute a canonical (aligned and averaged) pose by aligning individual animal poses to a common orientation
+    based on the head-to-tail body axis.
+
+    Args:
+        pred_data_array (np.ndarray):, prediction array of shape (F, I, 3*K)
+        head_idx / tail_idx (int): Index of the keypoint representing the head /tail, used to define the two ends
+        of the body axis.
+
+    Returns:
+        canon_pose (np.ndarray): Canonical average pose of shape (K, 2)
+        aligned_frame_poses (np.ndarray):  Aligned individual poses of shape (M, 2*K)
+        """
     F, I, XYCONF = pred_data_array.shape
     pred_data_combined = pred_data_array.reshape(F*I, 1, XYCONF)
     _, local_coords = calculate_pose_centroids(pred_data_combined)
     all_frame_poses = np.squeeze(local_coords)
-    average_pose = np.nanmean((all_frame_poses), axis=0)
+
+    no_head_mask = np.any(np.isnan(all_frame_poses[:, head_idx*2:head_idx*2+2]), axis=1)
+    no_tail_mask = np.any(np.isnan(all_frame_poses[:, tail_idx*2:tail_idx*2+2]), axis=1)
+    valid_frame_poses = all_frame_poses[~(no_head_mask | no_tail_mask)]
+
+    dy = valid_frame_poses[:, head_idx*2+1] - valid_frame_poses[:, tail_idx*2+1]
+    dx = valid_frame_poses[:, head_idx*2] - valid_frame_poses[:, tail_idx*2]
+    valid_angles = np.arctan2(dy, dx)
+
+    aligned_frame_poses = align_poses_by_vector(valid_frame_poses, valid_angles)
+
+    average_pose = np.nanmean((aligned_frame_poses), axis=0)
     canon_pose = average_pose.reshape(XYCONF//3, 2) # (kp,2)
-    return canon_pose, all_frame_poses
+    
+    return canon_pose, aligned_frame_poses
 
 def calculate_bbox(inst_x:np.ndarray, inst_y:np.ndarray, padding:float=10.0) -> Tuple[float, float, float, float]:
     min_x, min_y = np.nanmin(inst_x) - padding, np.nanmin(inst_y) - padding
@@ -538,33 +558,6 @@ def infer_head_tail_indices(keypoint_names:List[str]) -> Tuple[int,int]:
         print("Warning: Could not infer head keypoint from keypoint names.")
     if tail_idx is None:
         print("Warning: Could not infer tail keypoint from keypoint names.")
-
-    return head_idx, tail_idx
-
-def get_head_tail_indices_from_canon_pose(canon_pose:np.ndarray, head_idx:int, tail_idx:int) -> Tuple[int,int]:
-    if head_idx is None and tail_idx is None: # PCA fallback
-        valid = ~np.isnan(canon_pose).all(axis=1)
-        points = canon_pose[valid]
-        if len(points) == 2:
-            head_idx, tail_idx = 0, 1
-        else:
-            cov = np.cov(points.T)
-            _, eigvecs = np.linalg.eigh(cov)
-            axis = eigvecs[:, -1]
-            proj = canon_pose @ axis
-            head_idx = int(np.nanargmax(proj))
-            tail_idx = int(np.nanargmin(proj))
-    elif head_idx is None: # Take d
-        tail_vec = canon_pose[head_idx]
-        dist_sq = np.sum((canon_pose - tail_vec)**2, axis=1)
-        tail_idx = int(np.nanargmax(dist_sq))
-    elif tail_idx is None:
-        head_vec = canon_pose[tail_idx]
-        dist_sq = np.sum((canon_pose - head_vec)**2, axis=1)
-        head_idx = int(np.nanargmax(dist_sq))
-
-    if head_idx == tail_idx:
-        raise ValueError("Could not resolve valid head/tail indices")
 
     return head_idx, tail_idx
 
