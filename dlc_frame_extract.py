@@ -15,7 +15,8 @@ from PySide6.QtWidgets import QMessageBox, QFileDialog
 import traceback
 
 from utils.dtu_io import DLC_Loader, DLC_Exporter
-from utils.dtu_widget import Menu_Widget, Progress_Bar_Widget, Nav_Widget, Adjust_Property_Dialog, Generate_Mark_Dialog, Clear_Mark_Dialog
+from utils.dtu_widget import Menu_Widget, Progress_Bar_Widget, Nav_Widget
+from utils.dtu_dialog import Adjust_Property_Dialog, Generate_Mark_Dialog, Clear_Mark_Dialog
 from utils.dtu_dataclass import Export_Settings, Plot_Config
 from utils.dtu_plotter import DLC_Plotter
 import utils.dtu_helper as duh
