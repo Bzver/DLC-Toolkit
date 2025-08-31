@@ -747,3 +747,45 @@ class Canonical_Pose_Dialog(QDialog):
         pixmap = QPixmap.fromImage(qt_image)
         self.image_label.setPixmap(pixmap)
         self.image_label.setAlignment(Qt.AlignCenter)
+
+###################################################################################################################################################
+
+class Head_Tail_Dialog(QtWidgets.QDialog):
+    def __init__(self, keypoints, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Head and Tail Keypoints")
+        self.keypoints = keypoints
+        self.head_idx, self.tail_idx = None, None
+
+        layout = QtWidgets.QVBoxLayout(self)
+
+        head_label = QtWidgets.QLabel("Select Head Keypoint:")
+        self.head_combo = QtWidgets.QComboBox()
+        self.head_combo.addItems(self.keypoints)
+        layout.addWidget(head_label)
+        layout.addWidget(self.head_combo)
+
+        tail_label = QtWidgets.QLabel("Select Tail Keypoint:")
+        self.tail_combo = QtWidgets.QComboBox()
+        self.tail_combo.addItems(self.keypoints)
+        layout.addWidget(tail_label)
+        layout.addWidget(self.tail_combo)
+
+        button_box = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
+        button_box.accepted.connect(self.on_accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+    def on_accept(self):
+        self.head_idx = self.head_combo.currentIndex()
+        self.tail_idx = self.tail_combo.currentIndex()
+        if self.head_idx == self.tail_idx:
+            QMessageBox.warning(self, "Invalid Selection",
+                "Head and tail cannot be the same bodypart.")
+            return
+        self.accept()
+
+    def get_selected_indices(self):
+        return self.head_idx, self.tail_idx
