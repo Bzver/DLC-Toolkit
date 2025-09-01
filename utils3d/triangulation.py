@@ -109,9 +109,12 @@ def triangulate_point(
     return point_3d, final_confidence
 
 def triangulate_point_simple(
-        proj1:np.ndarray,           proj2:np.ndarray, 
-        pts_2d1:Tuple[float],    pts_2d2:Tuple[float], 
-        conf1:float,             conf2:float
+        proj1:np.ndarray,
+        proj2:np.ndarray, 
+        pts_2d1:Tuple[float],
+        pts_2d2:Tuple[float], 
+        conf1:float,
+        conf2:float
         ) -> np.ndarray:
     """
     Triangulates a single 3D point from two 2D camera views.
