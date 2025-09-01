@@ -5,7 +5,7 @@ from PySide6.QtGui import QFont
  
 from typing import List, Optional
 
-from utils.dtu_comp import Slider_With_Marks
+from ui import Slider_With_Marks
 
 class Menu_Widget(QtWidgets.QMenuBar):
     def __init__(self, parent=None):

@@ -11,8 +11,8 @@ from typing import List, Optional
 
 from utils.dtu_plotter import DLC_Plotter
 from utils.dtu_dataclass import Loaded_DLC_Data, Plot_Config
-from . import dtu_track_edit as dute
-from . import dtu_helper as duh
+from utils import dtu_track_edit as dute
+from utils import dtu_helper as duh
 
 class Adjust_Property_Dialog(QDialog):
     property_changed = Signal(float)

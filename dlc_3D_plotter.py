@@ -17,18 +17,16 @@ from PySide6.QtWidgets import QMessageBox
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
-from utils.dtu_io import DLC_Loader
-from utils.dtu_widget import Menu_Widget, Progress_Bar_Widget, Nav_Widget
-from utils.dtu_dialog import Adjust_Property_Dialog
-from utils.dtu_comp import Clickable_Video_Label
-from utils.dtu_helper import Data_Processor_3D
-from utils.dtu_plotter import DLC_Plotter
-from utils.dtu_dataclass import Plot_Config
 import utils.dtu_io as dio
 import utils.dtu_helper as duh
 import utils.dtu_gui_helper as dugh
 import utils.dtu_track_edit as dute
 import utils.dtu_triangulation as dutri
+from utils.dtu_io import DLC_Loader
+from utils.dtu_helper import Data_Processor_3D
+from utils.dtu_plotter import DLC_Plotter
+from utils.dtu_dataclass import Plot_Config
+from ui import Menu_Widget, Progress_Bar_Widget, Nav_Widget, Adjust_Property_Dialog, Clickable_Video_Label
 
 import traceback
 

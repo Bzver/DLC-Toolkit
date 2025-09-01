@@ -9,9 +9,11 @@ from PySide6.QtCore import Qt, QEvent, Signal
 from PySide6.QtGui import QShortcut, QKeySequence, QPainter, QColor, QPen, QCloseEvent
 from PySide6.QtWidgets import QMessageBox, QGraphicsView, QGraphicsRectItem
 
-from utils.dtu_widget import Menu_Widget, Progress_Bar_Widget, Nav_Widget
-from utils.dtu_dialog import Adjust_Property_Dialog, Pose_Rotation_Dialog, Canonical_Pose_Dialog, Head_Tail_Dialog
-from utils.dtu_comp import Selectable_Instance, Draggable_Keypoint
+from ui import (
+    Menu_Widget, Progress_Bar_Widget, Nav_Widget,
+    Adjust_Property_Dialog, Pose_Rotation_Dialog, Canonical_Pose_Dialog, Head_Tail_Dialog,
+    Selectable_Instance, Draggable_Keypoint
+)
 from utils.dtu_plotter import DLC_Plotter
 from utils.dtu_io import DLC_Loader
 from utils.dtu_dataclass import Export_Settings, Plot_Config, Refiner_Plotter_Callbacks
