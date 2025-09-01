@@ -1,4 +1,4 @@
-from .helper import (
+from .helper_3d import (
     get_config_from_mode,
     calculate_identity_swap_score_per_frame,
     acquire_view_perspective_for_selected_cam

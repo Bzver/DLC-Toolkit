@@ -22,7 +22,7 @@ from .widget import (
 from .draw_canon import Canonical_Pose_Dialog
 from .plot import Prediction_Plotter
 from .inference import DLC_Inference
-from .helper import (
+from .ui_helper import (
     format_title,
     load_and_show_message,
     export_and_show_message,

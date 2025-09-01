@@ -19,10 +19,9 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 import ui
 import utils3d as utls3
-import utils.dtu_io as dio
-import utils.dtu_track_edit as dute
-from utils.dtu_io import DLC_Loader
-from utils.dtu_dataclass import Plot_Config
+import utils.io as dio
+import utils.track_edit as dute
+from utils.dataclass import Plot_Config
 from ui import (
     Menu_Widget, Progress_Bar_Widget, Nav_Widget, Adjust_Property_Dialog,
     Prediction_Plotter, Clickable_Video_Label
@@ -36,12 +35,12 @@ DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/COM3D/config.yaml"
 CALIB_FILE_DEBUG = "D:/Project/SDANNCE-Models/4CAM-250620/SD-20250705-MULTI/sync_dannce.mat"
 VIDEO_FOLDER_DEBUG = "D:/Project/SDANNCE-Models/4CAM-250620/SD-20250705-MULTI/Videos"
 
-class DLC_3D_plotter(QtWidgets.QMainWindow):
+class Frame_View_3D(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
 
         self.is_debug = False
-        self.setWindowTitle(ui.format_title("DLC 3D Plotter", self.is_debug))
+        self.setWindowTitle(ui.format_title("Frame Viewer 3D", self.is_debug))
         self.setGeometry(100, 100, 1600, 960)
 
         self.menu_widget = Menu_Widget(self)
@@ -162,7 +161,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         self.deviance_threshold = 50
         self.velocity_threshold = 20
 
-        self.data_loader = DLC_Loader(None, None)
+        self.data_loader = dio.DLC_Loader(None, None)
         self.dlc_data = None
         self.keypoint_to_idx = {}
 
@@ -412,7 +411,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
     ###################################################################################################################################################
 
     def call_track_refiner(self): 
-        from dlc_track_refiner import DLC_Track_Refiner
+        from frame_label import Frame_Label
 
         if not hasattr(self, "video_list") or not hasattr(self, "prediction_list") or self.dlc_data is None:
             QMessageBox.warning(self, "Warning", "Predictions or DLC config are not loaded, load predictions and config first!")
@@ -424,7 +423,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             return
         
         selected_value = self.selected_cam_idx 
-        self.refiner_window = DLC_Track_Refiner()
+        self.refiner_window = Frame_Label()
         self.refiner_window.video_file = self.video_list[selected_value]
         self.refiner_window.initialize_loaded_video()
         self.dlc_data.pred_data_array = self.pred_data_array[:,selected_value,:,:].copy()
@@ -1173,6 +1172,6 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication([])
-    main_window = DLC_3D_plotter()
+    main_window = Frame_View_3D()
     main_window.show()
     app.exec()

@@ -6,8 +6,8 @@ from PySide6.QtWidgets import QVBoxLayout, QDialog, QLabel
 from PySide6.QtGui import QPixmap, QImage
 
 from .plot import Prediction_Plotter
-from utils.dtu_dataclass import Loaded_DLC_Data, Plot_Config
-from utils import dtu_helper as duh
+from utils.dataclass import Loaded_DLC_Data, Plot_Config
+from utils import helper as duh
 
 class Canonical_Pose_Dialog(QDialog):
     def __init__(self, dlc_data:Loaded_DLC_Data, canon_pose:np.ndarray, parent=None):

@@ -15,19 +15,19 @@ from PySide6.QtWidgets import QMessageBox, QFileDialog
 import traceback
 
 import ui
-import utils.dtu_helper as duh
-import utils.dtu_io as dio
-from utils.dtu_io import DLC_Loader, DLC_Exporter
-from utils.dtu_dataclass import Export_Settings, Plot_Config
+import utils.helper as duh
+import utils.io as dio
+from utils.io import DLC_Loader, DLC_Exporter
+from utils.dataclass import Export_Settings, Plot_Config
 from ui import (
-    Menu_Widget, Progress_Bar_Widget, Nav_Widget,
-    Adjust_Property_Dialog, Generate_Mark_Dialog, Clear_Mark_Dialog, Prediction_Plotter
+    Menu_Widget, Progress_Bar_Widget, Nav_Widget, Prediction_Plotter,
+    Adjust_Property_Dialog, Generate_Mark_Dialog, Clear_Mark_Dialog
     )
 
-class DLC_Extractor(QtWidgets.QMainWindow):
+class Frame_View(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("DLC Frame Extractor")
+        self.setWindowTitle("Frame Viewer")
         self.setGeometry(100, 100, 1200, 960)
 
         self.menu_widget = Menu_Widget(self)
@@ -570,10 +570,10 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             QMessageBox.warning(self, "DLC Data Not Loaded", "No DLC data has been loaded, load them to export to Refiner.")
             return
         
-        from dlc_track_refiner import DLC_Track_Refiner
+        from frame_label import Frame_Label
 
         try:
-            self.refiner_window = DLC_Track_Refiner()
+            self.refiner_window = Frame_Label()
             self.refiner_window.video_file = self.video_file
             self.refiner_window.initialize_loaded_video()
             self.refiner_window.dlc_data = self.dlc_data
@@ -754,6 +754,6 @@ class DLC_Extractor(QtWidgets.QMainWindow):
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication([])
-    window = DLC_Extractor()
+    window = Frame_View()
     window.show()
     app.exec()

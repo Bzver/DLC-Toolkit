@@ -16,12 +16,12 @@ from typing import List, Literal
 from .component import Clickable_Video_Label
 from .widget import Progress_Bar_Widget
 from .plot import Prediction_Plotter
-from .helper import handle_unsaved_changes_on_close
-from utils.dtu_dataclass import Loaded_DLC_Data, Export_Settings
-from utils.dtu_io import DLC_Exporter, DLC_Loader
-from utils import dtu_track_edit as dute
-from utils import dtu_helper as duh
-from utils import dtu_io as dio
+from .ui_helper import handle_unsaved_changes_on_close
+from utils.dataclass import Loaded_DLC_Data, Export_Settings
+from utils.io import DLC_Exporter, DLC_Loader
+from utils import track_edit as dute
+from utils import helper as duh
+from utils import io as dio
 
 DEBUG = False
 

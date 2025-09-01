@@ -4,8 +4,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox, QProgressDialog
 from typing import Optional, Callable, List, Literal
 
-from utils.dtu_io import DLC_Loader, DLC_Exporter
-from utils.dtu_dataclass import Loaded_DLC_Data
+from utils.io import DLC_Loader, DLC_Exporter
+from utils.dataclass import Loaded_DLC_Data
 
 def format_title(base_title: str, debug_status: bool) -> str:
     return f"{base_title} --- DEBUG MODE" if debug_status else base_title

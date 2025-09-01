@@ -15,11 +15,10 @@ from ui import (
     Adjust_Property_Dialog, Pose_Rotation_Dialog, Canonical_Pose_Dialog, Head_Tail_Dialog,
     Prediction_Plotter, Selectable_Instance, Draggable_Keypoint
 )
-from utils.dtu_io import DLC_Loader
-from utils.dtu_dataclass import Export_Settings, Plot_Config, Refiner_Plotter_Callbacks
-import utils.dtu_io as dio
-import utils.dtu_helper as duh
-import utils.dtu_track_edit as dute
+from utils.dataclass import Export_Settings, Plot_Config, Refiner_Plotter_Callbacks
+import utils.io as dio
+import utils.helper as duh
+import utils.track_edit as dute
 
 DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/NTD/config.yaml"
 VIDEO_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/job/20250709S-340.mp4"
@@ -28,7 +27,7 @@ PRED_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/job/20250709S-340DLC_HrnetW3
 # Todo:
 #   Add support for use cases where individual counts exceed 2
 
-class DLC_Track_Refiner(QtWidgets.QMainWindow):
+class Frame_Label(QtWidgets.QMainWindow):
     prediction_saved = Signal(str)          # Signal to emit the path of the saved prediction file
     refined_frames_exported = Signal(list)  # Signal to emit the refined_roi_frame_list back to Extractor
 
@@ -36,7 +35,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         super().__init__()
 
         self.is_debug = False
-        self.setWindowTitle(ui.format_title("DLC Track Refiner", self.is_debug))
+        self.setWindowTitle(ui.format_title("Frame Labeler", self.is_debug))
         self.setGeometry(100, 100, 1200, 960)
 
         self.setup_menu()
@@ -207,7 +206,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.video_file, self.prediction, self.video_name = None, None, None
         self.dlc_data, self.canon_pose, self.angle_map_data = None, None, None
         self.instance_count_per_frame, self.pred_data_array = None, None
-        self.data_loader = DLC_Loader(None, None)
+        self.data_loader = dio.DLC_Loader(None, None)
 
         self.roi_frame_list, self.marked_roi_frame_list, self.refined_roi_frame_list = [], [], []
         self.cap, self.current_frame = None, None
@@ -610,7 +609,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
             QMessageBox.warning(self, "", "")
         df_idt = pd.read_csv(idt_csv, header=0)
         df_conf = pd.read_csv(conf_csv, header=0)
-        idt_traj_array = duh.parse_idt_df_into_ndarray(df_idt, df_conf)
+        idt_traj_array = dio.parse_idt_df_into_ndarray(df_idt, df_conf)
 
         self._save_state_for_undo()
 
@@ -1114,6 +1113,6 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication([])
-    window = DLC_Track_Refiner()
+    window = Frame_Label()
     window.show()
     app.exec()

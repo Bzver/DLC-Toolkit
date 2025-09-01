@@ -5,7 +5,7 @@ from itertools import combinations
 
 from typing import List, Optional, Tuple, Dict
 
-from . import dtu_helper as duh
+from . import helper as duh
 
 def delete_track(pred_data_array:np.ndarray, current_frame_idx:int, selected_instance_idx:int,
                 mode:str="point", deletion_range:Optional[List[int]]=None) -> Optional[np.ndarray]:

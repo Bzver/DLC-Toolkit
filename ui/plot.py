@@ -6,7 +6,7 @@ from PySide6.QtWidgets import QGraphicsRectItem, QGraphicsEllipseItem, QGraphics
 
 from typing import Optional, Tuple
 
-from utils.dtu_dataclass import Loaded_DLC_Data, Plot_Config, Refiner_Plotter_Callbacks
+from utils.dataclass import Loaded_DLC_Data, Plot_Config, Refiner_Plotter_Callbacks
 from ui import Selectable_Instance, Draggable_Keypoint
 
 class Prediction_Plotter:

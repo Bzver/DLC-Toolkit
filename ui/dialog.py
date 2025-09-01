@@ -7,8 +7,8 @@ from PySide6.QtGui import QIntValidator
  
 from typing import List, Optional
 
-from utils.dtu_dataclass import Loaded_DLC_Data
-from utils import dtu_track_edit as dute
+from utils.dataclass import Loaded_DLC_Data
+from utils import track_edit as dute
 
 class Adjust_Property_Dialog(QDialog):
     property_changed = Signal(float)
