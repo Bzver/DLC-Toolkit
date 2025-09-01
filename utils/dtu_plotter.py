@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QGraphicsRectItem, QGraphicsEllipseItem, QGraphics
 from typing import Optional, Tuple
 
 from .dtu_dataclass import Loaded_DLC_Data, Plot_Config, Refiner_Plotter_Callbacks
-from .dtu_comp import Selectable_Instance, Draggable_Keypoint
+from ui import Selectable_Instance, Draggable_Keypoint
 
 class DLC_Plotter:
     def __init__(

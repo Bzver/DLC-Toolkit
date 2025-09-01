@@ -13,8 +13,7 @@ from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QHBoxLayout
 
 from typing import List, Literal
 
-from .dtu_widget import Progress_Bar_Widget
-from .dtu_comp import Clickable_Video_Label
+from ui import Progress_Bar_Widget, Clickable_Video_Label
 from .dtu_dataclass import Loaded_DLC_Data, Export_Settings
 from .dtu_io import DLC_Exporter, DLC_Loader
 from .dtu_plotter import DLC_Plotter
