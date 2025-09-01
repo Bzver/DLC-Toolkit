@@ -5,4 +5,4 @@ from .helper_3d import (
 )
 
 from .triangulation import get_projection_matrix
-from .data_process import Data_Processor_3D as processor
+from .data_3d import Data_Processor_3D as processor
