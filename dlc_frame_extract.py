@@ -14,13 +14,15 @@ from PySide6.QtWidgets import QMessageBox, QFileDialog
 
 import traceback
 
+import ui
 import utils.dtu_helper as duh
-import utils.dtu_gui_helper as dugh
 import utils.dtu_io as dio
 from utils.dtu_io import DLC_Loader, DLC_Exporter
 from utils.dtu_dataclass import Export_Settings, Plot_Config
-from utils.dtu_plotter import DLC_Plotter
-from ui import Menu_Widget, Progress_Bar_Widget, Nav_Widget, Adjust_Property_Dialog, Generate_Mark_Dialog, Clear_Mark_Dialog
+from ui import (
+    Menu_Widget, Progress_Bar_Widget, Nav_Widget,
+    Adjust_Property_Dialog, Generate_Mark_Dialog, Clear_Mark_Dialog, Prediction_Plotter
+    )
 
 class DLC_Extractor(QtWidgets.QMainWindow):
     def __init__(self):
@@ -176,7 +178,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
 
         self.data_loader.dlc_config_filepath = dlc_config
 
-        self.dlc_data = dugh.load_and_show_message(self, self.data_loader)
+        self.dlc_data = ui.load_and_show_message(self, self.data_loader)
 
         self.process_labeled_frame()
         self.display_current_frame()
@@ -213,7 +215,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
                 self.data_loader.dlc_config_filepath = dlc_config
                 self.data_loader.prediction_filepath = prediction
 
-                self.dlc_data = dugh.load_and_show_message(self, self.data_loader)
+                self.dlc_data = ui.load_and_show_message(self, self.data_loader)
 
             if "refined_frame_list" in fmk.keys():
                 self.refined_frame_list = fmk["refined_frame_list"]
@@ -274,7 +276,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
 
     def initialize_plotter(self):
         current_frame_data = np.full((self.dlc_data.instance_count, self.dlc_data.num_keypoint*3), np.nan)
-        self.plotter = DLC_Plotter(
+        self.plotter = Prediction_Plotter(
             dlc_data = self.dlc_data,
             current_frame_data = current_frame_data,
             plot_config = self.plot_config,
@@ -395,7 +397,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         self._refresh_slider()
 
     def _navigate_marked_frames(self, mode):
-        dugh.navigate_to_marked_frame(self, self.frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, mode)
+        ui.navigate_to_marked_frame(self, self.frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, mode)
 
     ###################################################################################################################################################
 
@@ -619,10 +621,10 @@ class DLC_Extractor(QtWidgets.QMainWindow):
 
             self.data_loader.dlc_config_filepath = dlc_config
 
-            self.dlc_data = dugh.load_and_show_message(self, self.data_loader, metadata_only=True)
+            self.dlc_data = ui.load_and_show_message(self, self.data_loader, metadata_only=True)
             self.dlc_data.pred_frame_count = self.total_frames
 
-        from utils.dtu_inference import DLC_Inference
+        from ui import DLC_Inference
         try:
             self.inference_window = DLC_Inference(dlc_data=self.dlc_data, frame_list=inference_list, video_filepath=self.video_file, parent=self)
             self.inference_window.show()
@@ -692,14 +694,14 @@ class DLC_Extractor(QtWidgets.QMainWindow):
                 if not dlc_dir: # When user close the file selection window
                     return
                 self.project_dir = os.path.join(dlc_dir, "labeled-data", self.video_name)
-                dugh.export_and_show_message(self, exporter, frame_only=True)
+                ui.export_and_show_message(self, exporter, frame_only=True)
                 return
             else:
                 self.load_prediction()
                 if self.dlc_data is None:
                     return
 
-        dugh.export_and_show_message(self, exporter, frame_only=False)
+        ui.export_and_show_message(self, exporter, frame_only=False)
         dio.append_new_video_to_dlc_config(self.dlc_data.dlc_config_filepath, self.video_name)
 
         if self.exp_set.export_mode == "Merge":
@@ -736,7 +738,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
             label_data_array_export = duh.remove_confidence_score(self.label_data_array)
 
             exporter = DLC_Exporter(self.dlc_data, self.exp_set, merge_frame_list, label_data_array_export)
-            dugh.export_and_show_message(self, exporter, frame_only=False)
+            ui.export_and_show_message(self, exporter, frame_only=False)
 
             self.process_labeled_frame()
 
@@ -746,7 +748,7 @@ class DLC_Extractor(QtWidgets.QMainWindow):
         super().changeEvent(event)
 
     def closeEvent(self, event: QCloseEvent):
-        dugh.handle_unsaved_changes_on_close(self, event, self.is_saved, self.save_workspace)
+        ui.handle_unsaved_changes_on_close(self, event, self.is_saved, self.save_workspace)
 
 #######################################################################################################################################################
 

@@ -1,18 +1,14 @@
 from functools import partial
-import numpy as np
-import cv2
 
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QPushButton, QHBoxLayout, QVBoxLayout, QDialog, QLabel, QLineEdit, QMessageBox
-from PySide6.QtGui import QIntValidator, QPixmap, QImage
+from PySide6.QtGui import QIntValidator
  
 from typing import List, Optional
 
-from utils.dtu_plotter import DLC_Plotter
-from utils.dtu_dataclass import Loaded_DLC_Data, Plot_Config
+from utils.dtu_dataclass import Loaded_DLC_Data
 from utils import dtu_track_edit as dute
-from utils import dtu_helper as duh
 
 class Adjust_Property_Dialog(QDialog):
     property_changed = Signal(float)
@@ -372,68 +368,6 @@ class Clear_Mark_Dialog(QDialog):
     def _on_button_clicked(self, category_text:str):
         self.frame_category_to_clear.emit(category_text)
         self.accept()
-
-###################################################################################################################################################
-
-class Canonical_Pose_Dialog(QDialog):
-    def __init__(self, dlc_data:Loaded_DLC_Data, canon_pose:np.ndarray, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Canonical Pose Viewer")
-        self.setGeometry(200, 200, 600, 600)
-
-        self.dlc_data = dlc_data
-        self.canon_pose = canon_pose
-
-        self.layout = QVBoxLayout(self)
-        self.image_label = QLabel(self)
-        self.layout.addWidget(self.image_label)
-
-        self.draw_canonical_pose()
-
-    def draw_canonical_pose(self):
-        if self.canon_pose is None or self.dlc_data is None:
-            self.image_label.setText("No canonical pose data available.")
-            return
-
-        img_height, img_width = 600, 600
-        blank_image = np.full((img_height, img_width, 3), 255, dtype=np.uint8)
-        
-        min_x, min_y, max_x, max_y = duh.calculate_bbox(self.canon_pose[:, 0], self.canon_pose[:, 1])
-        canon_len = max(max_y-min_y, max_x-min_x)
-
-        zoom_factor = 600 // canon_len
-
-        # Reshape canon_pose to be compatible with DLC_Plotter
-        num_keypoints = self.canon_pose.shape[0]
-        reshaped_pose = np.zeros((1, num_keypoints * 3))
-        for i in range(num_keypoints):  # Center the pose
-            reshaped_pose[0, i*3] = self.canon_pose[i, 0] * zoom_factor + img_width / 2
-            reshaped_pose[0, i*3+1] = self.canon_pose[i, 1] * zoom_factor + img_height / 2
-            reshaped_pose[0, i*3+2] = 1.0
-
-        # Create a dummy dlc_data for the plotter to use the skeleton and keypoint names
-        dummy_dlc_data = self.dlc_data
-        dummy_dlc_data.instance_count = 1
-        
-        plot_config = Plot_Config(
-            plot_opacity=1.0, point_size=6.0, confidence_cutoff=0.0, hide_text_labels=False, edit_mode=False)
-
-        plotter = DLC_Plotter(
-            dlc_data=dummy_dlc_data,
-            current_frame_data=reshaped_pose,
-            frame_cv2=blank_image,
-            plot_config=plot_config,
-        )
-        plotted_image = plotter.plot_predictions()
-
-        # Convert OpenCV image to QPixmap and display
-        rgb_image = cv2.cvtColor(plotted_image, cv2.COLOR_BGR2RGB)
-        h, w, ch = rgb_image.shape
-        bytes_per_line = ch * w
-        qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format_RGB888)
-        pixmap = QPixmap.fromImage(qt_image)
-        self.image_label.setPixmap(pixmap)
-        self.image_label.setAlignment(Qt.AlignCenter)
 
 ###################################################################################################################################################
 

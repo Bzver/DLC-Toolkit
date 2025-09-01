@@ -7,7 +7,7 @@ from typing import List, Optional, Tuple, Dict
 
 from . import dtu_helper as duh
 
-def delete_track(pred_data_array:np.ndarray, current_frame_idx:int, roi_frame_list:List[int], selected_instance_idx:int,
+def delete_track(pred_data_array:np.ndarray, current_frame_idx:int, selected_instance_idx:int,
                 mode:str="point", deletion_range:Optional[List[int]]=None) -> Optional[np.ndarray]:
     
     if mode == "point": # Only removing the current frame
@@ -18,13 +18,9 @@ def delete_track(pred_data_array:np.ndarray, current_frame_idx:int, roi_frame_li
             frames_to_delete = deletion_range
         else:
             raise ValueError("Deletion range must be provided for 'range' mode.")
-
-    else: # Remove until the next frame swap
-        next_roi_frame_idx = duh.get_next_frame_in_list(roi_frame_list, current_frame_idx)
-        if next_roi_frame_idx: 
-            frames_to_delete = range(current_frame_idx, next_roi_frame_idx)
-        else:
-            frames_to_delete = range(current_frame_idx, pred_data_array.shape[0])
+        
+    else:
+        raise ValueError(f"Invalid Mode {mode}, required one of 'point' or 'range'.")
 
     pred_data_array[frames_to_delete, selected_instance_idx, :] = np.nan
 

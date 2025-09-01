@@ -17,15 +17,16 @@ from PySide6.QtWidgets import QMessageBox
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
+import ui
+import utils3d as utls3
 import utils.dtu_io as dio
-import utils.dtu_helper as duh
-import utils.dtu_gui_helper as dugh
 import utils.dtu_track_edit as dute
-import utils3d as ut3d
 from utils.dtu_io import DLC_Loader
-from utils.dtu_plotter import DLC_Plotter
 from utils.dtu_dataclass import Plot_Config
-from ui import Menu_Widget, Progress_Bar_Widget, Nav_Widget, Adjust_Property_Dialog, Clickable_Video_Label
+from ui import (
+    Menu_Widget, Progress_Bar_Widget, Nav_Widget, Adjust_Property_Dialog,
+    Prediction_Plotter, Clickable_Video_Label
+    )
 
 import traceback
 
@@ -40,7 +41,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         super().__init__()
 
         self.is_debug = False
-        self.setWindowTitle(duh.format_title("DLC 3D Plotter", self.is_debug))
+        self.setWindowTitle(ui.format_title("DLC 3D Plotter", self.is_debug))
         self.setGeometry(100, 100, 1600, 960)
 
         self.menu_widget = Menu_Widget(self)
@@ -272,7 +273,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
     def dlc_config_loader(self, dlc_config_filepath: str):
         self.data_loader.dlc_config_filepath = dlc_config_filepath
         try:
-            self.dlc_data = dugh.load_and_show_message(self, self.data_loader, metadata_only=True)
+            self.dlc_data = ui.load_and_show_message(self, self.data_loader, metadata_only=True)
             self.keypoint_to_idx = {name: idx for idx, name in enumerate(self.dlc_data.keypoints)}
         except:
             QMessageBox.critical(self, "Error", "Failed to load DLC config.")
@@ -373,7 +374,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
     def load_prediction(self, cam_idx:int, prediction_filepath:str):
         self.data_loader.prediction_filepath = prediction_filepath
-        temp_dlc_data = dugh.load_and_show_message(self, self.data_loader, mute=True)
+        temp_dlc_data = ui.load_and_show_message(self, self.data_loader, mute=True)
 
         if not temp_dlc_data:
             return
@@ -403,7 +404,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             cam_pos[i] = -np.dot(r.T, t)
             cam_dir[i] = r[2, :]
             self.camera_params[i]["K"] = K
-            self.camera_params[i]["P"] = ut3d.get_projection_matrix(K,r,t)
+            self.camera_params[i]["P"] = utls3.get_projection_matrix(K,r,t)
             frame_count[i] = len(calib["sync"][i,0][0,0]["data_sampleID"][0])
         self.cam_pos = np.array(cam_pos)
         self.cam_dir = np.array(cam_dir)
@@ -529,7 +530,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         if self.dlc_data is None or self.pred_data_array is None:
             point_3d_array = np.full((1, 1, 3), np.nan)
         else:
-            data_processor_3d = ut3d.processor(
+            data_processor_3d = utls3.processor(
                 self.dlc_data, self.camera_params, self.pred_data_array, self.plot_config.confidence_cutoff, self.num_cam)
             point_3d_array = data_processor_3d.get_3d_pose_array(self.current_frame_idx, return_confidence=False)
 
@@ -594,7 +595,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
     def initialize_2d_plotter(self, frame):
         current_frame_data = np.full((self.dlc_data.instance_count, self.dlc_data.num_keypoint*3), np.nan)
-        self.plotter = DLC_Plotter(
+        self.plotter = Prediction_Plotter(
             dlc_data = self.dlc_data,
             current_frame_data = current_frame_data,
             plot_config = self.plot_config,
@@ -611,7 +612,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             return False
 
         try:
-            config = ut3d.get_config_from_mode(mode, self.current_frame_idx, self.check_range, self.total_frames)
+            config = utls3.get_config_from_mode(mode, self.current_frame_idx, self.check_range, self.total_frames)
         except ValueError as e:
             QMessageBox.warning(self, "Invalid Mode", f"{e}")
             return False
@@ -619,7 +620,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         if config.show_progress:
             dialog = "Calculating swap detection score..."
             title = f"Calculating Identity Score In {mode}"
-            progress = dugh.get_progress_dialog(self, config.start_frame, self.total_frames, title, dialog, parent_progress)
+            progress = ui.get_progress_dialog(self, config.start_frame, self.total_frames, title, dialog, parent_progress)
         else:
             progress = None
 
@@ -636,7 +637,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
 
             QtWidgets.QApplication.processEvents()  # Keep UI responsive
         
-            data_processor_3d = ut3d.processor(
+            data_processor_3d = utls3.processor(
                 self.dlc_data, self.camera_params, self.pred_data_array, self.plot_config.confidence_cutoff, self.num_cam)
             keypoint_data_tr, valid_view = data_processor_3d.get_keypoint_data_for_frame(
                 frame_idx, instance_threshold=self.dlc_data.instance_count, view_threshold=3)
@@ -646,7 +647,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
                     self.skipped_frame_list.append(frame_idx)
                 continue
 
-            swap_score = ut3d.calculate_identity_swap_score_per_frame(keypoint_data_tr, valid_view, self.dlc_data.instance_count, self.dlc_data.num_keypoint)
+            swap_score = utls3.calculate_identity_swap_score_per_frame(keypoint_data_tr, valid_view, self.dlc_data.instance_count, self.dlc_data.num_keypoint)
             
             self.swap_detection_score_array[frame_idx, 1] = swap_score
             calculated_frame_count += 1
@@ -671,9 +672,9 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         if frame_idx_r is None:
             dialog = "Calculating temporal velocity for all the frames..."
             title = f"Calculating Temporal Velocity"
-            progress = dugh.get_progress_dialog(self, 0, self.total_frames, title, dialog)
+            progress = ui.get_progress_dialog(self, 0, self.total_frames, title, dialog)
 
-        data_processor_3d = ut3d.processor(
+        data_processor_3d = utls3.processor(
             self.dlc_data, self.camera_params, self.pred_data_array, self.plot_config.confidence_cutoff, self.num_cam)
 
         if progress:
@@ -711,7 +712,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             QMessageBox.information(self, "Unimplemented", "The function is only for two instance only.")
             return
 
-        self.correction_progress = dugh.get_progress_dialog(self, 0, self.total_frames,
+        self.correction_progress = ui.get_progress_dialog(self, 0, self.total_frames,
             title="Automatic Correction Progress", dialog="Commencing automatic track correction...")
 
         main_window_center = self.geometry().center()
@@ -876,17 +877,17 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             if not self.roi_frame_list:
                 QMessageBox.information(self, "No ROI Frames", "No ROI frames available to navigate.")
                 return
-            dugh.navigate_to_marked_frame(self, self.roi_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, direction)
+            ui.navigate_to_marked_frame(self, self.roi_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, direction)
         elif self.current_view_mode_idx == 1:  # Failed frames
             if not self.failed_frame_list:
                 QMessageBox.information(self, "No Failed Frames", "No failed frames available to navigate.")
                 return
-            dugh.navigate_to_marked_frame(self, self.failed_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, direction)
+            ui.navigate_to_marked_frame(self, self.failed_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, direction)
         elif self.current_view_mode_idx == 2:  # Multi-swap frames
             if not self.skipped_frame_list:
                 QMessageBox.information(self, "No Skipped Frames", "No frames of multiple instance swap available to navigate.")
                 return
-            dugh.navigate_to_marked_frame(self, self.skipped_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, direction)
+            ui.navigate_to_marked_frame(self, self.skipped_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, direction)
 
     def _post_correction_operations(self):
         self.display_current_frame()
@@ -1023,7 +1024,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         if self.selected_cam_idx is None:
             return
         cam_pos = self.cam_pos[self.selected_cam_idx]
-        elev, azim = ut3d.acquire_view_perspective_for_selected_cam(cam_pos)
+        elev, azim = utls3.acquire_view_perspective_for_selected_cam(cam_pos)
         self.ax.view_init(elev=elev, azim=azim)
         self.canvas.draw_idle()
 
@@ -1117,9 +1118,9 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
         com_idx = self.keypoint_to_idx[item]
         dialog = "Gathering 3D COM (Center of Mass) data for export..."
         title = f"Gather 3D COM Data For Export"
-        progress = dugh.get_progress_dialog(self, 0, self.total_frames, title, dialog)
+        progress = ui.get_progress_dialog(self, 0, self.total_frames, title, dialog)
 
-        data_processor_3d = ut3d.processor(
+        data_processor_3d = utls3.processor(
             self.dlc_data, self.camera_params, self.pred_data_array, self.plot_config.confidence_cutoff, self.num_cam)
         com_for_export = np.full((self.total_frames, 3, self.dlc_data.instance_count), np.nan)
         for frame_idx in range(self.total_frames):
@@ -1166,7 +1167,7 @@ class DLC_3D_plotter(QtWidgets.QMainWindow):
             for cap in self.cap_list:
                 if cap and cap.isOpened():
                     cap.release()
-        dugh.handle_unsaved_changes_on_close(self, event, self.is_saved, self.save_workspace)
+        ui.handle_unsaved_changes_on_close(self, event, self.is_saved, self.save_workspace)
 
 ###################################################################################################################################################
 

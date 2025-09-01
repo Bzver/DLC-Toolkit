@@ -6,10 +6,10 @@ from PySide6.QtWidgets import QGraphicsRectItem, QGraphicsEllipseItem, QGraphics
 
 from typing import Optional, Tuple
 
-from .dtu_dataclass import Loaded_DLC_Data, Plot_Config, Refiner_Plotter_Callbacks
+from utils.dtu_dataclass import Loaded_DLC_Data, Plot_Config, Refiner_Plotter_Callbacks
 from ui import Selectable_Instance, Draggable_Keypoint
 
-class DLC_Plotter:
+class Prediction_Plotter:
     def __init__(
             self, dlc_data:Loaded_DLC_Data,
             current_frame_data:np.ndarray,
@@ -18,7 +18,27 @@ class DLC_Plotter:
             graphics_scene:Optional[QGraphicsScene]=None,
             plot_callback:Optional[Refiner_Plotter_Callbacks]=None
             ):
-        
+        """
+        Initializes the prediction plotter for visualizing 2D pose predictions either on a CV2 image 
+        or a QGraphicsScene. Supports interactive editing and real-time rendering.
+
+        Args:
+            dlc_data (Loaded_DLC_Data): Metadata including instance count, keypoint names, skeleton
+                structure, and individual IDs.
+            current_frame_data (np.ndarray): Flattened array of shape (num_instances * num_keypoints * 3,) 
+                containing x, y, confidence for each keypoint of each instance.
+            plot_config (Plot_Config, optional): Configuration for plotting appearance and behavior. 
+                Uses default values if not provided.
+            frame_cv2 (np.ndarray, optional): BGR image frame for OpenCV-based drawing. 
+                Used when plotting in "CV" mode.
+            graphics_scene (QGraphicsScene, optional): Qt graphics scene for interactive rendering. 
+                Used when plotting in "GS" mode.
+            plot_callback (Refiner_Plotter_Callbacks, optional): Callback handler for keypoint drag 
+                events; required for interactive editing in graphics scene mode.
+
+        Raises:
+            ValueError: If neither or both of 'frame_cv2' and 'graphics_scene' are provided.
+        """
         self.dlc_data = dlc_data
         self.current_frame_data = current_frame_data
         self.frame_cv2 = frame_cv2
@@ -44,6 +64,24 @@ class DLC_Plotter:
         self.keypoint_coords = {}
 
     def plot_predictions(self) -> Optional[np.ndarray]:
+        """
+        Renders keypoints, labels, bounding boxes, and skeleton connections for all instances 
+        in the current frame based on the selected plotting mode.
+
+        Drawing modes:
+            - "GS" (QGraphicsScene): Draws interactive, draggable keypoints with Qt items.
+              Connects drag events to the provided callback for refinement workflows.
+            - "CV" (OpenCV): Draws static circles on the input image using cv2.
+
+        Additional elements:
+            - Keypoint text labels (if not hidden).
+            - Bounding box around each instance (if individuals are defined and >=2 keypoints visible).
+            - Skeleton lines connecting keypoints according to the skeleton definition.
+
+        Returns:
+            Optional[np.ndarray]: Modified frame_cv2 with overlays if in "CV" mode; 
+                                 otherwise None (drawing is done directly on the scene in "GS" mode).
+        """
         for inst in range(self.dlc_data.instance_count):
             self.keypoint_coords = {} # Cleanup the keypoint coords of other insts
             color = self.color[inst % len(self.color)]
@@ -141,7 +179,7 @@ class DLC_Plotter:
                     cv2.FONT_HERSHEY_SIMPLEX, self.plot_config.point_size/20, color, 1, cv2.LINE_AA)
 
     def _plot_keypoint_label(self, color:Tuple[int, int, int]):
-        for kp_idx, (x, y, conf) in self.keypoint_coords.items():
+        for kp_idx, (x, y, _) in self.keypoint_coords.items():
             keypoint_label = self.dlc_data.keypoints[kp_idx]
 
             if self.mode == "GS":

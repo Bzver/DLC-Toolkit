@@ -13,14 +13,15 @@ from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QHBoxLayout
 
 from typing import List, Literal
 
-from ui import Progress_Bar_Widget, Clickable_Video_Label
-from .dtu_dataclass import Loaded_DLC_Data, Export_Settings
-from .dtu_io import DLC_Exporter, DLC_Loader
-from .dtu_plotter import DLC_Plotter
-from . import dtu_gui_helper as dugh
-from . import dtu_track_edit as dute
-from . import dtu_helper as duh
-from . import dtu_io as dio
+from .component import Clickable_Video_Label
+from .widget import Progress_Bar_Widget
+from .plot import Prediction_Plotter
+from .helper import handle_unsaved_changes_on_close
+from utils.dtu_dataclass import Loaded_DLC_Data, Export_Settings
+from utils.dtu_io import DLC_Exporter, DLC_Loader
+from utils import dtu_track_edit as dute
+from utils import dtu_helper as duh
+from utils import dtu_io as dio
 
 DEBUG = False
 
@@ -28,7 +29,24 @@ class DLC_Inference(QtWidgets.QDialog):
     prediction_saved = Signal(str)
     frames_exported = Signal(tuple)
 
-    def __init__(self, dlc_data:Loaded_DLC_Data, frame_list:List[int], video_filepath:str, parent=None):
+    def __init__(
+        self,
+        dlc_data:Loaded_DLC_Data,
+        frame_list:List[int],
+        video_filepath:str,
+        parent=None
+        ):
+        """
+        Initializes the DLC inference dialog for re-running predictions on selected frames 
+        using a trained DeepLabCut model.
+
+        Args:
+            dlc_data (Loaded_DLC_Data): Object containing DLC project configuration, 
+                prediction data, and metadata.
+            frame_list (List[int]): List of frame indices to re-analyze.
+            video_filepath (str): Path to the source video file, used for frame extraction.
+            parent: Parent widget.
+        """
         super().__init__(parent)
         self.setWindowTitle("Re-run Predictions With Selected Frames in DLC")
         self.dlc_data = dlc_data
@@ -50,16 +68,16 @@ class DLC_Inference(QtWidgets.QDialog):
             self.fresh_pred = False
 
         layout = QVBoxLayout(self)
-        self.setup_container = self.build_setup_container()
+        self.setup_container = self._build_setup_container()
         if self.setup_container is None:
             return
         layout.addWidget(self.setup_container)
         
-        self.wait_container = self.build_wait_container()
+        self.wait_container = self._build_wait_container()
         layout.addWidget(self.wait_container)
 
         if not self.fresh_pred:
-            self.video_container = self.build_video_container()
+            self.video_container = self._build_video_container()
             if self.setup_container is None:
                 return
             layout.addWidget(self.video_container)
@@ -71,23 +89,23 @@ class DLC_Inference(QtWidgets.QDialog):
 
     #######################################################################################################################
 
-    def build_setup_container(self):
+    def _build_setup_container(self):
         """Container to wrap up all the setup process UI"""
-        iteration_idx, iteration_folder = self.check_iteration_integrity()
+        iteration_idx, iteration_folder = self._check_iteration_integrity()
         if iteration_folder is None:
             self.emergency_exit(f"Iteration {iteration_idx} folder not found.")
             return
         
         self.iteration_folder = iteration_folder
 
-        available_shuffles = self.check_available_shuffles()
+        available_shuffles = self._check_available_shuffles()
         if available_shuffles is None:
             self.emergency_exit("No shuffles found in iteration folder.")
             return
         
         available_shuffles.sort()
         self.shuffle_idx = int(available_shuffles[-1])
-        shuffle_metadata_text, model_status = self.check_shuffle_metadata()
+        shuffle_metadata_text, model_status = self._check_shuffle_metadata()
 
         setup_container = QtWidgets.QWidget()
         container_layout = QVBoxLayout(setup_container)
@@ -146,7 +164,7 @@ class DLC_Inference(QtWidgets.QDialog):
             else:
                 subprocess.run(['xdg-open', os.path.dirname(pytorch_yaml_path)])
 
-    def check_iteration_integrity(self):
+    def _check_iteration_integrity(self):
         dlc_config_filepath = self.dlc_data.dlc_config_filepath
         dlc_folder = os.path.dirname(self.dlc_data.dlc_config_filepath)
         with open(dlc_config_filepath, 'r') as dcf:
@@ -158,14 +176,14 @@ class DLC_Inference(QtWidgets.QDialog):
         
         return iteration_idx, iteration_folder
 
-    def check_available_shuffles(self):
+    def _check_available_shuffles(self):
         available_shuffles = [f.split("shuffle")[1] for f in os.listdir(self.iteration_folder) if "shuffle" in f]
         if not available_shuffles:
             return None
 
         return available_shuffles
     
-    def check_shuffle_metadata(self):
+    def _check_shuffle_metadata(self):
         available_detector_models = []
         available_models = []
 
@@ -218,7 +236,7 @@ class DLC_Inference(QtWidgets.QDialog):
 
     def _shuffle_spinbox_changed(self, value):
         self.shuffle_idx = value
-        text, status = self.check_shuffle_metadata()
+        text, status = self._check_shuffle_metadata()
         self.shuffle_config_label.setText(text)
         if not status:
             self.shuffle_config_label.setStyleSheet("color: red;")
@@ -232,7 +250,7 @@ class DLC_Inference(QtWidgets.QDialog):
 
     #######################################################################################################################
 
-    def build_video_container(self):
+    def _build_video_container(self):
         """Container to display prediction plots, left pane -> old, right pane -> new"""
         self.total_marked_frames = len(self.frame_list)
         self.total_frames = self.dlc_data.pred_data_array.shape[0]
@@ -329,11 +347,11 @@ class DLC_Inference(QtWidgets.QDialog):
         approval_box.setLayout(approval_layout)
         container_layout.addWidget(approval_box)
 
-        self.build_shortcut()
+        self._build_shortcut()
 
         return video_container
 
-    def build_shortcut(self):
+    def _build_shortcut(self):
         QShortcut(QKeySequence(Qt.Key_Left), self).activated.connect(lambda: self.change_frame(-1))
         QShortcut(QKeySequence(Qt.Key_Right), self).activated.connect(lambda: self.change_frame(1))
         QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.progress_widget.toggle_playback)
@@ -342,7 +360,7 @@ class DLC_Inference(QtWidgets.QDialog):
         QShortcut(QKeySequence(Qt.CTRL | Qt.Key_A), self).activated.connect(self.approve_all_remaining_frames)
         QShortcut(QKeySequence(Qt.CTRL | Qt.Key_S), self).activated.connect(self.save_prediction)
     
-    def display_current_frame(self):
+    def _display_current_frame(self):
         global_frame_idx = self.frame_list[self.current_frame_idx]
         image_filename = f"img{global_frame_idx:08d}.png"
         image_path = os.path.join(self.temp_dir, image_filename)
@@ -365,7 +383,7 @@ class DLC_Inference(QtWidgets.QDialog):
             current_frame_data = pred_data_to_use[global_frame_idx, :, :]
 
             if not hasattr(self, "plotter"):
-                self.plotter = DLC_Plotter(dlc_data=self.dlc_data, current_frame_data=current_frame_data, frame_cv2=frame)
+                self.plotter = Prediction_Plotter(dlc_data=self.dlc_data, current_frame_data=current_frame_data, frame_cv2=frame)
 
             self.plotter.current_frame_data = current_frame_data
             self.plotter.frame_cv2 = frame_view
@@ -388,16 +406,16 @@ class DLC_Inference(QtWidgets.QDialog):
             self.video_labels[i].setText("")
             
         self.progress_widget.set_current_frame(self.current_frame_idx) # Update slider handle's position
-        self.update_button_states()
+        self._update_button_states()
     
     def change_frame(self, delta):
         self.selected_cam = None # Clear the selected cam upon frame switch
         new_frame_idx = self.current_frame_idx + delta
         if 0 <= new_frame_idx < self.total_marked_frames:
             self.current_frame_idx = new_frame_idx
-            self.display_current_frame()
-            self.navigation_title_controller()
-            self.update_button_states()
+            self._display_current_frame()
+            self._navigation_title_controller()
+            self._update_button_states()
 
     def mark_frame_status(self, status:Literal["Rejected","Approved"]):
         if self.current_frame_idx < 0 or self.current_frame_idx >= len(self.frame_status):
@@ -410,8 +428,8 @@ class DLC_Inference(QtWidgets.QDialog):
         pred_data_to_use = self.new_data_array if status == "Approved" else self.backup_data_array
         self.dlc_data.pred_data_array[global_frame_idx, :, :] = pred_data_to_use[global_frame_idx, :, :]
 
-        self.display_current_frame()
-        self.update_button_states()
+        self._display_current_frame()
+        self._update_button_states()
         self._refresh_lists()
 
     def approve_all_remaining_frames(self):
@@ -421,8 +439,8 @@ class DLC_Inference(QtWidgets.QDialog):
                 self.dlc_data.pred_data_array[self.frame_list[i], :, :] = self.new_data_array[self.frame_list[i], :, :]
 
         self.apply_button.setEnabled(True)
-        self.display_current_frame()
-        self.update_button_states()
+        self._display_current_frame()
+        self._update_button_states()
         self._refresh_lists()
 
     def save_prediction(self):
@@ -462,7 +480,7 @@ class DLC_Inference(QtWidgets.QDialog):
 
         return True
 
-    def navigation_title_controller(self):
+    def _navigation_title_controller(self):
         global_frame_idx = self.frame_list[self.current_frame_idx]
         self.global_frame_label.setText(f"Global: {global_frame_idx} / {self.total_frames}")
         self.selected_frame_label.setText(f"Selected: {self.current_frame_idx} / {self.total_marked_frames}")
@@ -477,9 +495,9 @@ class DLC_Inference(QtWidgets.QDialog):
 
     def _handle_frame_change_from_comp(self, new_frame_idx:int):
         self.current_frame_idx = new_frame_idx
-        self.display_current_frame()
-        self.navigation_title_controller()
-        self.update_button_states()
+        self._display_current_frame()
+        self._navigation_title_controller()
+        self._update_button_states()
 
     def _refresh_lists(self):
         self.is_saved = False
@@ -498,7 +516,7 @@ class DLC_Inference(QtWidgets.QDialog):
 
     #######################################################################################################################
 
-    def build_wait_container(self):
+    def _build_wait_container(self):
         wait_container = QtWidgets.QWidget()
         wait_layout = QHBoxLayout(wait_container)
         wait_layout.setContentsMargins(10, 10, 10, 10)
@@ -533,7 +551,7 @@ class DLC_Inference(QtWidgets.QDialog):
 
         return wait_container
 
-    def update_button_states(self):
+    def _update_button_states(self):
         current_status = self.frame_status[self.current_frame_idx]
         self.approve_button.setEnabled(current_status != "Approved")
         self.reject_button.setEnabled(current_status != "Rejected")
@@ -542,14 +560,14 @@ class DLC_Inference(QtWidgets.QDialog):
     #######################################################################################################################
 
     def inference_workflow(self):
-        extract_success = self.extract_marked_frame_images()
+        extract_success = self._extract_marked_frame_images()
 
         self.setup_container.setVisible(False)
         self.wait_container.setVisible(True)
         self.center()
         QtWidgets.QApplication.processEvents()
 
-        analyze_success = self.analyze_frame_images()
+        analyze_success = self._analyze_frame_images()
         if not extract_success or not analyze_success:
             QMessageBox(self, "Error", 
                 "Error during frame image extraction and analysis, check terminal for detail.")
@@ -584,12 +602,12 @@ class DLC_Inference(QtWidgets.QDialog):
         self.video_container.setVisible(True)
         self.center()
 
-        self.load_and_remap_new_prediction()
+        self._load_and_remap_new_prediction()
 
-        self.correct_new_prediction_track()
-        self.display_current_frame()
+        self._correct_new_prediction_track()
+        self._display_current_frame()
 
-    def extract_marked_frame_images(self):
+    def _extract_marked_frame_images(self):
         try:
             exporter = DLC_Exporter(dlc_data=self.dlc_data, export_settings=self.export_set, frame_list=self.frame_list)
             exporter.export_data_to_DLC(frame_only=True)
@@ -598,7 +616,7 @@ class DLC_Inference(QtWidgets.QDialog):
             print(f"Failed to extracted frame images. Exception: {e}.")
             return False
 
-    def analyze_frame_images(self):
+    def _analyze_frame_images(self):
         try:
             import deeplabcut
             deeplabcut.analyze_images(
@@ -611,7 +629,7 @@ class DLC_Inference(QtWidgets.QDialog):
             print(f"Failed to analyze extracted frame images using deeplabcut. Exception: {e}.")
             return False
 
-    def load_and_remap_new_prediction(self):
+    def _load_and_remap_new_prediction(self):
         h5_files = [f for f in os.listdir(self.temp_dir) if f.endswith(".h5")]
         pred_filepath = os.path.join(self.temp_dir, h5_files[-1])
         dlc_config_filepath = self.dlc_data.dlc_config_filepath
@@ -623,7 +641,7 @@ class DLC_Inference(QtWidgets.QDialog):
         self.new_data_array = new_data_array
         return h5_files[-1]
 
-    def correct_new_prediction_track(self, max_dist: float = 10.0):
+    def _correct_new_prediction_track(self, max_dist: float = 10.0):
         for frame_idx in self.frame_list:
             pred_centroids, _ = duh.calculate_pose_centroids(self.new_data_array, frame_idx)
             ref_centroids, _ = duh.calculate_pose_centroids(self.dlc_data.pred_data_array, frame_idx)
@@ -654,6 +672,6 @@ class DLC_Inference(QtWidgets.QDialog):
         self.reject()
 
     def closeEvent(self, event):
-        dugh.handle_unsaved_changes_on_close(self, event, self.is_saved, self.save_prediction)
+        handle_unsaved_changes_on_close(self, event, self.is_saved, self.save_prediction)
         if self.temp_directory is not None:
             self.temp_directory.cleanup()

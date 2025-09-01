@@ -1,14 +1,9 @@
 import pandas as pd
 import numpy as np
-import bisect
 
-from typing import List, Optional, Tuple, Union, Dict
+from typing import List, Tuple, Union, Dict
+
 from .dtu_dataclass import Loaded_DLC_Data
-
-def format_title(base_title: str, debug_status: bool) -> str:
-    if debug_status:
-        return f"{base_title} --- DEBUG MODE"
-    return base_title
 
 def log_print(*args, **kwargs):
     try:
@@ -16,42 +11,7 @@ def log_print(*args, **kwargs):
         with open(log_file, 'a', encoding='utf-8') as f:
             print(*args, file=f, **kwargs)
     except:
-        return
-
-###########################################################################################
-
-def get_prev_frame_in_list(frame_list:List[int], current_frame_idx:int) -> Optional[int]:
-    try:
-        current_idx_in_list = frame_list.index(current_frame_idx)
-        prev_idx = current_idx_in_list - 1
-    except ValueError:
-        insertion_point = bisect.bisect_left(frame_list, current_frame_idx)
-        prev_idx = insertion_point - 1
-
-    if prev_idx >= 0:
-        return frame_list[prev_idx]
-    
-    return None
-
-def get_next_frame_in_list(frame_list:List[int], current_frame_idx:int) -> Optional[int]:
-    try:
-        current_idx_in_list = frame_list.index(current_frame_idx)
-        next_idx = current_idx_in_list + 1
-    except ValueError:
-        insertion_point = bisect.bisect_right(frame_list, current_frame_idx)
-        next_idx = insertion_point
-
-    if next_idx < len(frame_list):
-        return frame_list[next_idx]
-    
-    return None
-
-def get_current_frame_inst(dlc_data:Loaded_DLC_Data, pred_data_array:np.ndarray, current_frame_idx:int) -> List[int]:
-    current_frame_inst = []
-    for inst in [ inst for inst in range(dlc_data.instance_count) ]:
-        if np.any(~np.isnan(pred_data_array[current_frame_idx, inst, :])):
-            current_frame_inst.append(inst)
-    return current_frame_inst
+        pass
 
 ###########################################################################################
 
@@ -404,6 +364,13 @@ def calculate_bbox(inst_x:np.ndarray, inst_y:np.ndarray, padding:float=10.0) -> 
     min_x, min_y = np.nanmin(inst_x) - padding, np.nanmin(inst_y) - padding
     max_x, max_y = np.nanmax(inst_x) + padding, np.nanmax(inst_y) + padding
     return min_x, min_y, max_x, max_y
+
+def get_current_frame_inst(dlc_data:Loaded_DLC_Data, pred_data_array:np.ndarray, current_frame_idx:int) -> List[int]:
+    current_frame_inst = []
+    for inst in [ inst for inst in range(dlc_data.instance_count) ]:
+        if np.any(~np.isnan(pred_data_array[current_frame_idx, inst, :])):
+            current_frame_inst.append(inst)
+    return current_frame_inst
 
 #########################################################################################################################################################1
 

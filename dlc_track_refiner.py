@@ -9,17 +9,16 @@ from PySide6.QtCore import Qt, QEvent, Signal
 from PySide6.QtGui import QShortcut, QKeySequence, QPainter, QColor, QPen, QCloseEvent
 from PySide6.QtWidgets import QMessageBox, QGraphicsView, QGraphicsRectItem
 
+import ui
 from ui import (
     Menu_Widget, Progress_Bar_Widget, Nav_Widget,
     Adjust_Property_Dialog, Pose_Rotation_Dialog, Canonical_Pose_Dialog, Head_Tail_Dialog,
-    Selectable_Instance, Draggable_Keypoint
+    Prediction_Plotter, Selectable_Instance, Draggable_Keypoint
 )
-from utils.dtu_plotter import DLC_Plotter
 from utils.dtu_io import DLC_Loader
 from utils.dtu_dataclass import Export_Settings, Plot_Config, Refiner_Plotter_Callbacks
 import utils.dtu_io as dio
 import utils.dtu_helper as duh
-import utils.dtu_gui_helper as dugh
 import utils.dtu_track_edit as dute
 
 DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/NTD/config.yaml"
@@ -37,7 +36,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         super().__init__()
 
         self.is_debug = False
-        self.setWindowTitle(duh.format_title("DLC Track Refiner", self.is_debug))
+        self.setWindowTitle(ui.format_title("DLC Track Refiner", self.is_debug))
         self.setGeometry(100, 100, 1200, 960)
 
         self.setup_menu()
@@ -282,7 +281,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         self.data_loader.dlc_config_filepath = dlc_config
 
-        self.dlc_data = dugh.load_and_show_message(self, self.data_loader)
+        self.dlc_data = ui.load_and_show_message(self, self.data_loader)
         self.initialize_loaded_data()
 
     def debug_load(self):
@@ -290,7 +289,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self.initialize_loaded_video()
         self.data_loader.dlc_config_filepath = DLC_CONFIG_DEBUG
         self.data_loader.prediction_filepath = self.prediction = PRED_FILE_DEBUG
-        self.dlc_data = dugh.load_and_show_message(self, self.data_loader)
+        self.dlc_data = ui.load_and_show_message(self, self.data_loader)
         self.initialize_loaded_data()
 
     def initialize_loaded_data(self):
@@ -308,7 +307,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         self._update_roi_list()
 
-        self.plotter = DLC_Plotter(
+        self.plotter = Prediction_Plotter(
             dlc_data=self.dlc_data, current_frame_data=self.pred_data_array[self.current_frame_idx, ...],
             graphics_scene=self.graphics_scene, plot_config=self.plot_config, plot_callback=self.plotter_callback)
 
@@ -481,7 +480,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         self._refresh_slider()
 
     def _navigate_roi_frames(self, mode):
-        dugh.navigate_to_marked_frame(self, self.roi_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, mode)
+        ui.navigate_to_marked_frame(self, self.roi_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, mode)
         
     ###################################################################################################################################################
 
@@ -576,7 +575,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         dialog = "Fixing track using temporal consistency..."
         title = f"Fix Track Using Temporal"
-        progress = dugh.get_progress_dialog(self, 0, self.total_frames, title, dialog)
+        progress = ui.get_progress_dialog(self, 0, self.total_frames, title, dialog)
 
         self.pred_data_array = dute.ghost_prediction_buster(self.pred_data_array, self.canon_pose)
         self.pred_data_array, _, _ = dute.purge_by_conf_and_bp(
@@ -617,7 +616,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
 
         dialog = "Fixing track from idTracker.ai trajectories..."
         title = f"Fix Track Using idTracker.ai"
-        progress = dugh.get_progress_dialog(self, 0, self.total_frames, title, dialog)
+        progress = ui.get_progress_dialog(self, 0, self.total_frames, title, dialog)
 
         self.pred_data_array, changes_applied = dute.track_correction(
             pred_data_array=self.pred_data_array,
@@ -743,7 +742,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         selected_instance_idx = self.selected_box.instance_id if self.selected_box else current_frame_inst[0]
         try:
             self.pred_data_array = dute.delete_track(self.pred_data_array, self.current_frame_idx,
-                                        self.roi_frame_list, selected_instance_idx, mode, deletion_range)
+                                        selected_instance_idx, mode, deletion_range)
         except ValueError as e:
             QMessageBox.warning(self, "Deletion Error", str(e))
             return
@@ -1109,7 +1108,7 @@ class DLC_Track_Refiner(QtWidgets.QMainWindow):
         super().changeEvent(event)
 
     def closeEvent(self, event: QCloseEvent):
-        dugh.handle_unsaved_changes_on_close(self, event, self.is_saved, self.save_prediction)
+        ui.handle_unsaved_changes_on_close(self, event, self.is_saved, self.save_prediction)
 
 #######################################################################################################################################################
 
