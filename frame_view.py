@@ -17,7 +17,7 @@ import traceback
 import ui
 import utils.helper as duh
 import utils.io as dio
-from utils.io import DLC_Loader, DLC_Exporter
+from utils.io import DLC_Loader, Exporter
 from utils.dataclass import Export_Settings, Plot_Config
 from ui import (
     Menu_Widget, Progress_Bar_Widget, Nav_Widget, Prediction_Plotter,
@@ -668,14 +668,14 @@ class Frame_View(QtWidgets.QMainWindow):
         self.save_workspace()
         if not self.refined_frame_list:
             self.exp_set.export_mode = "Append"
-            exporter = DLC_Exporter(self.dlc_data, self.exp_set, self.frame_list)
+            exporter = Exporter(self.dlc_data, self.exp_set, self.frame_list)
         else:
             self.exp_set.save_path = os.path.join(dlc_dir, "labeled-data", self.video_name)
             os.makedirs(self.exp_set.save_path, exist_ok=True)
 
             pred_data_array_for_export = duh.remove_confidence_score(self.dlc_data.pred_data_array)
             self.exp_set.export_mode = "Merge"
-            exporter = DLC_Exporter(self.dlc_data, self.exp_set, self.refined_frame_list, pred_data_array_for_export)
+            exporter = Exporter(self.dlc_data, self.exp_set, self.refined_frame_list, pred_data_array_for_export)
         
         if not self.dlc_data:
             reply = QMessageBox.question(
@@ -737,7 +737,7 @@ class Frame_View(QtWidgets.QMainWindow):
             merge_frame_list = list(set(self.labeled_frame_list) | set(self.refined_frame_list))
             label_data_array_export = duh.remove_confidence_score(self.label_data_array)
 
-            exporter = DLC_Exporter(self.dlc_data, self.exp_set, merge_frame_list, label_data_array_export)
+            exporter = Exporter(self.dlc_data, self.exp_set, merge_frame_list, label_data_array_export)
             ui.export_and_show_message(self, exporter, frame_only=False)
 
             self.process_labeled_frame()

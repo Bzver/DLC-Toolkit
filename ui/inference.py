@@ -18,7 +18,7 @@ from .widget import Progress_Bar_Widget
 from .plot import Prediction_Plotter
 from .ui_helper import handle_unsaved_changes_on_close
 from utils.dataclass import Loaded_DLC_Data, Export_Settings
-from utils.io import DLC_Exporter, DLC_Loader
+from utils.io import Exporter, DLC_Loader
 from utils import track_edit as dute
 from utils import helper as duh
 from utils import io as dio
@@ -609,7 +609,7 @@ class DLC_Inference(QtWidgets.QDialog):
 
     def _extract_marked_frame_images(self):
         try:
-            exporter = DLC_Exporter(dlc_data=self.dlc_data, export_settings=self.export_set, frame_list=self.frame_list)
+            exporter = Exporter(dlc_data=self.dlc_data, export_settings=self.export_set, frame_list=self.frame_list)
             exporter.export_data_to_DLC(frame_only=True)
             return True
         except Exception as e:

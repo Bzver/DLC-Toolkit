@@ -4,7 +4,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox, QProgressDialog
 from typing import Optional, Callable, List, Literal
 
-from utils.io import DLC_Loader, DLC_Exporter
+from utils.io import DLC_Loader, Exporter
 from utils.dataclass import Loaded_DLC_Data
 
 def format_title(base_title: str, debug_status: bool) -> str:
@@ -43,7 +43,7 @@ def load_and_show_message(
 
 def export_and_show_message(
         parent,
-        exporter:DLC_Exporter,
+        exporter:Exporter,
         frame_only:bool=False,
         mute:bool=False
         ) -> bool:
