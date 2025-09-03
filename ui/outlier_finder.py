@@ -231,7 +231,7 @@ class Outlier_Container(QtWidgets.QWidget):
         self.duplicate_bp_spinbox = QtWidgets.QDoubleSpinBox()
         self.duplicate_bp_spinbox.setRange(0.0, 1.0)
         self.duplicate_bp_spinbox.setSingleStep(0.05)
-        self.duplicate_bp_spinbox.setValue(0.8)
+        self.duplicate_bp_spinbox.setValue(0.5)
         self.duplicate_bp_spinbox.setDecimals(2)
         bp_frame.addWidget(bp_label)
         bp_frame.addWidget(self.duplicate_bp_spinbox)
