@@ -319,9 +319,21 @@ class Frame_Label(QtWidgets.QMainWindow):
             graphics_scene=self.graphics_scene, plot_config=self.plot_config, plot_callback=self.plotter_callback)
 
         if self.dlc_data.pred_frame_count != self.total_frames:
-            QMessageBox.warning(self, "Error: Frame Mismatch",
-                    "Total frames in video and in prediction do not match!"
-                    f"Frames in config: {self.total_frames} \n Frames in prediction: {self.dlc_data.pred_frame_count}")
+            msg = f"Frames in config: {self.total_frames} | Frames in prediction: {self.dlc_data.pred_frame_count}.\n\n"
+            if self.dlc_data.pred_frame_count > self.total_frames:
+                self.pred_data_array = self.pred_data_array[self.total_frames]
+                msg += "Truncating the data to match the video length."
+            else:
+                pred_data_array_padded = np.full(
+                    (self.total_frames,
+                     self.dlc_data.instance_count,
+                     self.dlc_data.num_keypoint)
+                     ,np.nan)
+                pred_data_array_padded[self.dlc_data.pred_frame_count] = self.pred_data_array.copy()
+                self.pred_data_array = pred_data_array_padded
+                msg += "Padding the data with NaN to match the video length."
+            self.dlc_data.pred_frame_count = self.total_frames
+            QMessageBox.information(self, "Video / Prediction Length Mismatch", msg)
             
         self.display_current_frame()
         self.reset_zoom()
