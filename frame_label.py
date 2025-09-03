@@ -863,8 +863,6 @@ class Frame_Label(QtWidgets.QMainWindow):
         self._save_state_for_undo()
         self.pred_data_array[outlier_mask] = np.nan
         self._on_track_data_changed()
-        self.outlier_finder.accept()
-        self.outlier_clean_pending = False
         self.is_cleaned = True
 
     def _handle_frame_change_from_comp(self, new_frame_idx: int):

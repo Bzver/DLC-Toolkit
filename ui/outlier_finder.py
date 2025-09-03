@@ -63,7 +63,6 @@ class Outlier_Finder(QDialog):
     def outlier_delete(self):
         self.get_outlier_mask()
         if self.outliers is not None:
-            self.closing.emit()
             self.mask_changed.emit(self.outliers)
 
     def closeEvent(self, event):
