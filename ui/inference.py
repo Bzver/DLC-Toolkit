@@ -18,7 +18,7 @@ from .widget import Progress_Bar_Widget
 from .plot import Prediction_Plotter
 from .ui_helper import handle_unsaved_changes_on_close
 from utils.dataclass import Loaded_DLC_Data, Export_Settings
-from utils.io import Exporter, DLC_Loader
+from utils.io import Exporter, Prediction_Loader
 from utils import io as dio
 from utils.helper import log_print
 from utils.pose import calculate_pose_centroids
@@ -634,7 +634,7 @@ class DLC_Inference(QtWidgets.QDialog):
         h5_files = [f for f in os.listdir(self.temp_dir) if f.endswith(".h5")]
         pred_filepath = os.path.join(self.temp_dir, h5_files[-1])
         dlc_config_filepath = self.dlc_data.dlc_config_filepath
-        loader = DLC_Loader(dlc_config_filepath, pred_filepath)
+        loader = Prediction_Loader(dlc_config_filepath, pred_filepath)
         loaded_data, _ = loader.load_data()
         new_data_array = np.full(
             (self.dlc_data.pred_frame_count, self.dlc_data.instance_count, self.dlc_data.num_keypoint*3), np.nan)

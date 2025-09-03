@@ -205,7 +205,7 @@ class Frame_Label(QtWidgets.QMainWindow):
         self.video_file, self.prediction, self.video_name = None, None, None
         self.dlc_data, self.canon_pose, self.angle_map_data = None, None, None
         self.instance_count_per_frame, self.pred_data_array = None, None
-        self.data_loader = dio.DLC_Loader(None, None)
+        self.data_loader = dio.Prediction_Loader(None, None)
 
         self.roi_frame_list, self.marked_roi_frame_list, self.refined_roi_frame_list = [], [], []
         self.cap, self.current_frame = None, None

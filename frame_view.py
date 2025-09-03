@@ -18,7 +18,7 @@ import ui
 import utils.helper as duh
 import utils.io as dio
 import utils.pose as dupe
-from utils.io import DLC_Loader, Exporter
+from utils.io import Prediction_Loader, Exporter
 from utils.dataclass import Export_Settings, Plot_Config
 from ui import (
     Menu_Widget, Progress_Bar_Widget, Nav_Widget, Prediction_Plotter,
@@ -116,7 +116,7 @@ class Frame_View(QtWidgets.QMainWindow):
         self.video_file, self.video_name, self.project_dir = None, None, None
         self.dlc_data, self.canon_pose = None, None
 
-        self.data_loader = DLC_Loader(None, None) # Initialize the data loader
+        self.data_loader = Prediction_Loader(None, None) # Initialize the data loader
         self.exp_set = Export_Settings(video_filepath=None, video_name=None, save_path=None, export_mode=None)
 
         self.labeled_frame_list, self.frame_list = [], []
@@ -191,6 +191,17 @@ class Frame_View(QtWidgets.QMainWindow):
         self.initialize_canon_pose()
         self.process_labeled_frame()
         self.display_current_frame()
+
+    def load_labeled(self):
+        if self.current_frame is None:
+            QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
+            return
+        
+        file_dialog = QFileDialog(self)
+        labeled_path, _ = file_dialog.getOpenFileName(self, "Load Prediction", "", "HDF5 Files (*.h5);;All Files (*)")
+
+        if not labeled_path:
+            return
 
     def load_workspace(self):
         file_dialog = QFileDialog(self)

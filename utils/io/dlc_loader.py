@@ -10,7 +10,7 @@ from typing import Tuple, Optional, Any, Dict
 from .h5_op import validate_h5_keys
 from utils.dataclass import Loaded_DLC_Data
 
-class DLC_Loader:
+class Prediction_Loader:
     """A class to load DeepLabCut configuration and prediction data."""
     def __init__(self, dlc_config_filepath: str, prediction_filepath: str):
         self.dlc_config_filepath = dlc_config_filepath

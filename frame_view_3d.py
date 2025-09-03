@@ -160,7 +160,7 @@ class Frame_View_3D(QtWidgets.QMainWindow):
         self.deviance_threshold = 50
         self.velocity_threshold = 20
 
-        self.data_loader = dio.DLC_Loader(None, None)
+        self.data_loader = dio.Prediction_Loader(None, None)
         self.dlc_data = None
         self.keypoint_to_idx = {}
 

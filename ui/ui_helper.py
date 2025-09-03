@@ -4,7 +4,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox, QProgressDialog
 from typing import Optional, Callable, Tuple
 
-from utils.io import DLC_Loader, Exporter
+from utils.io import Prediction_Loader, Exporter
 from utils.dataclass import Loaded_DLC_Data
 
 def format_title(base_title: str, debug_status: bool) -> str:
@@ -12,7 +12,7 @@ def format_title(base_title: str, debug_status: bool) -> str:
 
 def load_and_show_message(
         parent,
-        data_loader:DLC_Loader,
+        data_loader:Prediction_Loader,
         metadata_only:bool=False,
         mute:bool=False
         ) -> Optional[Loaded_DLC_Data]:
@@ -22,7 +22,7 @@ def load_and_show_message(
 
     Args:
         parent: Parent widget (e.g., QMainWindow) used for displaying dialogs or status messages.
-        data_loader (DLC_Loader): Loader instance responsible for loading the DLC data.
+        data_loader (Prediction_Loader): Loader instance responsible for loading the DLC data.
         metadata_only (bool): If True, only metadata (e.g., config, skeleton) is loaded; 
                               otherwise, full prediction data is loaded.
         mute (bool): If True, suppresses pop-up messages and only updates the status bar.
