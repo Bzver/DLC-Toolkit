@@ -10,15 +10,16 @@ from PySide6.QtGui import QShortcut, QKeySequence, QPainter, QColor, QPen, QClos
 from PySide6.QtWidgets import QMessageBox, QGraphicsView, QGraphicsRectItem
 
 import ui
+import utils.io as dio
+import utils.helper as duh
+import utils.pose as dupe
+import utils.track as dute
 from ui import (
-    Menu_Widget, Progress_Bar_Widget, Nav_Widget,
+    Menu_Widget, Progress_Bar_Widget, Nav_Widget, Outlier_Finder,
     Adjust_Property_Dialog, Pose_Rotation_Dialog, Canonical_Pose_Dialog, Head_Tail_Dialog,
     Prediction_Plotter, Selectable_Instance, Draggable_Keypoint
 )
 from utils.dataclass import Export_Settings, Plot_Config, Refiner_Plotter_Callbacks
-import utils.io as dio
-import utils.helper as duh
-import utils.track_edit as dute
 
 DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/NTD/config.yaml"
 VIDEO_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/job/20250709S-340.mp4"
@@ -89,19 +90,17 @@ class Frame_Label(QtWidgets.QMainWindow):
                         "submenu": "Delete",
                         "display_name": "Delete",
                         "items": [
-                            ("Delete Selected Instance On Current Frame (X)", lambda:self._delete_track_wrapper("point")),
-                            ("Delete Selected Instance Until Next ROI (Shift + X)", lambda:self._delete_track_wrapper("batch")),
-                            ("Delete Instances Below Set Confidence Across All Frames ", self.purge_inst_by_conf),
+                            ("Delete Selected Instance On Current Frame (X)", self._delete_track_wrapper),
                             ("Delete All Prediction Inside Selected Area", self.designate_no_mice_zone),
-                            ("Delete Abnormal Instances", self.purge_ghost_tracks)
+                            ("Delete Outliers", self.call_outlier_finder),
                         ]
                     },
                     {
                         "submenu": "Swap",
                         "display_name": "Swap",
                         "items": [
-                            ("Swap Instances On Current Frame (W)", lambda:self._swap_track_wrapper("point")),
-                            ("Swap Until The End (Shift + W)", lambda:self._swap_track_wrapper("batch"))
+                            ("Swap Instances On Current Frame (W)", self._swap_track_wrapper),
+                            ("Swap Until The End (Shift + W)", lambda:self._swap_track_wrapper(swap_range=[-1]))
                         ]
                     },
                     {
@@ -112,17 +111,17 @@ class Frame_Label(QtWidgets.QMainWindow):
                             ("Correct Track Using Idtrackerai Trajectories", self.correct_track_using_idtrackerai),
                         ]
                     },
-                    ("Generate Instance (G)", self._generate_track_wrapper),
-                    ("Rotate Selected Instance (R)", self._rotate_track_wrapper),
+                    ("Generate Instance (G)", self._generate_inst_wrapper),
+                    ("Rotate Selected Instance (R)", self._rotate_inst_wrapper),
                 ]
             },
             "View": {
                 "buttons": [
                     ("Toggle Zoom Mode (Z)", self.toggle_zoom_mode, {"checkable": True, "checked": False}),
                     ("Toggle Snap to Instances (E)", self.toggle_snap_to_instances, {"checkable": True, "checked": False}),
-                    ("Reset Zoom", self.reset_zoom),
                     ("Hide Text Labels", self.toggle_hide_text_labels, {"checkable": True, "checked": False}),
-                    ("View Canonical Pose", self.view_canonical_pose)
+                    ("View Canonical Pose", self.view_canonical_pose),
+                    ("Reset Zoom", self.reset_zoom),
                 ]
             },
             "Preference": {
@@ -185,14 +184,14 @@ class Frame_Label(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_Down), self).activated.connect(lambda:self._navigate_roi_frames("next"))
         QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.progress_widget.toggle_playback)
 
-        QShortcut(QKeySequence(Qt.Key_W), self).activated.connect(lambda:self._swap_track_wrapper("point"))
-        QShortcut(QKeySequence(Qt.Key_X), self).activated.connect(lambda:self._delete_track_wrapper("point"))
-        QShortcut(QKeySequence(Qt.Key_W | Qt.ShiftModifier), self).activated.connect(lambda:self._swap_track_wrapper("batch"))
-        QShortcut(QKeySequence(Qt.Key_X | Qt.ShiftModifier), self).activated.connect(lambda:self._delete_track_wrapper("batch"))
+        QShortcut(QKeySequence(Qt.Key_W), self).activated.connect(self._swap_track_wrapper)
+        QShortcut(QKeySequence(Qt.Key_X), self).activated.connect(self._delete_track_wrapper)
+        QShortcut(QKeySequence(Qt.Key_W | Qt.ShiftModifier), self).activated.connect(lambda:self._swap_track_wrapper(swap_range=[-1]))
+        QShortcut(QKeySequence(Qt.Key_X | Qt.ShiftModifier), self).activated.connect(self._delete_track_wrapper)
         QShortcut(QKeySequence(Qt.Key_T), self).activated.connect(self._interpolate_track_wrapper)
         QShortcut(QKeySequence(Qt.Key_T | Qt.ShiftModifier), self).activated.connect(self._interpolate_missing_kp_wrapper)
-        QShortcut(QKeySequence(Qt.Key_G), self).activated.connect(self._generate_track_wrapper)
-        QShortcut(QKeySequence(Qt.Key_R), self).activated.connect(self._rotate_track_wrapper)
+        QShortcut(QKeySequence(Qt.Key_G), self).activated.connect(self._generate_inst_wrapper)
+        QShortcut(QKeySequence(Qt.Key_R), self).activated.connect(self._rotate_inst_wrapper)
         QShortcut(QKeySequence(Qt.Key_Q), self).activated.connect(self.direct_keypoint_edit)
         QShortcut(QKeySequence(Qt.Key_Backspace), self).activated.connect(self.delete_dragged_keypoint)
 
@@ -214,6 +213,7 @@ class Frame_Label(QtWidgets.QMainWindow):
         self.start_point, self.current_rect_item = None, None
 
         self.is_kp_edit, self.is_drawing_zone, self.is_zoom_mode = False, False, False
+        self.skip_outlier_clean, self.outlier_clean_pending, self.is_cleaned = False, False, False
 
         self.undo_stack, self.redo_stack = [], []
         self.max_undo_stack_size = 100
@@ -226,7 +226,6 @@ class Frame_Label(QtWidgets.QMainWindow):
             box_coords_callback = self._update_instance_position, box_object_callback = self._handle_box_selection
         )
         self.zoom_factor = 1.0
-
         self.auto_snapping = False
 
         self.nav_widget.set_collapsed(True)
@@ -301,7 +300,7 @@ class Frame_Label(QtWidgets.QMainWindow):
             if dialog.exec() == QtWidgets.QDialog.Accepted:
                 head_idx, tail_idx = dialog.get_selected_indices()
 
-        self.canon_pose, all_frame_pose = duh.calculate_canonical_pose(self.pred_data_array, head_idx, tail_idx)
+        self.canon_pose, all_frame_pose = dupe.calculate_canonical_pose(self.pred_data_array, head_idx, tail_idx)
         self.angle_map_data = duh.build_angle_map(self.canon_pose, all_frame_pose, head_idx, tail_idx)
 
         self._update_roi_list()
@@ -348,7 +347,7 @@ class Frame_Label(QtWidgets.QMainWindow):
                     current_frame_data = self.pred_data_array[self.current_frame_idx, ...]
                     if not np.all(np.isnan(current_frame_data)):
                         self.zoom_factor, center_x, center_y = \
-                            duh.calculate_snapping_zoom_level(current_frame_data, view_width, view_height)
+                            ui.calculate_snapping_zoom_level(current_frame_data, view_width, view_height)
                         self.graphics_view.centerOn(center_x, center_y)
 
                 new_transform = QtGui.QTransform()
@@ -443,7 +442,7 @@ class Frame_Label(QtWidgets.QMainWindow):
     ###################################################################################################################################################
 
     def _update_roi_list(self):
-        self.instance_count_per_frame = dute.get_instance_count_per_frame(self.pred_data_array)
+        self.instance_count_per_frame = duh.get_instance_count_per_frame(self.pred_data_array)
         if self.marked_roi_frame_list:
             self.roi_frame_list = list(self.marked_roi_frame_list)
         else:
@@ -483,56 +482,6 @@ class Frame_Label(QtWidgets.QMainWindow):
         
     ###################################################################################################################################################
 
-    def purge_inst_by_conf(self):
-        if not self._track_edit_blocker():
-            return
-        confidence_threshold, ok = QtWidgets.QInputDialog.getDouble(
-            self,"Set Confidence Threshold","Delete all instances below this confidence:",
-            value=0.5, minValue=0.0, maxValue=1.0, decimals=2
-        )
-
-        if not ok:
-            QMessageBox.information(self, "Input Cancelled", "Confidence input cancelled.")
-            return
-
-        # Prompt for the body part discovery percentage
-        bodypart_threshold, ok_bp = QtWidgets.QInputDialog.getDouble(
-            self, "Set Body Part Threshold", "Delete all instances with fewer than this percentage of body parts discovered:",
-            value=20.0, minValue=0.0, maxValue=100.0, decimals=0
-        )
-
-        if not ok_bp:
-            QMessageBox.information(self, "Input Cancelled", "Body part threshold input cancelled.")
-            return
-        
-        reply = QMessageBox.question(
-            self, "Confirm Deletion",
-            f"Are you sure you want to delete all instances with confidence below {confidence_threshold:.2f} "
-            f"OR with fewer than {int(bodypart_threshold)}% of body parts discovered?",
-            QMessageBox.Yes | QMessageBox.No
-        )
-
-        if reply == QMessageBox.Yes:
-            self._save_state_for_undo()  # Save state before modification
-
-            self.pred_data_array, removed_frames_count, removed_instances_count = dute.purge_by_conf_and_bp(
-                self.pred_data_array, confidence_threshold, bodypart_threshold)
-            QMessageBox.information(self, "Deletion Complete", f"Deleted {removed_instances_count} instances from {removed_frames_count} frames.")
-
-            self._on_track_data_changed()
-            self.reset_zoom()
-        else:
-            QMessageBox.information(self, "Deletion Cancelled", "Deletion cancelled by user.")
-
-    def purge_ghost_tracks(self):
-        if not self._track_edit_blocker():
-            return
-        
-        self._save_state_for_undo()
-        self.pred_data_array = dute.ghost_prediction_buster(self.pred_data_array, self.canon_pose, debug_print=self.is_debug)
-        self._on_track_data_changed()
-        self.reset_zoom()
-
     def interpolate_all(self):
         if not self._track_edit_blocker():
             return
@@ -570,15 +519,13 @@ class Frame_Label(QtWidgets.QMainWindow):
         if not self._track_edit_blocker():
             return
 
+        self.suggest_outlier_clean()
+
         self._save_state_for_undo()
 
         dialog = "Fixing track using temporal consistency..."
         title = f"Fix Track Using Temporal"
         progress = ui.get_progress_dialog(self, 0, self.total_frames, title, dialog)
-
-        self.pred_data_array = dute.ghost_prediction_buster(self.pred_data_array, self.canon_pose)
-        self.pred_data_array, _, _ = dute.purge_by_conf_and_bp(
-            self.pred_data_array, confidence_threshold=0.5, bodypart_threshold=0)
 
         self.pred_data_array, changes_applied = dute.track_correction(
             pred_data_array=self.pred_data_array,
@@ -611,6 +558,7 @@ class Frame_Label(QtWidgets.QMainWindow):
         df_conf = pd.read_csv(conf_csv, header=0)
         idt_traj_array = dio.parse_idt_df_into_ndarray(df_idt, df_conf)
 
+        self.suggest_outlier_clean()
         self._save_state_for_undo()
 
         dialog = "Fixing track from idTracker.ai trajectories..."
@@ -714,6 +662,34 @@ class Frame_Label(QtWidgets.QMainWindow):
     def set_dragged_keypoint(self, keypoint_item:Draggable_Keypoint):
         self.dragged_keypoint = keypoint_item
 
+    def call_outlier_finder(self):
+        if not self._track_edit_blocker():
+            return
+        
+        self.outlier_clean_pending = True
+        self.outlier_finder = Outlier_Finder(self.pred_data_array, canon_pose=self.canon_pose)
+        self.outlier_finder.mask_changed.connect(self._handle_outlier_mask_from_comp)
+        self.outlier_finder.list_changed.connect(self._handle_frame_list_from_comp)
+        self.outlier_finder.closing.connect(self._handle_outlier_window_closing)
+        self.outlier_finder.show()
+        self.reset_zoom()
+
+    def suggest_outlier_clean(self):
+        if not self.is_cleaned and not self.skip_outlier_clean:
+            reply = QMessageBox.question(
+                self, "Outliers Not Cleaned",
+            "You are about to apply temporal correction on uncleaned tracking data.\n"
+            "This may lead to error propagation or inaccurate smoothing.\n"
+            "It is strongly recommended cleaning outliers first.\n\n"
+            "Do you still want to continue without cleaning?",
+            )
+
+            if reply == QMessageBox.No:
+                self.call_outlier_finder()
+                return
+            else:
+                self.skip_outlier_clean = True
+
     ###################################################################################################################################################
 
     def _track_edit_blocker(self):
@@ -723,14 +699,20 @@ class Frame_Label(QtWidgets.QMainWindow):
         if self.is_kp_edit:
             QMessageBox.warning(self, "Not Allowed", "Please finish editing keypoints before using this function.")
             return False
+        if self.outlier_clean_pending:
+            QMessageBox.warning(self, "Outlier Cleaning Pending",
+            "An outlier cleaning operation is pending.\n"
+            "Please confirm or cancel the outlier detection dialog first."
+        )
+            return False
         return True
     
-    def _delete_track_wrapper(self, mode, deletion_range=None):
+    def _delete_track_wrapper(self, deletion_range=None):
         if self.pred_data_array is None:
             QMessageBox.warning(self, "Error", "Prediction data not loaded. Please load a prediction file first.")
             return
 
-        current_frame_inst = duh.get_current_frame_inst(self.dlc_data, self.pred_data_array, self.current_frame_idx)
+        current_frame_inst = duh.get_instances_on_current_frame(self.pred_data_array, self.current_frame_idx)
         if len(current_frame_inst) > 1 and not self.selected_box:
             QMessageBox.information(self, "No Instance Seleted",
                 "When there are more than one instance present, "
@@ -741,14 +723,14 @@ class Frame_Label(QtWidgets.QMainWindow):
         selected_instance_idx = self.selected_box.instance_id if self.selected_box else current_frame_inst[0]
         try:
             self.pred_data_array = dute.delete_track(self.pred_data_array, self.current_frame_idx,
-                                        selected_instance_idx, mode, deletion_range)
+                                        selected_instance_idx, deletion_range)
         except ValueError as e:
             QMessageBox.warning(self, "Deletion Error", str(e))
             return
         
         self._on_track_data_changed()
         
-    def _swap_track_wrapper(self, mode, swap_range=None):
+    def _swap_track_wrapper(self, swap_range=None):
         if self.pred_data_array is None:
             QMessageBox.warning(self, "Error", "Prediction data not loaded. Please load a prediction file first.")
             return
@@ -760,7 +742,7 @@ class Frame_Label(QtWidgets.QMainWindow):
 
         self._save_state_for_undo()
         try:
-            self.pred_data_array = dute.swap_track(self.pred_data_array, self.current_frame_idx, mode, swap_range)
+            self.pred_data_array = dute.swap_track(self.pred_data_array, self.current_frame_idx, swap_range)
         except ValueError as e:
             QMessageBox.warning(self, "Deletion Error", str(e))
             return
@@ -772,7 +754,7 @@ class Frame_Label(QtWidgets.QMainWindow):
             QMessageBox.warning(self, "Error", "Prediction data not loaded. Please load a prediction file first.")
             return
         
-        current_frame_inst = duh.get_current_frame_inst(self.dlc_data, self.pred_data_array, self.current_frame_idx)
+        current_frame_inst = duh.get_instances_on_current_frame(self.pred_data_array, self.current_frame_idx)
         if len(current_frame_inst) > 1 and not self.selected_box:
             QMessageBox.information(self, "Track Not Interpolated", "No Instance is selected.")
             return
@@ -797,39 +779,39 @@ class Frame_Label(QtWidgets.QMainWindow):
         self.pred_data_array = dute.interpolate_track(self.pred_data_array, frames_to_interpolate, selected_instance_idx)
         self._on_track_data_changed()
 
-    def _generate_track_wrapper(self):
+    def _generate_inst_wrapper(self):
         if self.pred_data_array is None:
             QMessageBox.warning(self, "Error", "Prediction data not loaded. Please load a prediction file first.")
             return False
 
         self._save_state_for_undo()
 
-        current_frame_inst = duh.get_current_frame_inst(self.dlc_data, self.pred_data_array, self.current_frame_idx)
+        current_frame_inst = duh.get_instances_on_current_frame(self.pred_data_array, self.current_frame_idx)
         missing_instances = [inst for inst in range(self.dlc_data.instance_count) if inst not in current_frame_inst]
         if not missing_instances:
             QMessageBox.information(self, "No Missing Instances", "No missing instances found in the current frame to fill.")
             return
         
-        self.pred_data_array = dute.generate_track(self.pred_data_array, self.current_frame_idx, missing_instances,
+        self.pred_data_array = dupe.generate_missing_inst(self.pred_data_array, self.current_frame_idx, missing_instances,
             angle_map_data=self.angle_map_data)
         self._on_track_data_changed()
 
-    def _rotate_track_wrapper(self):
+    def _rotate_inst_wrapper(self):
         if self.pred_data_array is None:
             QMessageBox.warning(self, "Error", "Prediction data not loaded. Please load a prediction file first.")
             return
         
-        current_frame_inst = duh.get_current_frame_inst(self.dlc_data, self.pred_data_array, self.current_frame_idx)
+        current_frame_inst = duh.get_instances_on_current_frame(self.pred_data_array, self.current_frame_idx)
         if len(current_frame_inst) > 1 and not self.selected_box:
             QMessageBox.information(self, "Track Not Rotated", "No Instance is selected.")
             return
         
         selected_instance_idx = self.selected_box.instance_id if self.selected_box else current_frame_inst[0]
 
-        _, local_coords = duh.calculate_pose_centroids(self.pred_data_array, self.current_frame_idx)
+        _, local_coords = dupe.calculate_pose_centroids(self.pred_data_array, self.current_frame_idx)
         local_x = local_coords[selected_instance_idx, 0::2]
         local_y = local_coords[selected_instance_idx, 1::2]
-        current_rotation = np.degrees(duh.calculate_pose_rotations(local_x, local_y, angle_map_data=self.angle_map_data))
+        current_rotation = np.degrees(dupe.calculate_pose_rotations(local_x, local_y, angle_map_data=self.angle_map_data))
         if np.isnan(current_rotation) or np.isinf(current_rotation):
             current_rotation = 0.0
         else:
@@ -846,7 +828,7 @@ class Frame_Label(QtWidgets.QMainWindow):
             QMessageBox.warning(self, "Error", "Prediction data not loaded. Please load a prediction file first.")
             return
         
-        current_frame_inst = duh.get_current_frame_inst(self.dlc_data, self.pred_data_array, self.current_frame_idx)
+        current_frame_inst = duh.get_instances_on_current_frame(self.pred_data_array, self.current_frame_idx)
         if len(current_frame_inst) > 1 and not self.selected_box:
             QMessageBox.information(self, "Track Not Interpolated", "No Instance is selected.")
             return
@@ -854,7 +836,7 @@ class Frame_Label(QtWidgets.QMainWindow):
         selected_instance_idx = self.selected_box.instance_id if self.selected_box else current_frame_inst[0]
         self._save_state_for_undo()
 
-        self.pred_data_array = dute.interpolate_missing_keypoints(self.pred_data_array, self.current_frame_idx, selected_instance_idx,
+        self.pred_data_array = dupe.generate_missing_kp_for_inst(self.pred_data_array, self.current_frame_idx, selected_instance_idx,
             angle_map_data=self.angle_map_data)
         self._on_track_data_changed()
 
@@ -866,6 +848,25 @@ class Frame_Label(QtWidgets.QMainWindow):
         self._update_roi_list()
         self.display_current_frame()
 
+    def _handle_outlier_window_closing(self):
+        self.outlier_clean_pending = False
+        self.marked_roi_frame_list = []
+        self._update_roi_list()
+
+    def _handle_frame_list_from_comp(self, frame_list:list):
+        self.marked_roi_frame_list = frame_list
+        self._update_roi_list()
+        self.current_frame_idx = frame_list[0]
+        self.display_current_frame()
+
+    def _handle_outlier_mask_from_comp(self, outlier_mask:np.ndarray):
+        self._save_state_for_undo()
+        self.pred_data_array[outlier_mask] = np.nan
+        self._on_track_data_changed()
+        self.outlier_finder.accept()
+        self.outlier_clean_pending = False
+        self.is_cleaned = True
+
     def _handle_frame_change_from_comp(self, new_frame_idx: int):
         self.current_frame_idx = new_frame_idx
         self.display_current_frame()
@@ -873,7 +874,7 @@ class Frame_Label(QtWidgets.QMainWindow):
 
     def _on_rotation_changed(self, selected_instance_idx, angle_delta: float):
         angle_delta = np.radians(angle_delta)
-        self.pred_data_array = dute.rotate_track(self.pred_data_array, self.current_frame_idx,
+        self.pred_data_array = dupe.rotate_selected_inst(self.pred_data_array, self.current_frame_idx,
             selected_instance_idx, angle=angle_delta)
         self._on_track_data_changed()
 
@@ -945,7 +946,7 @@ class Frame_Label(QtWidgets.QMainWindow):
             x1, y1, x2, y2 = int(rect.left()), int(rect.top()), int(rect.right()), int(rect.bottom())
 
             self._save_state_for_undo()
-            self.pred_data_array = dute.clean_inconsistent_nans(self.pred_data_array) # Cleanup ghost points (NaN for x,y yet non-nan in confidence)
+            self.pred_data_array = duh.clean_inconsistent_nans(self.pred_data_array) # Cleanup ghost points (NaN for x,y yet non-nan in confidence)
 
             all_x_kps = self.pred_data_array[:,:,0::3]
             all_y_kps = self.pred_data_array[:,:,1::3]

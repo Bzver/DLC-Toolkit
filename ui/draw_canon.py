@@ -7,7 +7,7 @@ from PySide6.QtGui import QPixmap, QImage
 
 from .plot import Prediction_Plotter
 from utils.dataclass import Loaded_DLC_Data, Plot_Config
-from utils import helper as duh
+from utils.pose import calculate_pose_bbox
 
 class Canonical_Pose_Dialog(QDialog):
     def __init__(self, dlc_data:Loaded_DLC_Data, canon_pose:np.ndarray, parent=None):
@@ -52,7 +52,7 @@ class Canonical_Pose_Dialog(QDialog):
         img_height, img_width = 600, 600
         blank_image = np.full((img_height, img_width, 3), 255, dtype=np.uint8)
         
-        min_x, min_y, max_x, max_y = duh.calculate_bbox(self.canon_pose[:, 0], self.canon_pose[:, 1])
+        min_x, min_y, max_x, max_y = calculate_pose_bbox(self.canon_pose[:, 0], self.canon_pose[:, 1])
         canon_len = max(max_y-min_y, max_x-min_x)
 
         zoom_factor = 600 // canon_len

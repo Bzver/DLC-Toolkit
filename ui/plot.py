@@ -1,6 +1,6 @@
 import numpy as np
-
 import cv2
+
 from PySide6 import QtGui
 from PySide6.QtWidgets import QGraphicsRectItem, QGraphicsEllipseItem, QGraphicsTextItem, QGraphicsLineItem, QGraphicsScene
 

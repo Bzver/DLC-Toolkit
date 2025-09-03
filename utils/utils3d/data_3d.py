@@ -5,7 +5,7 @@ from sklearn.linear_model import LinearRegression
 
 from typing import Optional, Tuple, List
 
-from . import triangulation as tri
+from .triangulation import triangulate_point, undistort_points
 from utils.dataclass import Loaded_DLC_Data
 
 class Data_Processor_3D:
@@ -89,10 +89,10 @@ class Data_Processor_3D:
 
                 if num_valid_views >= 2:
                     if return_confidence:
-                        point_3d_array[inst, kp_idx, :3], point_3d_array[inst, kp_idx, 3] = tri.triangulate_point(
+                        point_3d_array[inst, kp_idx, :3], point_3d_array[inst, kp_idx, 3] = triangulate_point(
                             num_valid_views, projs, pts_2d, confs, return_confidence)
                     else:
-                        point_3d_array[inst, kp_idx, :] = tri.triangulate_point(num_valid_views, projs, pts_2d, confs, return_confidence)
+                        point_3d_array[inst, kp_idx, :] = triangulate_point(num_valid_views, projs, pts_2d, confs, return_confidence)
 
         return point_3d_array
 
@@ -273,7 +273,7 @@ class Data_Processor_3D:
                 keypoint_data_all_kps_flattened = self.pred_data_array[frame_idx, cam_idx, inst_idx, :]
 
                 if not self.undistorted_images:
-                    keypoint_data_all_kps_flattened = tri.undistort_points(keypoint_data_all_kps_flattened, K, RDistort, TDistort)
+                    keypoint_data_all_kps_flattened = undistort_points(keypoint_data_all_kps_flattened, K, RDistort, TDistort)
                 
                 # Shape the flattened data back into (num_keypoints, 3) for easier iteration
                 keypoint_data_all_kps_reshaped = keypoint_data_all_kps_flattened.reshape(-1, 3)

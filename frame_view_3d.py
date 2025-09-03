@@ -18,9 +18,8 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 import ui
-import utils.utils3d as utls3
 import utils.io as dio
-import utils.track_edit as dute
+import utils.utils3d as utls3
 from utils.dataclass import Plot_Config
 from ui import (
     Menu_Widget, Progress_Bar_Widget, Nav_Widget, Adjust_Property_Dialog,
@@ -780,7 +779,7 @@ class Frame_View_3D(QtWidgets.QMainWindow):
             self.pred_data_array = backup_pred_data_array.copy()
 
             for cam_idx in cam_combo:
-                self.pred_data_array = dute.track_swap_3D_plotter(self.pred_data_array, frame_idx, cam_idx)
+                self.pred_data_array = utls3.track_swap_3D(self.pred_data_array, frame_idx, cam_idx)
 
             self.selected_cam_idx = cam_combo[0] # Set the first camera as selected for display
             self._post_correction_operations()
@@ -814,7 +813,7 @@ class Frame_View_3D(QtWidgets.QMainWindow):
             QMessageBox.information(self, "Unimplemented", "The function is only for two instance only.")
             return
         
-        self.pred_data_array = dute.track_swap_3D_plotter(self.pred_data_array, self.current_frame_idx, self.selected_cam_idx)
+        self.pred_data_array = utls3.track_swap_3D(self.pred_data_array, self.current_frame_idx, self.selected_cam_idx)
         self.display_current_frame() # Refresh the display to show the swapped frame
         self.calculate_identity_swap_score(mode="manual_check")
         self.calculate_temporal_vel(frame_idx_r=self.current_frame_idx)

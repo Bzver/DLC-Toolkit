@@ -2,8 +2,9 @@ import numpy as np
 from itertools import combinations
 from typing import Tuple, Literal
 
-from . import triangulation as tri
+from .triangulation import triangulate_point_simple
 from utils.dataclass import Swap_Calculation_Config
+from utils.track import swap_track
 
 def calculate_identity_swap_score_per_frame(
         keypoint_data_tr:dict,
@@ -48,7 +49,7 @@ def calculate_identity_swap_score_per_frame(
                     conf2 = keypoint_data_tr[inst][kp_idx]['confs'][cam2_idx]
 
                     kp_3d_all_pair[pair_idx, inst, kp_idx] = \
-                        tri.triangulate_point_simple(proj1, proj2, pts_2d1, pts_2d2, conf1, conf2)
+                        triangulate_point_simple(proj1, proj2, pts_2d1, pts_2d2, conf1, conf2)
 
     mean_3d_kp = np.nanmean(kp_3d_all_pair, axis=0)
 
@@ -158,3 +159,9 @@ def acquire_view_perspective_for_selected_cam(cam_pos:np.ndarray) -> Tuple[float
     azimuth = np.arctan2(cam_pos[1], cam_pos[0])
     azim_deg = np.degrees(azimuth)
     return elev_deg, azim_deg
+
+def track_swap_3D(pred_data_array:np.ndarray, frame_idx:int, selected_cam_idx:int) -> np.ndarray:
+    pred_data_array_to_swap = pred_data_array[:, selected_cam_idx, :, :]
+    pred_data_array_swapped = swap_track(pred_data_array_to_swap, frame_idx, mode="batch")
+    pred_data_array[:, selected_cam_idx, :, :] = pred_data_array_swapped
+    return pred_data_array

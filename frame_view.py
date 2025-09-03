@@ -17,11 +17,12 @@ import traceback
 import ui
 import utils.helper as duh
 import utils.io as dio
+import utils.pose as dupe
 from utils.io import DLC_Loader, Exporter
 from utils.dataclass import Export_Settings, Plot_Config
 from ui import (
     Menu_Widget, Progress_Bar_Widget, Nav_Widget, Prediction_Plotter,
-    Adjust_Property_Dialog, Generate_Mark_Dialog, Clear_Mark_Dialog
+    Adjust_Property_Dialog, Mark_Generator, Clear_Mark_Dialog, Canonical_Pose_Dialog
     )
 
 class Frame_View(QtWidgets.QMainWindow):
@@ -47,7 +48,8 @@ class Frame_View(QtWidgets.QMainWindow):
                     ("Adjust Confidence Cutoff", self.show_confidence_dialog),
                     ("Mark / Unmark Current Frame (X)", self.toggle_frame_status),
                     ("Automatic Mark Generation", self.show_mark_generation_dialog),
-                    ("Clear Frame Marks of Category", self.show_clear_mark_dialog)
+                    ("Clear Frame Marks of Category", self.show_clear_mark_dialog),
+                    ("View Canonical Pose", self.view_canonical_pose)
                 ]
             },
             "Edit": {
@@ -108,7 +110,7 @@ class Frame_View(QtWidgets.QMainWindow):
 
     def reset_state(self):
         self.video_file, self.video_name, self.project_dir = None, None, None
-        self.dlc_data = None
+        self.dlc_data, self.canon_pose = None, None
 
         self.data_loader = DLC_Loader(None, None) # Initialize the data loader
         self.exp_set = Export_Settings(video_filepath=None, video_name=None, save_path=None, export_mode=None)
@@ -180,6 +182,7 @@ class Frame_View(QtWidgets.QMainWindow):
 
         self.dlc_data = ui.load_and_show_message(self, self.data_loader)
 
+        self.initialize_canon_pose()
         self.process_labeled_frame()
         self.display_current_frame()
 
@@ -216,6 +219,7 @@ class Frame_View(QtWidgets.QMainWindow):
                 self.data_loader.prediction_filepath = prediction
 
                 self.dlc_data = ui.load_and_show_message(self, self.data_loader)
+                self.initialize_canon_pose()
 
             if "refined_frame_list" in fmk.keys():
                 self.refined_frame_list = fmk["refined_frame_list"]
@@ -245,7 +249,7 @@ class Frame_View(QtWidgets.QMainWindow):
             return
         
         self.labeled_frame_list = []
-        # Initialize an empty label data array that has same size as pred_data_array
+
         self.label_data_array = np.full_like(self.dlc_data.pred_data_array, np.nan)
         for label_data_file in label_data_files:
             with h5py.File(os.path.join(self.project_dir, label_data_file), "r") as lbf:
@@ -281,6 +285,11 @@ class Frame_View(QtWidgets.QMainWindow):
             current_frame_data = current_frame_data,
             plot_config = self.plot_config,
             frame_cv2 = self.current_frame)
+        
+    def initialize_canon_pose(self):
+        head_idx, tail_idx = duh.infer_head_tail_indices(self.dlc_data.keypoints)
+        if head_idx is not None and tail_idx is not None:
+            self.canon_pose, _ = dupe.calculate_canonical_pose(self.dlc_data.pred_data_array, head_idx, tail_idx)
 
     ###################################################################################################################################################
 
@@ -370,7 +379,7 @@ class Frame_View(QtWidgets.QMainWindow):
         if self.current_frame_idx in self.refined_frame_list:
             reply = QMessageBox.question(
                 self, "Confirm Unmarking",
-                "This frame is already refined, do you still want to remove it from the exported lists>",
+                "This frame is already refined, do you still want to remove it from the exported lists?",
                 QMessageBox.Yes | QMessageBox.No
             )
             if reply == QMessageBox.Yes:
@@ -424,10 +433,10 @@ class Frame_View(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
             return
         
-        mark_gen_dialog = Generate_Mark_Dialog(self.total_frames, self.dlc_data, parent=self)
+        mark_gen_dialog = Mark_Generator(self.total_frames, self.dlc_data, self.canon_pose, parent=self)
         mark_gen_dialog.clear_old.connect(self._on_clear_old_command)
         mark_gen_dialog.frame_list_new.connect(self._handle_frame_marks_from_comp)
-        mark_gen_dialog.exec()
+        mark_gen_dialog.show()
 
     def show_clear_mark_dialog(self):
         frame_set = set(self.frame_list)
@@ -463,6 +472,10 @@ class Frame_View(QtWidgets.QMainWindow):
         mark_clear_dialog.frame_category_to_clear.connect(self._clear_category)
         mark_clear_dialog.exec()
 
+    def view_canonical_pose(self):
+        dialog = Canonical_Pose_Dialog(self.dlc_data, self.canon_pose)
+        dialog.exec()
+
     def _clear_category(self, frame_category):
         actions = {
             "All Marked Frames": lambda: (
@@ -490,7 +503,11 @@ class Frame_View(QtWidgets.QMainWindow):
         self.navigation_title_controller()
 
     def _on_clear_old_command(self, clear_old:bool):
-        if clear_old:
+        if not clear_old:
+            return
+        if not self.refined_frame_list:
+            self._clear_category("All Marked Frames")
+        else:
             self._clear_category("All Marked Frames (Except for Refined)")
 
     ###################################################################################################################################################

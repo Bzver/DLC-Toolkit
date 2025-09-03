@@ -3,7 +3,7 @@ from PySide6.QtCore import Qt, QTimer, Signal, QPropertyAnimation, QEasingCurve
 from PySide6.QtWidgets import QPushButton, QHBoxLayout, QVBoxLayout, QFrame, QLabel
 from PySide6.QtGui import QFont
  
-from typing import List, Optional
+from typing import List
 
 from ui import Slider_With_Marks
 
@@ -119,14 +119,14 @@ class Progress_Bar_Widget(QtWidgets.QWidget):
         self.playback_timer.setInterval(int(1000/50)) # ~50 FPS
         self.playback_timer.timeout.connect(self.advance_frame)
 
-    def set_frame_category(self, category_name:str, frame_list:List[int], color:Optional[HexColor]="#183539", priority:int=0):
+    def set_frame_category(self, category_name:str, frame_list:List[int], color:HexColor="#183539", priority:int=0):
         """
         Public API to pass the slider mark properties
 
         Args:
             category_name (str): The name of the category to assign to the specified frames.
             frame_list (List[int]): A list of frame indices to be associated with the category.
-            color (Optional[HexColor]): The hexadecimal color code (e.g., '#FF55A3') used to style the frames in this category
+            color (HexColor): The hexadecimal color code (e.g., '#FF55A3') used to style the frames in this category
             priority (int): The rendering priority of the category. 
                 The higher the priority, the more prominently the category will be displayed.
 

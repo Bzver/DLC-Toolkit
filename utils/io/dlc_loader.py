@@ -5,7 +5,7 @@ import h5py
 import yaml
 from utils import helper as duh
 
-from typing import Tuple, Optional, Any
+from typing import Tuple, Optional, Any, Dict
 
 from .h5_op import validate_h5_keys
 from utils.dataclass import Loaded_DLC_Data
@@ -76,7 +76,7 @@ class DLC_Loader:
         except Exception as e:
             return None, f"Error loading DLC config: {e}"
 
-    def _load_prediction_data(self, config_data: dict) -> Tuple[Optional[dict[str, Any]], str]:
+    def _load_prediction_data(self, config_data: dict) -> Tuple[Optional[Dict[str, Any]], str]:
         """
         Internal method to load prediction data from HDF5 file.
         Returns a dictionary of prediction data on success, or (None, "Error Message") on failure.

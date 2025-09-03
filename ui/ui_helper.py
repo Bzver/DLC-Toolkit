@@ -1,8 +1,8 @@
-import bisect
+import numpy as np
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox, QProgressDialog
-from typing import Optional, Callable, List, Literal
+from typing import Optional, Callable, Tuple
 
 from utils.io import DLC_Loader, Exporter
 from utils.dataclass import Loaded_DLC_Data
@@ -123,6 +123,8 @@ def handle_unsaved_changes_on_close(
     else:
         event.ignore()  # Cancel the close action
 
+###########################################################################################
+
 def get_progress_dialog(
         parent,
         start_frame:int,
@@ -161,73 +163,59 @@ def get_progress_dialog(
 
 ###########################################################################################
 
-def navigate_to_marked_frame(
-        parent,
-        frame_list:List[int],
-        current_frame_idx:int,
-        change_frame_callback:Callable[[int], None],
-        mode:Literal["prev","next"]
-        ):
+def calculate_snapping_zoom_level(
+        current_frame_data:np.ndarray,
+        view_width:float,
+        view_height:float
+        )->Tuple[float,float,float]:
     """
-    Navigates to the previous or next frame in a sorted list of frames.
+    Calculates an optimal zoom level and center position to fit all visible keypoints 
+    in the current frame within the view, with padding.
+
+    The function computes the bounding box of all non-NaN 2D keypoint coordinates, 
+    applies uniform padding, and determines the maximum zoom level that fits the padded 
+    box within the given view dimensions. The result centers the keypoints in the view.
 
     Args:
-        parent: Parent widget for displaying warning or error messages.
-        frame_list (List[int]): List of frame indices that are marked.
-        current_frame_idx (int): Index of the currently displayed frame.
-        change_frame_callback (Callable[[int], None]): Function to call with the destination frame index.
-        mode (Literal["prev", "next"]): Direction of navigation — either "prev" or "next".
+        current_frame_data (np.ndarray): Array of shape (num_instances * num_keypoints, 3) 
+            containing flattened x, y, confidence values for all keypoints in the frame.
+        view_width (float): Width of the target view (e.g., graphics scene or display window).
+        view_height (float): Height of the target view.
 
-    Behavior:
-        - Sorts the frame list and finds the nearest previous or next frame.
-        - If no such frame exists, shows a warning.
-        - Otherwise, calls the frame change callback with the target frame.
-        - On exception during callback, shows a critical error message.
+    Returns:
+        Tuple[float, float, float]:
+            - new_zoom_level (float): Scaling factor to apply (clamped between 0.1 and 10.0).
+            - center_x (float): X-coordinate of the center of the bounding box.
+            - center_y (float): Y-coordinate of the center of the bounding box.
     """
-    if not frame_list:
-        QMessageBox.warning(parent, "No Marked Frames", "No marked frames to navigate.")
+    x_vals_current_frame = current_frame_data[:, 0::3]
+    y_vals_current_frame = current_frame_data[:, 1::3]
+
+    if np.all(np.isnan(x_vals_current_frame)):
         return
     
-    frame_list.sort()
+    min_x = np.nanmin(x_vals_current_frame)
+    max_x = np.nanmax(x_vals_current_frame)
+    min_y = np.nanmin(y_vals_current_frame)
+    max_y = np.nanmax(y_vals_current_frame)
 
-    if mode == "prev":
-        dest_frame_idx = _get_prev_frame_in_list(frame_list, current_frame_idx)
-        no_frame_message = "No previous marked frame found."
-    elif mode == "next":
-        dest_frame_idx = _get_next_frame_in_list(frame_list, current_frame_idx)
-        no_frame_message = "No next marked frame found."
-    
-    if dest_frame_idx is None:
-        QMessageBox.warning(parent, "Navigation", no_frame_message)
-        return
+    padding_factor = 1.25 # 25% padding
+    width = max(1.0, max_x - min_x)
+    height = max(1.0, max_y - min_y)
+    padded_width = width * padding_factor
+    padded_height = height * padding_factor
+    center_x = (min_x + max_x) / 2
+    center_y = (min_y + max_y) / 2
 
-    try:
-        change_frame_callback(dest_frame_idx)
-    except Exception as e:
-        QMessageBox.critical(parent, "Exception", f"Enountering exception: {e}.")
+    # Calculate new zoom level
+    if padded_width > 0 and padded_height > 0:
+        zoom_x = view_width / padded_width
+        zoom_y = view_height / padded_height
+        new_zoom_level = min(zoom_x, zoom_y)
+    else:
+        new_zoom_level = 1.0
 
-def _get_prev_frame_in_list(frame_list:List[int], current_frame_idx:int) -> Optional[int]:
-    try:
-        current_idx_in_list = frame_list.index(current_frame_idx)
-        prev_idx = current_idx_in_list - 1
-    except ValueError:
-        insertion_point = bisect.bisect_left(frame_list, current_frame_idx)
-        prev_idx = insertion_point - 1
+    # Apply zoom limits
+    new_zoom_level = max(0.1, min(new_zoom_level, 10.0))
 
-    if prev_idx >= 0:
-        return frame_list[prev_idx]
-    
-    return None
-
-def _get_next_frame_in_list(frame_list:List[int], current_frame_idx:int) -> Optional[int]:
-    try:
-        current_idx_in_list = frame_list.index(current_frame_idx)
-        next_idx = current_idx_in_list + 1
-    except ValueError:
-        insertion_point = bisect.bisect_right(frame_list, current_frame_idx)
-        next_idx = insertion_point
-
-    if next_idx < len(frame_list):
-        return frame_list[next_idx]
-    
-    return None
+    return new_zoom_level, center_x, center_y

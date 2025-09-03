@@ -19,9 +19,10 @@ from .plot import Prediction_Plotter
 from .ui_helper import handle_unsaved_changes_on_close
 from utils.dataclass import Loaded_DLC_Data, Export_Settings
 from utils.io import Exporter, DLC_Loader
-from utils import track_edit as dute
-from utils import helper as duh
 from utils import io as dio
+from utils.helper import log_print
+from utils.pose import calculate_pose_centroids
+from utils.track import hungarian_matching
 
 DEBUG = False
 
@@ -643,8 +644,8 @@ class DLC_Inference(QtWidgets.QDialog):
 
     def _correct_new_prediction_track(self, max_dist: float = 10.0):
         for frame_idx in self.frame_list:
-            pred_centroids, _ = duh.calculate_pose_centroids(self.new_data_array, frame_idx)
-            ref_centroids, _ = duh.calculate_pose_centroids(self.dlc_data.pred_data_array, frame_idx)
+            pred_centroids, _ = calculate_pose_centroids(self.new_data_array, frame_idx)
+            ref_centroids, _ = calculate_pose_centroids(self.dlc_data.pred_data_array, frame_idx)
 
             valid_pred_mask = np.all(~np.isnan(pred_centroids), axis=1)
             valid_ref_mask = np.all(~np.isnan(ref_centroids), axis=1)
@@ -653,8 +654,8 @@ class DLC_Inference(QtWidgets.QDialog):
             valid_ref_centroids = ref_centroids[valid_ref_mask]
 
             if DEBUG:
-                duh.log_print(f"------ Processing Frame {frame_idx} ------")
-            corrected_order = dute.hungarian_matching(
+                log_print(f"------ Processing Frame {frame_idx} ------")
+            corrected_order = hungarian_matching(
                 valid_pred_centroids, valid_ref_centroids, valid_pred_mask, valid_ref_mask, max_dist, debug_print=DEBUG)
             
             if corrected_order:
