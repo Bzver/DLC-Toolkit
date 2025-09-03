@@ -241,7 +241,7 @@ class Outlier_Container(QtWidgets.QWidget):
         self.duplicate_dist_spinbox = QtWidgets.QDoubleSpinBox()
         self.duplicate_dist_spinbox.setRange(0.0, 100.0)
         self.duplicate_dist_spinbox.setSingleStep(1.0)
-        self.duplicate_dist_spinbox.setValue(5.0)
+        self.duplicate_dist_spinbox.setValue(10.0)
         self.duplicate_dist_spinbox.setDecimals(1)
         dist_frame.addWidget(dist_label)
         dist_frame.addWidget(self.duplicate_dist_spinbox)

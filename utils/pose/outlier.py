@@ -94,7 +94,7 @@ def outlier_instance(pred_data_array:np.ndarray, threshold:int) -> np.ndarray:
 def outlier_duplicate(
         pred_data_array:np.ndarray,
         bp_threshold:float=0.5,
-        dist_threshold:float=5.0
+        dist_threshold:float=10.0
         ) -> np.ndarray:
     """
     Detects duplicate detections by identifying instances whose keypoints are abnormally close.

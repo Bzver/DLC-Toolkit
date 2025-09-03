@@ -78,7 +78,7 @@ def track_correction(pred_data_array: np.ndarray,
             if debug_print:
                 for i in range(instance_count):
                     if valid_idt_mask[i]:
-                        print(f"x,y in idt: inst {i}: ({idt_centroids[i,0]:.1f}, {idt_centroids[i,1]:.1f})")
+                        log_print(f"x,y in idt: inst {i}: ({idt_centroids[i,0]:.1f}, {idt_centroids[i,1]:.1f})")
 
         # Case 2: idTracker invalid — use prior DLC as reference
         else: # # Build last_known_centroids from prior frames
