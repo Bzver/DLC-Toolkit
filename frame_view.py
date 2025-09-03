@@ -35,25 +35,29 @@ class Frame_View(QtWidgets.QMainWindow):
         self.setMenuBar(self.menu_widget)
         extractor_menu_config = {
             "File": {
-                "display_name": "File",
                 "buttons": [
                     ("Load Video", self.load_video),
                     ("Load Prediction", self.load_prediction),
-                    ("Load Workspace", self.load_workspace)
+                    ("Load Workspace", self.load_workspace),
+                ]
+            },
+            "View": {
+                "buttons": [
+                    ("Toggle Labeled Predictions Visiblity", self.toggle_labeled_vis, {"checkable": True, "checked": True}),
+                    ("Toggle Predictions Visiblity", self.toggle_pred_vis, {"checkable": True, "checked": True}),
+                    ("Toggle Navigating Labeled Frames", self.toggle_labeled_nav, {"checkable": True, "checked": False}),
+                    ("View Canonical Pose", self.view_canonical_pose),
                 ]
             },
             "Mark": {
-                "display_name": "Mark",
                 "buttons": [
                     ("Adjust Confidence Cutoff", self.show_confidence_dialog),
                     ("Mark / Unmark Current Frame (X)", self.toggle_frame_status),
                     ("Automatic Mark Generation", self.show_mark_generation_dialog),
                     ("Clear Frame Marks of Category", self.show_clear_mark_dialog),
-                    ("View Canonical Pose", self.view_canonical_pose)
                 ]
             },
             "Edit": {
-                "display_name": "Edit",
                 "buttons": [
                     ("Call Refiner - Track Correction", lambda: self.call_refiner(track_only=True)),
                     ("Call Refiner - Edit Marked Frames", lambda: self.call_refiner(track_only=False)),
@@ -123,6 +127,8 @@ class Frame_View(QtWidgets.QMainWindow):
 
         self.is_saved = True
         self.last_saved = []
+        self.plot_labeled, self.plot_pred = True, True
+        self.nav_labeled = False
 
         self.plot_config = Plot_Config(
             plot_opacity=1.0, point_size = 6.0, confidence_cutoff = 0.0, hide_text_labels = False, edit_mode = False)
@@ -307,15 +313,19 @@ class Frame_View(QtWidgets.QMainWindow):
         if self.dlc_data is not None:
             if not hasattr(self, "plotter"):
                 self.initialize_plotter()
-                
-            self.plotter.frame_cv2 = frame
 
-            if self.current_frame_idx in self.labeled_frame_list: # Use labeled data first
-                self.plotter.current_frame_data = self.label_data_array[self.current_frame_idx,:,:]
-            else:
+            if self.plot_pred:
+                self.plotter.frame_cv2 = frame
                 self.plotter.current_frame_data = self.dlc_data.pred_data_array[self.current_frame_idx,:,:]
+                frame = self.plotter.plot_predictions()
 
-            frame = self.plotter.plot_predictions()
+            if self.current_frame_idx in self.labeled_frame_list and self.plot_labeled:
+                self.plotter.frame_cv2 = frame
+                self.plotter.current_frame_data = self.label_data_array[self.current_frame_idx,:,:]
+                old_colors = self.plotter.color.copy()
+                self.plotter.color = [(200, 130, 0), (40, 200, 40), (40, 120, 200), (200, 40, 40), (200, 200, 80)]
+                frame = self.plotter.plot_predictions()
+                self.plotter.color = old_colors
 
         # Convert OpenCV image to QPixmap
         rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -406,7 +416,12 @@ class Frame_View(QtWidgets.QMainWindow):
         self._refresh_slider()
 
     def _navigate_marked_frames(self, mode):
-        ui.navigate_to_marked_frame(self, self.frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, mode)
+        if self.nav_labeled:
+            ui.navigate_to_marked_frame(
+                self, self.labeled_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, mode)
+        else:
+            ui.navigate_to_marked_frame(
+                self, self.frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, mode)
 
     ###################################################################################################################################################
 
@@ -475,6 +490,17 @@ class Frame_View(QtWidgets.QMainWindow):
     def view_canonical_pose(self):
         dialog = Canonical_Pose_Dialog(self.dlc_data, self.canon_pose)
         dialog.exec()
+
+    def toggle_labeled_vis(self):
+        self.plot_labeled = not self.plot_labeled
+        self.display_current_frame()
+
+    def toggle_pred_vis(self):
+        self.plot_pred = not self.plot_pred
+        self.display_current_frame()
+
+    def toggle_labeled_nav(self):
+        self.nav_labeled = not self.nav_labeled
 
     def _clear_category(self, frame_category):
         actions = {
