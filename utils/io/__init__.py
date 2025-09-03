@@ -1,5 +1,5 @@
 from .exporter import Exporter
-from .Prediction_Loader import Prediction_Loader
+from .pred_loader import Prediction_Loader
 
 from .parser import parse_idt_df_into_ndarray
 from .csv_op import prediction_to_csv

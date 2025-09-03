@@ -271,10 +271,10 @@ class Frame_View_3D(QtWidgets.QMainWindow):
     def dlc_config_loader(self, dlc_config_filepath: str):
         self.data_loader.dlc_config_filepath = dlc_config_filepath
         try:
-            self.dlc_data = ui.load_and_show_message(self, self.data_loader, metadata_only=True)
+            self.dlc_data = self.data_loader.load_data(metadata_only=True)
             self.keypoint_to_idx = {name: idx for idx, name in enumerate(self.dlc_data.keypoints)}
-        except:
-            QMessageBox.critical(self, "Error", "Failed to load DLC config.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load DLC config: {e}")
             traceback.print_exc()
         self.dlc_config_filepath = dlc_config_filepath # Store the DLC config file path for saving
 
@@ -372,7 +372,10 @@ class Frame_View_3D(QtWidgets.QMainWindow):
 
     def load_prediction(self, cam_idx:int, prediction_filepath:str):
         self.data_loader.prediction_filepath = prediction_filepath
-        temp_dlc_data = ui.load_and_show_message(self, self.data_loader, mute=True)
+        try:
+            temp_dlc_data = self.data_loader.load_data()
+        except Exception as e:
+            QMessageBox.critical(self, "Error Loading Prediction", f"Unexpected error during prediction loading: {e}.")
 
         if not temp_dlc_data:
             return

@@ -186,7 +186,10 @@ class Frame_View(QtWidgets.QMainWindow):
 
         self.data_loader.dlc_config_filepath = dlc_config
 
-        self.dlc_data = ui.load_and_show_message(self, self.data_loader)
+        try:
+            self.dlc_data = self.data_loader.load_data()
+        except Exception as e:
+            QMessageBox.critical(self, "Error Loading Prediction", f"Unexpected error during prediction loading: {e}.")
 
         self.initialize_canon_pose()
         self.process_labeled_frame()
@@ -235,7 +238,11 @@ class Frame_View(QtWidgets.QMainWindow):
                 self.data_loader.dlc_config_filepath = dlc_config
                 self.data_loader.prediction_filepath = prediction
 
-                self.dlc_data = ui.load_and_show_message(self, self.data_loader)
+            try:
+                self.dlc_data = self.data_loader.load_data()
+            except Exception as e:
+                QMessageBox.critical(self, "Error Loading Prediction", f"Unexpected error during prediction loading: {e}.")
+
                 self.initialize_canon_pose()
 
             if "refined_frame_list" in fmk.keys():
@@ -675,7 +682,11 @@ class Frame_View(QtWidgets.QMainWindow):
 
             self.data_loader.dlc_config_filepath = dlc_config
 
-            self.dlc_data = ui.load_and_show_message(self, self.data_loader, metadata_only=True)
+            try:
+                self.dlc_data = self.data_loader.load_data(metadata_only=True)
+            except Exception as e:
+                QMessageBox.critical(self, "Error Loading Prediction", f"Unexpected error during prediction loading: {e}.")
+
             self.dlc_data.pred_frame_count = self.total_frames
 
         from ui import DLC_Inference

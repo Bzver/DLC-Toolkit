@@ -5,7 +5,7 @@ import h5py
 import yaml
 from utils import helper as duh
 
-from typing import Tuple, Optional, Any, Dict
+from typing import Optional, Any, Dict
 
 from .h5_op import validate_h5_keys
 from utils.dataclass import Loaded_DLC_Data
@@ -16,15 +16,9 @@ class Prediction_Loader:
         self.dlc_config_filepath = dlc_config_filepath
         self.prediction_filepath = prediction_filepath
 
-    def load_data(self, metadata_only: bool = False) -> Tuple[Optional[Loaded_DLC_Data], str]:
-        """
-        Loads both the DLC config and, optionally, prediction data.
-        Returns a (Loaded_DLC_Data object, "Success") tuple on success, or (None, "Error Message") on failure.
-        """
-        config_data, msg = self._load_config_data()
-        if not config_data:
-            return None, msg
-
+    def load_data(self, metadata_only: bool = False) -> Optional[Loaded_DLC_Data]:
+        config_data = self._load_config_data()
+        
         if metadata_only:
             loaded_data = Loaded_DLC_Data(
                 **config_data,
@@ -32,23 +26,18 @@ class Prediction_Loader:
                 pred_data_array=None,
                 pred_frame_count=None
             )
-            return loaded_data, "DLC config loaded successfully!"
+            return loaded_data
 
-        pred_data, msg = self._load_prediction_data(config_data)
-        if not pred_data:
-            return None, msg
+        pred_data = self._load_prediction_data(config_data)
         
         # Merge dictionaries for a clean object creation
         loaded_data = Loaded_DLC_Data(**config_data, **pred_data)
-        return loaded_data, "DLC config and prediction loaded successfully!"
+        return loaded_data
 
-    def _load_config_data(self) -> Tuple[Optional[dict[str, Any]], str]:
-        """
-        Internal method to load DLC configuration from the YAML file.
-        Returns a dictionary of config data on success, or (None, "Error Message") on failure.
-        """
+    def _load_config_data(self) -> Dict[str, Any]:
+        """Internal method to load DLC configuration from the YAML file."""
         if not os.path.isfile(self.dlc_config_filepath):
-            return None, f"DLC config file not found at: {self.dlc_config_filepath}"
+            raise FileNotFoundError(f"DLC config file not found at: {self.dlc_config_filepath}")
         
         try:
             with open(self.dlc_config_filepath, "r") as conf:
@@ -72,20 +61,17 @@ class Prediction_Loader:
                 "keypoint_to_idx": keypoint_to_idx
             }
 
-            return config_dict, "Success"
+            return config_dict
         except Exception as e:
-            return None, f"Error loading DLC config: {e}"
+            raise RuntimeError(f"Error loading DLC config: {e}") from e
 
-    def _load_prediction_data(self, config_data: dict) -> Tuple[Optional[Dict[str, Any]], str]:
-        """
-        Internal method to load prediction data from HDF5 file.
-        Returns a dictionary of prediction data on success, or (None, "Error Message") on failure.
-        """
+    def _load_prediction_data(self, config_data: dict) -> Dict[str, Any]:
+        """Internal method to load prediction data from HDF5 file."""
         if not os.path.isfile(self.prediction_filepath):
-            return None, f"Prediction file not found at: {self.prediction_filepath}"
+            raise FileNotFoundError(f"Prediction file not found at: {self.prediction_filepath}")
         
         if "num_keypoint" not in config_data or "instance_count" not in config_data:
-            return None, "Config data is incomplete. Please load config first."
+            raise ValueError("Config data is incomplete. Please load config first.")
 
         num_keypoint = config_data["num_keypoint"]
         instance_count = config_data["instance_count"]
@@ -94,7 +80,7 @@ class Prediction_Loader:
             with h5py.File(self.prediction_filepath, "r") as pred_file:
                 key, subkey = validate_h5_keys(pred_file)
                 if not key or not subkey:
-                    return False, f"Error: No valid key in the {self.prediction_filepath}."
+                    raise ValueError(f"No valid key found in '{self.prediction_filepath}'")
                 
                 prediction_raw = pred_file[key][subkey]
 
@@ -107,10 +93,12 @@ class Prediction_Loader:
 
                 expected_cols = instance_count * num_keypoint * 3
                 if pred_data_values.shape[1] != expected_cols:
-                    error_msg = (f"Prediction data columns ({pred_data_values.shape[1]}) "
-                                 f"do not match expected ({expected_cols}) based on config. "
-                                 "Check config or prediction file.")
-                    return None, error_msg
+                    raise ValueError(
+                        f"Prediction data has {pred_data_values.shape[1]} columns, "
+                        f"but {expected_cols} columns were expected based on config "
+                        f"(instances={instance_count}, keypoints={num_keypoint}). "
+                        "Please verify the prediction file and configuration match."
+                    )
 
             pred_data_array = duh.unflatten_data_array(pred_data_values, instance_count)
 
@@ -119,6 +107,6 @@ class Prediction_Loader:
                 "pred_data_array": pred_data_array,
                 "pred_frame_count": pred_frame_count
             }
-            return pred_data_dict, "Success"
+            return pred_data_dict
         except Exception as e:
-            return None, f"Error loading prediction data: {e}"
+            raise RuntimeError(f"Error loading prediction data: {e}")

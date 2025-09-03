@@ -2,44 +2,13 @@ import numpy as np
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox, QProgressDialog
-from typing import Optional, Callable, Tuple
+from typing import Callable, Tuple
 
-from utils.io import Prediction_Loader, Exporter
+from utils.io import Exporter
 from utils.dataclass import Loaded_DLC_Data
 
 def format_title(base_title: str, debug_status: bool) -> str:
     return f"{base_title} --- DEBUG MODE" if debug_status else base_title
-
-def load_and_show_message(
-        parent,
-        data_loader:Prediction_Loader,
-        metadata_only:bool=False,
-        mute:bool=False
-        ) -> Optional[Loaded_DLC_Data]:
-    """
-    Loads DLC data using the provided loader and displays an appropriate message to the user 
-    based on the outcome. Shows error, success, or status messages via QMessageBox or statusBar.
-
-    Args:
-        parent: Parent widget (e.g., QMainWindow) used for displaying dialogs or status messages.
-        data_loader (Prediction_Loader): Loader instance responsible for loading the DLC data.
-        metadata_only (bool): If True, only metadata (e.g., config, skeleton) is loaded; 
-                              otherwise, full prediction data is loaded.
-        mute (bool): If True, suppresses pop-up messages and only updates the status bar.
-
-    Returns:
-        Optional[Loaded_DLC_Data]: Loaded data object if successful; None if loading failed.
-    """
-    loaded_data, msg = data_loader.load_data(metadata_only)
-
-    if loaded_data is None:
-        QMessageBox.critical(parent, "Error", str(msg))
-    elif not mute:
-        QMessageBox.information(parent, "Success", str(msg))
-    else:
-        parent.statusBar().showMessage(msg)
-    
-    return loaded_data
 
 def export_and_show_message(
         parent,

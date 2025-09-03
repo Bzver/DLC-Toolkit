@@ -279,7 +279,11 @@ class Frame_Label(QtWidgets.QMainWindow):
 
         self.data_loader.dlc_config_filepath = dlc_config
 
-        self.dlc_data = ui.load_and_show_message(self, self.data_loader)
+        try:
+            self.dlc_data = self.data_loader.load_data()
+        except Exception as e:
+            QMessageBox.critical(self, "Error Loading Prediction", f"Unexpected error during prediction loading: {e}.")
+
         self.initialize_loaded_data()
 
     def debug_load(self):
@@ -287,7 +291,12 @@ class Frame_Label(QtWidgets.QMainWindow):
         self.initialize_loaded_video()
         self.data_loader.dlc_config_filepath = DLC_CONFIG_DEBUG
         self.data_loader.prediction_filepath = self.prediction = PRED_FILE_DEBUG
-        self.dlc_data = ui.load_and_show_message(self, self.data_loader)
+        
+        try:
+            self.dlc_data = self.data_loader.load_data()
+        except Exception as e:
+            QMessageBox.critical(self, "Error Loading Prediction", f"Unexpected error during prediction loading: {e}.")
+
         self.initialize_loaded_data()
 
     def initialize_loaded_data(self):
