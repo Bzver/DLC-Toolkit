@@ -1,12 +1,9 @@
 import os
-
-import h5py
 import yaml
-
 import pandas as pd
 import numpy as np
-
 import cv2
+
 from PySide6 import QtWidgets, QtGui
 from PySide6.QtCore import Qt, QEvent
 from PySide6.QtGui import QShortcut, QKeySequence, QCloseEvent
@@ -15,9 +12,8 @@ from PySide6.QtWidgets import QMessageBox, QFileDialog
 import traceback
 
 import ui
-import utils.helper as duh
 import utils.io as dio
-import utils.pose as dupe
+from utils import infer_head_tail_indices, calculate_canonical_pose
 from utils.io import Prediction_Loader, Exporter
 from utils.dataclass import Export_Settings, Plot_Config
 from ui import (
@@ -116,9 +112,6 @@ class Frame_View(QtWidgets.QMainWindow):
         self.video_file, self.video_name, self.project_dir = None, None, None
         self.dlc_data, self.canon_pose = None, None
 
-        self.data_loader = Prediction_Loader(None, None) # Initialize the data loader
-        self.exp_set = Export_Settings(video_filepath=None, video_name=None, save_path=None, export_mode=None)
-
         self.labeled_frame_list, self.frame_list = [], []
         self.refined_frame_list, self.approved_frame_list, self.rejected_frame_list = [], [], []
         self.label_data_array = None
@@ -141,12 +134,10 @@ class Frame_View(QtWidgets.QMainWindow):
         if video_path:
             self.reset_state()
             self.video_file = video_path
-            self.exp_set.video_filepath = video_path
             self.initialize_loaded_video()
 
     def initialize_loaded_video(self):
         self.video_name = os.path.basename(self.video_file).split(".")[0]
-        self.exp_set.video_name = self.video_name
         self.cap = cv2.VideoCapture(self.video_file)
 
         if not self.cap.isOpened():
@@ -169,30 +160,51 @@ class Frame_View(QtWidgets.QMainWindow):
             return
         
         file_dialog = QFileDialog(self)
-        prediction_path, _ = file_dialog.getOpenFileName(self, "Load Prediction", "", "HDF5 Files (*.h5);;All Files (*)")
+        prediction_path, _ = file_dialog.getOpenFileName(self, "Select Prediction", "", "HDF5 Files (*.h5);;All Files (*)")
 
         if not prediction_path:
             return
-        
-        self.data_loader.prediction_filepath = prediction_path
 
-        QMessageBox.information(self, "DLC Config Loaded", "Prediction loaded, now loading DLC config.")
+        prediction_filename = os.path.basename(prediction_path)
+        if prediction_filename.startswith("CollectedData_"):
+            is_label_data = True
+            QMessageBox.information(self, "Labeled Data Selected", "Labeled data selected, now loading DLC config.")
+        else:
+            QMessageBox.information(self, "Prediction Selected", "Prediction selected, now loading DLC config.")
 
         file_dialog = QFileDialog(self)
-        dlc_config, _ = file_dialog.getOpenFileName(self, "Load DLC Config", "", "YAML Files (config.yaml);;All Files (*)")
+        dlc_config, _ = file_dialog.getOpenFileName(self, "Select DLC Config", "", "YAML Files (config.yaml);;All Files (*)")
 
         if not dlc_config:
             return
 
-        self.data_loader.dlc_config_filepath = dlc_config
+        data_loader = Prediction_Loader(dlc_config, prediction_path)
 
-        try:
-            self.dlc_data = self.data_loader.load_data()
-        except Exception as e:
-            QMessageBox.critical(self, "Error Loading Prediction", f"Unexpected error during prediction loading: {e}.")
+        if is_label_data:
+            if not self.dlc_data:
+                try:
+                    self.dlc_data = data_loader.load_data(metadata_only=True)
+                except Exception as e:
+                    QMessageBox.critical(self, "Error Loading Prediction",
+                                         f"Unexpected error during prediction loading: {e}.")
+                
+                self.dlc_data.pred_data_array = np.full(
+                    (self.total_frames, self.dlc_data.instance_count, self.dlc_data.num_keypoint*3),
+                    np.nan)
+                
+                self.dlc_data.pred_frame_count = self.total_frames
+                self.dlc_data.prediction_filepath = prediction_path
+
+            self.process_labeled_frame(prediction_path)
+        else:
+            try:
+                self.dlc_data = data_loader.load_data()
+            except Exception as e:
+                QMessageBox.critical(self, "Error Loading Prediction",
+                                     f"Unexpected error during prediction loading: {e}.")
+            self.process_labeled_frame()
 
         self.initialize_canon_pose()
-        self.process_labeled_frame()
         self.display_current_frame()
 
     def load_labeled(self):
@@ -226,7 +238,6 @@ class Frame_View(QtWidgets.QMainWindow):
                 return
             
             self.video_file = video_file
-            self.exp_set.video_filepath = video_file
             self.initialize_loaded_video()
             self.frame_list = fmk["frame_list"]
             print(f"Marked frames loaded: {self.frame_list}")
@@ -235,11 +246,10 @@ class Frame_View(QtWidgets.QMainWindow):
             prediction = fmk["prediction"]
 
             if dlc_config and prediction:
-                self.data_loader.dlc_config_filepath = dlc_config
-                self.data_loader.prediction_filepath = prediction
+                data_loader = Prediction_Loader(dlc_config, prediction)
 
             try:
-                self.dlc_data = self.data_loader.load_data()
+                self.dlc_data = data_loader.load_data()
             except Exception as e:
                 QMessageBox.critical(self, "Error Loading Prediction", f"Unexpected error during prediction loading: {e}.")
 
@@ -259,41 +269,34 @@ class Frame_View(QtWidgets.QMainWindow):
             self.process_labeled_frame()
             self.display_current_frame()
 
-    def process_labeled_frame(self):
-        dlc_dir = os.path.dirname(self.data_loader.dlc_config_filepath)
-        self.project_dir = os.path.join(dlc_dir, "labeled-data", self.video_name)
-        self.exp_set.save_path = self.project_dir
+    def process_labeled_frame(self, lbf=None):
+        if lbf is None:
+            dlc_dir = os.path.dirname(self.dlc_data.dlc_config_filepath)
+            self.project_dir = os.path.join(dlc_dir, "labeled-data", self.video_name)
 
-        if not os.path.isdir(self.project_dir):
             self.labeled_frame_list = []
-            return
+            if not os.path.isdir(self.project_dir):
+                return
         
-        label_data_files = [ f for f in os.listdir(self.project_dir) if f.startswith("CollectedData_") and f.endswith(".h5") ]
-        if not label_data_files:
-            return
-        
-        self.labeled_frame_list = []
+            scorer = self.dlc_data.scorer
+            label_data_filename = f"CollectedData_{scorer}.h5"
+            label_data_filepath = os.path.join(self.project_dir, label_data_filename)
+        else:
+            label_data_filepath = lbf
+            self.project_dir = os.path.dirname(lbf)
 
         self.label_data_array = np.full_like(self.dlc_data.pred_data_array, np.nan)
-        for label_data_file in label_data_files:
-            with h5py.File(os.path.join(self.project_dir, label_data_file), "r") as lbf:
-                key = "df_with_missing" if "df_with_missing" in lbf else "keypoints"
-                labeled_frame_list = lbf[key]["axis1_level2"].asstr()[()]
-                labeled_frame_list = [int(f.split("img")[1].split(".")[0]) for f in labeled_frame_list]
-                labeled_frame_list.sort()
-                labeled_data_flattened = lbf[key]["block0_values"]
-                self.labeled_frame_list.extend(labeled_frame_list)
-                
-                cols = labeled_data_flattened.shape[1] # Check if labeled_data_flattened already have conf or not
-                if cols / self.dlc_data.num_keypoint == 3 * self.dlc_data.instance_count:
-                    labeled_data_with_conf = labeled_data_flattened
-                else:
-                    labeled_data_with_conf = duh.add_mock_confidence_score(labeled_data_flattened)
-                labeled_data_unflattened = duh.unflatten_data_array(
-                    labeled_data_with_conf, self.dlc_data.instance_count)
-                self.label_data_array[labeled_frame_list,:,:] = labeled_data_unflattened
-        
-        self.frame_list = list(set(self.frame_list) - set(self.labeled_frame_list)) # Clean up the already labeled marked frames
+
+        data_loader = Prediction_Loader(self.dlc_data.dlc_config_filepath, label_data_filepath)
+        label_data = data_loader.load_data()
+        label_array = label_data.pred_data_array
+        self.label_data_array[range(label_array.shape[0])] = label_array
+
+        self.labeled_frame_list = np.where(
+            np.any(~np.isnan(self.label_data_array), axis=(1, 2))
+            )[0].tolist()
+
+        self.frame_list = list(set(self.frame_list) - set(self.labeled_frame_list))
         self.refined_frame_list = list(set(self.refined_frame_list) - set(self.labeled_frame_list))
         self.approved_frame_list = list(set(self.approved_frame_list) - set(self.labeled_frame_list))
         self.rejected_frame_list = list(set(self.rejected_frame_list) - set(self.labeled_frame_list))
@@ -311,9 +314,15 @@ class Frame_View(QtWidgets.QMainWindow):
             frame_cv2 = self.current_frame)
         
     def initialize_canon_pose(self):
-        head_idx, tail_idx = duh.infer_head_tail_indices(self.dlc_data.keypoints)
-        if head_idx is not None and tail_idx is not None:
-            self.canon_pose, _ = dupe.calculate_canonical_pose(self.dlc_data.pred_data_array, head_idx, tail_idx)
+        head_idx, tail_idx = infer_head_tail_indices(self.dlc_data.keypoints)
+        if head_idx is None or tail_idx is None:
+            return
+        if not np.all(np.isnan(self.dlc_data.pred_data_array)):
+            self.canon_pose, _ = calculate_canonical_pose(self.dlc_data.pred_data_array, head_idx, tail_idx)
+        elif self.label_data_array is None:
+            return
+        else:
+            self.canon_pose, _ = calculate_canonical_pose(self.label_data_array, head_idx, tail_idx)
 
     ###################################################################################################################################################
 
@@ -433,13 +442,13 @@ class Frame_View(QtWidgets.QMainWindow):
         self.rejected_frame_list = []
         self._refresh_slider()
 
-    def _navigate_marked_frames(self, mode):
+    def _navigate_marked_frames(self, direction):
         if self.nav_labeled:
             ui.navigate_to_marked_frame(
-                self, self.labeled_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, mode)
+                self, self.labeled_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, direction)
         else:
             ui.navigate_to_marked_frame(
-                self, self.frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, mode)
+                self, self.frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, direction)
 
     ###################################################################################################################################################
 
@@ -680,10 +689,9 @@ class Frame_View(QtWidgets.QMainWindow):
             if not dlc_config:
                 return
 
-            self.data_loader.dlc_config_filepath = dlc_config
-
+            data_loader = Prediction_Loader(dlc_config)
             try:
-                self.dlc_data = self.data_loader.load_data(metadata_only=True)
+                self.dlc_data = data_loader.load_data(metadata_only=True)
             except Exception as e:
                 QMessageBox.critical(self, "Error Loading Prediction", f"Unexpected error during prediction loading: {e}.")
 
@@ -703,8 +711,8 @@ class Frame_View(QtWidgets.QMainWindow):
 
     def reload_prediction(self, prediction_path):
         """Reload prediction data from file and update visualization"""
-        self.data_loader.prediction_filepath = prediction_path
-        self.dlc_data, _ = self.data_loader.load_data()
+        data_loader = Prediction_Loader(self.dlc_data.dlc_config_filepath, prediction_path)
+        self.dlc_data, _ = data_loader.load_data()
         self.approved_frame_list[:] = list(set(self.approved_frame_list) - set(self.refined_frame_list))
         self.rejected_frame_list[:] = list(set(self.rejected_frame_list) - set(self.refined_frame_list))
 
@@ -728,21 +736,33 @@ class Frame_View(QtWidgets.QMainWindow):
         if not self.pre_saving_sanity_check():
             return
 
-        dlc_dir = os.path.dirname(self.data_loader.dlc_config_filepath)
+        dlc_dir = os.path.dirname(self.dlc_data.dlc_config_filepath)
+
+        exp_set = Export_Settings(video_filepath=self.video_file,
+                                  video_name=self.video_name,
+                                  save_path=self.project_dir,
+                                  export_mode="Append")
 
         self.save_workspace()
-        if not self.refined_frame_list:
-            self.exp_set.export_mode = "Append"
-            exporter = Exporter(self.dlc_data, self.exp_set, self.frame_list)
-        else:
-            self.exp_set.save_path = os.path.join(dlc_dir, "labeled-data", self.video_name)
-            os.makedirs(self.exp_set.save_path, exist_ok=True)
 
-            pred_data_array_for_export = duh.remove_confidence_score(self.dlc_data.pred_data_array)
-            self.exp_set.export_mode = "Merge"
-            exporter = Exporter(self.dlc_data, self.exp_set, self.refined_frame_list, pred_data_array_for_export)
+        if not self.project_dir:
+            exp_set.save_path = os.path.join(dlc_dir, "labeled-data", self.video_name)
+            os.makedirs(exp_set.save_path, exist_ok=True)
+
+        if not self.refined_frame_list:
+            exporter = Exporter(self.dlc_data, exp_set, self.frame_list)
+        else:
+            exp_set.export_mode = "Merge"
+            pred_data_array_for_export = dio.remove_confidence_score(self.dlc_data.pred_data_array)
+            exporter = Exporter(self.dlc_data, exp_set, self.refined_frame_list, pred_data_array_for_export)
         
-        if not self.dlc_data:
+        if self.dlc_data:
+            ui.export_and_show_message(self, exporter, frame_only=False)
+            dio.append_new_video_to_dlc_config(self.dlc_data.dlc_config_filepath, self.video_name)
+
+            if exp_set.export_mode == "Merge":
+                self.process_labeled_frame()
+        else:
             reply = QMessageBox.question(
                 self,
                 "No Prediction Loaded",
@@ -758,19 +778,12 @@ class Frame_View(QtWidgets.QMainWindow):
                         )
                 if not dlc_dir: # When user close the file selection window
                     return
-                self.project_dir = os.path.join(dlc_dir, "labeled-data", self.video_name)
                 ui.export_and_show_message(self, exporter, frame_only=True)
                 return
             else:
                 self.load_prediction()
                 if self.dlc_data is None:
                     return
-
-        ui.export_and_show_message(self, exporter, frame_only=False)
-        dio.append_new_video_to_dlc_config(self.dlc_data.dlc_config_filepath, self.video_name)
-
-        if self.exp_set.export_mode == "Merge":
-            self.process_labeled_frame()
 
     def merge_data(self):
         if not self.pre_saving_sanity_check():
@@ -796,13 +809,20 @@ class Frame_View(QtWidgets.QMainWindow):
         else:
             self.save_workspace()
 
-            self.exp_set.export_mode = "Merge"
+            exp_set = Export_Settings(video_filepath=self.video_file,
+                                      video_name=self.video_name,
+                                      save_path=self.project_dir,
+                                      export_mode="Merge")
 
             self.label_data_array[self.refined_frame_list, :, :] = self.dlc_data.pred_data_array[self.refined_frame_list, :, :]
             merge_frame_list = list(set(self.labeled_frame_list) | set(self.refined_frame_list))
-            label_data_array_export = duh.remove_confidence_score(self.label_data_array)
+            label_data_array_export = dio.remove_confidence_score(self.label_data_array)
 
-            exporter = Exporter(self.dlc_data, self.exp_set, merge_frame_list, label_data_array_export)
+            exporter = Exporter(dlc_data=self.dlc_data,
+                                export_settings=exp_set,
+                                frame_list=merge_frame_list,
+                                pred_data_array=label_data_array_export)
+            
             ui.export_and_show_message(self, exporter, frame_only=False)
 
             self.process_labeled_frame()
