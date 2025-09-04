@@ -55,8 +55,8 @@ class Frame_View(QtWidgets.QMainWindow):
             },
             "Edit": {
                 "buttons": [
-                    ("Call Refiner - Track Correction", lambda: self.call_refiner(track_only=True)),
-                    ("Call Refiner - Edit Marked Frames", lambda: self.call_refiner(track_only=False)),
+                    ("Call Labeler - Track Correction", lambda: self.call_labeler(track_only=True)),
+                    ("Call Labeler - Edit Marked Frames", lambda: self.call_labeler(track_only=False)),
                     ("Call DeepLabCut - Run Predictions of Marked Frames", self.dlc_inference)
                 ]
             },
@@ -632,39 +632,39 @@ class Frame_View(QtWidgets.QMainWindow):
         self.statusBar().showMessage(f"Current workspace files have been saved to {output_filepath}")
         return True
 
-    def call_refiner(self, track_only=False):
+    def call_labeler(self, track_only=False):
         if not self.video_file:
             QMessageBox.warning(self, "Video Not Loaded", "No video is loaded, load a video first!")
             return
         if not self.dlc_data:
-            QMessageBox.warning(self, "DLC Data Not Loaded", "No DLC data has been loaded, load them to export to Refiner.")
+            QMessageBox.warning(self, "DLC Data Not Loaded", "No DLC data has been loaded, load them to export to Labeler.")
             return
         
         from frame_label import Frame_Label
 
         try:
-            self.refiner_window = Frame_Label()
-            self.refiner_window.video_file = self.video_file
-            self.refiner_window.initialize_loaded_video()
-            self.refiner_window.dlc_data = self.dlc_data
+            self.labeler_window = Frame_Label()
+            self.labeler_window.video_file = self.video_file
+            self.labeler_window.initialize_loaded_video()
+            self.labeler_window.dlc_data = self.dlc_data
             if not track_only:
-                self.refiner_window.marked_roi_frame_list = self.frame_list
-                self.refiner_window.refined_roi_frame_list = self.refined_frame_list
-            self.refiner_window.current_frame_idx = self.current_frame_idx
-            self.refiner_window.prediction = self.dlc_data.prediction_filepath
-            self.refiner_window.initialize_loaded_data()
-            self.refiner_window.display_current_frame()
-            self.refiner_window.navigation_title_controller()
+                self.labeler_window.marked_roi_frame_list = self.frame_list
+                self.labeler_window.refined_roi_frame_list = self.refined_frame_list
+            self.labeler_window.current_frame_idx = self.current_frame_idx
+            self.labeler_window.prediction = self.dlc_data.prediction_filepath
+            self.labeler_window.initialize_loaded_data()
+            self.labeler_window.display_current_frame()
+            self.labeler_window.navigation_title_controller()
             if self.frame_list and not track_only:
-                self.refiner_window.direct_keypoint_edit()
-                self.refiner_window.refined_frames_exported.connect(self._handle_refined_frames_exported)
-            self.refiner_window.show()
-            self.refiner_window.prediction_saved.connect(self.reload_prediction) # Reload from prediction provided by Refiner
+                self.labeler_window.direct_keypoint_edit()
+                self.labeler_window.refined_frames_exported.connect(self._handle_refined_frames_exported)
+            self.labeler_window.show()
+            self.labeler_window.prediction_saved.connect(self.reload_prediction) # Reload from prediction provided by Labeler
             
         except Exception as e:
-            error_message = f"Refiner failed to initialize. Error: {e}"
+            error_message = f"Labeler failed to initialize. Error: {e}"
             detailed_message = f"{error_message}\n\nTraceback:\n{traceback.format_exc()}"
-            QMessageBox.warning(self, "Refiner Failed", detailed_message)
+            QMessageBox.warning(self, "Labeler Failed", detailed_message)
 
     def dlc_inference(self):
         if not self.video_file:
@@ -712,16 +712,16 @@ class Frame_View(QtWidgets.QMainWindow):
     def reload_prediction(self, prediction_path):
         """Reload prediction data from file and update visualization"""
         data_loader = Prediction_Loader(self.dlc_data.dlc_config_filepath, prediction_path)
-        self.dlc_data, _ = data_loader.load_data()
+        self.dlc_data = data_loader.load_data()
         self.approved_frame_list[:] = list(set(self.approved_frame_list) - set(self.refined_frame_list))
         self.rejected_frame_list[:] = list(set(self.rejected_frame_list) - set(self.refined_frame_list))
 
         self.display_current_frame()
         self.statusBar().showMessage("Prediction successfully reloaded")
 
-        if hasattr(self, 'refiner_window') and self.refiner_window: # Clean refiner windows
-            self.refiner_window.close()
-            self.refiner_window = None
+        if hasattr(self, 'labeler_window') and self.labeler_window: # Clean labeler windows
+            self.labeler_window.close()
+            self.labeler_window = None
         
         if hasattr(self, "inference_window") and self.inference_window:
             self.inference_window.close()
