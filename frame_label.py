@@ -70,7 +70,8 @@ class Frame_Label(QtWidgets.QMainWindow):
             "File": {
                 "buttons": [
                     ("Load Video", self.load_video),
-                    ("Load Prediction", self.load_prediction)
+                    ("Load Prediction", self.load_prediction),
+                    ("Load Project Label", self.load_project_label)
                 ]
             },
             "Labeler": {
@@ -232,10 +233,10 @@ class Frame_Label(QtWidgets.QMainWindow):
         self._refresh_slider()
 
     def load_video(self):
-        self.reset_state()
         file_dialog = QtWidgets.QFileDialog(self)
         video_path, _ = file_dialog.getOpenFileName(self, "Load Video", "", "Video Files (*.mp4 *.avi *.mov *.mkv);;All Files (*)")
         if video_path:
+            self.reset_state()
             self.video_file = video_path
             self.initialize_loaded_video()
             
