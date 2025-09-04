@@ -1,6 +1,6 @@
 import numpy as np
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from .pose_analysis import calculate_pose_centroids, calculate_pose_rotations
 from .pose_worker import pose_rotation_worker
@@ -38,7 +38,8 @@ def generate_missing_kp_for_inst(
         pred_data_array:np.ndarray,
         current_frame_idx:int,
         selected_instance_idx:int,
-        angle_map_data:Dict[str, any]
+        angle_map_data:Dict[str, Any],
+        canon_pose:Optional[np.ndarray]
         ) -> np.ndarray:
     
     num_keypoint = pred_data_array.shape[2] // 3
@@ -57,9 +58,15 @@ def generate_missing_kp_for_inst(
     local_inst_x = local_coords[selected_instance_idx, 0::2]
     local_inst_y = local_coords[selected_instance_idx, 1::2]
     set_rotation = calculate_pose_rotations(local_inst_x, local_inst_y, angle_map_data=angle_map_data)
-    average_pose = get_average_pose(pred_data_array, selected_instance_idx, angle_map_data=angle_map_data, frame_idx=current_frame_idx, 
-        initial_pose_range=10, max_attempts=20, valid_frames_threshold=100, set_centroid=set_centroid, set_rotation=set_rotation)
-    
+
+    if canon_pose is None:
+        average_pose = get_average_pose(pred_data_array, selected_instance_idx, angle_map_data=angle_map_data, frame_idx=current_frame_idx, 
+            initial_pose_range=10, max_attempts=20, valid_frames_threshold=100, set_centroid=set_centroid, set_rotation=set_rotation)
+        
+    else:
+        canon_pose = canon_pose.flatten()
+        average_pose = pose_rotation_worker(set_rotation, set_centroid, canon_pose, np.full(num_keypoint, 1.0))
+        
     # Interpolate keypoint coordinates
     for keypoint_idx in missing_keypoints:
         try:

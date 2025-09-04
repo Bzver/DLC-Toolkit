@@ -337,7 +337,6 @@ class Frame_Label(QtWidgets.QMainWindow):
         # Proceed with initialization
         self.current_frame_idx = 0
         self.progress_widget.set_slider_range(self.total_frames) # Initialize slider range
-        self.is_kp_edit = True
         self.initialize_loaded_data()
         self.display_current_frame()
         self.reset_zoom()
@@ -751,7 +750,7 @@ class Frame_Label(QtWidgets.QMainWindow):
             return
         
         self.outlier_clean_pending = True
-        self.outlier_finder = Outlier_Finder(self.pred_data_array, canon_pose=self.canon_pose)
+        self.outlier_finder = Outlier_Finder(self.pred_data_array, canon_pose=self.canon_pose, parent=self)
         self.outlier_finder.mask_changed.connect(self._handle_outlier_mask_from_comp)
         self.outlier_finder.list_changed.connect(self._handle_frame_list_from_comp)
         self.outlier_finder.closing.connect(self._handle_outlier_window_closing)
@@ -920,8 +919,12 @@ class Frame_Label(QtWidgets.QMainWindow):
         selected_instance_idx = self.selected_box.instance_id if self.selected_box else current_frame_inst[0]
         self._save_state_for_undo()
 
-        self.pred_data_array = dupe.generate_missing_kp_for_inst(self.pred_data_array, self.current_frame_idx, selected_instance_idx,
-            angle_map_data=self.angle_map_data)
+        self.pred_data_array = dupe.generate_missing_kp_for_inst(
+            self.pred_data_array, 
+            self.current_frame_idx,
+            selected_instance_idx,
+            angle_map_data=self.angle_map_data,
+            canon_pose=self.canon_pose)
         self._on_track_data_changed()
 
     ###################################################################################################################################################  
