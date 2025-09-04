@@ -43,7 +43,7 @@ class Plot_Config:
     edit_mode:bool
 
 @dataclass
-class Refiner_Plotter_Callbacks:
+class Labeler_Plotter_Callbacks:
     keypoint_coords_callback: Callable[[int, int, float, float], None]  # instance_id, keypoint_id, new_x, new_y
     keypoint_object_callback: Callable[[object], None]
     box_coords_callback: Callable[[int, float, float], None]

@@ -66,12 +66,11 @@ class Frame_Label(QtWidgets.QMainWindow):
     def setup_menu(self):
         self.menu_widget = Menu_Widget(self)
         self.setMenuBar(self.menu_widget)
-        refiner_menu_config = {
+        labeler_menu_config = {
             "File": {
                 "buttons": [
                     ("Load Video", self.load_video),
-                    ("Load Prediction", self.load_prediction),
-                    ("Load Project Label", self.load_project_label)
+                    ("Load Prediction", self.load_prediction)
                 ]
             },
             "Labeler": {
@@ -151,12 +150,12 @@ class Frame_Label(QtWidgets.QMainWindow):
             }
         }
         if self.is_debug:
-            refiner_menu_config["DEBUG"] = {
+            labeler_menu_config["DEBUG"] = {
                 "buttons": [
                     ("Debug Load", self.debug_load)
                 ]
             }
-        self.menu_widget.add_menu_from_config(refiner_menu_config)
+        self.menu_widget.add_menu_from_config(labeler_menu_config)
 
     def setup_graphicscene(self):
         """Graphics view for interactive elements and video display"""
@@ -1088,7 +1087,7 @@ class Frame_Label(QtWidgets.QMainWindow):
             QMessageBox.warning(self, "No Prediction Data", "Please load a prediction file first.")
             return
         
-        pred_file_to_save_path = dio.determine_save_path(self.prediction, suffix="_track_refiner_modified_")
+        pred_file_to_save_path = dio.determine_save_path(self.prediction, suffix="_track_labeler_modified_")
         status, msg = dio.save_prediction_to_existing_h5(pred_file_to_save_path, self.pred_data_array)
         
         if not status:
