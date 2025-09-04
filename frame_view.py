@@ -15,7 +15,7 @@ import ui
 import utils.io as dio
 from utils import infer_head_tail_indices, calculate_canonical_pose
 from utils.io import Prediction_Loader, Exporter
-from utils.dataclass import Export_Settings, Plot_Config
+from core.dataclass import Export_Settings, Plot_Config
 from ui import (
     Menu_Widget, Progress_Bar_Widget, Nav_Widget, Prediction_Plotter,
     Adjust_Property_Dialog, Mark_Generator, Clear_Mark_Dialog, Canonical_Pose_Dialog

@@ -19,7 +19,7 @@ from ui import (
     Adjust_Property_Dialog, Pose_Rotation_Dialog, Canonical_Pose_Dialog, Head_Tail_Dialog,
     Prediction_Plotter, Selectable_Instance, Draggable_Keypoint
 )
-from utils.dataclass import Export_Settings, Plot_Config, Refiner_Plotter_Callbacks
+from core.dataclass import Export_Settings, Plot_Config, Refiner_Plotter_Callbacks
 
 DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/NTD/config.yaml"
 VIDEO_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/job/20250709S-340.mp4"

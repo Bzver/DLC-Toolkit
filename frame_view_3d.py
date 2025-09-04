@@ -20,7 +20,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 import ui
 import utils.io as dio
 import utils.utils3d as utls3
-from utils.dataclass import Plot_Config
+from core.dataclass import Plot_Config
 from ui import (
     Menu_Widget, Progress_Bar_Widget, Nav_Widget, Adjust_Property_Dialog,
     Prediction_Plotter, Clickable_Video_Label
