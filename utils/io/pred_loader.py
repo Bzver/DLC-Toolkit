@@ -3,20 +3,20 @@ import numpy as np
 
 import h5py
 import yaml
-from utils import helper as duh
 
-from typing import Optional, Any, Dict
+from typing import Any, Dict, Optional
 
 from .h5_op import validate_h5_keys
+from .io_helper import unflatten_data_array, add_mock_confidence_score
 from utils.dataclass import Loaded_DLC_Data
 
 class Prediction_Loader:
     """A class to load DeepLabCut configuration and prediction data."""
-    def __init__(self, dlc_config_filepath: str, prediction_filepath: str):
+    def __init__(self, dlc_config_filepath: str, prediction_filepath:Optional[str]=None):
         self.dlc_config_filepath = dlc_config_filepath
         self.prediction_filepath = prediction_filepath
 
-    def load_data(self, metadata_only: bool = False) -> Optional[Loaded_DLC_Data]:
+    def load_data(self, metadata_only: bool = False) -> Loaded_DLC_Data:
         config_data = self._load_config_data()
         
         if metadata_only:
@@ -28,7 +28,13 @@ class Prediction_Loader:
             )
             return loaded_data
 
-        pred_data = self._load_prediction_data(config_data)
+        num_keypoint = config_data["num_keypoint"]
+        instance_count = config_data["instance_count"]
+
+        if os.path.basename(self.prediction_filepath).startswith("CollectedData_"):
+            pred_data = self._load_labeled_data(num_keypoint, instance_count)
+        else:
+            pred_data = self._load_prediction_data(num_keypoint, instance_count)
         
         # Merge dictionaries for a clean object creation
         loaded_data = Loaded_DLC_Data(**config_data, **pred_data)
@@ -65,16 +71,10 @@ class Prediction_Loader:
         except Exception as e:
             raise RuntimeError(f"Error loading DLC config: {e}") from e
 
-    def _load_prediction_data(self, config_data: dict) -> Dict[str, Any]:
+    def _load_prediction_data(self, num_keypoint:int, instance_count:int) -> Dict[str, Any]:
         """Internal method to load prediction data from HDF5 file."""
         if not os.path.isfile(self.prediction_filepath):
             raise FileNotFoundError(f"Prediction file not found at: {self.prediction_filepath}")
-        
-        if "num_keypoint" not in config_data or "instance_count" not in config_data:
-            raise ValueError("Config data is incomplete. Please load config first.")
-
-        num_keypoint = config_data["num_keypoint"]
-        instance_count = config_data["instance_count"]
 
         try:
             with h5py.File(self.prediction_filepath, "r") as pred_file:
@@ -92,6 +92,7 @@ class Prediction_Loader:
                     pred_frame_count = len(prediction_raw)
 
                 expected_cols = instance_count * num_keypoint * 3
+
                 if pred_data_values.shape[1] != expected_cols:
                     raise ValueError(
                         f"Prediction data has {pred_data_values.shape[1]} columns, "
@@ -100,7 +101,7 @@ class Prediction_Loader:
                         "Please verify the prediction file and configuration match."
                     )
 
-            pred_data_array = duh.unflatten_data_array(pred_data_values, instance_count)
+            pred_data_array = unflatten_data_array(pred_data_values, instance_count)
 
             pred_data_dict = {
                 "prediction_filepath": self.prediction_filepath,
@@ -110,3 +111,57 @@ class Prediction_Loader:
             return pred_data_dict
         except Exception as e:
             raise RuntimeError(f"Error loading prediction data: {e}")
+        
+    def _load_labeled_data(self, num_keypoint:int, instance_count:int) -> Dict[str, Any]:
+        """Internal method to load label data from CollectedData_*.h5 file."""
+        if not os.path.isfile(self.prediction_filepath):
+            raise FileNotFoundError(f"Prediction file not found at: {self.prediction_filepath}")
+        
+        try:
+            with h5py.File(self.prediction_filepath, "r") as lbf:
+                key, subkey = validate_h5_keys(lbf)
+                if not key or not subkey:
+                    raise ValueError(f"No valid key found in '{self.prediction_filepath}'")
+                
+                prediction_raw = lbf[key][subkey]
+
+                if subkey == "block0_values": # Already an array
+                    pred_data_values = np.array(prediction_raw)
+                else:
+                    raise ValueError("'block0_values' not found in labeled HDF5.")
+
+                expected_cols_labeled = instance_count * num_keypoint * 2 
+
+                if pred_data_values.shape[1] == expected_cols_labeled:
+                    pred_data_values = add_mock_confidence_score(pred_data_values)
+                    pred_data_unflattened = unflatten_data_array(pred_data_values, instance_count)
+                else:
+                    raise ValueError(
+                        f"Label data has {pred_data_values.shape[1]} columns, "
+                        f"but {expected_cols_labeled} columns were expected based on config "
+                        f"(instances={instance_count}, keypoints={num_keypoint}). "
+                        "Please verify the label data file and configuration match."
+                    )
+
+                if "axis1_level2" in lbf[key]:
+                    labeled_frame_list = lbf[key]["axis1_level2"].asstr()[()]
+                    labeled_frame_list = [int(f.split("img")[1].split(".")[0]) for f in labeled_frame_list]
+                    labeled_frame_list.sort()
+                    pred_frame_count = max(labeled_frame_list) + 1
+                
+                    pred_data_array = np.full(
+                        (pred_frame_count, instance_count, num_keypoint*3),
+                        np.nan
+                        )
+                    pred_data_array[labeled_frame_list] = pred_data_unflattened
+                else:
+                    raise ValueError("'axis1_level2' not found in labeled HDF5.")
+
+            pred_data_dict = {
+                "prediction_filepath": self.prediction_filepath,
+                "pred_data_array": pred_data_array,
+                "pred_frame_count": pred_frame_count
+            }
+            return pred_data_dict
+        except Exception as e:
+            raise RuntimeError(f"Error loading label data: {e}")
