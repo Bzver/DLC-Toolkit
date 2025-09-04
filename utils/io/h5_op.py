@@ -7,7 +7,7 @@ import traceback
 
 from .parser import convert_prediction_array_to_save_format
 from .csv_op import prediction_to_csv, csv_to_h5
-from utils.dataclass import Loaded_DLC_Data, Export_Settings
+from core.dataclass import Loaded_DLC_Data, Export_Settings
 
 def save_prediction_to_existing_h5(prediction_filepath: str, pred_data_array: np.ndarray) -> Tuple[bool, str]:
     try:

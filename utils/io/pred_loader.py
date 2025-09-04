@@ -8,7 +8,7 @@ from typing import Any, Dict, Optional
 
 from .h5_op import validate_h5_keys
 from .io_helper import unflatten_data_array, add_mock_confidence_score
-from utils.dataclass import Loaded_DLC_Data
+from core.dataclass import Loaded_DLC_Data
 
 class Prediction_Loader:
     """A class to load DeepLabCut configuration and prediction data."""

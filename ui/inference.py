@@ -17,7 +17,7 @@ from .component import Clickable_Video_Label
 from .widget import Progress_Bar_Widget
 from .plot import Prediction_Plotter
 from .ui_helper import handle_unsaved_changes_on_close
-from utils.dataclass import Loaded_DLC_Data, Export_Settings
+from core.dataclass import Loaded_DLC_Data, Export_Settings
 from utils.io import Exporter, Prediction_Loader
 from utils import io as dio
 from utils.helper import log_print

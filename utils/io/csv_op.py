@@ -7,7 +7,7 @@ import numpy as np
 
 from typing import List, Tuple
 
-from utils.dataclass import Loaded_DLC_Data, Export_Settings
+from core.dataclass import Loaded_DLC_Data, Export_Settings
 
 def prediction_to_csv(
         dlc_data:Loaded_DLC_Data,

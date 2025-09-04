@@ -6,7 +6,7 @@ from PySide6.QtWidgets import QVBoxLayout, QDialog, QLabel
 from PySide6.QtGui import QPixmap, QImage
 
 from .plot import Prediction_Plotter
-from utils.dataclass import Loaded_DLC_Data, Plot_Config
+from core.dataclass import Loaded_DLC_Data, Plot_Config
 from utils.pose import calculate_pose_bbox
 
 class Canonical_Pose_Dialog(QDialog):

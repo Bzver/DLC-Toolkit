@@ -6,7 +6,7 @@ from sklearn.linear_model import LinearRegression
 from typing import Optional, Tuple, List
 
 from .triangulation import triangulate_point, undistort_points
-from utils.dataclass import Loaded_DLC_Data
+from core.dataclass import Loaded_DLC_Data
 
 class Data_Processor_3D:
     def __init__(

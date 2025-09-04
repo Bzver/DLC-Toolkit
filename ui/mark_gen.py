@@ -8,7 +8,7 @@ from PySide6.QtGui import QIntValidator
 
 from typing import Optional
 
-from utils.dataclass import Loaded_DLC_Data
+from core.dataclass import Loaded_DLC_Data
 from .outlier_finder import Outlier_Container
 
 class Mark_Generator(QDialog):

@@ -5,7 +5,7 @@ import cv2
 from typing import Tuple, List
 
 from .csv_op import prediction_to_csv, csv_to_h5
-from utils.dataclass import Loaded_DLC_Data, Export_Settings
+from core.dataclass import Loaded_DLC_Data, Export_Settings
 
 class Exporter:
     """A class to handle saving or merging predictions back to DLC"""
