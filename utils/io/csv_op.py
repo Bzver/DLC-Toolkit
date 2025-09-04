@@ -1,5 +1,4 @@
 import os
-import shutil
 from itertools import islice
 
 import pandas as pd
@@ -8,6 +7,7 @@ import numpy as np
 from typing import List, Tuple
 
 from core.dataclass import Loaded_DLC_Data, Export_Settings
+from .io_helper import backup_existing_prediction
 
 def prediction_to_csv(
         dlc_data:Loaded_DLC_Data,
@@ -58,17 +58,7 @@ def prediction_to_csv(
 
     save_filepath = os.path.join(export_settings.save_path, f"{csv_name}.csv")
 
-    if os.path.isfile(save_filepath):
-        backup_idx = 0
-        backup_dir = os.path.join(export_settings.save_path, "backup")
-        os.makedirs(backup_dir, exist_ok=True)
-        backup_filepath = os.path.join(backup_dir, f"{csv_name}_backup{backup_idx}.csv")
-
-        while os.path.isfile(backup_filepath):
-            backup_idx += 1
-            backup_filepath = os.path.join(backup_dir, f"{csv_name}_backup{backup_idx}.csv")
-
-        shutil.copy(save_filepath , backup_filepath)
+    backup_existing_prediction(save_filepath)
 
     final_df.to_csv(save_filepath, index=False, header=None)
     return True

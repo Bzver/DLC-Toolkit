@@ -6,7 +6,7 @@ from PySide6.QtWidgets import QGraphicsRectItem, QGraphicsEllipseItem, QGraphics
 
 from typing import Optional, Tuple
 
-from core.dataclass import Loaded_DLC_Data, Plot_Config, Refiner_Plotter_Callbacks
+from core.dataclass import Loaded_DLC_Data, Plot_Config, Labeler_Plotter_Callbacks
 from ui import Selectable_Instance, Draggable_Keypoint
 
 class Prediction_Plotter:
@@ -16,7 +16,7 @@ class Prediction_Plotter:
             plot_config:Optional[Plot_Config]=None,
             frame_cv2:Optional[np.ndarray]=None,
             graphics_scene:Optional[QGraphicsScene]=None,
-            plot_callback:Optional[Refiner_Plotter_Callbacks]=None
+            plot_callback:Optional[Labeler_Plotter_Callbacks]=None
             ):
         """
         Initializes the prediction plotter for visualizing 2D pose predictions either on a CV2 image 

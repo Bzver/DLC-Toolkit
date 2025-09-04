@@ -16,7 +16,7 @@ class Prediction_Loader:
         self.dlc_config_filepath = dlc_config_filepath
         self.prediction_filepath = prediction_filepath
 
-    def load_data(self, metadata_only: bool = False) -> Loaded_DLC_Data:
+    def load_data(self, metadata_only: bool = False, force_load_pred:bool = False) -> Loaded_DLC_Data:
         config_data = self._load_config_data()
         
         if metadata_only:
@@ -31,7 +31,7 @@ class Prediction_Loader:
         num_keypoint = config_data["num_keypoint"]
         instance_count = config_data["instance_count"]
 
-        if os.path.basename(self.prediction_filepath).startswith("CollectedData_"):
+        if os.path.basename(self.prediction_filepath).startswith("CollectedData_") and not force_load_pred:
             pred_data = self._load_labeled_data(num_keypoint, instance_count)
         else:
             pred_data = self._load_prediction_data(num_keypoint, instance_count)
@@ -92,14 +92,18 @@ class Prediction_Loader:
                     pred_frame_count = len(prediction_raw)
 
                 expected_cols = instance_count * num_keypoint * 3
+                half_expected_cols = instance_count * num_keypoint * 2
 
                 if pred_data_values.shape[1] != expected_cols:
-                    raise ValueError(
-                        f"Prediction data has {pred_data_values.shape[1]} columns, "
-                        f"but {expected_cols} columns were expected based on config "
-                        f"(instances={instance_count}, keypoints={num_keypoint}). "
-                        "Please verify the prediction file and configuration match."
-                    )
+                    if pred_data_values.shape[1] == half_expected_cols:
+                        pred_data_values = add_mock_confidence_score(pred_data_values)
+                    else:
+                        raise ValueError(
+                            f"Prediction data has {pred_data_values.shape[1]} columns, "
+                            f"but {expected_cols} columns were expected based on config "
+                            f"(instances={instance_count}, keypoints={num_keypoint}). "
+                            "Please verify the prediction file and configuration match."
+                        )
 
             pred_data_array = unflatten_data_array(pred_data_values, instance_count)
 

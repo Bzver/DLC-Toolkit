@@ -9,6 +9,8 @@ from PySide6.QtCore import Qt, QEvent, Signal
 from PySide6.QtGui import QShortcut, QKeySequence, QPainter, QColor, QPen, QCloseEvent
 from PySide6.QtWidgets import QMessageBox, QGraphicsView, QGraphicsRectItem
 
+import traceback
+
 import ui
 import utils.io as dio
 import utils.helper as duh
@@ -70,7 +72,8 @@ class Frame_Label(QtWidgets.QMainWindow):
             "File": {
                 "buttons": [
                     ("Load Video", self.load_video),
-                    ("Load Prediction", self.load_prediction)
+                    ("Load Prediction", self.load_prediction),
+                    ("Load DLC Label Data", self.load_dlc_label_data),
                 ]
             },
             "Labeler": {
@@ -187,7 +190,6 @@ class Frame_Label(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_W), self).activated.connect(self._swap_track_wrapper)
         QShortcut(QKeySequence(Qt.Key_X), self).activated.connect(self._delete_track_wrapper)
         QShortcut(QKeySequence(Qt.Key_W | Qt.ShiftModifier), self).activated.connect(lambda:self._swap_track_wrapper(swap_range=[-1]))
-        QShortcut(QKeySequence(Qt.Key_X | Qt.ShiftModifier), self).activated.connect(self._delete_track_wrapper)
         QShortcut(QKeySequence(Qt.Key_T), self).activated.connect(self._interpolate_track_wrapper)
         QShortcut(QKeySequence(Qt.Key_T | Qt.ShiftModifier), self).activated.connect(self._interpolate_missing_kp_wrapper)
         QShortcut(QKeySequence(Qt.Key_G), self).activated.connect(self._generate_inst_wrapper)
@@ -206,6 +208,8 @@ class Frame_Label(QtWidgets.QMainWindow):
         self.dlc_data, self.canon_pose, self.angle_map_data = None, None, None
         self.instance_count_per_frame, self.pred_data_array = None, None
         self.data_loader = dio.Prediction_Loader(None, None)
+
+        self.image_files = []
 
         self.roi_frame_list, self.marked_roi_frame_list, self.refined_roi_frame_list = [], [], []
         self.cap, self.current_frame = None, None
@@ -286,6 +290,59 @@ class Frame_Label(QtWidgets.QMainWindow):
 
         self.initialize_loaded_data()
 
+    def load_dlc_label_data(self):
+        folder_dialog = QtWidgets.QFileDialog(self)
+        image_folder = folder_dialog.getExistingDirectory(self, "Select Image Folder")
+        if not image_folder:
+            return
+
+        # List all .h5 files starting with "CollectedData_"
+        h5_candidates = [f for f in os.listdir(image_folder) if f.startswith("CollectedData_") and f.endswith(".h5")]
+        if not h5_candidates:
+            QMessageBox.warning(self, "No H5 File", "No 'CollectedData_*.h5' file found in the selected folder.")
+            return
+
+        prediction_path = os.path.join(image_folder, h5_candidates[0])
+        self.prediction = prediction_path
+        dlc_dir = os.path.dirname(os.path.dirname(image_folder))
+        dlc_config = os.path.join(dlc_dir, "config.yaml")
+
+        self.reset_state()
+
+        # Set video file to folder path (for naming)
+        self.video_file = image_folder
+        self.video_name = os.path.basename(image_folder)
+
+        # Load label
+        self.data_loader.dlc_config_filepath = dlc_config
+        self.data_loader.prediction_filepath = prediction_path
+        try:
+            self.dlc_data = self.data_loader.load_data(force_load_pred=True)
+        except Exception as e:
+            QMessageBox.critical(self, "Error Loading Prediction", f"Failed to load prediction: {e}")
+            traceback.print_exc()
+            return
+
+        # Load image filenames
+        img_exts = ('.png', '.jpg')
+        self.image_files = sorted([f for f in os.listdir(image_folder) if f.lower().endswith(img_exts) and f.startswith("img")])
+        if not self.image_files:
+            QMessageBox.warning(self, "No Images", "No image files found in the selected folder.")
+            return
+
+        # Set total frames
+        self.total_frames = len(self.image_files)
+        self.marked_roi_frame_list = list(range(self.total_frames))
+        
+        # Proceed with initialization
+        self.current_frame_idx = 0
+        self.progress_widget.set_slider_range(self.total_frames) # Initialize slider range
+        self.is_kp_edit = True
+        self.initialize_loaded_data()
+        self.display_current_frame()
+        self.reset_zoom()
+        self.navigation_title_controller()
+
     def debug_load(self):
         self.video_file = VIDEO_FILE_DEBUG
         self.initialize_loaded_video()
@@ -342,58 +399,64 @@ class Frame_Label(QtWidgets.QMainWindow):
 
     def display_current_frame(self):
         self.selected_box = None # Ensure the selected instance is unselected
+
+        if self.image_files:
+            # Load image from folder
+            img_path = os.path.join(self.video_file, self.image_files[self.current_frame_idx])
+            frame = cv2.imread(img_path)
+            if frame is None:
+                self.graphics_scene.clear()
+                return
+
         if self.cap and self.cap.isOpened():
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame_idx)
             ret, frame = self.cap.read()
-            if ret:
-                self.current_frame = frame
-                self.graphics_scene.clear() # Clear previous graphics items
-
-                # Convert OpenCV image to QPixmap and add to scene
-                rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                h, w, ch = rgb_image.shape
-                bytes_per_line = ch * w
-                qt_image = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
-                pixmap = QtGui.QPixmap.fromImage(qt_image)
-                
-                # Add pixmap to the scene
-                pixmap_item = self.graphics_scene.addPixmap(pixmap)
-                pixmap_item.setZValue(-1)
-
-                self.graphics_scene.setSceneRect(0, 0, w, h)
-                
-                if self.auto_snapping:
-                    view_width = self.graphics_scene.sceneRect().width()
-                    view_height = self.graphics_scene.sceneRect().height()
-                    current_frame_data = self.pred_data_array[self.current_frame_idx, ...]
-                    if not np.all(np.isnan(current_frame_data)):
-                        self.zoom_factor, center_x, center_y = \
-                            ui.calculate_snapping_zoom_level(current_frame_data, view_width, view_height)
-                        self.graphics_view.centerOn(center_x, center_y)
-
-                new_transform = QtGui.QTransform()
-                new_transform.scale(self.zoom_factor, self.zoom_factor)
-                self.graphics_view.setTransform(new_transform)
-
-                # Plot predictions (keypoints, bounding boxes, skeleton)
-                if self.pred_data_array is not None:
-                    self.plotter.current_frame_data = self.pred_data_array[self.current_frame_idx, ...]
-                    self.plotter.plot_config = self.plot_config
-                    self.plotter.plot_predictions()
-
-                self.graphics_view.update() # Force update of the graphics view
-                self.progress_widget.set_current_frame(self.current_frame_idx) # Update slider handle's position
-
-            else: # If video frame cannot be read, clear scene and display error
+            if not ret:
                 self.graphics_scene.clear()
-                error_text_item = self.graphics_scene.addText("Error: Could not read frame")
-                error_text_item.setDefaultTextColor(QColor(255, 255, 255)) # White text
-                self.graphics_view.fitInView(error_text_item.boundingRect(), Qt.KeepAspectRatio)
+                return
+
+        self.current_frame = frame
+        self.graphics_scene.clear() # Clear previous graphics items
+
+        # Convert OpenCV image to QPixmap and add to scene
+        rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        h, w, ch = rgb_image.shape
+        bytes_per_line = ch * w
+        qt_image = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
+        pixmap = QtGui.QPixmap.fromImage(qt_image)
+        
+        # Add pixmap to the scene
+        pixmap_item = self.graphics_scene.addPixmap(pixmap)
+        pixmap_item.setZValue(-1)
+
+        self.graphics_scene.setSceneRect(0, 0, w, h)
+        
+        if self.auto_snapping:
+            view_width = self.graphics_scene.sceneRect().width()
+            view_height = self.graphics_scene.sceneRect().height()
+            current_frame_data = self.pred_data_array[self.current_frame_idx, ...]
+            if not np.all(np.isnan(current_frame_data)):
+                self.zoom_factor, center_x, center_y = \
+                    ui.calculate_snapping_zoom_level(current_frame_data, view_width, view_height)
+                self.graphics_view.centerOn(center_x, center_y)
+
+        new_transform = QtGui.QTransform()
+        new_transform.scale(self.zoom_factor, self.zoom_factor)
+        self.graphics_view.setTransform(new_transform)
+
+        # Plot predictions (keypoints, bounding boxes, skeleton)
+        if self.pred_data_array is not None:
+            self.plotter.current_frame_data = self.pred_data_array[self.current_frame_idx, ...]
+            self.plotter.plot_config = self.plot_config
+            self.plotter.plot_predictions()
+
+        self.graphics_view.update() # Force update of the graphics view
+        self.progress_widget.set_current_frame(self.current_frame_idx) # Update slider handle's position
 
     ###################################################################################################################################################
 
     def change_frame(self, delta):
-        if self.cap and self.cap.isOpened():
+        if self.cap and self.cap.isOpened() or self.image_files:
             new_frame_idx = self.current_frame_idx + delta
             if 0 <= new_frame_idx < self.total_frames:
                 self.current_frame_idx = new_frame_idx
@@ -1087,9 +1150,13 @@ class Frame_Label(QtWidgets.QMainWindow):
             QMessageBox.warning(self, "No Prediction Data", "Please load a prediction file first.")
             return
         
-        pred_file_to_save_path = dio.determine_save_path(self.prediction, suffix="_track_labeler_modified_")
+        if self.image_files:
+            dio.backup_existing_prediction(self.prediction)
+            self.pred_data_array = dio.remove_confidence_score(self.pred_data_array)
+            pred_file_to_save_path = self.prediction
+        else:
+            pred_file_to_save_path = dio.determine_save_path(self.prediction, suffix="_track_labeler_modified_")
         status, msg = dio.save_prediction_to_existing_h5(pred_file_to_save_path, self.pred_data_array)
-        
         if not status:
             QMessageBox.critical(self, "Saving Error", f"An error occurred during saving: {msg}")
             print(f"An error occurred during saving: {msg}")
@@ -1107,7 +1174,11 @@ class Frame_Label(QtWidgets.QMainWindow):
         self.prediction = pred_file_to_save_path
         self.data_loader.dlc_config_filepath = self.dlc_data.dlc_config_filepath
         self.data_loader.prediction_filepath = self.prediction
-        self.dlc_data, msg = self.data_loader.load_data()
+        if self.image_files:
+            self.dlc_data = self.data_loader.load_data(force_load_pred=True)
+        else:
+            self.dlc_data = self.data_loader.load_data()
+        self.pred_data_array = self.dlc_data.pred_data_array
 
     def save_prediction_as_csv(self):
         save_path = os.path.dirname(self.prediction)

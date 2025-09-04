@@ -3,6 +3,24 @@ import shutil
 import yaml
 import numpy as np
 
+def backup_existing_prediction(save_filepath):
+    if not os.path.isfile(save_filepath):
+        return
+
+    filename = os.path.basename(save_filepath)
+    path = os.path.dirname(save_filepath)
+    file, ext = filename.split(".")
+    backup_idx = 0
+    backup_dir = os.path.join(path, "backup")
+    os.makedirs(backup_dir, exist_ok=True)
+    backup_filepath = os.path.join(backup_dir, f"{file}_backup{backup_idx}.{ext}")
+
+    while os.path.isfile(backup_filepath):
+        backup_idx += 1
+        backup_filepath = os.path.join(backup_dir, f"{file}_backup{backup_idx}.{ext}")
+
+    shutil.copy(save_filepath, backup_filepath)
+
 def determine_save_path(prediction_filepath:str, suffix:str) -> str:
     pred_file_dir = os.path.dirname(prediction_filepath)
     pred_file_name_without_ext = os.path.splitext(os.path.basename(prediction_filepath))[0]
