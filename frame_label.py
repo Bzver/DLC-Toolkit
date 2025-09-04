@@ -19,7 +19,7 @@ from ui import (
     Adjust_Property_Dialog, Pose_Rotation_Dialog, Canonical_Pose_Dialog, Head_Tail_Dialog,
     Prediction_Plotter, Selectable_Instance, Draggable_Keypoint
 )
-from core.dataclass import Export_Settings, Plot_Config, Refiner_Plotter_Callbacks
+from core.dataclass import Export_Settings, Plot_Config, Labeler_Plotter_Callbacks
 
 DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/NTD/config.yaml"
 VIDEO_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/job/20250709S-340.mp4"
@@ -73,7 +73,7 @@ class Frame_Label(QtWidgets.QMainWindow):
                     ("Load Prediction", self.load_prediction)
                 ]
             },
-            "Refiner": {
+            "Labeler": {
                 "display_name": "Refine",
                 "buttons": [
                     ("Direct Keypoint Edit (Q)", self.direct_keypoint_edit),
@@ -117,6 +117,8 @@ class Frame_Label(QtWidgets.QMainWindow):
             },
             "View": {
                 "buttons": [
+                    ("Paste Frame Marks From Clipboard", self.load_marked_roi_from_clipboard),
+                    ("Reset Marked Frames", self.clear_marked_roi),
                     ("Toggle Zoom Mode (Z)", self.toggle_zoom_mode, {"checkable": True, "checked": False}),
                     ("Toggle Snap to Instances (E)", self.toggle_snap_to_instances, {"checkable": True, "checked": False}),
                     ("Hide Text Labels", self.toggle_hide_text_labels, {"checkable": True, "checked": False}),
@@ -150,9 +152,7 @@ class Frame_Label(QtWidgets.QMainWindow):
         if self.is_debug:
             refiner_menu_config["DEBUG"] = {
                 "buttons": [
-                    ("Debug Load", self.debug_load),
-                    ("Paste Frame Marks From Clipboard", self.load_marked_roi_from_clipboard),
-                    ("Empty Marked ROI", self.clear_marked_roi)
+                    ("Debug Load", self.debug_load)
                 ]
             }
         self.menu_widget.add_menu_from_config(refiner_menu_config)
@@ -221,7 +221,7 @@ class Frame_Label(QtWidgets.QMainWindow):
 
         self.plot_config = Plot_Config(
             plot_opacity=1.0, point_size = 6.0, confidence_cutoff = 0.0, hide_text_labels = False, edit_mode = False)
-        self.plotter_callback = Refiner_Plotter_Callbacks(
+        self.plotter_callback = Labeler_Plotter_Callbacks(
             keypoint_coords_callback = self._update_keypoint_position, keypoint_object_callback = self.set_dragged_keypoint,
             box_coords_callback = self._update_instance_position, box_object_callback = self._handle_box_selection
         )
@@ -1044,7 +1044,7 @@ class Frame_Label(QtWidgets.QMainWindow):
             QMessageBox.information(
                 self,  "Action Not Available", 
                 "To begin keypoint refinement, you must first select and designate frames" \
-                " using the Extractor tool. The Refiner tool is open, but only for track " \
+                " using the Extractor tool. The Labeler tool is open, but only for track " \
                 "refinement, which uses the automatically tagged frames to assist with track " \
                 "swapping, interpolation, and other tracking tasks."
             )
