@@ -8,7 +8,7 @@ def navigate_to_marked_frame(
         frame_list:List[int],
         current_frame_idx:int,
         change_frame_callback:Callable[[int], None],
-        mode:Literal["prev","next"]
+        direction:Literal["prev","next"]
         ):
     """
     Navigates to the previous or next frame in a sorted list of frames.
@@ -18,7 +18,7 @@ def navigate_to_marked_frame(
         frame_list (List[int]): List of frame indices that are marked.
         current_frame_idx (int): Index of the currently displayed frame.
         change_frame_callback (Callable[[int], None]): Function to call with the destination frame index.
-        mode (Literal["prev", "next"]): Direction of navigation — either "prev" or "next".
+        direction (Literal["prev", "next"]): Direction of navigation — either "prev" or "next".
 
     Behavior:
         - Sorts the frame list and finds the nearest previous or next frame.
@@ -32,10 +32,10 @@ def navigate_to_marked_frame(
     
     frame_list.sort()
 
-    if mode == "prev":
+    if direction == "prev":
         dest_frame_idx = _get_prev_frame_in_list(frame_list, current_frame_idx)
         no_frame_message = "No previous marked frame found."
-    elif mode == "next":
+    elif direction == "next":
         dest_frame_idx = _get_next_frame_in_list(frame_list, current_frame_idx)
         no_frame_message = "No next marked frame found."
     
