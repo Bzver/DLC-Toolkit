@@ -318,6 +318,7 @@ class Frame_Label(QtWidgets.QMainWindow):
         self.data_loader.prediction_filepath = prediction_path
         try:
             self.dlc_data = self.data_loader.load_data(force_load_pred=True)
+            self.pred_data_array = self.dlc_data.pred_data_array
         except Exception as e:
             QMessageBox.critical(self, "Error Loading Prediction", f"Failed to load prediction: {e}")
             traceback.print_exc()
@@ -370,14 +371,16 @@ class Frame_Label(QtWidgets.QMainWindow):
 
         self._update_roi_list()
 
+        current_frame_data = self.pred_data_array[self.current_frame_idx, :, :].copy()
+
         self.plotter = Prediction_Plotter(
-            dlc_data=self.dlc_data, current_frame_data=self.pred_data_array[self.current_frame_idx, ...],
+            dlc_data=self.dlc_data, current_frame_data=current_frame_data,
             graphics_scene=self.graphics_scene, plot_config=self.plot_config, plot_callback=self.plotter_callback)
 
         if self.dlc_data.pred_frame_count != self.total_frames:
             msg = f"Frames in config: {self.total_frames} | Frames in prediction: {self.dlc_data.pred_frame_count}.\n\n"
             if self.dlc_data.pred_frame_count > self.total_frames:
-                self.pred_data_array = self.pred_data_array[self.total_frames]
+                self.pred_data_array = self.pred_data_array[range(self.total_frames)]
                 msg += "Truncating the data to match the video length."
             else:
                 pred_data_array_padded = np.full(
@@ -433,7 +436,7 @@ class Frame_Label(QtWidgets.QMainWindow):
         if self.auto_snapping:
             view_width = self.graphics_scene.sceneRect().width()
             view_height = self.graphics_scene.sceneRect().height()
-            current_frame_data = self.pred_data_array[self.current_frame_idx, ...]
+            current_frame_data = self.pred_data_array[self.current_frame_idx, :, :].copy()
             if not np.all(np.isnan(current_frame_data)):
                 self.zoom_factor, center_x, center_y = \
                     ui.calculate_snapping_zoom_level(current_frame_data, view_width, view_height)
@@ -445,7 +448,7 @@ class Frame_Label(QtWidgets.QMainWindow):
 
         # Plot predictions (keypoints, bounding boxes, skeleton)
         if self.pred_data_array is not None:
-            self.plotter.current_frame_data = self.pred_data_array[self.current_frame_idx, ...]
+            self.plotter.current_frame_data = self.pred_data_array[self.current_frame_idx, :, :].copy()
             self.plotter.plot_config = self.plot_config
             self.plotter.plot_predictions()
 
