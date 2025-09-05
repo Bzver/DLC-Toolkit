@@ -1,5 +1,6 @@
 import os
 import pandas as pd
+from collections import Counter
 
 def load_deeplabcut_csv(csv_file):
     """
@@ -59,9 +60,26 @@ def remove_extra_image(project_dir, data_list):
     else:
         print("No extra images found to delete.")
 
+def find_duplicates(lst):
+    counts = Counter(lst)
+    return {item: count for item, count in counts.items() if count > 1}
+
+def check_missing_images(project_dir, data_list):
+    if not data_list:
+        print("Warning: Data list is empty. No images to compare against for deletion.")
+        return
+
+    print(f"Duplicate entries: {find_duplicates(data_list)}")
+    images = [f for f in os.listdir(project_dir) if f.endswith(".png") and f.startswith("img")]
+
+    for entry in data_list:
+        if entry not in images:
+            print(f"Warning: No corresponding image can be found for {entry}!")
+
 if __name__ == "__main__":
     csv_file = "CollectedData_bezver.csv"
-    project_dir = "D:/Project/DLC-Models/NTD/labeled-data/20250626C1-first3h-S"
+    project_dir = "D:/Project/DLC-Models/NTD/labeled-data/SD-20250605B-cam5_cam5"
     csv_file = os.path.join(project_dir, csv_file)
     data_list = load_deeplabcut_csv(csv_file)
-    remove_extra_image(project_dir, data_list)
+    # remove_extra_image(project_dir, data_list)
+    check_missing_images(project_dir, data_list)
