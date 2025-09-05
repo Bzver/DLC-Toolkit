@@ -74,6 +74,8 @@ def csv_to_h5(
         fn = os.path.join(project_dir, f"{csv_name}.csv")
         with open(fn) as datafile:
             total_lines = sum(1 for _ in datafile)
+        
+        with open(fn) as datafile: # Reopen the file to read the head
             head = list(islice(datafile, 0, 5))
         if multi_animal:
             header = list(range(4))

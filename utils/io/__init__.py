@@ -20,5 +20,6 @@ __all__ = (
     save_predictions_to_new_h5,
     determine_save_path,
     append_new_video_to_dlc_config,
-    remove_confidence_score
+    remove_confidence_score,
+    backup_existing_prediction
 )

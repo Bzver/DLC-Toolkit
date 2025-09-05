@@ -1160,9 +1160,15 @@ class Frame_Label(QtWidgets.QMainWindow):
             dio.backup_existing_prediction(self.prediction)
             self.pred_data_array = dio.remove_confidence_score(self.pred_data_array)
             pred_file_to_save_path = self.prediction
+            status, msg = dio.save_prediction_to_existing_h5(
+                pred_file_to_save_path,
+                self.pred_data_array,
+                self.dlc_data.keypoints,
+                self.dlc_data.multi_animal
+                )
         else:
             pred_file_to_save_path = dio.determine_save_path(self.prediction, suffix="_track_labeler_modified_")
-        status, msg = dio.save_prediction_to_existing_h5(pred_file_to_save_path, self.pred_data_array)
+            status, msg = dio.save_prediction_to_existing_h5(pred_file_to_save_path, self.pred_data_array)
         if not status:
             QMessageBox.critical(self, "Saving Error", f"An error occurred during saving: {msg}")
             print(f"An error occurred during saving: {msg}")
@@ -1202,7 +1208,7 @@ class Frame_Label(QtWidgets.QMainWindow):
         if event.type() == QEvent.Type.WindowStateChange:
             self.reset_zoom()
         super().changeEvent(event)
-
+    
     def closeEvent(self, event: QCloseEvent):
         ui.handle_unsaved_changes_on_close(self, event, self.is_saved, self.save_prediction)
 
