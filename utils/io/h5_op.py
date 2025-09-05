@@ -127,14 +127,16 @@ def fix_h5_frame_order(pred_file):
     pass
 
 def fix_h5_key_order_on_save(pred_file, key: str, multi_animal: bool, keypoints: list):
-    target_key = "axis0_label2" if multi_animal else "axis0_label1"
+    target_key_axis = "axis0_label2" if multi_animal else "axis0_label1"
+    target_key_block = "block0_items_label2" if multi_animal else "block0_items_label1"
     ref_key = "axis0_level2" if multi_animal else "axis0_level1"
 
     ref_list = [kp.decode('utf-8') if isinstance(kp, bytes) else kp 
                 for kp in pred_file[key][ref_key]]
     
-    label_array = np.array(pred_file[key][target_key])
-    n_cols = label_array.shape[0]
+    label_array_axis = np.array(pred_file[key][target_key_axis])
+    label_array_block = np.array(pred_file[key][target_key_block])
+    n_cols = label_array_axis.shape[0]
     n_kp = len(keypoints)
 
     if multi_animal:
@@ -152,9 +154,12 @@ def fix_h5_key_order_on_save(pred_file, key: str, multi_animal: bool, keypoints:
     for animal_idx in range(n_animals):
         start_col = animal_idx * n_kp * 2
         for new_kp_idx, orig_kp_idx in enumerate(remap):
-            label_array[start_col + new_kp_idx * 2]     = orig_kp_idx  # x
-            label_array[start_col + new_kp_idx * 2 + 1] = orig_kp_idx  # y
+            label_array_axis[start_col + new_kp_idx * 2]     = orig_kp_idx  # x
+            label_array_axis[start_col + new_kp_idx * 2 + 1] = orig_kp_idx  # y
+
+    label_array_block = label_array_axis.copy()
 
     # Write back to file
-    pred_file[key][target_key][...] = label_array
+    pred_file[key][target_key_axis][...] = label_array_axis
+    pred_file[key][target_key_block][...] = label_array_block
     return pred_file
