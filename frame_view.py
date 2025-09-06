@@ -170,6 +170,7 @@ class Frame_View(QtWidgets.QMainWindow):
             is_label_data = True
             QMessageBox.information(self, "Labeled Data Selected", "Labeled data selected, now loading DLC config.")
         else:
+            is_label_data = False
             QMessageBox.information(self, "Prediction Selected", "Prediction selected, now loading DLC config.")
 
         file_dialog = QFileDialog(self)
