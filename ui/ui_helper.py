@@ -4,41 +4,9 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox, QProgressDialog
 from typing import Callable, Tuple
 
-from utils.io import Exporter
-from core.dataclass import Loaded_DLC_Data
 
 def format_title(base_title: str, debug_status: bool) -> str:
     return f"{base_title} --- DEBUG MODE" if debug_status else base_title
-
-def export_and_show_message(
-        parent,
-        exporter:Exporter,
-        frame_only:bool=False,
-        mute:bool=False
-        ) -> bool:
-    """
-    Exports current pose estimation data using the provided exporter and informs the user 
-    of the result via message dialogs or status bar.
-
-    Args:
-        parent: Parent widget used for displaying messages.
-        exporter (DLC_Exporter): Exporter instance handling the write operation.
-        frame_only (bool): If True, exports only the current frame; otherwise, exports all data.
-        mute (bool): If True, avoids pop-up dialogs and only shows the result in the status bar.
-
-    Returns:
-        bool: True if export was successful; False otherwise.
-    """
-    status, msg = exporter.export_data_to_DLC(frame_only)
-
-    if not status:
-        QMessageBox.critical(parent, "Error", str(msg))
-    elif not mute:
-        QMessageBox.information(parent, "Success", str(msg))
-    else:
-        parent.statusBar().showMessage(msg)
-
-    return status
 
 def handle_unsaved_changes_on_close(
         parent,

@@ -758,7 +758,11 @@ class Frame_View(QtWidgets.QMainWindow):
             exporter = Exporter(self.dlc_data, exp_set, self.refined_frame_list, pred_data_array_for_export)
         
         if self.dlc_data:
-            ui.export_and_show_message(self, exporter, frame_only=False)
+            try:
+                exporter.export_data_to_DLC()
+                QMessageBox.information(self, "Success", "Successfully exported frames and prediction to DLC.")
+            except Exception as e:
+                QMessageBox.critical(self, "Error Save Data", f"Error saving data to DLC: {e}")
             dio.append_new_video_to_dlc_config(self.dlc_data.dlc_config_filepath, self.video_name)
 
             if exp_set.export_mode == "Merge":
@@ -779,7 +783,11 @@ class Frame_View(QtWidgets.QMainWindow):
                         )
                 if not dlc_dir: # When user close the file selection window
                     return
-                ui.export_and_show_message(self, exporter, frame_only=True)
+                try:
+                    exporter.export_data_to_DLC(frame_only=True)
+                    QMessageBox.information(self, "Success", "Successfully exported marked frames to DLC for labeling!")
+                except Exception as e:
+                    QMessageBox.critical(self, "Error Export Frames", f"Error exporting marked frames to DLC: {e}")
                 return
             else:
                 self.load_prediction()
@@ -824,7 +832,11 @@ class Frame_View(QtWidgets.QMainWindow):
                                 frame_list=merge_frame_list,
                                 pred_data_array=label_data_array_export)
             
-            ui.export_and_show_message(self, exporter, frame_only=False)
+            try:
+                exporter.export_data_to_DLC()
+                QMessageBox.information(self, "Success", "Successfully exported frames and prediction to DLC.")
+            except Exception as e:
+                QMessageBox.critical(self, "Error Merge Data", f"Error merging data to DLC: {e}")
 
             self.process_labeled_frame()
 

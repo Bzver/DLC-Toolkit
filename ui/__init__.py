@@ -26,7 +26,6 @@ from .mark_gen import Mark_Generator
 from .outlier_finder import Outlier_Finder
 from .ui_helper import (
     format_title,
-    export_and_show_message,
     handle_unsaved_changes_on_close,
     get_progress_dialog,
     calculate_snapping_zoom_level,
@@ -51,7 +50,6 @@ __all__ = (
     Mark_Generator,
     navigate_to_marked_frame,
     format_title,
-    export_and_show_message,
     handle_unsaved_changes_on_close,
     get_progress_dialog,
     calculate_snapping_zoom_level,
