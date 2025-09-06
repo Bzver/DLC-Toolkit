@@ -174,9 +174,18 @@ class Mark_Generator(QDialog):
                                         "No frames matched the selected outlier criteria in the given range.")
                 return
 
+            frame_count_in_data = self.dlc_data.pred_data_array.shape[0]
             mask_range = np.zeros(self.total_frames, dtype=bool)
             mask_range[frame_range] = True
-            combined_mask = np.any(outlier_mask, axis=1) & mask_range
+
+            # Trucate or pad mask_range in case frame counts are different
+            if self.total_frames >= frame_count_in_data:
+                mask_range_processed = mask_range[range(frame_count_in_data)]
+            else:
+                mask_range_processed = np.zeros(self.total_frames, dtype=bool)
+                mask_range_processed[frame_range] = True
+
+            combined_mask = np.any(outlier_mask, axis=1) & mask_range_processed
             if not np.any(combined_mask):
                 QMessageBox.information(self, "No Outliers in Range",
                                         "No outliers found within the selected frame range.")

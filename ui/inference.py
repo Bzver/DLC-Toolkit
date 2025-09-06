@@ -635,7 +635,7 @@ class DLC_Inference(QtWidgets.QDialog):
         pred_filepath = os.path.join(self.temp_dir, h5_files[-1])
         dlc_config_filepath = self.dlc_data.dlc_config_filepath
         loader = Prediction_Loader(dlc_config_filepath, pred_filepath)
-        loaded_data, _ = loader.load_data()
+        loaded_data = loader.load_data()
         new_data_array = np.full(
             (self.dlc_data.pred_frame_count, self.dlc_data.instance_count, self.dlc_data.num_keypoint*3), np.nan)
         new_data_array[self.frame_list, :, :] = loaded_data.pred_data_array

@@ -28,14 +28,10 @@ class Prediction_Loader:
             )
             return loaded_data
 
-        multi_animal = config_data["multi_animal"]
-        keypoints = config_data["keypoints"]
-        instance_count = config_data["instance_count"]
-
         if os.path.basename(self.prediction_filepath).startswith("CollectedData_") and not force_load_pred:
-            pred_data = self._load_labeled_data(keypoints, instance_count, multi_animal)
+            pred_data = self._load_labeled_data(config_data)
         else:
-            pred_data = self._load_prediction_data(keypoints, instance_count, multi_animal)
+            pred_data = self._load_prediction_data(config_data)
         
         # Merge dictionaries for a clean object creation
         loaded_data = Loaded_DLC_Data(**config_data, **pred_data)
@@ -72,12 +68,7 @@ class Prediction_Loader:
         except Exception as e:
             raise RuntimeError(f"Error loading DLC config: {e}") from e
 
-    def _load_prediction_data(
-            self,
-            keypoints:list,
-            instance_count:int,
-            multi_animal:bool
-            ) -> Dict[str, Any]:
+    def _load_prediction_data(self, config_data:Dict[str, Any]) -> Dict[str, Any]:
         """Internal method to load prediction data from HDF5 file."""
         if not os.path.isfile(self.prediction_filepath):
             raise FileNotFoundError(f"Prediction file not found at: {self.prediction_filepath}")
@@ -89,10 +80,11 @@ class Prediction_Loader:
                     raise ValueError(f"No valid key found in '{self.prediction_filepath}'")
                 
                 prediction_raw = pred_file[key][subkey]
-
-                num_keypoint = len(keypoints)
+                
+                instance_count = config_data["instance_count"]
+                num_keypoint = config_data["num_keypoint"]
                 if subkey == "block0_values": # Already an array
-                    pred_data_values = fix_h5_kp_order(pred_file, key, multi_animal, keypoints)
+                    pred_data_values = fix_h5_kp_order(pred_file, key, config_data)
                     
                     pred_frame_count = pred_data_values.shape[0]
                 else:

@@ -55,7 +55,7 @@ def save_predictions_to_new_h5(dlc_data:Loaded_DLC_Data, pred_data_array:np.ndar
         traceback.print_exc()
         return False, e
     
-def validate_h5_keys(pred_file:dict):
+def validate_h5_keys(pred_file:dict) -> Tuple[str, str]:
     pred_header = ["tracks", "df_with_missing", "predictions", "keypoints"]
     found_keys = [key for key in pred_header if key in pred_file]
     if not found_keys:
@@ -70,9 +70,13 @@ def validate_h5_keys(pred_file:dict):
 
     return key, subkey
 
-def fix_h5_kp_order(pred_file: dict, key: str, multi_animal: bool, keypoints: list):
+def fix_h5_kp_order(pred_file: dict, key: str, config_data:dict) -> np.ndarray:
     data = np.array(pred_file[key]["block0_values"])
     n_cols = data.shape[1]
+    multi_animal = config_data["multi_animal"]
+    keypoints = config_data["keypoints"]
+    num_keypoint = config_data["num_keypoint"]
+    instance_count = config_data["instance_count"]
 
     ref_key = "axis0_level2" if multi_animal else "axis0_level1"
     ref_list = [kp.decode('utf-8') if isinstance(kp, bytes) else kp 
@@ -86,15 +90,9 @@ def fix_h5_kp_order(pred_file: dict, key: str, multi_animal: bool, keypoints: li
     label_key = "axis0_label2" if multi_animal else "axis0_label1"
     label_array = np.array(pred_file[key][label_key])  # shape: (n_cols,), int indices
 
-    n_keypoints_expected = len(keypoints)
-    n_coords_per_kp = 2
 
-    if n_cols % (n_keypoints_expected * n_coords_per_kp) != 0:
-        n_coords_per_kp = 3
-        if n_cols % (n_keypoints_expected * n_coords_per_kp) != 0:
-            raise ValueError("Data shape does not match expected number of keypoints.")
-    
-    n_animals = n_cols // (n_keypoints_expected * n_coords_per_kp)
+    if n_cols % (num_keypoint * 2) != 0 or  n_cols // (num_keypoint * 2) != instance_count:
+        return data
 
     # Create mapping: new order index -> original keypoint index
     try:
@@ -102,19 +100,16 @@ def fix_h5_kp_order(pred_file: dict, key: str, multi_animal: bool, keypoints: li
     except ValueError as e:
         raise ValueError(f"Missing keypoint in reference list: {e}")
 
-    # Prepare output array
     data_reordered = np.empty_like(data)
 
-    # For each animal and each keypoint, copy x and y columns
-    for animal_idx in range(n_animals):
-        animal_slice = slice(animal_idx * n_keypoints_expected * 2,
-                             (animal_idx + 1) * n_keypoints_expected * 2)
+    for animal_idx in range(instance_count):
+        animal_slice = slice(animal_idx * num_keypoint * 2, (animal_idx + 1) * num_keypoint * 2)
 
         for new_idx, orig_kp_idx in enumerate(remap_kp_indices):
             old_x_col = np.where(label_array[animal_slice] == orig_kp_idx)[0][0] + animal_slice.start
             old_y_col = np.where(label_array[animal_slice] == orig_kp_idx)[0][1] + animal_slice.start
 
-            new_x_col = animal_idx * n_keypoints_expected * 2 + new_idx * 2
+            new_x_col = animal_idx * num_keypoint * 2 + new_idx * 2
             new_y_col = new_x_col + 1
 
             data_reordered[:, new_x_col] = data[:, old_x_col]
@@ -126,7 +121,7 @@ def fix_h5_frame_order(pred_file):
     # 2 B Implemented
     pass
 
-def fix_h5_key_order_on_save(pred_file, key: str, multi_animal: bool, keypoints: list):
+def fix_h5_key_order_on_save(pred_file, key: str, multi_animal: bool, keypoints: list) -> dict:
     target_key_axis = "axis0_label2" if multi_animal else "axis0_label1"
     target_key_block = "block0_items_label2" if multi_animal else "block0_items_label1"
     ref_key = "axis0_level2" if multi_animal else "axis0_level1"
