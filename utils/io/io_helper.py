@@ -119,3 +119,8 @@ def remove_confidence_score(array:np.ndarray):
         new_array[:,:,0::2] = array[:,:,0::3]
         new_array[:,:,1::2] = array[:,:,1::3]
     return new_array
+
+def nuke_negative_val_in_loaded_pred(array:np.ndarray):
+    array = array.copy()
+    array[array<0] = np.nan
+    return array

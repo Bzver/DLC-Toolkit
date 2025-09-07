@@ -7,7 +7,7 @@ import yaml
 from typing import Any, Dict, Optional
 
 from .h5_op import validate_h5_keys, fix_h5_kp_order
-from .io_helper import unflatten_data_array, add_mock_confidence_score
+from .io_helper import unflatten_data_array, add_mock_confidence_score, nuke_negative_val_in_loaded_pred
 from core.dataclass import Loaded_DLC_Data
 
 class Prediction_Loader:
@@ -106,6 +106,7 @@ class Prediction_Loader:
                         )
 
             pred_data_array = unflatten_data_array(pred_data_values, instance_count)
+            pred_data_array = nuke_negative_val_in_loaded_pred(pred_data_array)
 
             pred_data_dict = {
                 "prediction_filepath": self.prediction_filepath,
@@ -164,6 +165,7 @@ class Prediction_Loader:
                         np.nan
                         )
                     pred_data_array[labeled_frame_list] = pred_data_unflattened
+                    pred_data_array = nuke_negative_val_in_loaded_pred(pred_data_array)
                 else:
                     raise ValueError("'axis1_level2' not found in labeled HDF5.")
 
