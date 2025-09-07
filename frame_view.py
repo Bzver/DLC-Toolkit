@@ -254,7 +254,7 @@ class Frame_View(QtWidgets.QMainWindow):
             except Exception as e:
                 QMessageBox.critical(self, "Error Loading Prediction", f"Unexpected error during prediction loading: {e}.")
 
-                self.initialize_canon_pose()
+            self.initialize_canon_pose()
 
             if "refined_frame_list" in fmk.keys():
                 self.refined_frame_list = fmk["refined_frame_list"]
