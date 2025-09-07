@@ -84,12 +84,12 @@ def hungarian_matching(
             log_print(f"[HUN] Hungarian failed: {e}. Returning None.")
         return None  # Hungarian failed
     else:
-        if full_set: # Only do the comparison with full set
+        if full_set:
             current_order = list(range(instance_count))
-            if not _compare_assignment_costs(cost_matrix, current_order, row_ind, col_ind, improvement_threshold=0.1):
+            if not _compare_distance_improvement(valid_pred_centroids, valid_idt_centroids, current_order, row_ind, col_ind):
                 if debug_print:
-                    log_print(f"[HUN] Hungarian failed to improve the assognment costs.")
-                return list(range(instance_count))  # already stable
+                    log_print(f"[HUN] Hungarian assignment does not improve geometric distances sufficiently.")
+                return list(range(instance_count))  # keep current assignment
 
     # Build new_order
     all_inst = range(instance_count)
@@ -133,48 +133,68 @@ def hungarian_matching(
 
     return new_order
 
-def _compare_assignment_costs(
-        cost_matrix:np.ndarray,
-        current_order:list, 
-        new_row_ind:np.ndarray,
-        new_col_ind:np.ndarray,
-        improvement_threshold:float = 0.1
-        ) -> bool:
+def _compare_distance_improvement(
+    valid_pred_centroids: np.ndarray,
+    valid_idt_centroids: np.ndarray,
+    current_order: list,
+    new_row_ind: np.ndarray,
+    new_col_ind: np.ndarray,
+    improvement_threshold: float = 0.1
+) -> bool:
     """
-    Decide whether to apply the new Hungarian assignment by comparing total costs.
+    Compare assignments by sorting all assignment distances and comparing element-wise.
 
-    Args:
-        cost_matrix: (K, M) matrix of distances between current detections and prior positions
-        current_order: list of length N, current identity mapping (e.g., [0,1] or [1,0])
-        new_row_ind: Hungarian result - assigned detection indices
-        new_col_ind: Hungarian result - assigned prior (identity) indices
-        improvement_threshold: float, minimum relative improvement to accept swap
-                             e.g., 0.1 = 10% better cost required
+    Ignores which identity is assigned to which instance — only compares the overall
+    distribution of match quality.
 
-    Returns:
-        bool: True if new assignment is significantly better
+    Accepts new assignment if, on average, sorted distances are improved by threshold.
     """
-    K, M = cost_matrix.shape
-    N = len(current_order)
+    K, _ = valid_pred_centroids.shape
+    M, _ = valid_idt_centroids.shape
+    N = min(K, M)
 
-    # Build current assignment cost
-    current_cost = 0.0
-    count = 0
-    for j in range(N):
-        i = current_order[j] 
-        if i < K and j < M and not np.isnan(cost_matrix[i, j]):
-            current_cost += cost_matrix[i, j]
-            count += 1
+    # Compute current assignment distances
+    current_dists = []
+    for j in range(len(current_order)):
+        if j >= M:
+            continue
+        i_old = current_order[j]
+        if i_old >= K:
+            continue
+        dist = np.linalg.norm(valid_pred_centroids[i_old] - valid_idt_centroids[j])
+        current_dists.append(dist)
 
-    current_cost = current_cost / count if count > 0 else 1e6
+    # Compute new assignment distances
+    new_dists = []
+    for r, c in zip(new_row_ind, new_col_ind):
+        if c >= M or r >= K:
+            continue
+        dist = np.linalg.norm(valid_pred_centroids[r] - valid_idt_centroids[c])
+        new_dists.append(dist)
 
-    # Build new assignment cost
-    new_cost = cost_matrix[new_row_ind, new_col_ind].sum()
-    new_count = len(new_row_ind)
-    new_cost = new_cost / new_count if new_count > 0 else 1e6
+    # Sort both to get identity-agnostic score
+    current_dists = np.sort(current_dists)[:N]
+    new_dists = np.sort(new_dists)[:N]
 
-    # Only apply if new assignment is significantly better
-    if new_cost < current_cost * (1 - improvement_threshold):
-        return True
-    else:
+    if len(current_dists) == 0 or len(new_dists) == 0:
         return False
+
+    # Compute relative improvement per sorted position
+    total_improvement = 0.0
+    count = 0
+
+    for i in range(len(current_dists)):
+        old_d = current_dists[i]
+        new_d = new_dists[i] if i < len(new_dists) else old_d
+
+        if old_d < 1e-9:
+            improvement = 1.0 if new_d < old_d else 0.0
+        else:
+            improvement = (old_d - new_d) / old_d
+
+        total_improvement += improvement
+        count += 1
+
+    avg_improvement = total_improvement / count if count > 0 else 0.0
+
+    return avg_improvement >= improvement_threshold
