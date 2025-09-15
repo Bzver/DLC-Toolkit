@@ -25,11 +25,21 @@ def generate_missing_inst(
         pred_data_array:np.ndarray,
         current_frame_idx:int,
         missing_instances:List[int],
-        angle_map_data:Dict[str, Any]
+        angle_map_data:Dict[str, Any],
+        canon_pose:Optional[np.ndarray]=None
         ) -> np.ndarray:
     
+    num_keypoint = pred_data_array.shape[2] // 3
     for instance_idx in missing_instances:
-        average_pose = get_average_pose(pred_data_array, instance_idx, angle_map_data=angle_map_data, frame_idx=current_frame_idx)
+        try:
+            average_pose = get_average_pose(
+                pred_data_array, instance_idx, angle_map_data=angle_map_data, frame_idx=current_frame_idx)
+        except:
+            canon_pose = canon_pose.flatten()
+            set_rotation = float(instance_idx)
+            set_centroid = np.full((1,2),200)
+            average_pose = pose_rotation_worker(set_rotation, set_centroid, canon_pose, np.full(num_keypoint, 1.0))
+
         pred_data_array[current_frame_idx, instance_idx, :] = average_pose
 
     return pred_data_array
@@ -39,7 +49,7 @@ def generate_missing_kp_for_inst(
         current_frame_idx:int,
         selected_instance_idx:int,
         angle_map_data:Dict[str, Any],
-        canon_pose:Optional[np.ndarray]
+        canon_pose:Optional[np.ndarray]=None,
         ) -> np.ndarray:
     
     num_keypoint = pred_data_array.shape[2] // 3
