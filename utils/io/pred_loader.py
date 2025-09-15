@@ -117,16 +117,14 @@ class Prediction_Loader:
         except Exception as e:
             raise RuntimeError(f"Error loading prediction data: {e}")
         
-    def _load_labeled_data(
-            self,
-            keypoints:list,
-            instance_count:int,
-            multi_animal:bool
-            ) -> Dict[str, Any]:
+    def _load_labeled_data(self, config_data:Dict[str, Any]) -> Dict[str, Any]:
         """Internal method to load label data from CollectedData_*.h5 file."""
         if not os.path.isfile(self.prediction_filepath):
             raise FileNotFoundError(f"Prediction file not found at: {self.prediction_filepath}")
         
+        keypoints = config_data["keypoints"]
+        instance_count = config_data["instance_count"]
+
         try:
             with h5py.File(self.prediction_filepath, "r") as lbf:
                 key, subkey = validate_h5_keys(lbf)
@@ -136,7 +134,7 @@ class Prediction_Loader:
                 num_keypoint = len(keypoints)
 
                 if subkey == "block0_values": # Already an array
-                    pred_data_values = fix_h5_kp_order(lbf, key, multi_animal, keypoints)
+                    pred_data_values = fix_h5_kp_order(lbf, key, config_data)
                     pred_frame_count = pred_data_values.shape[0]
                 else:
                     raise ValueError("'block0_values' not found in labeled HDF5.")

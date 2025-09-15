@@ -16,6 +16,8 @@ class Exporter:
         self.frame_list = frame_list
         self.pred_data_array = pred_data_array
 
+        os.makedirs(self.export_settings.save_path, exist_ok=True)
+
     def export_data_to_DLC(self, frame_only:bool=False) -> Tuple[bool, str]:
         self._extract_frame()
         if frame_only:
