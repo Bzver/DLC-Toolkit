@@ -575,7 +575,7 @@ class DLC_Inference(QtWidgets.QDialog):
             self.emergency_exit()
         
         if self.fresh_pred:
-            temp_pred_filename = self.load_and_remap_new_prediction()
+            temp_pred_filename = self._load_and_remap_new_prediction()
             video_path = os.path.dirname(self.video_filepath)
             pred_filename = temp_pred_filename.replace("image_predictions_", self.export_set.video_name)
             pred_filepath = os.path.join(video_path, pred_filename)
