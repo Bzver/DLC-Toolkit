@@ -12,9 +12,9 @@ from PySide6.QtWidgets import QMessageBox, QFileDialog
 import traceback
 
 import ui
-import utils.io as dio
+import core.io as dio
 from utils import infer_head_tail_indices, calculate_canonical_pose
-from utils.io import Prediction_Loader, Exporter
+from core.io import Prediction_Loader, Exporter
 from core.dataclass import Export_Settings, Plot_Config
 from ui import (
     Menu_Widget, Progress_Bar_Widget, Nav_Widget, Prediction_Plotter,

@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QMessageBox, QGraphicsView, QGraphicsRectItem
 import traceback
 
 import ui
-import utils.io as dio
+import core.io as dio
 import utils.helper as duh
 import utils.pose as dupe
 import utils.track as dute

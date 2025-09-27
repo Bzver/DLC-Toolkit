@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 import ui
-import utils.io as dio
+import core.io as dio
 import utils.utils3d as utls3
 from core.dataclass import Plot_Config
 from ui import (
