@@ -212,7 +212,7 @@ class Frame_Label(QtWidgets.QMainWindow):
         self.image_files = []
 
         self.roi_frame_list, self.marked_roi_frame_list, self.refined_roi_frame_list = [], [], []
-        self.cap, self.current_frame = None, None
+        self.extractor, self.current_frame = None, None
         self.selected_box, self.dragged_keypoint = None, None
         self.start_point, self.current_rect_item = None, None
 
@@ -245,14 +245,9 @@ class Frame_Label(QtWidgets.QMainWindow):
             
     def initialize_loaded_video(self):
         self.video_name = os.path.basename(self.video_file).split(".")[0]
-        self.cap = cv2.VideoCapture(self.video_file)
+        self.extractor = dio.Frame_Extractor(self.video_file)
         
-        if not self.cap.isOpened():
-            QMessageBox.warning(self, "Error Open Video", f"Error: Could not open video {self.video_file}")
-            self.cap = None
-            return
-        
-        self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        self.total_frames = self.extractor.get_total_frame()
         self.current_frame_idx = 0
         self.progress_widget.set_slider_range(self.total_frames) # Initialize slider range
         self.display_current_frame()
@@ -410,10 +405,9 @@ class Frame_Label(QtWidgets.QMainWindow):
                 self.graphics_scene.clear()
                 return
 
-        if self.cap and self.cap.isOpened():
-            self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame_idx)
-            ret, frame = self.cap.read()
-            if not ret:
+        if self.extractor:
+            frame = self.extractor.get_frame(self.current_frame_idx)
+            if frame is None:
                 self.graphics_scene.clear()
                 return
 
@@ -458,7 +452,7 @@ class Frame_Label(QtWidgets.QMainWindow):
     ###################################################################################################################################################
 
     def change_frame(self, delta):
-        if self.cap and self.cap.isOpened() or self.image_files:
+        if self.extractor or self.image_files:
             new_frame_idx = self.current_frame_idx + delta
             if 0 <= new_frame_idx < self.total_frames:
                 self.current_frame_idx = new_frame_idx

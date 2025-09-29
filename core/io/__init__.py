@@ -1,5 +1,6 @@
 from .exporter import Exporter
 from .pred_loader import Prediction_Loader
+from .frame_loader import Frame_Extractor
 
 from .parser import parse_idt_df_into_ndarray
 from .csv_op import prediction_to_csv
@@ -14,6 +15,7 @@ from .io_helper import (
 __all__ = (
     Exporter,
     Prediction_Loader,
+    Frame_Extractor,
     parse_idt_df_into_ndarray,
     prediction_to_csv,
     save_prediction_to_existing_h5,

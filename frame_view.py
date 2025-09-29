@@ -14,7 +14,7 @@ import traceback
 import ui
 import core.io as dio
 from utils import infer_head_tail_indices, calculate_canonical_pose
-from core.io import Prediction_Loader, Exporter
+from core.io import Prediction_Loader, Exporter, Frame_Extractor
 from core.dataclass import Export_Settings, Plot_Config
 from ui import (
     Menu_Widget, Progress_Bar_Widget, Nav_Widget, Prediction_Plotter,
@@ -116,7 +116,7 @@ class Frame_View(QtWidgets.QMainWindow):
         self.refined_frame_list, self.approved_frame_list, self.rejected_frame_list = [], [], []
         self.label_data_array = None
 
-        self.cap, self.current_frame = None, None
+        self.extractor, self.current_frame = None, None
 
         self.is_saved = True
         self.last_saved = []
@@ -124,7 +124,7 @@ class Frame_View(QtWidgets.QMainWindow):
         self.nav_labeled = False
 
         self.plot_config = Plot_Config(
-            plot_opacity=1.0, point_size = 6.0, confidence_cutoff = 0.0, hide_text_labels = False, edit_mode = False)
+            plot_opacity =1.0, point_size = 6.0, confidence_cutoff = 0.0, hide_text_labels = False, edit_mode = False)
 
         self.nav_widget.set_collapsed(True)
 
@@ -138,15 +138,10 @@ class Frame_View(QtWidgets.QMainWindow):
 
     def initialize_loaded_video(self):
         self.video_name = os.path.basename(self.video_file).split(".")[0]
-        self.cap = cv2.VideoCapture(self.video_file)
 
-        if not self.cap.isOpened():
-            print(f"Error: Could not open video {self.video_file}")
-            self.video_label.setText("Error: Could not open video")
-            self.cap = None
-            return
-        
-        self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        self.extractor = Frame_Extractor(video_path=self.video_file)
+        self.total_frames = self.extractor.get_total_frames()
+
         self.current_frame_idx = 0
         self.progress_widget.set_slider_range(self.total_frames)
         self._refresh_slider()
@@ -328,15 +323,14 @@ class Frame_View(QtWidgets.QMainWindow):
     ###################################################################################################################################################
 
     def display_current_frame(self):
-        if not self.cap or self.cap.isOpened():
+        if not self.extractor:
             self.video_label.setText("No video loaded")
 
-        self.cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame_idx)
-        ret, frame = self.cap.read()
-
-        if not ret:
-            self.video_label.setText("Error: Could not read frame")
-
+        frame = self.extractor.get_frame(self.current_frame_idx)
+        if frame is None:
+            self.video_label.setText("Failed to load current frame.")
+            return
+        
         self.current_frame = frame
         if self.dlc_data is not None:
             if not hasattr(self, "plotter"):
@@ -371,7 +365,7 @@ class Frame_View(QtWidgets.QMainWindow):
     ###################################################################################################################################################
 
     def change_frame(self, delta):
-        if self.cap and self.cap.isOpened():
+        if self.extractor:
             new_frame_idx = self.current_frame_idx + delta
             if 0 <= new_frame_idx < self.total_frames:
                 self.current_frame_idx = new_frame_idx
@@ -841,7 +835,7 @@ class Frame_View(QtWidgets.QMainWindow):
             self.process_labeled_frame()
 
     def changeEvent(self, event):
-        if event.type() == QEvent.Type.WindowStateChange and self.cap:
+        if event.type() == QEvent.Type.WindowStateChange and self.extractor:
             self.display_current_frame()
         super().changeEvent(event)
 

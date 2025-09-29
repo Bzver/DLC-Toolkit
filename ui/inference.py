@@ -19,7 +19,7 @@ from .plot import Prediction_Plotter
 from .ui_helper import handle_unsaved_changes_on_close
 from core.dataclass import Loaded_DLC_Data, Export_Settings
 from core.io import Exporter, Prediction_Loader
-from utils import io as dio
+from core import io as dio
 from utils.helper import log_print
 from utils.pose import calculate_pose_centroids
 from utils.track import hungarian_matching
