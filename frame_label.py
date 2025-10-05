@@ -6,8 +6,8 @@ import cv2
 
 from PySide6 import QtWidgets, QtGui, QtCore
 from PySide6.QtCore import Qt, QEvent, Signal
-from PySide6.QtGui import QShortcut, QKeySequence, QPainter, QColor, QPen, QCloseEvent
-from PySide6.QtWidgets import QMessageBox, QGraphicsView, QGraphicsRectItem
+from PySide6.QtGui import QShortcut, QKeySequence, QCloseEvent
+from PySide6.QtWidgets import QMessageBox
 
 import traceback
 
@@ -19,7 +19,7 @@ import utils.track as dute
 from ui import (
     Menu_Widget, Progress_Bar_Widget, Nav_Widget, Outlier_Finder,
     Adjust_Property_Dialog, Pose_Rotation_Dialog, Canonical_Pose_Dialog, Head_Tail_Dialog,
-    Prediction_Plotter, Selectable_Instance, Draggable_Keypoint
+    Prediction_Plotter, Canvas
 )
 from core.dataclass import Export_Settings, Plot_Config, Labeler_Plotter_Callbacks
 
@@ -37,7 +37,7 @@ class Frame_Label(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.is_debug = False
+        self.is_debug = True
         self.setWindowTitle(ui.format_title("Frame Labeler", self.is_debug))
         self.setGeometry(100, 100, 1200, 960)
 
@@ -47,7 +47,8 @@ class Frame_Label(QtWidgets.QMainWindow):
         self.setCentralWidget(self.central_widget)
         self.layout = QtWidgets.QVBoxLayout(self.central_widget)
 
-        self.setup_graphicscene()
+        self.gview = Canvas(track_edit_callback=self._on_track_data_changed, parent=self)
+        self.layout.addWidget(self.gview, 1)
 
         self.progress_widget = Progress_Bar_Widget()
         self.progress_widget.frame_changed.connect(self._handle_frame_change_from_comp)
@@ -57,7 +58,6 @@ class Frame_Label(QtWidgets.QMainWindow):
         self.layout.addWidget(self.nav_widget)
         self.nav_widget.set_collapsed(True)
 
-        # Connect buttons to events
         self.nav_widget.frame_changed_sig.connect(self.change_frame)
         self.nav_widget.prev_marked_frame_sig.connect(lambda:self._navigate_roi_frames("prev"))
         self.nav_widget.next_marked_frame_sig.connect(lambda:self._navigate_roi_frames("next"))
@@ -126,7 +126,7 @@ class Frame_Label(QtWidgets.QMainWindow):
                     ("Toggle Snap to Instances (E)", self.toggle_snap_to_instances, {"checkable": True, "checked": False}),
                     ("Hide Text Labels", self.toggle_hide_text_labels, {"checkable": True, "checked": False}),
                     ("View Canonical Pose", self.view_canonical_pose),
-                    ("Reset Zoom", self.reset_zoom),
+                    ("Reset Zoom", self._reset_zoom),
                 ]
             },
             "Preference": {
@@ -159,24 +159,6 @@ class Frame_Label(QtWidgets.QMainWindow):
                 ]
             }
         self.menu_widget.add_menu_from_config(labeler_menu_config)
-
-    def setup_graphicscene(self):
-        """Graphics view for interactive elements and video display"""
-        self.graphics_scene = QtWidgets.QGraphicsScene(self)
-        self.graphics_view = QGraphicsView(self.graphics_scene)
-        self.graphics_view.setRenderHint(QPainter.Antialiasing)
-        self.graphics_view.setFrameShape(QtWidgets.QFrame.NoFrame)
-        self.graphics_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.graphics_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.graphics_view.setMouseTracking(True)
-        self.graphics_view.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
-        self.graphics_view.setStyleSheet("background-color: black;")
-        self.layout.addWidget(self.graphics_view, 1)
-
-        self.graphics_view.mousePressEvent = self.graphics_view_mouse_press_event
-        self.graphics_view.mouseMoveEvent = self.graphics_view_mouse_move_event
-        self.graphics_view.mouseReleaseEvent = self.graphics_view_mouse_release_event
-        self.graphics_scene.parent = lambda: self # Allow items to access the main window
 
     def setup_shortcut(self):
         QShortcut(QKeySequence(Qt.Key_Left | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(-10))
@@ -213,10 +195,9 @@ class Frame_Label(QtWidgets.QMainWindow):
 
         self.roi_frame_list, self.marked_roi_frame_list, self.refined_roi_frame_list = [], [], []
         self.extractor, self.current_frame = None, None
-        self.selected_box, self.dragged_keypoint = None, None
+        self.dragged_keypoint = None
         self.start_point, self.current_rect_item = None, None
 
-        self.is_kp_edit, self.is_drawing_zone, self.is_zoom_mode = False, False, False
         self.skip_outlier_clean, self.outlier_clean_pending, self.is_cleaned = False, False, False
 
         self.undo_stack, self.redo_stack = [], []
@@ -226,10 +207,9 @@ class Frame_Label(QtWidgets.QMainWindow):
         self.plot_config = Plot_Config(
             plot_opacity=1.0, point_size = 6.0, confidence_cutoff = 0.0, hide_text_labels = False, edit_mode = False)
         self.plotter_callback = Labeler_Plotter_Callbacks(
-            keypoint_coords_callback = self._update_keypoint_position, keypoint_object_callback = self.set_dragged_keypoint,
-            box_coords_callback = self._update_instance_position, box_object_callback = self._handle_box_selection
+            keypoint_coords_callback = self._update_keypoint_position, keypoint_object_callback = self.gview.set_dragged_keypoint,
+            box_coords_callback = self._update_instance_position, box_object_callback = self.gview._handle_box_selection
         )
-        self.zoom_factor = 1.0
         self.auto_snapping = False
 
         self.nav_widget.set_collapsed(True)
@@ -251,7 +231,7 @@ class Frame_Label(QtWidgets.QMainWindow):
         self.current_frame_idx = 0
         self.progress_widget.set_slider_range(self.total_frames) # Initialize slider range
         self.display_current_frame()
-        self.reset_zoom()
+        self._reset_zoom()
         self.navigation_title_controller()
         print(f"Video loaded: {self.video_file}")
 
@@ -335,7 +315,7 @@ class Frame_Label(QtWidgets.QMainWindow):
         self.progress_widget.set_slider_range(self.total_frames) # Initialize slider range
         self.initialize_loaded_data()
         self.display_current_frame()
-        self.reset_zoom()
+        self._reset_zoom()
         self.navigation_title_controller()
 
     def debug_load(self):
@@ -370,7 +350,7 @@ class Frame_Label(QtWidgets.QMainWindow):
 
         self.plotter = Prediction_Plotter(
             dlc_data=self.dlc_data, current_frame_data=current_frame_data,
-            graphics_scene=self.graphics_scene, plot_config=self.plot_config, plot_callback=self.plotter_callback)
+            graphics_scene=self.gview.gscene, plot_config=self.plot_config, plot_callback=self.plotter_callback)
 
         if self.dlc_data.pred_frame_count != self.total_frames:
             msg = f"Frames in config: {self.total_frames} | Frames in prediction: {self.dlc_data.pred_frame_count}.\n\n"
@@ -390,29 +370,29 @@ class Frame_Label(QtWidgets.QMainWindow):
             QMessageBox.information(self, "Video / Prediction Length Mismatch", msg)
             
         self.display_current_frame()
-        self.reset_zoom()
+        self._reset_zoom()
 
     ###################################################################################################################################################
 
     def display_current_frame(self):
-        self.selected_box = None # Ensure the selected instance is unselected
+        self.gview.sbox = None # Ensure the selected instance is unselected
 
         if self.image_files:
             # Load image from folder
             img_path = os.path.join(self.video_file, self.image_files[self.current_frame_idx])
             frame = cv2.imread(img_path)
             if frame is None:
-                self.graphics_scene.clear()
+                self.gview.clear_graphic_scene()
                 return
 
         if self.extractor:
             frame = self.extractor.get_frame(self.current_frame_idx)
             if frame is None:
-                self.graphics_scene.clear()
+                self.gview.clear_graphic_scene()
                 return
 
         self.current_frame = frame
-        self.graphics_scene.clear() # Clear previous graphics items
+        self.gview.clear_graphic_scene() # Clear previous graphics items
 
         # Convert OpenCV image to QPixmap and add to scene
         rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -422,23 +402,22 @@ class Frame_Label(QtWidgets.QMainWindow):
         pixmap = QtGui.QPixmap.fromImage(qt_image)
         
         # Add pixmap to the scene
-        pixmap_item = self.graphics_scene.addPixmap(pixmap)
+        pixmap_item = self.gview.gscene.addPixmap(pixmap)
         pixmap_item.setZValue(-1)
 
-        self.graphics_scene.setSceneRect(0, 0, w, h)
+        self.gview.gscene.setSceneRect(0, 0, w, h)
         
         if self.auto_snapping:
-            view_width = self.graphics_scene.sceneRect().width()
-            view_height = self.graphics_scene.sceneRect().height()
+            view_width, view_height = self.gview.get_graphic_scene_dim()
             current_frame_data = self.pred_data_array[self.current_frame_idx, :, :].copy()
             if not np.all(np.isnan(current_frame_data)):
-                self.zoom_factor, center_x, center_y = \
+                self.gview.zoom_factor, center_x, center_y = \
                     ui.calculate_snapping_zoom_level(current_frame_data, view_width, view_height)
-                self.graphics_view.centerOn(center_x, center_y)
+                self.gview.centerOn(center_x, center_y)
 
         new_transform = QtGui.QTransform()
-        new_transform.scale(self.zoom_factor, self.zoom_factor)
-        self.graphics_view.setTransform(new_transform)
+        new_transform.scale(self.gview.zoom_factor, self.gview.zoom_factor)
+        self.gview.setTransform(new_transform)
 
         # Plot predictions (keypoints, bounding boxes, skeleton)
         if self.pred_data_array is not None:
@@ -446,7 +425,7 @@ class Frame_Label(QtWidgets.QMainWindow):
             self.plotter.plot_config = self.plot_config
             self.plotter.plot_predictions()
 
-        self.graphics_view.update() # Force update of the graphics view
+        self.gview.update() # Force update of the graphics view
         self.progress_widget.set_current_frame(self.current_frame_idx) # Update slider handle's position
 
     ###################################################################################################################################################
@@ -463,7 +442,7 @@ class Frame_Label(QtWidgets.QMainWindow):
         title_text = f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | Video: {self.video_name}"
         if self.refined_roi_frame_list and self.marked_roi_frame_list:
             title_text += f"Manual Refining Progress: {len(self.refined_roi_frame_list)} / {len(self.marked_roi_frame_list)} Frames Refined"
-        if self.is_kp_edit and self.current_frame_idx:
+        if self.gview.is_kp_edit and self.current_frame_idx:
             title_text += " ----- KEYPOINTS EDITING MODE ----- "
         self.nav_widget.setTitle(title_text)
         if self.current_frame_idx in self.refined_roi_frame_list:
@@ -474,20 +453,8 @@ class Frame_Label(QtWidgets.QMainWindow):
             self.nav_widget.setTitleColor("black")  # Default black
 
     def toggle_zoom_mode(self):
-        self.is_zoom_mode = not self.is_zoom_mode
-        if self.is_zoom_mode:
-            self.graphics_view.setDragMode(QGraphicsView.ScrollHandDrag)
-            self.graphics_view.wheelEvent = self.graphics_view_mouse_wheel_event
-        else:
-            self.graphics_view.setDragMode(QGraphicsView.NoDrag)
-            self.graphics_view.wheelEvent = super(QGraphicsView, self.graphics_view).wheelEvent
+        self.gview.toggle_zoom_mode()
         self.navigation_title_controller()
-
-    def reset_zoom(self):
-        if self.zoom_factor == 1.0: # Don't do anything when there has not been any zoom in/out yet
-            return
-        self.zoom_factor = 1.0
-        self.graphics_view.fitInView(self.graphics_scene.sceneRect(), Qt.KeepAspectRatio)
 
     ###################################################################################################################################################
 
@@ -566,7 +533,7 @@ class Frame_Label(QtWidgets.QMainWindow):
         if not self._track_edit_blocker():
             return
         
-        if not self.selected_box:
+        if not self.gview.sbox:
             QMessageBox.information(self, "No Instance Selected", "Please select a track to interpolate all frames for one instance.")
             return
         
@@ -579,20 +546,21 @@ class Frame_Label(QtWidgets.QMainWindow):
             QMessageBox.information(self, "Input Cancelled", "Max Gap input cancelled.")
             return
 
-        instance_to_interpolate = self.selected_box.instance_id
+        instance_to_interpolate = self.gview.sbox.instance_id
         self._save_state_for_undo() # Save state before modification
 
         self.pred_data_array = dute.interpolate_track_all(self.pred_data_array, instance_to_interpolate, max_gap_allowed)
 
         self._on_track_data_changed()
-        self.reset_zoom()
+        self._reset_zoom()
         QMessageBox.information(self, "Interpolation Complete", f"All frames interpolated for instance {self.dlc_data.individuals[instance_to_interpolate]}.")
     
     def designate_no_mice_zone(self):
         if not self._track_edit_blocker():
             return
-        self.is_drawing_zone = True
-        self.graphics_view.setCursor(Qt.CrossCursor)
+        self.gview.setCursor(Qt.CrossCursor)
+        self.gview.is_drawing_zone = True
+        self._save_state_for_undo()
         QMessageBox.information(self, "Designate No Mice Zone", "Click and drag on the video to select a zone. Release to apply.")
 
     def correct_track_using_temporal(self):
@@ -600,7 +568,6 @@ class Frame_Label(QtWidgets.QMainWindow):
             return
 
         self.suggest_outlier_clean()
-
         self._save_state_for_undo()
 
         dialog = "Fixing track using temporal consistency..."
@@ -666,20 +633,12 @@ class Frame_Label(QtWidgets.QMainWindow):
         if self.pred_data_array is None:
             QMessageBox.warning(self, "Error", "Prediction data not loaded. Please load a prediction file first.")
             return
+
+        self.gview.set_kp_edit()
+        self.plot_config.edit_mode = self.gview.is_kp_edit
+        self.navigation_title_controller()
         
-        self.is_kp_edit = not self.is_kp_edit # Toggle the mode
-        self.plot_config.edit_mode = self.is_kp_edit
-        self.navigation_title_controller() # Update title to reflect mode
-        
-        # Enable/disable draggable property of items based on self.is_kp_edit
-        for item in self.graphics_scene.items():
-            if isinstance(item, Draggable_Keypoint):
-                item.setFlag(QtWidgets.QGraphicsEllipseItem.ItemIsMovable, self.is_kp_edit)
-            elif isinstance(item, Selectable_Instance):
-                item.setFlag(QGraphicsRectItem.ItemIsMovable, self.is_kp_edit)
-        
-        # Non-intrusive feedback
-        if self.is_kp_edit:
+        if self.gview.is_kp_edit:
             self.statusBar().showMessage(
                 "Keypoint editing mode is ON. Drag to adjust. Press Backspace to delete a keypoint."
             )
@@ -726,21 +685,17 @@ class Frame_Label(QtWidgets.QMainWindow):
         self.navigation_title_controller()
 
     def delete_dragged_keypoint(self):
-        if self.is_kp_edit and self.dragged_keypoint:
+        if self.gview.is_kp_edit and self.dragged_keypoint:
             self._save_state_for_undo()
             if self.current_frame_idx in self.marked_roi_frame_list and self.current_frame_idx not in self.refined_roi_frame_list:
                 self.refined_roi_frame_list.append(self.current_frame_idx)
             instance_id = self.dragged_keypoint.instance_id
             keypoint_id = self.dragged_keypoint.keypoint_id
-            # Set the keypoint coordinates and confidence to NaN
             self.pred_data_array[self.current_frame_idx, instance_id, keypoint_id*3:keypoint_id*3+3] = np.nan
             print(f"{self.dlc_data.keypoints[keypoint_id]} of instance {instance_id} deleted.")
-            self.dragged_keypoint = None # Clear the dragged keypoint
+            self.dragged_keypoint = None
             self._refresh_slider()
             self.display_current_frame()
-
-    def set_dragged_keypoint(self, keypoint_item:Draggable_Keypoint):
-        self.dragged_keypoint = keypoint_item
 
     def call_outlier_finder(self):
         if not self._track_edit_blocker():
@@ -752,7 +707,7 @@ class Frame_Label(QtWidgets.QMainWindow):
         self.outlier_finder.list_changed.connect(self._handle_frame_list_from_comp)
         self.outlier_finder.closing.connect(self._handle_outlier_window_closing)
         self.outlier_finder.show()
-        self.reset_zoom()
+        self._reset_zoom()
 
     def suggest_outlier_clean(self):
         if not self.is_cleaned and not self.skip_outlier_clean:
@@ -776,7 +731,7 @@ class Frame_Label(QtWidgets.QMainWindow):
         if self.pred_data_array is None:
             QMessageBox.warning(self, "Error", "Prediction data not loaded. Please load a prediction file first.")
             return False
-        if self.is_kp_edit:
+        if self.gview.is_kp_edit:
             QMessageBox.warning(self, "Not Allowed", "Please finish editing keypoints before using this function.")
             return False
         if self.outlier_clean_pending:
@@ -793,14 +748,14 @@ class Frame_Label(QtWidgets.QMainWindow):
             return
 
         current_frame_inst = duh.get_instances_on_current_frame(self.pred_data_array, self.current_frame_idx)
-        if len(current_frame_inst) > 1 and not self.selected_box:
+        if len(current_frame_inst) > 1 and not self.gview.sbox:
             QMessageBox.information(self, "No Instance Seleted",
                 "When there are more than one instance present, "
                 "you need to click one of the instance bounding box to specify which to delete.")
             return
         
         self._save_state_for_undo()
-        selected_instance_idx = self.selected_box.instance_id if self.selected_box else current_frame_inst[0]
+        selected_instance_idx = self.gview.sbox.instance_id if self.gview.sbox else current_frame_inst[0]
         try:
             self.pred_data_array = dute.delete_track(self.pred_data_array, self.current_frame_idx,
                                         selected_instance_idx, deletion_range)
@@ -835,11 +790,11 @@ class Frame_Label(QtWidgets.QMainWindow):
             return
         
         current_frame_inst = duh.get_instances_on_current_frame(self.pred_data_array, self.current_frame_idx)
-        if len(current_frame_inst) > 1 and not self.selected_box:
+        if len(current_frame_inst) > 1 and not self.gview.sbox:
             QMessageBox.information(self, "Track Not Interpolated", "No Instance is selected.")
             return
         
-        selected_instance_idx = self.selected_box.instance_id if self.selected_box else current_frame_inst[0]
+        selected_instance_idx = self.gview.sbox.instance_id if self.gview.sbox else current_frame_inst[0]
         self._save_state_for_undo()
         
         iter_frame_idx = self.current_frame_idx + 1
@@ -882,11 +837,11 @@ class Frame_Label(QtWidgets.QMainWindow):
             return
         
         current_frame_inst = duh.get_instances_on_current_frame(self.pred_data_array, self.current_frame_idx)
-        if len(current_frame_inst) > 1 and not self.selected_box:
+        if len(current_frame_inst) > 1 and not self.gview.sbox:
             QMessageBox.information(self, "Track Not Rotated", "No Instance is selected.")
             return
         
-        selected_instance_idx = self.selected_box.instance_id if self.selected_box else current_frame_inst[0]
+        selected_instance_idx = self.gview.sbox.instance_id if self.gview.sbox else current_frame_inst[0]
 
         _, local_coords = dupe.calculate_pose_centroids(self.pred_data_array, self.current_frame_idx)
         local_x = local_coords[selected_instance_idx, 0::2]
@@ -909,11 +864,11 @@ class Frame_Label(QtWidgets.QMainWindow):
             return
         
         current_frame_inst = duh.get_instances_on_current_frame(self.pred_data_array, self.current_frame_idx)
-        if len(current_frame_inst) > 1 and not self.selected_box:
+        if len(current_frame_inst) > 1 and not self.gview.sbox:
             QMessageBox.information(self, "Track Not Interpolated", "No Instance is selected.")
             return
         
-        selected_instance_idx = self.selected_box.instance_id if self.selected_box else current_frame_inst[0]
+        selected_instance_idx = self.gview.sbox.instance_id if self.gview.sbox else current_frame_inst[0]
         self._save_state_for_undo()
 
         self.pred_data_array = dupe.generate_missing_kp_for_inst(
@@ -927,7 +882,7 @@ class Frame_Label(QtWidgets.QMainWindow):
     ###################################################################################################################################################  
     
     def _on_track_data_changed(self):
-        self.selected_box = None
+        self.gview.sbox = None
         self.is_saved = False
         self._update_roi_list()
         self.display_current_frame()
@@ -964,115 +919,8 @@ class Frame_Label(QtWidgets.QMainWindow):
         self.progress_widget.set_frame_category("Refined frames", self.refined_roi_frame_list, "#009979", priority=7)
         self.progress_widget.set_frame_category("ROI frames", self.roi_frame_list, "#F04C4C") # Update ROI frames
 
-    def _handle_box_selection(self, clicked_box:Selectable_Instance):
-        if self.selected_box and self.selected_box != clicked_box and self.selected_box.scene() is not None:
-            self.selected_box.toggle_selection() # Deselect previously selected box
-        clicked_box.toggle_selection() # Toggle selection of the clicked box
-        if clicked_box.is_selected:
-            self.selected_box = clicked_box
-            print(f"Selected Instance: {clicked_box.instance_id}")
-        else:
-            self.selected_box = None
-            print("No instance selected.")
-
-    ###################################################################################################################################################
-    
-    def graphics_view_mouse_press_event(self, event):
-        if self.is_zoom_mode:
-            QtWidgets.QGraphicsView.mousePressEvent(self.graphics_view, event)
-            return
-        if self.is_drawing_zone:
-            self.start_point = self.graphics_view.mapToScene(event.position().toPoint())
-            if self.current_rect_item:
-                self.graphics_scene.removeItem(self.current_rect_item)
-            self.current_rect_item = QGraphicsRectItem(self.start_point.x(), self.start_point.y(), 0, 0)
-            self.current_rect_item.setPen(QPen(QColor(255, 0, 0), 2)) # Red pen for drawing
-            self.graphics_scene.addItem(self.current_rect_item)
-        else:
-            # If not in drawing zone mode, allow default behavior for item selection/dragging
-            item = self.graphics_view.itemAt(event.position().toPoint())
-            
-            # Check if the clicked item is a draggable keypoint or selectable instance and we are in edit mode
-            if (isinstance(item, Draggable_Keypoint) or isinstance(item, Selectable_Instance)) and self.is_kp_edit:
-                pass # Let the item's own mousePressEvent handle it
-            elif isinstance(item, Selectable_Instance): # Allow box selection even outside of direct keypoint edit mode
-                pass
-            else: # If no interactive item was clicked, deselect any currently selected box
-                if self.selected_box:
-                    self.selected_box.toggle_selection()
-                    self.selected_box = None
-                    print("No instance selected.")
-            QtWidgets.QGraphicsView.mousePressEvent(self.graphics_view, event)
-
-    def graphics_view_mouse_move_event(self, event):
-        if self.is_zoom_mode:
-            QtWidgets.QGraphicsView.mouseMoveEvent(self.graphics_view, event)
-            return
-        if self.is_drawing_zone and self.start_point:
-            current_point = self.graphics_view.mapToScene(event.position().toPoint())
-            rect = QtCore.QRectF(self.start_point, current_point).normalized()
-            self.current_rect_item.setRect(rect)
-        QtWidgets.QGraphicsView.mouseMoveEvent(self.graphics_view, event)
-
-    def graphics_view_mouse_release_event(self, event):
-        if self.is_drawing_zone and self.start_point and self.current_rect_item:
-            self.is_drawing_zone = False
-            self.graphics_view.setCursor(Qt.ArrowCursor)
-            
-            rect = self.current_rect_item.rect()
-            self.graphics_scene.removeItem(self.current_rect_item) # Remove the temporary drawing rectangle
-            self.current_rect_item = None
-            self.start_point = None
-
-            # Convert scene coordinates to image coordinates
-            x1, y1, x2, y2 = int(rect.left()), int(rect.top()), int(rect.right()), int(rect.bottom())
-
-            self._save_state_for_undo()
-            self.pred_data_array = duh.clean_inconsistent_nans(self.pred_data_array) # Cleanup ghost points (NaN for x,y yet non-nan in confidence)
-
-            all_x_kps = self.pred_data_array[:,:,0::3]
-            all_y_kps = self.pred_data_array[:,:,1::3]
-
-            x_in_range = (all_x_kps >= x1) & (all_x_kps <= x2)
-            y_in_range = (all_y_kps >= y1) & (all_y_kps <= y2)
-            points_in_bbox_mask = x_in_range & y_in_range
-
-            self.pred_data_array[np.repeat(points_in_bbox_mask, 3, axis=-1)] = np.nan
-            
-            self.is_saved = False
-            self._update_roi_list()
-            self.display_current_frame()
-            QMessageBox.information(self, "No Mice Zone Applied", "Keypoints within the selected zone have been set to NaN.")
-        
-        if self.is_zoom_mode: # Allow panning, but prevent other interactions
-            QtWidgets.QGraphicsView.mouseReleaseEvent(self.graphics_view, event)
-            return
-        QtWidgets.QGraphicsView.mouseReleaseEvent(self.graphics_view, event)
-
-    def graphics_view_mouse_wheel_event(self, event):
-        if self.is_zoom_mode:
-            zoom_in_factor = 1.15
-            zoom_out_factor = 1 / zoom_in_factor
-
-            mouse_pos_view = event.position()
-            mouse_pos_scene = self.graphics_view.mapToScene(QtCore.QPoint(int(mouse_pos_view.x()), int(mouse_pos_view.y())))
-
-            transform = self.graphics_view.transform()
-
-            if event.angleDelta().y() > 0: # Zoom in
-                self.zoom_factor *= zoom_in_factor
-            else: # Zoom out
-                self.zoom_factor *= zoom_out_factor
-            
-            self.zoom_factor = max(0.1, min(self.zoom_factor, 10.0)) # Limit zoom to prevent extreme values
-
-            new_transform = QtGui.QTransform()
-            new_transform.scale(self.zoom_factor, self.zoom_factor)
-            self.graphics_view.setTransform(new_transform)
-
-            self.graphics_view.centerOn(mouse_pos_scene)
-        else:
-            super(QGraphicsView, self.graphics_view).wheelEvent(event)
+    def _reset_zoom(self):
+        self.gview.reset_zoom()
 
     ###################################################################################################################################################
 
@@ -1200,7 +1048,7 @@ class Frame_Label(QtWidgets.QMainWindow):
 
     def changeEvent(self, event):
         if event.type() == QEvent.Type.WindowStateChange:
-            self.reset_zoom()
+            self._reset_zoom()
         super().changeEvent(event)
     
     def closeEvent(self, event: QCloseEvent):

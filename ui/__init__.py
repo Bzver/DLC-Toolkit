@@ -24,6 +24,7 @@ from .inference import DLC_Inference
 from .mark_nav import navigate_to_marked_frame
 from .mark_gen import Mark_Generator
 from .outlier_finder import Outlier_Finder
+from .graphic_view import Canvas
 from .ui_helper import (
     format_title,
     handle_unsaved_changes_on_close,
@@ -48,6 +49,7 @@ __all__ = (
     DLC_Inference,
     Outlier_Finder,
     Mark_Generator,
+    Canvas,
     navigate_to_marked_frame,
     format_title,
     handle_unsaved_changes_on_close,
