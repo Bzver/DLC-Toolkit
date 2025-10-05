@@ -14,7 +14,7 @@ from .dialog import (
 
 from .widget import (
     Menu_Widget,
-    Progress_Bar_Widget,
+    Video_Slider_Widget,
     Nav_Widget,
 )
 
@@ -42,7 +42,7 @@ __all__ = (
     Clear_Mark_Dialog,
     Head_Tail_Dialog,
     Menu_Widget,
-    Progress_Bar_Widget,
+    Video_Slider_Widget,
     Nav_Widget,
     Canonical_Pose_Dialog,
     Prediction_Plotter,

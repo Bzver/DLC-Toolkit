@@ -90,7 +90,7 @@ class Menu_Widget(QtWidgets.QMenuBar):
         
 ###################################################################################################################################################
 
-class Progress_Bar_Widget(QtWidgets.QWidget):
+class Video_Slider_Widget(QtWidgets.QWidget):
     frame_changed = Signal(int)
     HexColor = str
 

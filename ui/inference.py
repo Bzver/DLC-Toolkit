@@ -14,7 +14,7 @@ from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QHBoxLayout
 from typing import List, Literal
 
 from .component import Clickable_Video_Label
-from .widget import Progress_Bar_Widget
+from .widget import Video_Slider_Widget
 from .plot import Prediction_Plotter
 from .ui_helper import handle_unsaved_changes_on_close
 from core.dataclass import Loaded_DLC_Data, Export_Settings
@@ -318,7 +318,7 @@ class DLC_Inference(QtWidgets.QDialog):
 
         container_layout.addLayout(self.video_layout)
 
-        self.progress_widget= Progress_Bar_Widget()
+        self.progress_widget= Video_Slider_Widget()
         self.progress_widget.set_slider_range(self.total_marked_frames)
         self.progress_widget.set_current_frame(0)
         self.progress_widget.set_frame_category("Unprocessed", self.unprocessed_list)

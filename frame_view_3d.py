@@ -22,7 +22,7 @@ import core.io as dio
 import utils.utils3d as utls3
 from core.dataclass import Plot_Config
 from ui import (
-    Menu_Widget, Progress_Bar_Widget, Nav_Widget, Adjust_Property_Dialog,
+    Menu_Widget, Video_Slider_Widget, Nav_Widget, Adjust_Property_Dialog,
     Prediction_Plotter, Clickable_Video_Label
     )
 
@@ -128,7 +128,7 @@ class Frame_View_3D(QtWidgets.QMainWindow):
         self.display_layout.addLayout(self.plot_layout)
         self.layout.addLayout(self.display_layout, 1)
 
-        self.progress_widget = Progress_Bar_Widget()
+        self.progress_widget = Video_Slider_Widget()
         self.layout.addWidget(self.progress_widget)
         self.progress_widget.frame_changed.connect(self._handle_frame_change_from_comp)
 

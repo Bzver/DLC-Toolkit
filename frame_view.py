@@ -17,7 +17,7 @@ from utils import infer_head_tail_indices, calculate_canonical_pose
 from core.io import Prediction_Loader, Exporter, Frame_Extractor
 from core.dataclass import Export_Settings, Plot_Config
 from ui import (
-    Menu_Widget, Progress_Bar_Widget, Nav_Widget, Prediction_Plotter,
+    Menu_Widget, Video_Slider_Widget, Nav_Widget, Prediction_Plotter,
     Adjust_Property_Dialog, Mark_Generator, Clear_Mark_Dialog, Canonical_Pose_Dialog
     )
 
@@ -83,7 +83,7 @@ class Frame_View(QtWidgets.QMainWindow):
         self.video_label.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         self.layout.addWidget(self.video_label, 1)
 
-        self.progress_widget = Progress_Bar_Widget()
+        self.progress_widget = Video_Slider_Widget()
         self.layout.addWidget(self.progress_widget)
         self.progress_widget.frame_changed.connect(self._handle_frame_change_from_comp)
 

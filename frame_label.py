@@ -17,7 +17,7 @@ import utils.helper as duh
 import utils.pose as dupe
 import utils.track as dute
 from ui import (
-    Menu_Widget, Progress_Bar_Widget, Nav_Widget, Outlier_Finder,
+    Menu_Widget, Video_Slider_Widget, Nav_Widget, Outlier_Finder,
     Adjust_Property_Dialog, Pose_Rotation_Dialog, Canonical_Pose_Dialog, Head_Tail_Dialog,
     Prediction_Plotter, Canvas
 )
@@ -50,7 +50,7 @@ class Frame_Label(QtWidgets.QMainWindow):
         self.gview = Canvas(track_edit_callback=self._on_track_data_changed, parent=self)
         self.layout.addWidget(self.gview, 1)
 
-        self.progress_widget = Progress_Bar_Widget()
+        self.progress_widget = Video_Slider_Widget()
         self.progress_widget.frame_changed.connect(self._handle_frame_change_from_comp)
         self.layout.addWidget(self.progress_widget)
 
