@@ -25,7 +25,7 @@ class Frame_Extractor:
         self._frame_cache = OrderedDict()
         self._cache_size = 100
 
-    def get_total_frame(self) -> int:
+    def get_total_frames(self) -> int:
         return self.total_frames
 
     def get_frame(self, frame_index: int) -> Optional[np.ndarray]:
