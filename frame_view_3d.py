@@ -21,7 +21,7 @@ import ui
 import utils.utils3d as utls3
 from core.dataclass import Plot_Config
 from ui import (
-    Menu_Widget, Video_Slider_Widget, Nav_Widget, Adjust_Property_Dialog, Clickable_Video_Label
+    Menu_Widget, Video_Slider_Widget, Nav_Widget, Adjust_Property_Dialog, Clickable_Video_Label, Progress_Indicator_Dialog
     )
 from core import Prediction_Plotter, io as dio
 
@@ -603,7 +603,7 @@ class Frame_View_3D(QtWidgets.QMainWindow):
 
     ###################################################################################################################################################
 
-    def calculate_identity_swap_score(self, mode, parent_progress=None, mute=False):
+    def calculate_identity_swap_score(self, mode, mute=False):
         if not self.dlc_data:
             return False
 
@@ -620,7 +620,7 @@ class Frame_View_3D(QtWidgets.QMainWindow):
         if config.show_progress:
             dialog = "Calculating swap detection score..."
             title = f"Calculating Identity Score In {mode}"
-            progress = ui.get_progress_dialog(self, config.start_frame, self.total_frames, title, dialog, parent_progress)
+            progress = Progress_Indicator_Dialog(config.start_frame, self.total_frames, title, dialog, self)
         else:
             progress = None
 
@@ -672,7 +672,7 @@ class Frame_View_3D(QtWidgets.QMainWindow):
         if frame_idx_r is None:
             dialog = "Calculating temporal velocity for all the frames..."
             title = f"Calculating Temporal Velocity"
-            progress = ui.get_progress_dialog(self, 0, self.total_frames, title, dialog)
+            progress = Progress_Indicator_Dialog( 0, self.total_frames, title, dialog, self)
 
         data_processor_3d = utls3.processor(
             self.dlc_data, self.camera_params, self.pred_data_array, self.plot_config.confidence_cutoff, self.num_cam)
@@ -712,8 +712,8 @@ class Frame_View_3D(QtWidgets.QMainWindow):
             QMessageBox.information(self, "Unimplemented", "The function is only for two instance only.")
             return
 
-        self.correction_progress = ui.get_progress_dialog(self, 0, self.total_frames,
-            title="Automatic Correction Progress", dialog="Commencing automatic track correction...")
+        self.correction_progress = Progress_Indicator_Dialog(0, self.total_frames,
+            title="Automatic Correction Progress", dialog="Commencing automatic track correction...", parent=self)
 
         main_window_center = self.geometry().center()
         x = main_window_center.x() - self.correction_progress.width() // 2
@@ -1118,7 +1118,7 @@ class Frame_View_3D(QtWidgets.QMainWindow):
         com_idx = self.keypoint_to_idx[item]
         dialog = "Gathering 3D COM (Center of Mass) data for export..."
         title = f"Gather 3D COM Data For Export"
-        progress = ui.get_progress_dialog(self, 0, self.total_frames, title, dialog)
+        progress = Progress_Indicator_Dialog(0, self.total_frames, title, dialog, self)
 
         data_processor_3d = utls3.processor(
             self.dlc_data, self.camera_params, self.pred_data_array, self.plot_config.confidence_cutoff, self.num_cam)

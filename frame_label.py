@@ -16,7 +16,7 @@ import utils.helper as duh
 import utils.pose as dupe
 import utils.track as dute
 from ui import (
-    Menu_Widget, Video_Slider_Widget, Nav_Widget, 
+    Menu_Widget, Video_Slider_Widget, Nav_Widget, Progress_Indicator_Dialog,
     Adjust_Property_Dialog, Pose_Rotation_Dialog, Head_Tail_Dialog
 )
 from core import (
@@ -228,7 +228,7 @@ class Frame_Label(QtWidgets.QMainWindow):
         self.video_name = os.path.basename(self.video_file).split(".")[0]
         self.extractor = dio.Frame_Extractor(self.video_file)
         
-        self.total_frames = self.extractor.get_total_frame()
+        self.total_frames = self.extractor.get_total_frames()
         self.current_frame_idx = 0
         self.progress_widget.set_slider_range(self.total_frames) # Initialize slider range
         self.display_current_frame()
@@ -573,7 +573,7 @@ class Frame_Label(QtWidgets.QMainWindow):
 
         dialog = "Fixing track using temporal consistency..."
         title = f"Fix Track Using Temporal"
-        progress = ui.get_progress_dialog(self, 0, self.total_frames, title, dialog)
+        progress = Progress_Indicator_Dialog(0, self.total_frames, title, dialog, self)
 
         self.pred_data_array, changes_applied = dute.track_correction(
             pred_data_array=self.pred_data_array,
@@ -611,7 +611,7 @@ class Frame_Label(QtWidgets.QMainWindow):
 
         dialog = "Fixing track from idTracker.ai trajectories..."
         title = f"Fix Track Using idTracker.ai"
-        progress = ui.get_progress_dialog(self, 0, self.total_frames, title, dialog)
+        progress = Progress_Indicator_Dialog(0, self.total_frames, title, dialog, self)
 
         self.pred_data_array, changes_applied = dute.track_correction(
             pred_data_array=self.pred_data_array,

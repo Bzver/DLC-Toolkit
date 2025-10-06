@@ -62,44 +62,6 @@ def handle_unsaved_changes_on_close(
 
 ###########################################################################################
 
-def get_progress_dialog(
-        parent,
-        start_frame:int,
-        end_frame:int,
-        title:str,
-        dialog:str,
-        parent_progress:QProgressDialog=None
-        ) -> QProgressDialog:
-    """
-    Creates and configures a QProgressDialog for long-running frame-based operations.
-
-    Args:
-        parent: Parent widget for modal behavior.
-        start_frame (int): Starting value of the progress range.
-        end_frame (int): Ending value of the progress range.
-        title (str): Window title for the dialog.
-        dialog (str): Label text displayed inside the dialog.
-        parent_progress (QProgressDialog, optional): Reference to a parent dialog for positioning.
-
-    Returns:
-        QProgressDialog: Configured progress dialog with modal behavior and optional positioning 
-                         below the parent dialog.
-    """
-    progress = QProgressDialog(dialog, "Cancel",  start_frame, end_frame, parent)
-    progress.setWindowTitle(title)
-    progress.setWindowModality(Qt.WindowModal)
-    progress.setValue(0)
-
-    if parent_progress:
-        # Position it below and slightly to the side of the parent dialog
-        x = parent_progress.x()
-        y = parent_progress.y() + parent_progress.height() + 30
-        progress.move(x, y)
-
-    return progress
-
-###########################################################################################
-
 def calculate_snapping_zoom_level(
         current_frame_data:np.ndarray,
         view_width:float,

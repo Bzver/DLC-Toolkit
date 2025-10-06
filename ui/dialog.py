@@ -158,3 +158,16 @@ class Head_Tail_Dialog(QtWidgets.QDialog):
 
     def get_selected_indices(self):
         return self.head_idx, self.tail_idx
+    
+###################################################################################################################################################
+
+class Progress_Indicator_Dialog(QtWidgets.QProgressDialog):
+    def __init__(self, start, end, title, text, parent=None):
+        super().__init__(parent)
+        self.setLabelText(text)
+        self.setMinimum(start)
+        self.setMaximum(end)
+        self.setCancelButtonText("Cancel")
+        self.setWindowTitle(title)
+        self.setWindowModality(Qt.WindowModal)
+        self.setValue(0)
