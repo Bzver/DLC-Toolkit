@@ -12,14 +12,17 @@ from PySide6.QtWidgets import QMessageBox, QFileDialog
 import traceback
 
 import ui
-import core.io as dio
 from utils import infer_head_tail_indices, calculate_canonical_pose
 from core.io import Prediction_Loader, Exporter, Frame_Extractor
 from core.dataclass import Export_Settings, Plot_Config
 from ui import (
-    Menu_Widget, Video_Slider_Widget, Nav_Widget, Prediction_Plotter,
-    Adjust_Property_Dialog, Mark_Generator, Clear_Mark_Dialog, Canonical_Pose_Dialog
+    Menu_Widget, Video_Slider_Widget, Nav_Widget,
+    Adjust_Property_Dialog, Clear_Mark_Dialog
     )
+from core import (
+    Prediction_Plotter, Mark_Generator, Canonical_Pose_Dialog, io as dio
+    )
+
 
 class Frame_View(QtWidgets.QMainWindow):
     def __init__(self):

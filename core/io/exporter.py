@@ -39,6 +39,7 @@ class Exporter:
                 ret, frame = cap.read()
                 if ret:
                     cv2.imwrite(image_output_path, frame)
+                    
         except Exception as e:
             raise RuntimeError(f"Error extracting frame: {e}") from e
 

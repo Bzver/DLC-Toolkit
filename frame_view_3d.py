@@ -18,13 +18,12 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 import ui
-import core.io as dio
 import utils.utils3d as utls3
 from core.dataclass import Plot_Config
 from ui import (
-    Menu_Widget, Video_Slider_Widget, Nav_Widget, Adjust_Property_Dialog,
-    Prediction_Plotter, Clickable_Video_Label
+    Menu_Widget, Video_Slider_Widget, Nav_Widget, Adjust_Property_Dialog, Clickable_Video_Label
     )
+from core import Prediction_Plotter, io as dio
 
 import traceback
 

@@ -18,13 +18,7 @@ from .widget import (
     Nav_Widget,
 )
 
-from .draw_canon import Canonical_Pose_Dialog
-from .plot import Prediction_Plotter
-from .inference import DLC_Inference
-from .mark_nav import navigate_to_marked_frame
-from .mark_gen import Mark_Generator
-from .outlier_finder import Outlier_Finder
-from .graphic_view import Canvas
+
 from .ui_helper import (
     format_title,
     handle_unsaved_changes_on_close,
@@ -44,13 +38,6 @@ __all__ = (
     Menu_Widget,
     Video_Slider_Widget,
     Nav_Widget,
-    Canonical_Pose_Dialog,
-    Prediction_Plotter,
-    DLC_Inference,
-    Outlier_Finder,
-    Mark_Generator,
-    Canvas,
-    navigate_to_marked_frame,
     format_title,
     handle_unsaved_changes_on_close,
     get_progress_dialog,

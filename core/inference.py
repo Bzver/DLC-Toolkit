@@ -13,13 +13,10 @@ from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QHBoxLayout
 
 from typing import List, Literal
 
-from .component import Clickable_Video_Label
-from .widget import Video_Slider_Widget
-from .plot import Prediction_Plotter
-from .ui_helper import handle_unsaved_changes_on_close
+from ui import Clickable_Video_Label, Video_Slider_Widget, handle_unsaved_changes_on_close
 from core.dataclass import Loaded_DLC_Data, Export_Settings
 from core.io import Exporter, Prediction_Loader
-from core import io as dio
+from core import Prediction_Plotter, io as dio
 from utils.helper import log_print
 from utils.pose import calculate_pose_centroids
 from utils.track import hungarian_matching

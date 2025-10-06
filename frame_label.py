@@ -12,14 +12,15 @@ from PySide6.QtWidgets import QMessageBox
 import traceback
 
 import ui
-import core.io as dio
 import utils.helper as duh
 import utils.pose as dupe
 import utils.track as dute
 from ui import (
-    Menu_Widget, Video_Slider_Widget, Nav_Widget, Outlier_Finder,
-    Adjust_Property_Dialog, Pose_Rotation_Dialog, Canonical_Pose_Dialog, Head_Tail_Dialog,
-    Prediction_Plotter, Canvas
+    Menu_Widget, Video_Slider_Widget, Nav_Widget, 
+    Adjust_Property_Dialog, Pose_Rotation_Dialog, Head_Tail_Dialog
+)
+from core import (
+    Outlier_Finder, Canonical_Pose_Dialog, Prediction_Plotter, Canvas, io as dio
 )
 from core.dataclass import Export_Settings, Plot_Config, Labeler_Plotter_Callbacks
 
