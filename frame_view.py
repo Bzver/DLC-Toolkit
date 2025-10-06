@@ -695,7 +695,7 @@ class Frame_View(QtWidgets.QMainWindow):
 
             self.dlc_data.pred_frame_count = self.total_frames
 
-        from ui import DLC_Inference
+        from core import DLC_Inference
         try:
             self.inference_window = DLC_Inference(dlc_data=self.dlc_data, frame_list=inference_list, video_filepath=self.video_file, parent=self)
             self.inference_window.show()

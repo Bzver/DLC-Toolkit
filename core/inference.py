@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QHBoxLayout
 
 from typing import List, Literal
 
-from ui import Clickable_Video_Label, Video_Slider_Widget, handle_unsaved_changes_on_close
+from ui import Clickable_Video_Label, Video_Slider_Widget, Progress_Indicator_Dialog, handle_unsaved_changes_on_close
 from core.dataclass import Loaded_DLC_Data, Export_Settings
 from core.io import Exporter, Prediction_Loader
 from core import Prediction_Plotter, io as dio
@@ -607,7 +607,10 @@ class DLC_Inference(QtWidgets.QDialog):
 
     def _extract_marked_frame_images(self):
         try:
-            exporter = Exporter(dlc_data=self.dlc_data, export_settings=self.export_set, frame_list=self.frame_list)
+            progress = Progress_Indicator_Dialog(0, 100, "Frame Extraction",
+                "Extracting frames from video", parent=self)
+            exporter = Exporter(
+                dlc_data=self.dlc_data, export_settings=self.export_set, frame_list=self.frame_list, progress_callback=progress)
             exporter.export_data_to_DLC(frame_only=True)
             return True
         except Exception as e:

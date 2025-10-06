@@ -2,7 +2,8 @@ import os
 import numpy as np
 import cv2
 
-from typing import Tuple, List
+from typing import Tuple, List, Optional
+from PySide6.QtWidgets import QProgressBar
 
 from .csv_op import prediction_to_csv, csv_to_h5
 from core.dataclass import Loaded_DLC_Data, Export_Settings
@@ -10,11 +11,14 @@ from core.dataclass import Loaded_DLC_Data, Export_Settings
 class Exporter:
     """A class to handle saving or merging predictions back to DLC"""
     def __init__(self, dlc_data: Loaded_DLC_Data, export_settings: Export_Settings,
-        frame_list: List[int], pred_data_array: np.ndarray=None):
+            frame_list: List[int], pred_data_array:Optional[np.ndarray]=None,
+            progress_callback:Optional[QProgressBar]=None
+            ):
         self.dlc_data = dlc_data
         self.export_settings = export_settings
         self.frame_list = frame_list
         self.pred_data_array = pred_data_array
+        self.progress_callback = progress_callback
 
         os.makedirs(self.export_settings.save_path, exist_ok=True)
 
@@ -31,14 +35,21 @@ class Exporter:
                 raise RuntimeError(f"Error: Could not open video {self.export_settings.video_filepath}")
             
             frames_to_extract = set(self.frame_list)
+            if self.progress_callback:
+                self.progress_callback.setMaximum(len(frames_to_extract))
 
-            for frame in frames_to_extract:
+            for i, frame in enumerate(frames_to_extract):
+                if self.progress_callback:
+                    self.progress_callback.setValue(i)
                 image_path = f"img{str(int(frame)).zfill(8)}.png"
                 image_output_path = os.path.join(self.export_settings.save_path, image_path)
                 cap.set(cv2.CAP_PROP_POS_FRAMES, frame)
                 ret, frame = cap.read()
                 if ret:
                     cv2.imwrite(image_output_path, frame)
+            
+            if self.progress_callback:
+                self.progress_callback.close()
                     
         except Exception as e:
             raise RuntimeError(f"Error extracting frame: {e}") from e

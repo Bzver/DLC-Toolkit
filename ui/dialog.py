@@ -162,11 +162,11 @@ class Head_Tail_Dialog(QtWidgets.QDialog):
 ###################################################################################################################################################
 
 class Progress_Indicator_Dialog(QtWidgets.QProgressDialog):
-    def __init__(self, start, end, title, text, parent=None):
+    def __init__(self, min, max, title, text, parent=None):
         super().__init__(parent)
         self.setLabelText(text)
-        self.setMinimum(start)
-        self.setMaximum(end)
+        self.setMinimum(min)
+        self.setMaximum(max)
         self.setCancelButtonText("Cancel")
         self.setWindowTitle(title)
         self.setWindowModality(Qt.WindowModal)
