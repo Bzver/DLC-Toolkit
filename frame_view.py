@@ -444,9 +444,10 @@ class Frame_View(QtWidgets.QMainWindow):
         self.progress_widget.set_frame_category("approved_frames", self.approved_frame_list, "#68b3ff", priority=6)
         self.progress_widget.set_frame_category("rejected_frames", self.rejected_frame_list, "#F749C6", priority=6)
         self.progress_widget.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7", priority=7)
-        self.progress_widget.set_frame_category("zero_animal_frames", self.animal_0_list, "#000000", priority=self.is_counting*10)
-        self.progress_widget.set_frame_category("one_animal_frames", self.animal_1_list, "#00E1FF", priority=self.is_counting*10)
-        self.progress_widget.set_frame_category("muliple_animal_frames", self.animal_n_list, "#FBFF00", priority=self.is_counting*10)
+        if self.is_counting:
+            self.progress_widget.set_frame_category("zero_animal_frames", self.animal_0_list, "#000000", priority=10)
+            self.progress_widget.set_frame_category("one_animal_frames", self.animal_1_list, "#00E1FF", priority=10)
+            self.progress_widget.set_frame_category("muliple_animal_frames", self.animal_n_list, "#FBFF00", priority=10)
 
     ###################################################################################################################################################
 
