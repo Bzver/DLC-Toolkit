@@ -3,6 +3,12 @@ import numpy as np
 from PySide6 import QtWidgets, QtGui
 from PySide6.QtCore import Qt, Signal
 
+import matplotlib
+matplotlib.use("QtAgg")
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
+import matplotlib.patches as patches
+
 from ui import Progress_Indicator_Dialog
 from .io import Frame_Extractor
 
@@ -22,9 +28,11 @@ class Blob_Counter(QtWidgets.QGroupBox):
 
         # UI parameters
         self.threshold = 100
+        self.double_blob_area_threshold = 2000
         self.min_blob_area = 500
         self.bg_removal_method = "None"
         self.blob_type = "Dark Blobs (Max)"
+        self._dragging_threshold = False
 
         self.layout = QtWidgets.QVBoxLayout(self)
         self.setFixedWidth(200)
@@ -36,6 +44,23 @@ class Blob_Counter(QtWidgets.QGroupBox):
         self.image_label.setCursor(Qt.PointingHandCursor)
         self.image_label.mousePressEvent = lambda e: self._show_background_in_dialog()
         self.layout.addWidget(self.image_label, 1)
+
+        # Histogram for blob sizes
+        self.histogram_layout = QtWidgets.QVBoxLayout()
+        self.layout.addLayout(self.histogram_layout)
+
+        self.histogram_label = QtWidgets.QLabel("Blob Size Distribution (computing...)")
+        self.histogram_layout.addWidget(self.histogram_label)
+
+        # Matplotlib figure
+        self.fig = Figure(figsize=(6, 3), dpi=100)
+        self.canvas = FigureCanvas(self.fig)
+        self.canvas.setMinimumHeight(200)
+        self.histogram_layout.addWidget(self.canvas)
+
+        self.ax = self.fig.add_subplot(111)
+        self.threshold_line = None
+        self.blob_areas = []
 
         # Controls
         self.control_gbox = QtWidgets.QGroupBox(self)
@@ -90,6 +115,10 @@ class Blob_Counter(QtWidgets.QGroupBox):
 
         self.controls_layout.addWidget(self.bg_removal_label)
         self.controls_layout.addWidget(self.bg_removal_combo)
+
+        self.refresh_hist_btn = QtWidgets.QPushButton("Refresh Histogram")
+        self.refresh_hist_btn.clicked.connect(self.plot_blob_histogram)
+        self.layout.addWidget(self.refresh_hist_btn)
 
         # Count display
         self.count_label = QtWidgets.QLabel("Animal Count: 0")
@@ -190,7 +219,14 @@ class Blob_Counter(QtWidgets.QGroupBox):
         # Find and filter contours
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         filtered_contours = [cnt for cnt in contours if cv2.contourArea(cnt) > self.min_blob_area]
-        self.animal_count = len(filtered_contours)
+
+        self.animal_count = 0
+        for cnt in filtered_contours:
+            area = cv2.contourArea(cnt)
+            if area >= self.double_blob_area_threshold:
+                self.animal_count += 2
+            else:
+                self.animal_count += 1
 
         # Draw results
         mask = np.zeros_like(current_frame, dtype=np.uint8)
@@ -302,3 +338,107 @@ class Blob_Counter(QtWidgets.QGroupBox):
 
         dialog_layout.addWidget(scroll_area)
         dialog.exec()
+
+    def compute_blob_areas(self):
+        if not self.frame_extractor:
+            return []
+
+        total_frames = self.frame_extractor.get_total_frames()
+        if total_frames == 0:
+            return []
+
+        # Sample frames (e.g., 200 frames max)
+        sample_count = min(200, total_frames)
+        frame_indices = np.linspace(0, total_frames - 1, sample_count, dtype=int)
+
+        all_areas = []
+        progress_dialog = Progress_Indicator_Dialog(0, len(frame_indices), "Blob Analysis", "Analyzing blob sizes...", self)
+
+        for i, idx in enumerate(frame_indices):
+            if progress_dialog.wasCanceled():
+                break
+            frame = self.frame_extractor.get_frame(idx)
+            if frame is None:
+                continue
+
+            # Reuse your preprocessing logic
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            if self.bg_removal_method != "None":
+                bg = self._get_background_frame(self.bg_removal_method)
+                if bg is not None:
+                    bg_gray = cv2.cvtColor(bg, cv2.COLOR_BGR2GRAY) if len(bg.shape) == 3 else bg
+                    processed = cv2.absdiff(gray, bg_gray.astype(gray.dtype))
+                else:
+                    processed = gray
+            else:
+                processed = gray
+
+            if self.blob_type == "Dark Blobs (Min)":
+                _, thresh = cv2.threshold(processed, self.threshold, 255, cv2.THRESH_BINARY_INV)
+            else:
+                _, thresh = cv2.threshold(processed, self.threshold, 255, cv2.THRESH_BINARY)
+
+            contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            areas = [cv2.contourArea(c) for c in contours if cv2.contourArea(c) > self.min_blob_area]
+            all_areas.extend(areas)
+
+            progress_dialog.setValue(i + 1)
+
+        progress_dialog.close()
+        return all_areas
+    
+    def plot_blob_histogram(self):
+        self.blob_areas = self.compute_blob_areas()
+        if not self.blob_areas:
+            self.ax.clear()
+            self.ax.text(0.5, 0.5, "No blobs found", transform=self.ax.transAxes, ha="center")
+            self.canvas.draw()
+            return
+
+        self.ax.clear()
+        counts, bins, patches = self.ax.hist(self.blob_areas, bins=50, color='skyblue', edgecolor='black', alpha=0.7)
+        self.ax.set_xlabel("Blob Area (pixels²)")
+        self.ax.set_ylabel("Frequency")
+        self.ax.set_title("Blob Size Distribution")
+
+        # Add draggable threshold line
+        if self.threshold_line:
+            self.threshold_line.remove()
+
+        self.threshold_line = self.ax.axvline(
+            x=self.double_blob_area_threshold,
+            color='red',
+            linestyle='--',
+            linewidth=2,
+            label=f"Threshold: {self.double_blob_area_threshold}"
+        )
+        self.ax.legend()
+
+        # Enable dragging
+        self.canvas.mpl_connect('button_press_event', self._on_histogram_click)
+        self.canvas.mpl_connect('motion_notify_event', self._on_histogram_drag)
+        self.canvas.mpl_connect('button_release_event', self._on_histogram_release)
+
+        self.canvas.draw()
+        self.histogram_label.setText("Blob Size Distribution (drag red line to set '2-animal' threshold)")
+
+    def _on_histogram_click(self, event):
+        if event.inaxes != self.ax or event.button != 1:
+            return
+        if self.threshold_line and abs(event.xdata - self.double_blob_area_threshold) < (max(self.blob_areas) - min(self.blob_areas)) / 20:
+            self._dragging_threshold = True
+
+    def _on_histogram_drag(self, event):
+        if not self._dragging_threshold or event.inaxes != self.ax:
+            return
+        new_x = max(0, event.xdata)
+        self.double_blob_area_threshold = int(new_x)
+        self.threshold_line.set_xdata([new_x, new_x])
+        self.canvas.draw()
+
+    def _on_histogram_release(self, event):
+        if self._dragging_threshold:
+            self._dragging_threshold = False
+            # Optional: reprocess current frame
+            if self.current_frame is not None:
+                self.set_current_frame(self.current_frame)
