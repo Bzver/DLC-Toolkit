@@ -15,6 +15,7 @@ class Blob_Counter(QtWidgets.QGroupBox):
         self.setTitle("Blob-based Animal Counting Controls")
 
         self.animal_count = 0
+        self.bg_sample_frame_count = 100
         self.frame_extractor = frame_extractor
         self.current_frame = None
         self.background_frames = {}
@@ -32,6 +33,8 @@ class Blob_Counter(QtWidgets.QGroupBox):
         self.image_label = QtWidgets.QLabel("No background image to display")
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        self.image_label.setCursor(Qt.PointingHandCursor)
+        self.image_label.mousePressEvent = lambda e: self._show_background_in_dialog()
         self.layout.addWidget(self.image_label, 1)
 
         # Controls
@@ -75,6 +78,16 @@ class Blob_Counter(QtWidgets.QGroupBox):
         self.bg_removal_combo = QtWidgets.QComboBox()
         self.bg_removal_combo.addItems(["None", "Min", "Max", "Median", "Mean"])
         self.bg_removal_combo.currentTextChanged.connect(self._on_bg_removal_changed)
+        
+        self.bg_frame_count_label = QtWidgets.QLabel("Background Sample Frames:")
+        self.bg_frame_count_spin = QtWidgets.QSpinBox()
+        self.bg_frame_count_spin.setRange(10, 10000)
+        self.bg_frame_count_spin.setValue(100)  # default
+        self.bg_frame_count_spin.setSingleStep(100)
+        self.bg_frame_count_spin.valueChanged.connect(self._on_bg_frame_count_changed)
+        self.controls_layout.addWidget(self.bg_frame_count_label)
+        self.controls_layout.addWidget(self.bg_frame_count_spin)
+
         self.controls_layout.addWidget(self.bg_removal_label)
         self.controls_layout.addWidget(self.bg_removal_combo)
 
@@ -104,6 +117,11 @@ class Blob_Counter(QtWidgets.QGroupBox):
     def _on_bg_removal_changed(self, text):
         self.bg_removal_method = text
         self.parameters_changed.emit()
+        self._update_background_display()
+
+    def _on_bg_frame_count_changed(self, value):
+        self.bg_sample_frame_count = value
+        self.background_frames.clear() # Invalidate cached backgrounds since sampling changed
         self._update_background_display()
 
     def _update_background_display(self):
@@ -194,10 +212,10 @@ class Blob_Counter(QtWidgets.QGroupBox):
             return None
 
         # Sample frames
-        if total_frames <= 1000:
+        if total_frames <= self.bg_sample_frame_count:
             frames_to_iter = range(total_frames)
         else:
-            frames_to_iter = np.linspace(0, total_frames - 1, 1000, dtype=int)
+            frames_to_iter = np.linspace(0, total_frames - 1, self.bg_sample_frame_count, dtype=int)
 
         # Initialize
         first_frame = self.frame_extractor.get_frame(0)
@@ -251,3 +269,36 @@ class Blob_Counter(QtWidgets.QGroupBox):
 
         self.background_frames[method] = background_frame
         return background_frame
+        
+    def _show_background_in_dialog(self, event=None):
+        method = self.bg_removal_method
+        if method == "None":
+            return
+
+        frame = self.background_frames.get(method)
+        if frame is None:
+            return
+
+        # Convert to QImage
+        rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        h, w, ch = rgb_image.shape
+        bytes_per_line = ch * w
+        qt_image = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
+
+        # Create dialog
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle(f"Background Image — {method}")
+        dialog_layout = QtWidgets.QVBoxLayout(dialog)
+
+        label = QtWidgets.QLabel()
+        label.setPixmap(QtGui.QPixmap.fromImage(qt_image))
+        label.setAlignment(Qt.AlignCenter)
+        label.setScaledContents(False)  # Keep aspect ratio
+        label.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+
+        scroll_area = QtWidgets.QScrollArea()
+        scroll_area.setWidget(label)
+        scroll_area.setWidgetResizable(True)
+
+        dialog_layout.addWidget(scroll_area)
+        dialog.exec()
