@@ -16,11 +16,10 @@ from utils import infer_head_tail_indices, calculate_canonical_pose
 from core.io import Prediction_Loader, Exporter, Frame_Extractor
 from core.dataclass import Export_Settings, Plot_Config
 from ui import (
-    Menu_Widget, Video_Slider_Widget, Nav_Widget,
-    Adjust_Property_Dialog, Clear_Mark_Dialog
+    Menu_Widget, Video_Slider_Widget, Nav_Widget, Adjust_Property_Dialog, Clear_Mark_Dialog, 
     )
 from core import (
-    Prediction_Plotter, Mark_Generator, Canonical_Pose_Dialog, io as dio
+    Prediction_Plotter, Mark_Generator, Canonical_Pose_Dialog, Blob_Counter, io as dio
     )
 
 
@@ -45,7 +44,9 @@ class Frame_View(QtWidgets.QMainWindow):
                     ("Toggle Labeled Predictions Visiblity", self.toggle_labeled_vis, {"checkable": True, "checked": True}),
                     ("Toggle Predictions Visiblity", self.toggle_pred_vis, {"checkable": True, "checked": True}),
                     ("Toggle Navigating Labeled Frames", self.toggle_labeled_nav, {"checkable": True, "checked": False}),
+                    ("Toggle Animal Counting", self.toggle_animal_counting, {"checkable": True, "checked": False}),
                     ("View Canonical Pose", self.view_canonical_pose),
+                    ("Count Animals Options", self.count_animals_options),
                 ]
             },
             "Mark": {
@@ -80,15 +81,34 @@ class Frame_View(QtWidgets.QMainWindow):
         self.layout = QtWidgets.QVBoxLayout(self.central_widget)
 
         # Video display area
+        self.video_side_panel_layout = QtWidgets.QHBoxLayout()
+
+        self.video_left_panel_widget = QtWidgets.QWidget()
+        self.video_left_panel_widget.setVisible(False)  # Hidden by default
+        self.video_left_panel_layout = QtWidgets.QVBoxLayout(self.video_left_panel_widget)
+        self.video_left_panel_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.video_right_panel_widget = QtWidgets.QWidget()
+        self.video_right_panel_widget.setVisible(False)  # Hidden by default
+        self.video_right_panel_layout = QtWidgets.QVBoxLayout(self.video_right_panel_widget)
+        self.video_right_panel_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.video_display = QtWidgets.QVBoxLayout()
+
         self.video_label = QtWidgets.QLabel("No video loaded")
         self.video_label.setAlignment(Qt.AlignCenter)
         self.video_label.setStyleSheet("background-color: black; color: white;")
         self.video_label.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
-        self.layout.addWidget(self.video_label, 1)
+        self.video_display.addWidget(self.video_label, 1)
 
         self.progress_widget = Video_Slider_Widget()
-        self.layout.addWidget(self.progress_widget)
+        self.video_display.addWidget(self.progress_widget)
         self.progress_widget.frame_changed.connect(self._handle_frame_change_from_comp)
+
+        self.video_side_panel_layout.addWidget(self.video_left_panel_widget)
+        self.video_side_panel_layout.addLayout(self.video_display, 1)
+        self.video_side_panel_layout.addWidget(self.video_right_panel_widget)
+        self.layout.addLayout(self.video_side_panel_layout)
 
         # Navigation controls
         self.nav_widget = Nav_Widget()
@@ -121,6 +141,7 @@ class Frame_View(QtWidgets.QMainWindow):
 
         self.extractor, self.current_frame = None, None
 
+        self.is_counting = False
         self.is_saved = True
         self.last_saved = []
         self.plot_labeled, self.plot_pred = True, True
@@ -128,6 +149,8 @@ class Frame_View(QtWidgets.QMainWindow):
 
         self.plot_config = Plot_Config(
             plot_opacity =1.0, point_size = 6.0, confidence_cutoff = 0.0, hide_text_labels = False, edit_mode = False)
+        
+        self.blob_counter = None
 
         self.nav_widget.set_collapsed(True)
 
@@ -143,6 +166,9 @@ class Frame_View(QtWidgets.QMainWindow):
         self.video_name = os.path.basename(self.video_file).split(".")[0]
 
         self.extractor = Frame_Extractor(video_path=self.video_file)
+        self.blob_counter = Blob_Counter(frame_extractor=self.extractor, parent=self)
+        self.blob_counter.frame_processed.connect(self._plot_current_frame)
+
         self.total_frames = self.extractor.get_total_frames()
 
         self.current_frame_idx = 0
@@ -323,7 +349,15 @@ class Frame_View(QtWidgets.QMainWindow):
         else:
             self.canon_pose, _ = calculate_canonical_pose(self.label_data_array, head_idx, tail_idx)
 
-    ###################################################################################################################################################
+    def count_animals_options(self):
+        if self.current_frame is None or self.extractor is None:
+            QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
+            return
+        
+        if self.blob_counter:
+            self.blob_counter.show()
+
+###################################################################################################################################################
 
     def display_current_frame(self):
         if not self.extractor:
@@ -335,6 +369,12 @@ class Frame_View(QtWidgets.QMainWindow):
             return
         
         self.current_frame = frame
+        if self.is_counting:
+            self.blob_counter.set_current_frame(frame=frame)
+        else:
+            self._plot_current_frame(frame)
+
+    def _plot_current_frame(self, frame, count=None):
         if self.dlc_data is not None:
             if not hasattr(self, "plotter"):
                 self.initialize_plotter()
@@ -526,6 +566,17 @@ class Frame_View(QtWidgets.QMainWindow):
 
     def toggle_labeled_nav(self):
         self.nav_labeled = not self.nav_labeled
+        self.display_current_frame()
+
+    def toggle_animal_counting(self):
+        self.is_counting = not self.is_counting
+        
+        if self.is_counting:
+            self.set_left_panel_widget(self.blob_counter)
+        else:
+            self.set_left_panel_widget(None)
+
+        self.display_current_frame()
 
     def _clear_category(self, frame_category):
         actions = {
@@ -592,6 +643,34 @@ class Frame_View(QtWidgets.QMainWindow):
         self.determine_save_status()
 
     ###################################################################################################################################################
+
+    def set_left_panel_widget(self, widget: QtWidgets.QWidget | None):
+        """Set or clear the left side panel widget."""
+        # Remove existing widget if any
+        if self.video_left_panel_layout.count() > 0:
+            old_widget = self.video_left_panel_layout.takeAt(0).widget()
+            if old_widget:
+                old_widget.setParent(None)  # or deleteLater() if owned
+
+        if widget is not None:
+            self.video_left_panel_layout.addWidget(widget)
+            self.video_left_panel_widget.setVisible(True)
+        else:
+            self.video_left_panel_widget.setVisible(False)
+
+
+    def set_right_panel_widget(self, widget: QtWidgets.QWidget | None):
+        """Set or clear the right side panel widget."""
+        if self.video_right_panel_layout.count() > 0:
+            old_widget = self.video_right_panel_layout.takeAt(0).widget()
+            if old_widget:
+                old_widget.setParent(None)
+
+        if widget is not None:
+            self.video_right_panel_layout.addWidget(widget)
+            self.video_right_panel_widget.setVisible(True)
+        else:
+            self.video_right_panel_widget.setVisible(False)
 
     def determine_save_status(self):
         if set(self.last_saved) == set(self.frame_list):

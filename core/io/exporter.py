@@ -3,16 +3,16 @@ import numpy as np
 import cv2
 
 from typing import Tuple, List, Optional
-from PySide6.QtWidgets import QProgressBar
 
 from .csv_op import prediction_to_csv, csv_to_h5
+from ui import Progress_Indicator_Dialog
 from core.dataclass import Loaded_DLC_Data, Export_Settings
 
 class Exporter:
     """A class to handle saving or merging predictions back to DLC"""
     def __init__(self, dlc_data: Loaded_DLC_Data, export_settings: Export_Settings,
             frame_list: List[int], pred_data_array:Optional[np.ndarray]=None,
-            progress_callback:Optional[QProgressBar]=None
+            progress_callback:Optional[Progress_Indicator_Dialog]=None
             ):
         self.dlc_data = dlc_data
         self.export_settings = export_settings
@@ -41,6 +41,8 @@ class Exporter:
             for i, frame in enumerate(frames_to_extract):
                 if self.progress_callback:
                     self.progress_callback.setValue(i)
+                    if self.progress_callback.wasCanceled():
+                        break
                 image_path = f"img{str(int(frame)).zfill(8)}.png"
                 image_output_path = os.path.join(self.export_settings.save_path, image_path)
                 cap.set(cv2.CAP_PROP_POS_FRAMES, frame)
