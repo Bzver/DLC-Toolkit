@@ -202,22 +202,46 @@ class Blob_Counter(QtWidgets.QGroupBox):
 
     def _count_entire_video(self):
         total_frames = self.frame_extractor.get_total_frames()
-        progress_dialog = Progress_Indicator_Dialog(0, total_frames, "Counting", "Counting entire video...", self)
 
-        counts_per_frame = []
-        for frame_idx in range(total_frames):
-            progress_dialog.setValue(frame_idx)
-            QtWidgets.QApplication.processEvents()
-            if progress_dialog.wasCanceled():
+        counts_per_frame = [0] * total_frames
+        current_count = 0
+        skip = 1
+        max_skip = 40  # Don't skip more than 40 frmaes
+
+        frame_idx = 0
+        progress = Progress_Indicator_Dialog(0, total_frames, "Counting", "Adaptive counting...", self)
+
+        while frame_idx < total_frames:
+            if progress.wasCanceled():
                 break
+
             frame = self.frame_extractor.get_frame(frame_idx)
             if frame is None:
-                count = 0
+                count = current_count
             else:
-                _, count = self._perform_blob_counting(frame, skip_draw=True)
-            counts_per_frame.append(count)
+                _, count = self._perform_blob_counting(
+                    frame,
+                    skip_draw=True
+                )
 
-        progress_dialog.close()
+            # Fill all skipped frames with this count
+            next_process_frame = min(frame_idx + skip, total_frames)
+            for i in range(frame_idx, next_process_frame):
+                counts_per_frame[i] = count
+
+            progress.setValue(frame_idx)
+            QtWidgets.QApplication.processEvents()
+
+            # Adaptive logic
+            if count == current_count:
+                skip = min(skip * 2, max_skip)  # exponential backoff
+            else:
+                skip = 1
+
+            current_count = count
+            frame_idx = next_process_frame
+
+        progress.close()
         self.video_counted.emit(counts_per_frame)
         
     def _perform_blob_counting(self, current_frame, skip_draw=False):
