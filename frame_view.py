@@ -137,6 +137,7 @@ class Frame_View(QtWidgets.QMainWindow):
 
         self.labeled_frame_list, self.frame_list = [], []
         self.refined_frame_list, self.approved_frame_list, self.rejected_frame_list = [], [], []
+        self.animal_0_list, self.animal_1_list, self.animal_n_list = [], [], []
         self.label_data_array = None
 
         self.extractor, self.current_frame = None, None
@@ -168,6 +169,10 @@ class Frame_View(QtWidgets.QMainWindow):
         self.extractor = Frame_Extractor(video_path=self.video_file)
         self.blob_counter = Blob_Counter(frame_extractor=self.extractor, parent=self)
         self.blob_counter.frame_processed.connect(self._plot_current_frame)
+        self.blob_counter.video_counted.connect(self._handle_counter_from_counter)
+
+        if self.is_counting:
+            self.set_left_panel_widget(self.blob_counter)
 
         self.total_frames = self.extractor.get_total_frames()
 
@@ -435,10 +440,13 @@ class Frame_View(QtWidgets.QMainWindow):
 
     def _refresh_slider(self):
         self.progress_widget.set_frame_category("marked_frames", self.frame_list, "#E28F13")
-        self.progress_widget.set_frame_category("refined_frames", self.refined_frame_list, "#009979", priority=7)
-        self.progress_widget.set_frame_category("approved_frames", self.approved_frame_list, "#68b3ff", priority=7)
-        self.progress_widget.set_frame_category("rejected_frames", self.rejected_frame_list, "#F749C6", priority=7)
-        self.progress_widget.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7", priority=9)
+        self.progress_widget.set_frame_category("refined_frames", self.refined_frame_list, "#009979", priority=6)
+        self.progress_widget.set_frame_category("approved_frames", self.approved_frame_list, "#68b3ff", priority=6)
+        self.progress_widget.set_frame_category("rejected_frames", self.rejected_frame_list, "#F749C6", priority=6)
+        self.progress_widget.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7", priority=7)
+        self.progress_widget.set_frame_category("zero_animal_frames", self.animal_0_list, "#000000", priority=self.is_counting*10)
+        self.progress_widget.set_frame_category("one_animal_frames", self.animal_1_list, "#00E1FF", priority=self.is_counting*10)
+        self.progress_widget.set_frame_category("muliple_animal_frames", self.animal_n_list, "#FBFF00", priority=self.is_counting*10)
 
     ###################################################################################################################################################
 
@@ -642,6 +650,13 @@ class Frame_View(QtWidgets.QMainWindow):
         self.navigation_title_controller()
         self.determine_save_status()
 
+    def _handle_counter_from_counter(self, count_list):
+        count_array = np.array(count_list)
+        self.animal_0_list = list(np.where(count_array==0)[0])
+        self.animal_1_list = list(np.where(count_array==1)[0])
+        self.animal_n_list = list(np.where((count_array!=1) & (count_array!=0))[0])
+        self._refresh_slider()
+
     ###################################################################################################################################################
 
     def set_left_panel_widget(self, widget: QtWidgets.QWidget | None):
@@ -657,7 +672,6 @@ class Frame_View(QtWidgets.QMainWindow):
             self.video_left_panel_widget.setVisible(True)
         else:
             self.video_left_panel_widget.setVisible(False)
-
 
     def set_right_panel_widget(self, widget: QtWidgets.QWidget | None):
         """Set or clear the right side panel widget."""

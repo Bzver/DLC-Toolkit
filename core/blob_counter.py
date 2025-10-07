@@ -7,7 +7,6 @@ import matplotlib
 matplotlib.use("QtAgg")
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-import matplotlib.patches as patches
 
 from ui import Progress_Indicator_Dialog
 from .io import Frame_Extractor
@@ -15,20 +14,23 @@ from .io import Frame_Extractor
 class Blob_Counter(QtWidgets.QGroupBox):
     parameters_changed = Signal()  # No args needed, store state internally
     frame_processed = Signal(object, int)  # emit processed QImage and count
+    video_counted = Signal(list)
 
     def __init__(self, frame_extractor: Frame_Extractor, parent=None):
         super().__init__(parent)
         self.setTitle("Blob-based Animal Counting Controls")
 
-        self.animal_count = 0
         self.bg_sample_frame_count = 100
         self.frame_extractor = frame_extractor
         self.current_frame = None
         self.background_frames = {}
 
+        self.kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        self.kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+
         # UI parameters
         self.threshold = 100
-        self.double_blob_area_threshold = 2000
+        self.double_blob_area_threshold = 6000
         self.min_blob_area = 500
         self.bg_removal_method = "None"
         self.blob_type = "Dark Blobs (Max)"
@@ -55,7 +57,7 @@ class Blob_Counter(QtWidgets.QGroupBox):
         # Matplotlib figure
         self.fig = Figure(figsize=(6, 3), dpi=100)
         self.canvas = FigureCanvas(self.fig)
-        self.canvas.setMinimumHeight(200)
+        self.canvas.setMinimumHeight(100)
         self.histogram_layout.addWidget(self.canvas)
 
         self.ax = self.fig.add_subplot(111)
@@ -119,6 +121,11 @@ class Blob_Counter(QtWidgets.QGroupBox):
         self.refresh_hist_btn = QtWidgets.QPushButton("Refresh Histogram")
         self.refresh_hist_btn.clicked.connect(self.plot_blob_histogram)
         self.layout.addWidget(self.refresh_hist_btn)
+
+        # Add button to count animals in entire video
+        self.count_all_btn = QtWidgets.QPushButton("Count Animals in Entire Video")
+        self.count_all_btn.clicked.connect(self._count_entire_video)
+        self.layout.addWidget(self.count_all_btn)
 
         # Count display
         self.count_label = QtWidgets.QLabel("Animal Count: 0")
@@ -193,13 +200,32 @@ class Blob_Counter(QtWidgets.QGroupBox):
             # Convert to QImage for display if needed (optional)
             self.frame_processed.emit(display_frame, count)
 
-    def _perform_blob_counting(self, current_frame):
-        if current_frame is None:
-            self.animal_count = 0
-            self.count_label.setText("Animal Count: 0")
-            return None
+    def _count_entire_video(self):
+        total_frames = self.frame_extractor.get_total_frames()
+        progress_dialog = Progress_Indicator_Dialog(0, total_frames, "Counting", "Counting entire video...", self)
 
-        frame_to_process = current_frame.copy()
+        counts_per_frame = []
+        for frame_idx in range(total_frames):
+            progress_dialog.setValue(frame_idx)
+            QtWidgets.QApplication.processEvents()
+            if progress_dialog.wasCanceled():
+                break
+            frame = self.frame_extractor.get_frame(frame_idx)
+            if frame is None:
+                count = 0
+            else:
+                _, count = self._perform_blob_counting(frame, skip_draw=True)
+            counts_per_frame.append(count)
+
+        progress_dialog.close()
+        self.video_counted.emit(counts_per_frame)
+        
+    def _perform_blob_counting(self, current_frame, skip_draw=False):
+        if current_frame is None:
+            self.count_label.setText("Animal Count: 0")
+            return None, 0
+
+        frame_to_process = current_frame
         gray_frame = cv2.cvtColor(frame_to_process, cv2.COLOR_BGR2GRAY)
 
         processed_frame = gray_frame
@@ -220,23 +246,29 @@ class Blob_Counter(QtWidgets.QGroupBox):
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         filtered_contours = [cnt for cnt in contours if cv2.contourArea(cnt) > self.min_blob_area]
 
-        self.animal_count = 0
+        animal_count = 0
         for cnt in filtered_contours:
             area = cv2.contourArea(cnt)
             if area >= self.double_blob_area_threshold:
-                self.animal_count += 2
+                animal_count += 2
             else:
-                self.animal_count += 1
+                animal_count += 1
 
+        if skip_draw:
+            return None, animal_count
+        
+        display_frame = self._draw_mask(current_frame, filtered_contours)
+        self.count_label.setText(f"Animal Count: {animal_count}")
+        return display_frame, animal_count
+
+    def _draw_mask(self, current_frame, filtered_contours):
         # Draw results
         mask = np.zeros_like(current_frame, dtype=np.uint8)
         cv2.drawContours(mask, filtered_contours, -1, (0, 255, 0), cv2.FILLED)
         alpha = 0.3
         display_frame = cv2.addWeighted(current_frame, 1 - alpha, mask, alpha, 0)
         cv2.drawContours(display_frame, filtered_contours, -1, (0, 255, 0), 2)
-
-        self.count_label.setText(f"Animal Count: {self.animal_count}")
-        return display_frame, self.animal_count
+        return display_frame
 
     def _get_background_frame(self, method):
         if method in self.background_frames:
@@ -337,6 +369,7 @@ class Blob_Counter(QtWidgets.QGroupBox):
         scroll_area.setWidgetResizable(True)
 
         dialog_layout.addWidget(scroll_area)
+        dialog.showMaximized()
         dialog.exec()
 
     def compute_blob_areas(self):
@@ -410,7 +443,7 @@ class Blob_Counter(QtWidgets.QGroupBox):
             color='red',
             linestyle='--',
             linewidth=2,
-            label=f"Threshold: {self.double_blob_area_threshold}"
+            label=f"Double Threshold: {self.double_blob_area_threshold}"
         )
         self.ax.legend()
 
@@ -439,6 +472,5 @@ class Blob_Counter(QtWidgets.QGroupBox):
     def _on_histogram_release(self, event):
         if self._dragging_threshold:
             self._dragging_threshold = False
-            # Optional: reprocess current frame
             if self.current_frame is not None:
                 self.set_current_frame(self.current_frame)
