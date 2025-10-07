@@ -23,7 +23,7 @@ from core.dataclass import Plot_Config
 from ui import (
     Menu_Widget, Video_Slider_Widget, Nav_Widget, Adjust_Property_Dialog, Clickable_Video_Label, Progress_Indicator_Dialog
     )
-from core import Prediction_Plotter, io as dio
+from core import Prediction_Plotter, io as dio, navigate_to_marked_frame
 
 import traceback
 
@@ -877,17 +877,17 @@ class Frame_View_3D(QtWidgets.QMainWindow):
             if not self.roi_frame_list:
                 QMessageBox.information(self, "No ROI Frames", "No ROI frames available to navigate.")
                 return
-            ui.navigate_to_marked_frame(self, self.roi_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, direction)
+            navigate_to_marked_frame(self, self.roi_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, direction)
         elif self.current_view_mode_idx == 1:  # Failed frames
             if not self.failed_frame_list:
                 QMessageBox.information(self, "No Failed Frames", "No failed frames available to navigate.")
                 return
-            ui.navigate_to_marked_frame(self, self.failed_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, direction)
+            navigate_to_marked_frame(self, self.failed_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, direction)
         elif self.current_view_mode_idx == 2:  # Multi-swap frames
             if not self.skipped_frame_list:
                 QMessageBox.information(self, "No Skipped Frames", "No frames of multiple instance swap available to navigate.")
                 return
-            ui.navigate_to_marked_frame(self, self.skipped_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, direction)
+            navigate_to_marked_frame(self, self.skipped_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, direction)
 
     def _post_correction_operations(self):
         self.display_current_frame()

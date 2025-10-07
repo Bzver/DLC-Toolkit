@@ -20,7 +20,7 @@ from ui import (
     Adjust_Property_Dialog, Pose_Rotation_Dialog, Head_Tail_Dialog
 )
 from core import (
-    Outlier_Finder, Canonical_Pose_Dialog, Prediction_Plotter, Canvas, io as dio
+    Outlier_Finder, Canonical_Pose_Dialog, Prediction_Plotter, Canvas, io as dio, navigate_to_marked_frame
 )
 from core.dataclass import Export_Settings, Plot_Config, Labeler_Plotter_Callbacks
 
@@ -526,7 +526,7 @@ class Frame_Label(QtWidgets.QMainWindow):
         self._refresh_slider()
 
     def _navigate_roi_frames(self, mode):
-        ui.navigate_to_marked_frame(self, self.roi_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, mode)
+        navigate_to_marked_frame(self, self.roi_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, mode)
         
     ###################################################################################################################################################
 

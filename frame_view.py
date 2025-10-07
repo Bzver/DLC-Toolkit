@@ -19,7 +19,7 @@ from ui import (
     Menu_Widget, Video_Slider_Widget, Nav_Widget, Adjust_Property_Dialog, Clear_Mark_Dialog, 
     )
 from core import (
-    Prediction_Plotter, Mark_Generator, Canonical_Pose_Dialog, Blob_Counter, io as dio
+    Prediction_Plotter, Mark_Generator, Canonical_Pose_Dialog, Blob_Counter, io as dio, navigate_to_marked_frame
     )
 
 
@@ -482,10 +482,10 @@ class Frame_View(QtWidgets.QMainWindow):
 
     def _navigate_marked_frames(self, direction):
         if self.nav_labeled:
-            ui.navigate_to_marked_frame(
+            navigate_to_marked_frame(
                 self, self.labeled_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, direction)
         else:
-            ui.navigate_to_marked_frame(
+            navigate_to_marked_frame(
                 self, self.frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, direction)
 
     ###################################################################################################################################################
