@@ -11,18 +11,17 @@ from PySide6.QtWidgets import QMessageBox
 
 import traceback
 
-import ui
 import utils.helper as duh
 import utils.pose as dupe
 import utils.track as dute
 from ui import (
-    Menu_Widget, Video_Slider_Widget, Nav_Widget, Progress_Indicator_Dialog,
+    Menu_Widget, Progress_Indicator_Dialog, Video_Player_Widget,
     Adjust_Property_Dialog, Pose_Rotation_Dialog, Head_Tail_Dialog
 )
 from core import (
     Outlier_Finder, Canonical_Pose_Dialog, Prediction_Plotter, Canvas, io as dio, navigate_to_marked_frame
 )
-from core.dataclass import Export_Settings, Plot_Config, Labeler_Plotter_Callbacks
+from core.dataclass import Export_Settings, Plot_Config, Labeler_Plotter_Callbacks, Nav_Callback
 
 DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/NTD/config.yaml"
 VIDEO_FILE_DEBUG = "D:/Project/DLC-Models/NTD/videos/job/20250709S-340.mp4"
@@ -39,34 +38,37 @@ class Frame_Label(QtWidgets.QMainWindow):
         super().__init__()
 
         self.is_debug = True
-        self.setWindowTitle(ui.format_title("Frame Labeler", self.is_debug))
+        self.setWindowTitle(duh.format_title("Frame Labeler", self.is_debug))
         self.setGeometry(100, 100, 1200, 960)
 
-        self.setup_menu()
+        self._setup_menu()
 
         self.central_widget = QtWidgets.QWidget()
         self.setCentralWidget(self.central_widget)
-        self.layout = QtWidgets.QVBoxLayout(self.central_widget)
+        self.app_layout = QtWidgets.QVBoxLayout(self.central_widget)
 
+        # Video display area
         self.gview = Canvas(track_edit_callback=self._on_track_data_changed, parent=self)
-        self.layout.addWidget(self.gview, 1)
+        nav_callback = Nav_Callback(
+            change_frame_callback = self._change_frame,
+            nav_prev_callback = self._nav_prev_roi,
+            nav_next_callback = self._nav_next_roi,
+        )
+        self.vid_play = Video_Player_Widget(
+            slider_callback = self._handle_frame_change_from_comp,
+            nav_callback = nav_callback,
+            parent = self,
+            )
+        
+        self.vid_play.nav.set_marked_list_name("ROI")
 
-        self.progress_widget = Video_Slider_Widget()
-        self.progress_widget.frame_changed.connect(self._handle_frame_change_from_comp)
-        self.layout.addWidget(self.progress_widget)
+        self.vid_play.swap_display_for_graphics_view(self.gview)
+        self.app_layout.addWidget(self.vid_play)
 
-        self.nav_widget = Nav_Widget(mark_name="ROI Frame")
-        self.layout.addWidget(self.nav_widget)
-        self.nav_widget.set_collapsed(True)
-
-        self.nav_widget.frame_changed_sig.connect(self.change_frame)
-        self.nav_widget.prev_marked_frame_sig.connect(lambda:self._navigate_roi_frames("prev"))
-        self.nav_widget.next_marked_frame_sig.connect(lambda:self._navigate_roi_frames("next"))
-
-        self.setup_shortcut()
+        self._setup_shortcut()
         self.reset_state()
 
-    def setup_menu(self):
+    def _setup_menu(self):
         self.menu_widget = Menu_Widget(self)
         self.setMenuBar(self.menu_widget)
         labeler_menu_config = {
@@ -161,14 +163,14 @@ class Frame_Label(QtWidgets.QMainWindow):
             }
         self.menu_widget.add_menu_from_config(labeler_menu_config)
 
-    def setup_shortcut(self):
-        QShortcut(QKeySequence(Qt.Key_Left | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(-10))
-        QShortcut(QKeySequence(Qt.Key_Left), self).activated.connect(lambda: self.change_frame(-1))
-        QShortcut(QKeySequence(Qt.Key_Right), self).activated.connect(lambda: self.change_frame(1))
-        QShortcut(QKeySequence(Qt.Key_Right | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(10))
+    def _setup_shortcut(self):
+        QShortcut(QKeySequence(Qt.Key_Left | Qt.ShiftModifier), self).activated.connect(lambda: self._change_frame(-10))
+        QShortcut(QKeySequence(Qt.Key_Left), self).activated.connect(lambda: self._change_frame(-1))
+        QShortcut(QKeySequence(Qt.Key_Right), self).activated.connect(lambda: self._change_frame(1))
+        QShortcut(QKeySequence(Qt.Key_Right | Qt.ShiftModifier), self).activated.connect(lambda: self._change_frame(10))
         QShortcut(QKeySequence(Qt.Key_Up), self).activated.connect(lambda:self._navigate_roi_frames("prev"))
         QShortcut(QKeySequence(Qt.Key_Down), self).activated.connect(lambda:self._navigate_roi_frames("next"))
-        QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.progress_widget.toggle_playback)
+        QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.vid_play.sld.toggle_playback)
 
         QShortcut(QKeySequence(Qt.Key_W), self).activated.connect(self._swap_track_wrapper)
         QShortcut(QKeySequence(Qt.Key_X), self).activated.connect(self._delete_track_wrapper)
@@ -213,7 +215,6 @@ class Frame_Label(QtWidgets.QMainWindow):
         )
         self.auto_snapping = False
 
-        self.nav_widget.set_collapsed(True)
         self._refresh_slider()
 
     def load_video(self):
@@ -230,7 +231,7 @@ class Frame_Label(QtWidgets.QMainWindow):
         
         self.total_frames = self.extractor.get_total_frames()
         self.current_frame_idx = 0
-        self.progress_widget.set_slider_range(self.total_frames) # Initialize slider range
+        self.vid_play.sld.set_slider_range(self.total_frames) # Initialize slider range
         self.display_current_frame()
         self._reset_zoom()
         self.navigation_title_controller()
@@ -313,7 +314,7 @@ class Frame_Label(QtWidgets.QMainWindow):
         
         # Proceed with initialization
         self.current_frame_idx = 0
-        self.progress_widget.set_slider_range(self.total_frames) # Initialize slider range
+        self.vid_play.sld.set_slider_range(self.total_frames) # Initialize slider range
         self.initialize_loaded_data()
         self.display_current_frame()
         self._reset_zoom()
@@ -413,7 +414,7 @@ class Frame_Label(QtWidgets.QMainWindow):
             current_frame_data = self.pred_data_array[self.current_frame_idx, :, :].copy()
             if not np.all(np.isnan(current_frame_data)):
                 self.gview.zoom_factor, center_x, center_y = \
-                    ui.calculate_snapping_zoom_level(current_frame_data, view_width, view_height)
+                    duh.calculate_snapping_zoom_level(current_frame_data, view_width, view_height)
                 self.gview.centerOn(center_x, center_y)
 
         new_transform = QtGui.QTransform()
@@ -427,17 +428,9 @@ class Frame_Label(QtWidgets.QMainWindow):
             self.plotter.plot_predictions()
 
         self.gview.update() # Force update of the graphics view
-        self.progress_widget.set_current_frame(self.current_frame_idx) # Update slider handle's position
+        self.vid_play.sld.set_current_frame(self.current_frame_idx) # Update slider handle's position
 
     ###################################################################################################################################################
-
-    def change_frame(self, delta):
-        if self.extractor or self.image_files:
-            new_frame_idx = self.current_frame_idx + delta
-            if 0 <= new_frame_idx < self.total_frames:
-                self.current_frame_idx = new_frame_idx
-                self.display_current_frame()
-                self.navigation_title_controller()
 
     def navigation_title_controller(self):
         title_text = f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | Video: {self.video_name}"
@@ -445,13 +438,13 @@ class Frame_Label(QtWidgets.QMainWindow):
             title_text += f"Manual Refining Progress: {len(self.refined_roi_frame_list)} / {len(self.marked_roi_frame_list)} Frames Refined"
         if self.gview.is_kp_edit and self.current_frame_idx:
             title_text += " ----- KEYPOINTS EDITING MODE ----- "
-        self.nav_widget.setTitle(title_text)
+        self.vid_play.nav.setTitle(title_text)
         if self.current_frame_idx in self.refined_roi_frame_list:
-            self.nav_widget.setTitleColor("#009979")  # Teal/Green for refined
+            self.vid_play.nav.setTitleColor("#009979")  # Teal/Green for refined
         elif self.current_frame_idx in self.roi_frame_list:
-            self.nav_widget.setTitleColor("#F04C4C")  # Red for ROI
+            self.vid_play.nav.setTitleColor("#F04C4C")  # Red for ROI
         else:
-            self.nav_widget.setTitleColor("black")  # Default black
+            self.vid_play.nav.setTitleColor("black")  # Default black
 
     def toggle_zoom_mode(self):
         self.gview.toggle_zoom_mode()
@@ -525,8 +518,19 @@ class Frame_Label(QtWidgets.QMainWindow):
         self._update_roi_list()
         self._refresh_slider()
 
-    def _navigate_roi_frames(self, mode):
-        navigate_to_marked_frame(self, self.roi_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, mode)
+    def _change_frame(self, delta):
+        if self.extractor or self.image_files:
+            new_frame_idx = self.current_frame_idx + delta
+            if 0 <= new_frame_idx < self.total_frames:
+                self.current_frame_idx = new_frame_idx
+                self.display_current_frame()
+                self.navigation_title_controller()
+
+    def _nav_prev_roi(self):
+        navigate_to_marked_frame(self, self.roi_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, "prev")
+
+    def _nav_next_roi(self):
+        navigate_to_marked_frame(self, self.roi_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, "next")
         
     ###################################################################################################################################################
 
@@ -917,8 +921,8 @@ class Frame_Label(QtWidgets.QMainWindow):
         self._on_track_data_changed()
 
     def _refresh_slider(self):
-        self.progress_widget.set_frame_category("Refined frames", self.refined_roi_frame_list, "#009979", priority=7)
-        self.progress_widget.set_frame_category("ROI frames", self.roi_frame_list, "#F04C4C") # Update ROI frames
+        self.vid_play.sld.set_frame_category("Refined frames", self.refined_roi_frame_list, "#009979", priority=7)
+        self.vid_play.sld.set_frame_category("ROI frames", self.roi_frame_list, "#F04C4C") # Update ROI frames
 
     def _reset_zoom(self):
         self.gview.reset_zoom()
@@ -1053,7 +1057,7 @@ class Frame_Label(QtWidgets.QMainWindow):
         super().changeEvent(event)
     
     def closeEvent(self, event: QCloseEvent):
-        ui.handle_unsaved_changes_on_close(self, event, self.is_saved, self.save_prediction)
+        duh.handle_unsaved_changes_on_close(self, event, self.is_saved, self.save_prediction)
 
 #######################################################################################################################################################
 

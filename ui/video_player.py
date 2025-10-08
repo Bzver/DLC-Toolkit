@@ -15,8 +15,9 @@ class Video_Player_Widget(QtWidgets.QWidget):
             parent=None
             ):
         super().__init__(parent)
+        self.slider_callback = slider_callback
+        
         self.vid_layout = QtWidgets.QVBoxLayout(self)
-
         self.video_side_panel_layout = QHBoxLayout()
         self.video_left_panel_widget = QtWidgets.QWidget()
         self.video_left_panel_widget.setVisible(False)  # Hidden by default
@@ -35,9 +36,7 @@ class Video_Player_Widget(QtWidgets.QWidget):
         self.display.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         self.video_display.addWidget(self.display, 1)
 
-        self.sld = Video_Slider_Widget()
-        self.video_display.addWidget(self.sld)
-        self.sld.frame_changed.connect(slider_callback)
+        self._setup_slider()
 
         self.video_side_panel_layout.addWidget(self.video_left_panel_widget)
         self.video_side_panel_layout.addLayout(self.video_display, 1)
@@ -55,11 +54,7 @@ class Video_Player_Widget(QtWidgets.QWidget):
         self.vid_layout.addWidget(self.video_bottom_panel_widget)
 
     def set_left_panel_widget(self, widget: QtWidgets.QWidget | None):
-        # Remove existing widget if any
-        if self.video_left_panel_layout.count() > 0:
-            old_widget = self.video_left_panel_layout.takeAt(0).widget()
-            if old_widget:
-                old_widget.setParent(None)  # or deleteLater() if owned
+        self.clear_layout(self.video_left_panel_layout)
 
         if widget is not None:
             self.video_left_panel_layout.addWidget(widget)
@@ -68,10 +63,7 @@ class Video_Player_Widget(QtWidgets.QWidget):
             self.video_left_panel_widget.setVisible(False)
 
     def set_right_panel_widget(self, widget: QtWidgets.QWidget | None):
-        if self.video_right_panel_layout.count() > 0:
-            old_widget = self.video_right_panel_layout.takeAt(0).widget()
-            if old_widget:
-                old_widget.setParent(None)
+        self.clear_layout(self.video_right_panel_layout)
 
         if widget is not None:
             self.video_right_panel_layout.addWidget(widget)
@@ -80,16 +72,37 @@ class Video_Player_Widget(QtWidgets.QWidget):
             self.video_right_panel_widget.setVisible(False)
             
     def set_bottom_panel_widget(self, widget: QtWidgets.QWidget | None):
-        if self.video_bottom_panel_layout.count() > 0:
-            old_widget = self.video_bottom_panel_layout.takeAt(0).widget()
-            if old_widget:
-                old_widget.setParent(None)
+        self.clear_layout(self.video_bottom_panel_layout)
 
         if widget is not None:
             self.video_bottom_panel_layout.addWidget(widget)
             self.video_bottom_panel_widget.setVisible(True)
         else:
             self.video_bottom_panel_widget.setVisible(False)
+
+    def swap_display_for_graphics_view(self, graphics_view:QtWidgets.QWidget):
+        self.clear_layout(self.video_display)
+
+        self.video_display.addWidget(graphics_view)
+        self._setup_slider()
+
+    def clear_layout(self, layout: QGridLayout | QHBoxLayout | QVBoxLayout):
+        while layout.count():
+            item = layout.takeAt(0)
+
+            if item.widget():
+                widget = item.widget()
+                widget.setParent(None)
+                widget.deleteLater()
+
+            elif item.layout(): # Recursively clear child layouts
+                self.clear_layout(item.layout())
+                item.layout().deleteLater()
+
+    def _setup_slider(self):
+        self.sld = Video_Slider_Widget()
+        self.video_display.addWidget(self.sld)
+        self.sld.frame_changed.connect(self.slider_callback)
 
 class Nav_Widget(QtWidgets.QWidget):
     HexColor = str

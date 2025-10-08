@@ -93,6 +93,10 @@ class Frame_View(QtWidgets.QMainWindow):
 
         self.app_layout.addWidget(self.vid_play)
 
+        self._setup_shortcut(self)        
+        self.reset_state()
+
+    def _setup_shortcut(self):
         QShortcut(QKeySequence(Qt.Key_Left | Qt.ShiftModifier), self).activated.connect(lambda: self._change_frame(-10))
         QShortcut(QKeySequence(Qt.Key_Left), self).activated.connect(lambda: self._change_frame(-1))
         QShortcut(QKeySequence(Qt.Key_Right), self).activated.connect(lambda: self._change_frame(1))
@@ -102,8 +106,6 @@ class Frame_View(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_Down), self).activated.connect(self._navigate_next)
         QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.vid_play.sld.toggle_playback)
         QShortcut(QKeySequence(Qt.Key_S | Qt.ControlModifier), self).activated.connect(self.save_workspace)
-        
-        self.reset_state()
 
     def reset_state(self):
         self.video_file, self.video_name, self.project_dir = None, None, None
@@ -384,14 +386,6 @@ class Frame_View(QtWidgets.QMainWindow):
 
     ###################################################################################################################################################
 
-    def _change_frame(self, delta):
-        if self.extractor:
-            new_frame_idx = self.current_frame_idx + delta
-            if 0 <= new_frame_idx < self.total_frames:
-                self.current_frame_idx = new_frame_idx
-                self.display_current_frame()
-                self.navigation_title_controller()
-
     def navigation_title_controller(self):
         title_text = f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | Video: {self.video_name}"
         if self.frame_list:
@@ -455,6 +449,14 @@ class Frame_View(QtWidgets.QMainWindow):
         self.determine_save_status()
         self._refresh_slider()
         self.navigation_title_controller()
+
+    def _change_frame(self, delta):
+        if self.extractor:
+            new_frame_idx = self.current_frame_idx + delta
+            if 0 <= new_frame_idx < self.total_frames:
+                self.current_frame_idx = new_frame_idx
+                self.display_current_frame()
+                self.navigation_title_controller()
 
     def _navigate_prev(self):
         list_to_nav = self.labeled_frame_list if self.navigate_labeled else self.frame_list
