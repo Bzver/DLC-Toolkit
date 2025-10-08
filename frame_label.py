@@ -16,10 +16,11 @@ import utils.pose as dupe
 import utils.track as dute
 from ui import (
     Menu_Widget, Progress_Indicator_Dialog, Video_Player_Widget,
-    Adjust_Property_Dialog, Pose_Rotation_Dialog, Head_Tail_Dialog
+    Pose_Rotation_Dialog, Head_Tail_Dialog
 )
 from core import (
-    Outlier_Finder, Canonical_Pose_Dialog, Prediction_Plotter, Canvas, io as dio, navigate_to_marked_frame
+    Outlier_Finder, Canonical_Pose_Dialog, Prediction_Plotter,
+    Plot_Config_Menu, Canvas, io as dio, navigate_to_marked_frame
 )
 from core.dataclass import Export_Settings, Plot_Config, Labeler_Plotter_Callbacks, Nav_Callback
 
@@ -127,7 +128,6 @@ class Frame_Label(QtWidgets.QMainWindow):
                     ("Reset Marked Frames", self.clear_marked_roi),
                     ("Toggle Zoom Mode (Z)", self.toggle_zoom_mode, {"checkable": True, "checked": False}),
                     ("Toggle Snap to Instances (E)", self.toggle_snap_to_instances, {"checkable": True, "checked": False}),
-                    ("Hide Text Labels", self.toggle_hide_text_labels, {"checkable": True, "checked": False}),
                     ("View Canonical Pose", self.view_canonical_pose),
                     ("Reset Zoom", self._reset_zoom),
                 ]
@@ -138,14 +138,7 @@ class Frame_Label(QtWidgets.QMainWindow):
                     ("Redo Changes", self.redo_changes),
                     ("Remove Current Frame From Refine Task", self.this_frame_is_beyond_savable),
                     ("Mark All As Refined", self.mark_all_as_refined),
-                    {
-                        "submenu": "Adjust",
-                        "display_name": "Adjust",
-                        "items": [
-                            ("Point Size", self.adjust_point_size),
-                            ("Plot Visibility", self.adjust_plot_opacity)
-                        ]
-                    },
+                    ("Plot Config Menu", self.open_plot_config_menu),
                 ]
             },
             "Save": {
@@ -199,6 +192,7 @@ class Frame_Label(QtWidgets.QMainWindow):
         self.roi_frame_list, self.marked_roi_frame_list, self.refined_roi_frame_list = [], [], []
         self.extractor, self.current_frame = None, None
         self.dragged_keypoint = None
+        self.open_config = False
         self.start_point, self.current_rect_item = None, None
 
         self.skip_outlier_clean, self.outlier_clean_pending, self.is_cleaned = False, False, False
@@ -456,29 +450,24 @@ class Frame_Label(QtWidgets.QMainWindow):
         self.auto_snapping = not self.auto_snapping
         self.display_current_frame()
 
-    def toggle_hide_text_labels(self):
-        self.plot_config.hide_text_labels = not self.plot_config.hide_text_labels
-        self.display_current_frame()
+    def open_plot_config_menu(self):
+        if self.current_frame is None:
+            QtWidgets.QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
+            return
+        
+        if not self.dlc_data:
+            QtWidgets.QMessageBox.warning(self, "No Prediction", "No prediction has been loaded, please load prediction first.")
+            return
+        
+        self.open_config = not self.open_config
 
-    def adjust_point_size(self):
-        dialog = Adjust_Property_Dialog(
-            property_name="Point Size", property_val=self.plot_config.point_size, range=(0.1, 10.0), parent=self)
-        dialog.property_changed.connect(self._update_point_size)
-        dialog.show()
-
-    def adjust_plot_opacity(self):
-        dialog = Adjust_Property_Dialog(
-            property_name="Point Opacity", property_val=self.plot_config.plot_opacity, range=(0.00, 1.00), parent=self)
-        dialog.property_changed.connect(self._update_plot_opacity)
-        dialog.show()
-
-    def _update_point_size(self, value):
-        self.plot_config.point_size = value
-        self.display_current_frame()
-
-    def _update_plot_opacity(self, value):
-        self.plot_config.plot_opacity = value
-        self.display_current_frame()
+        if self.open_config:
+            self.open_mark_gen = False
+            plot_config_widget = Plot_Config_Menu(plot_config=self.plot_config)
+            plot_config_widget.config_changed.connect(self._handle_config_from_config)
+            self.vid_play.set_right_panel_widget(plot_config_widget)
+        else:
+            self.vid_play.set_right_panel_widget(None)
 
     ###################################################################################################################################################
 
@@ -913,6 +902,10 @@ class Frame_Label(QtWidgets.QMainWindow):
         self.current_frame_idx = new_frame_idx
         self.display_current_frame()
         self.navigation_title_controller()
+
+    def _handle_config_from_config(self, new_config:Plot_Config):
+        self.plot_config = new_config
+        self.display_current_frame()
 
     def _on_rotation_changed(self, selected_instance_idx, angle_delta: float):
         angle_delta = np.radians(angle_delta)
