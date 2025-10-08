@@ -10,6 +10,7 @@ from matplotlib.figure import Figure
 
 from ui import Progress_Indicator_Dialog
 from core.io import Frame_Extractor
+from core.dataclass import Blob_Config
 
 class Blob_Counter(QtWidgets.QGroupBox):
     parameters_changed = Signal()  # No args needed, store state internally
@@ -125,7 +126,7 @@ class Blob_Counter(QtWidgets.QGroupBox):
         self.controls_layout.addWidget(self.bg_removal_combo)
 
         self.refresh_hist_btn = QtWidgets.QPushButton("Refresh Histogram")
-        self.refresh_hist_btn.clicked.connect(self.plot_blob_histogram)
+        self.refresh_hist_btn.clicked.connect(self._plot_blob_histogram)
         self.blb_layout.addWidget(self.refresh_hist_btn)
 
         # Add button to count animals in entire video
@@ -141,6 +142,22 @@ class Blob_Counter(QtWidgets.QGroupBox):
         # Connect parameter changes to reprocessing
         self.parameters_changed.connect(self._reprocess_current_frame)
         self._update_background_display()  # Initial background display
+
+    def set_current_frame(self, frame):
+        self.current_frame = frame
+        self._reprocess_current_frame()
+
+    def get_config(self):
+        config = Blob_Config(
+            bg_sample_frame_count = self.bg_sample_frame_count,
+            threshold = self.threshold,
+            double_blob_area_threshold = self.double_blob_area_threshold,
+            min_blob_area = self.min_blob_area,
+            bg_removal_method = self.bg_removal_method,
+            blob_type = self.blob_type,
+            background_frames = self.background_frames,
+        )
+        return config
 
     def _on_threshold_changed(self, value):
         self.threshold = value
@@ -191,10 +208,6 @@ class Blob_Counter(QtWidgets.QGroupBox):
             Qt.SmoothTransformation
         ))
         self.image_label.setText("")
-
-    def set_current_frame(self, frame):
-        self.current_frame = frame
-        self._reprocess_current_frame()
 
     def _reprocess_current_frame(self):
         if self.current_frame is None:
@@ -402,7 +415,7 @@ class Blob_Counter(QtWidgets.QGroupBox):
         dialog.showMaximized()
         dialog.exec()
 
-    def compute_blob_areas(self):
+    def _compute_blob_areas(self):
         if not self.frame_extractor:
             return []
 
@@ -450,8 +463,8 @@ class Blob_Counter(QtWidgets.QGroupBox):
         progress_dialog.close()
         return all_areas
     
-    def plot_blob_histogram(self):
-        self.blob_areas = self.compute_blob_areas()
+    def _plot_blob_histogram(self):
+        self.blob_areas = self._compute_blob_areas()
         if not self.blob_areas:
             self.ax.clear()
             self.ax.text(0.5, 0.5, "No blobs found", transform=self.ax.transAxes, ha="center")
@@ -459,7 +472,7 @@ class Blob_Counter(QtWidgets.QGroupBox):
             return
 
         self.ax.clear()
-        counts, bins, patches = self.ax.hist(self.blob_areas, bins=50, color='skyblue', edgecolor='black', alpha=0.7)
+        _, _, _ = self.ax.hist(self.blob_areas, bins=50, color='skyblue', edgecolor='black', alpha=0.7)
         self.ax.set_xlabel("Blob Area (pixels²)")
         self.ax.set_ylabel("Frequency")
         self.ax.set_title("Blob Size Distribution")

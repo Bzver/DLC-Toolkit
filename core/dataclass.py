@@ -54,3 +54,13 @@ class Nav_Callback:
     change_frame_callback: Callable[[int], None]
     nav_prev_callback: Callable[[], None]
     nav_next_callback: Callable[[], None]
+
+@dataclass
+class Blob_Config:
+    bg_sample_frame_count: int
+    threshold: int
+    double_blob_area_threshold: int
+    min_blob_area: int
+    bg_removal_method: str
+    blob_type: str
+    background_frames: Dict[str, NDArray]
