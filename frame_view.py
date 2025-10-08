@@ -15,10 +15,11 @@ from utils import helper as duh, pose as dupe
 from core.io import Prediction_Loader, Exporter, Frame_Extractor
 from core.dataclass import Export_Settings, Plot_Config, Nav_Callback
 from ui import (
-    Menu_Widget, Adjust_Property_Dialog, Clear_Mark_Dialog, Video_Player_Widget
+    Menu_Widget, Clear_Mark_Dialog, Video_Player_Widget
     )
 from core import (
-    Prediction_Plotter, Mark_Generator, Canonical_Pose_Dialog, navigate_to_marked_frame, Blob_Counter, io as dio
+    Prediction_Plotter, Mark_Generator, Canonical_Pose_Dialog,
+    Plot_Config_Menu, Blob_Counter, navigate_to_marked_frame, io as dio
     )
 
 class Frame_View(QtWidgets.QMainWindow):
@@ -49,10 +50,10 @@ class Frame_View(QtWidgets.QMainWindow):
             },
             "Mark": {
                 "buttons": [
-                    ("Adjust Confidence Cutoff", self.show_confidence_dialog),
                     ("Mark / Unmark Current Frame (X)", self.toggle_frame_status),
-                    ("Automatic Mark Generation", self.toggle_mark_gen_menu),
                     ("Clear Frame Marks of Category", self.show_clear_mark_dialog),
+                    ("Automatic Mark Generation", self.toggle_mark_gen_menu),
+                    ("Plot Config Menu", self.open_plot_config_menu),
                 ]
             },
             "Edit": {
@@ -119,7 +120,7 @@ class Frame_View(QtWidgets.QMainWindow):
         self.extractor, self.current_frame = None, None
 
         self.is_counting = False
-        self.open_mark_gen, self.open_inference = False, False
+        self.open_mark_gen, self.open_config = False, False
         self.is_saved = True
         self.last_saved = []
         self.plot_labeled, self.plot_pred = True, True
@@ -471,7 +472,7 @@ class Frame_View(QtWidgets.QMainWindow):
 
     ###################################################################################################################################################
 
-    def show_confidence_dialog(self):
+    def open_plot_config_menu(self):
         if self.current_frame is None:
             QtWidgets.QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
             return
@@ -480,27 +481,28 @@ class Frame_View(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "No Prediction", "No prediction has been loaded, please load prediction first.")
             return
         
-        dialog = Adjust_Property_Dialog(
-            property_name="Confidence Cutoff", property_val=self.plot_config.confidence_cutoff, range=(0.00, 1.00), parent=self)
-        dialog.property_changed.connect(self._update_application_cutoff)
-        dialog.show()
+        self.open_config = not self.open_config
 
-    def _update_application_cutoff(self, new_cutoff):
-        self.plot_config.confidence_cutoff = new_cutoff
-        self.display_current_frame() # Redraw with the new cutoff
+        if self.open_config:
+            self.open_mark_gen = False
+            plot_config_widget = Plot_Config_Menu(plot_config=self.plot_config)
+            plot_config_widget.config_changed.connect(self._handle_config_from_config)
+            self.vid_play.set_right_panel_widget(plot_config_widget)
+        else:
+            self.vid_play.set_right_panel_widget(None)
 
     def toggle_mark_gen_menu(self):
         if self.current_frame is None:
             QtWidgets.QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
             return
         
-        mark_gen = Mark_Generator(self.total_frames, self.dlc_data, self.canon_pose, parent=self)
-        mark_gen.clear_old.connect(self._on_clear_old_command)
-        mark_gen.frame_list_new.connect(self._handle_frame_marks_from_comp)
-
         self.open_mark_gen = not self.open_mark_gen
 
         if self.open_mark_gen:
+            self.open_config = False
+            mark_gen = Mark_Generator(self.total_frames, self.dlc_data, self.canon_pose, parent=self)
+            mark_gen.clear_old.connect(self._on_clear_old_command)
+            mark_gen.frame_list_new.connect(self._handle_frame_marks_from_comp)
             self.vid_play.set_right_panel_widget(mark_gen)
         else:
             self.vid_play.set_right_panel_widget(None)
@@ -635,6 +637,10 @@ class Frame_View(QtWidgets.QMainWindow):
         self.animal_1_list = list(np.where(count_array==1)[0])
         self.animal_n_list = list(np.where((count_array!=1) & (count_array!=0))[0])
         self._refresh_slider()
+
+    def _handle_config_from_config(self, new_config:Plot_Config):
+        self.plot_config = new_config
+        self.display_current_frame()
 
     ###################################################################################################################################################
 

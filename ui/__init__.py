@@ -5,7 +5,6 @@ from .component import (
 )
 
 from .dialog import (
-    Adjust_Property_Dialog,
     Pose_Rotation_Dialog,
     Clear_Mark_Dialog,
     Head_Tail_Dialog,
@@ -21,7 +20,6 @@ __all__ = (
     Draggable_Keypoint,
     Selectable_Instance,
     Clickable_Video_Label,
-    Adjust_Property_Dialog,
     Pose_Rotation_Dialog,
     Clear_Mark_Dialog,
     Head_Tail_Dialog,

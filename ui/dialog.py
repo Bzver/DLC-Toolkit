@@ -6,52 +6,6 @@ from PySide6.QtWidgets import QPushButton, QHBoxLayout, QVBoxLayout, QDialog, QL
 
 from typing import List
 
-class Adjust_Property_Dialog(QDialog):
-    property_changed = Signal(float)
-
-    def __init__(self, property_name, property_val, range:tuple, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(f"Adjust {property_name}")
-        self.property_name = property_name
-        self.property_val = float(property_val)
-        self.range = range
-        range_length = (self.range[1] - self.range[0])
-        self.slider_mult = range_length / 100
-        layout = QtWidgets.QVBoxLayout(self)
-
-        self.property_input = QtWidgets.QDoubleSpinBox()
-        self.property_input.setRange(self.range[0], self.range[1])
-        self.property_input.setValue(self.property_val)
-        self.property_input.setSingleStep(self.slider_mult)
-        layout.addWidget(self.property_input)
-
-        self.slider = QtWidgets.QSlider(Qt.Horizontal)
-        self.slider.setRange(0, 100)
-        initial_slider_value = int((self.property_val - self.range[0]) / self.slider_mult)
-        initial_slider_value = max(0, min(100, initial_slider_value)) 
-        self.slider.setValue(initial_slider_value)
-        self.slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
-        self.slider.setTickInterval(10)
-        layout.addWidget(self.slider)
-
-        self.slider.valueChanged.connect(self._slider_changed)
-        self.property_input.valueChanged.connect(self._spinbox_changed)
-
-    def _spinbox_changed(self, value:int):
-        self.property_val = value
-        slider_value = int((value - self.range[0]) / self.slider_mult)
-        slider_value = max(0, min(100, slider_value))
-        self.slider.setValue(slider_value)
-        self.property_changed.emit(self.property_val)
-
-    def _slider_changed(self, value:int):
-        # Map slider (0–100) to actual value
-        self.property_val = self.range[0] + value * self.slider_mult
-        self.property_input.setValue(self.property_val)
-        self.property_changed.emit(self.property_val )
-
-###################################################################################################################################################
-
 class Pose_Rotation_Dialog(QDialog):
     rotation_changed = Signal(int, float)  # (selected_instance_idx, angle_delta)
 

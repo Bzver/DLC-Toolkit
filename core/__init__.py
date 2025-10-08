@@ -6,6 +6,11 @@ from .mark_gen import Mark_Generator
 from .outlier_finder import Outlier_Finder
 from .graphic_view import Canvas
 from .blob_counter import Blob_Counter
+from .plot_config import (
+    Adjust_Property_Dialog,
+    Adjust_Property_Box,
+    Plot_Config_Menu,
+)
 
 __all__ = (
     Canonical_Pose_Dialog,
@@ -15,5 +20,8 @@ __all__ = (
     Outlier_Finder,
     Mark_Generator,
     Canvas,
+    Adjust_Property_Dialog,
+    Adjust_Property_Box,
+    Plot_Config_Menu,
     navigate_to_marked_frame,
 )
