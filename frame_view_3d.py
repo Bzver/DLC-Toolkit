@@ -17,13 +17,12 @@ from PySide6.QtWidgets import QMessageBox
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
-import ui
-import utils.utils3d as utls3
-from core.dataclass import Plot_Config
+from utils import helper as duh, utils3d as utls3
+from core.dataclass import Plot_Config, Nav_Callback
 from ui import (
-    Menu_Widget, Video_Slider_Widget, Nav_Widget, Adjust_Property_Dialog, Clickable_Video_Label, Progress_Indicator_Dialog
+    Menu_Widget, Video_Slider_Widget, Nav_Widget, Clickable_Video_Label, Progress_Indicator_Dialog
     )
-from core import Prediction_Plotter, io as dio, navigate_to_marked_frame
+from core import Adjust_Property_Dialog, Prediction_Plotter, io as dio, navigate_to_marked_frame
 
 import traceback
 
@@ -38,7 +37,7 @@ class Frame_View_3D(QtWidgets.QMainWindow):
         super().__init__()
 
         self.is_debug = False
-        self.setWindowTitle(ui.format_title("Frame Viewer 3D", self.is_debug))
+        self.setWindowTitle(duh.format_title("Frame Viewer 3D", self.is_debug))
         self.setGeometry(100, 100, 1600, 960)
 
         self.menu_widget = Menu_Widget(self)
@@ -96,7 +95,7 @@ class Frame_View_3D(QtWidgets.QMainWindow):
 
         self.central_widget = QtWidgets.QWidget()
         self.setCentralWidget(self.central_widget)
-        self.layout = QtWidgets.QVBoxLayout(self.central_widget)
+        self.app_layout = QtWidgets.QVBoxLayout(self.central_widget)
 
         self.display_layout = QtWidgets.QHBoxLayout()
         self.video_layout = QtWidgets.QGridLayout()
@@ -125,27 +124,27 @@ class Frame_View_3D(QtWidgets.QMainWindow):
 
         self.display_layout.addLayout(self.video_layout)
         self.display_layout.addLayout(self.plot_layout)
-        self.layout.addLayout(self.display_layout, 1)
+        self.app_layout.addLayout(self.display_layout, 1)
 
         self.progress_widget = Video_Slider_Widget()
-        self.layout.addWidget(self.progress_widget)
+        self.app_layout.addWidget(self.progress_widget)
         self.progress_widget.frame_changed.connect(self._handle_frame_change_from_comp)
 
         # Navigation controls
-        self.nav_widget = Nav_Widget()
-        self.layout.addWidget(self.nav_widget)
-        self.nav_widget.set_collapsed(True)
-
-        self.nav_widget.frame_changed_sig.connect(self.change_frame)
-        self.nav_widget.prev_marked_frame_sig.connect(lambda:self._navigate_marked_frames("prev"))
-        self.nav_widget.next_marked_frame_sig.connect(lambda:self._navigate_marked_frames("next"))
+        nav_callback = Nav_Callback(
+            change_frame_callback = self.change_frame,
+            nav_prev_callback = self._nav_prev_mark,
+            nav_next_callback = self._nav_next_mark
+        )
+        self.nav = Nav_Widget(nav_callback)
+        self.app_layout.addWidget(self.nav)
 
         QShortcut(QKeySequence(Qt.Key_Left | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(-10))
         QShortcut(QKeySequence(Qt.Key_Left), self).activated.connect(lambda: self.change_frame(-1))
         QShortcut(QKeySequence(Qt.Key_Right), self).activated.connect(lambda: self.change_frame(1))
         QShortcut(QKeySequence(Qt.Key_Right | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(10))
-        QShortcut(QKeySequence(Qt.Key_Up), self).activated.connect(lambda:self._navigate_marked_frames("prev"))
-        QShortcut(QKeySequence(Qt.Key_Down), self).activated.connect(lambda:self._navigate_marked_frames("next"))
+        QShortcut(QKeySequence(Qt.Key_Up), self).activated.connect(self._nav_prev_mark)
+        QShortcut(QKeySequence(Qt.Key_Down), self).activated.connect(self._nav_next_mark)
         QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.toggle_playback_wrapper)
         QShortcut(QKeySequence(Qt.Key_S | Qt.ControlModifier), self).activated.connect(self.save_workspace)
         QShortcut(QKeySequence(Qt.Key_X), self).activated.connect(self.manual_swap_frame_view)
@@ -209,7 +208,8 @@ class Frame_View_3D(QtWidgets.QMainWindow):
     def load_workspace(self):
         self.reset_state()
 
-        workspace_filepath, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Select Workspace", "", "Workspace Files (*.pickle)")
+        workspace_filepath, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Select Workspace", "", "Workspace Files (*.pickle)")
         if not workspace_filepath:
             return
         
@@ -365,7 +365,7 @@ class Frame_View_3D(QtWidgets.QMainWindow):
         self.base_folder = folder_path # Store the base folder path for saving later
         self.current_frame_idx = 0
         self.progress_widget.set_slider_range(self.total_frames)
-        self.nav_widget.set_collapsed(False)
+        self.nav.set_collapsed(False)
         self.navigation_title_controller()
         self.display_current_frame() # Display the first frames
 
@@ -871,23 +871,33 @@ class Frame_View_3D(QtWidgets.QMainWindow):
         self.current_view_mode_idx = (self.current_view_mode_idx + 1) % len(self.view_mode_choice)
         self.navigation_title_controller()
 
-    def _navigate_marked_frames(self, direction):
-        """Navigate through marked frames based on the current view mode."""
+    def _determine_frame_list_to_nav(self):
         if self.current_view_mode_idx == 0:  # ROI frames
             if not self.roi_frame_list:
-                QMessageBox.information(self, "No ROI Frames", "No ROI frames available to navigate.")
-                return
-            navigate_to_marked_frame(self, self.roi_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, direction)
+                raise RuntimeError("No ROI frames available to navigate.")
+            return self.roi_frame_list
         elif self.current_view_mode_idx == 1:  # Failed frames
             if not self.failed_frame_list:
-                QMessageBox.information(self, "No Failed Frames", "No failed frames available to navigate.")
-                return
-            navigate_to_marked_frame(self, self.failed_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, direction)
+                raise RuntimeError("No failed frames available to navigate.")
+            return self.failed_frame_list
         elif self.current_view_mode_idx == 2:  # Multi-swap frames
             if not self.skipped_frame_list:
-                QMessageBox.information(self, "No Skipped Frames", "No frames of multiple instance swap available to navigate.")
-                return
-            navigate_to_marked_frame(self, self.skipped_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, direction)
+                raise RuntimeError("No frames of multiple instance swap available to navigate.")
+            return self.skipped_frame_list
+
+    def _nav_prev_mark(self):
+        try:
+            frame_list = self._determine_frame_list_to_nav()
+        except Exception as e:
+            QMessageBox.information(self, "No Frame", e)
+        navigate_to_marked_frame(self, frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, "prev")
+
+    def _nav_next_mark(self):
+        try:
+            frame_list = self._determine_frame_list_to_nav()
+        except Exception as e:
+            QMessageBox.information(self, "No Frame", e)
+        navigate_to_marked_frame(self, frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, "next")
 
     def _post_correction_operations(self):
         self.display_current_frame()
@@ -928,15 +938,15 @@ class Frame_View_3D(QtWidgets.QMainWindow):
                     continue
                 title_text += f" | Instance {inst_idx} Velocity: {inst_vel}"
 
-        self.nav_widget.setTitle(title_text)
+        self.nav.setTitle(title_text)
         if self.current_frame_idx in self.failed_frame_list:
-            self.nav_widget.setTitleColor("#FF0000")  # Red
+            self.nav.setTitleColor("#FF0000")  # Red
         elif self.current_frame_idx in self.skipped_frame_list:
-            self.nav_widget.setTitleColor("#3D3D3D")  # Dark Gray
+            self.nav.setTitleColor("#3D3D3D")  # Dark Gray
         elif self.current_frame_idx in self.roi_frame_list:
-            self.nav_widget.setTitleColor("#F79F1C")  # Amber/Orange
+            self.nav.setTitleColor("#F79F1C")  # Amber/Orange
         else:
-            self.nav_widget.setTitleColor("black")
+            self.nav.setTitleColor("black")
 
     ###################################################################################################################################################
 
@@ -964,7 +974,7 @@ class Frame_View_3D(QtWidgets.QMainWindow):
         
         dialog = Adjust_Property_Dialog(
             property_name="Confidence Cutoff", property_val=self.plot_config.confidence_cutoff, range=(0.00, 1.00), parent=self)
-        dialog.property_changed.connect(self._update_confidence_cutoff)
+        dialog.gb.property_changed.connect(self._update_confidence_cutoff)
         dialog.show() # .show() instead of .exec() for a non-modal dialog
 
     def show_deviance_dialog(self):
@@ -974,7 +984,7 @@ class Frame_View_3D(QtWidgets.QMainWindow):
         
         dialog = Adjust_Property_Dialog(
             property_name="Deviance Threshold", property_val=self.deviance_threshold, range=(0, 300), parent=self)
-        dialog.property_changed.connect(self._update_deviance_threshold)
+        dialog.gb.property_changed.connect(self._update_deviance_threshold)
         dialog.finished.connect(self.refresh_failed_frame_list)
         dialog.show()
         self.dialog_deviance = dialog
@@ -986,7 +996,7 @@ class Frame_View_3D(QtWidgets.QMainWindow):
         
         dialog = Adjust_Property_Dialog(
             property_name="Velocity Threshold", property_val=self.velocity_threshold, range=(0, 100), parent=self)
-        dialog.property_changed.connect(self._update_velocity_threshold)
+        dialog.gb.property_changed.connect(self._update_velocity_threshold)
         dialog.show() # .show() instead of .exec() for a non-modal dialog
 
     def _update_confidence_cutoff(self, new_cutoff):
@@ -1167,7 +1177,7 @@ class Frame_View_3D(QtWidgets.QMainWindow):
             for cap in self.cap_list:
                 if cap and cap.isOpened():
                     cap.release()
-        ui.handle_unsaved_changes_on_close(self, event, self.is_saved, self.save_workspace)
+        duh.handle_unsaved_changes_on_close(self, event, self.is_saved, self.save_workspace)
 
 ###################################################################################################################################################
 
