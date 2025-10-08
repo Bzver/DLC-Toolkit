@@ -51,7 +51,7 @@ class Frame_View(QtWidgets.QMainWindow):
                 "buttons": [
                     ("Adjust Confidence Cutoff", self.show_confidence_dialog),
                     ("Mark / Unmark Current Frame (X)", self.toggle_frame_status),
-                    ("Automatic Mark Generation", self.show_mark_generation_dialog),
+                    ("Automatic Mark Generation", self.toggle_mark_gen_menu),
                     ("Clear Frame Marks of Category", self.show_clear_mark_dialog),
                 ]
             },
@@ -93,7 +93,7 @@ class Frame_View(QtWidgets.QMainWindow):
 
         self.app_layout.addWidget(self.vid_play)
 
-        self._setup_shortcut(self)        
+        self._setup_shortcut()        
         self.reset_state()
 
     def _setup_shortcut(self):
@@ -119,6 +119,7 @@ class Frame_View(QtWidgets.QMainWindow):
         self.extractor, self.current_frame = None, None
 
         self.is_counting = False
+        self.open_mark_gen, self.open_inference = False, False
         self.is_saved = True
         self.last_saved = []
         self.plot_labeled, self.plot_pred = True, True
@@ -488,15 +489,21 @@ class Frame_View(QtWidgets.QMainWindow):
         self.plot_config.confidence_cutoff = new_cutoff
         self.display_current_frame() # Redraw with the new cutoff
 
-    def show_mark_generation_dialog(self):
+    def toggle_mark_gen_menu(self):
         if self.current_frame is None:
             QtWidgets.QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
             return
         
-        mark_gen_dialog = Mark_Generator(self.total_frames, self.dlc_data, self.canon_pose, parent=self)
-        mark_gen_dialog.clear_old.connect(self._on_clear_old_command)
-        mark_gen_dialog.frame_list_new.connect(self._handle_frame_marks_from_comp)
-        mark_gen_dialog.show()
+        mark_gen = Mark_Generator(self.total_frames, self.dlc_data, self.canon_pose, parent=self)
+        mark_gen.clear_old.connect(self._on_clear_old_command)
+        mark_gen.frame_list_new.connect(self._handle_frame_marks_from_comp)
+
+        self.open_mark_gen = not self.open_mark_gen
+
+        if self.open_mark_gen:
+            self.vid_play.set_right_panel_widget(mark_gen)
+        else:
+            self.vid_play.set_right_panel_widget(None)
 
     def show_clear_mark_dialog(self):
         frame_set = set(self.frame_list)

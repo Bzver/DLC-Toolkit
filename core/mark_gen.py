@@ -3,7 +3,7 @@ import numpy as np
 
 from PySide6 import QtWidgets
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QPushButton, QHBoxLayout, QVBoxLayout, QDialog, QLabel, QLineEdit, QMessageBox
+from PySide6.QtWidgets import QPushButton, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox
 from PySide6.QtGui import QIntValidator
 
 from typing import Optional
@@ -11,7 +11,7 @@ from typing import Optional
 from core.dataclass import Loaded_DLC_Data
 from .outlier_finder import Outlier_Container
 
-class Mark_Generator(QDialog):
+class Mark_Generator(QtWidgets.QGroupBox):
     clear_old = Signal(bool)
     frame_list_new = Signal(list)
 
@@ -32,7 +32,7 @@ class Mark_Generator(QDialog):
             parent: Parent widget for modal behavior.
         """ 
         super().__init__(parent)
-        self.setWindowTitle("Automatic Mark Generation")
+        self.setTitle("Automatic Mark Generation")
         self.total_frames = total_frames
         self.dlc_data = dlc_data
 
@@ -232,13 +232,3 @@ class Mark_Generator(QDialog):
         self.random_container.setVisible(mode == "Random")
         self.stride_container.setVisible(mode == "Stride")
         self.outlier_container.setVisible(mode == "Outlier")
-
-        self.adjustSize()
-        self.center()
-
-    def center(self):
-        """Center the dialog on screen."""
-        geo = self.frameGeometry()
-        center = self.screen().availableGeometry().center()
-        geo.moveCenter(center)
-        self.move(geo.topLeft())
