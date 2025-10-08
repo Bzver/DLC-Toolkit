@@ -13,15 +13,8 @@ from .dialog import (
 )
 
 from .video_slider import Slider_With_Marks, Video_Slider_Widget
-from .video_player import Video_Player_Widget
+from .video_player import Video_Player_Widget, Nav_Widget
 from .menu_bar import Menu_Widget
-from .nav_control import Nav_Widget
-
-from .ui_helper import (
-    format_title,
-    handle_unsaved_changes_on_close,
-    calculate_snapping_zoom_level,
-)
 
 __all__ = (
     Slider_With_Marks,
@@ -37,7 +30,4 @@ __all__ = (
     Video_Slider_Widget,
     Video_Player_Widget,
     Nav_Widget,
-    format_title,
-    handle_unsaved_changes_on_close,
-    calculate_snapping_zoom_level,
 )

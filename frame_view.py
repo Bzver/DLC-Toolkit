@@ -11,17 +11,15 @@ from PySide6.QtWidgets import QMessageBox, QFileDialog
 
 import traceback
 
-import ui
-from utils import infer_head_tail_indices, calculate_canonical_pose
+from utils import helper as duh, pose as dupe
 from core.io import Prediction_Loader, Exporter, Frame_Extractor
-from core.dataclass import Export_Settings, Plot_Config
+from core.dataclass import Export_Settings, Plot_Config, Nav_Callback
 from ui import (
-    Menu_Widget, Video_Slider_Widget, Nav_Widget, Adjust_Property_Dialog, Clear_Mark_Dialog, 
+    Menu_Widget, Adjust_Property_Dialog, Clear_Mark_Dialog, Video_Player_Widget
     )
 from core import (
-    Prediction_Plotter, Mark_Generator, Canonical_Pose_Dialog, Blob_Counter, io as dio, navigate_to_marked_frame
+    Prediction_Plotter, Mark_Generator, Canonical_Pose_Dialog, navigate_to_marked_frame, Blob_Counter, io as dio
     )
-
 
 class Frame_View(QtWidgets.QMainWindow):
     def __init__(self):
@@ -61,7 +59,8 @@ class Frame_View(QtWidgets.QMainWindow):
                 "buttons": [
                     ("Call Labeler - Track Correction", lambda: self.call_labeler(track_only=True)),
                     ("Call Labeler - Edit Marked Frames", lambda: self.call_labeler(track_only=False)),
-                    ("Call DeepLabCut - Run Predictions of Marked Frames", self.dlc_inference)
+                    ("Call DeepLabCut - Run Predictions of Marked Frames", self.dlc_inference_marked),
+                    ("Call DeepLabCut - Run Predictions on Entire Video", self.dlc_inference_all),
                 ]
             },
             "Export": {
@@ -78,55 +77,30 @@ class Frame_View(QtWidgets.QMainWindow):
 
         self.central_widget = QtWidgets.QWidget()
         self.setCentralWidget(self.central_widget)
-        self.layout = QtWidgets.QVBoxLayout(self.central_widget)
+        self.app_layout = QtWidgets.QVBoxLayout(self.central_widget)
 
         # Video display area
-        self.video_side_panel_layout = QtWidgets.QHBoxLayout()
+        nav_callback = Nav_Callback(
+            change_frame_callback = self._change_frame,
+            nav_prev_callback = self._navigate_prev,
+            nav_next_callback = self._navigate_next,
+        )
+        self.vid_play = Video_Player_Widget(
+            slider_callback = self._handle_frame_change_from_comp,
+            nav_callback = nav_callback,
+            parent = self,
+            )
 
-        self.video_left_panel_widget = QtWidgets.QWidget()
-        self.video_left_panel_widget.setVisible(False)  # Hidden by default
-        self.video_left_panel_layout = QtWidgets.QVBoxLayout(self.video_left_panel_widget)
-        self.video_left_panel_layout.setContentsMargins(0, 0, 0, 0)
+        self.app_layout.addWidget(self.vid_play)
 
-        self.video_right_panel_widget = QtWidgets.QWidget()
-        self.video_right_panel_widget.setVisible(False)  # Hidden by default
-        self.video_right_panel_layout = QtWidgets.QVBoxLayout(self.video_right_panel_widget)
-        self.video_right_panel_layout.setContentsMargins(0, 0, 0, 0)
-
-        self.video_display = QtWidgets.QVBoxLayout()
-
-        self.video_label = QtWidgets.QLabel("No video loaded")
-        self.video_label.setAlignment(Qt.AlignCenter)
-        self.video_label.setStyleSheet("background-color: black; color: white;")
-        self.video_label.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
-        self.video_display.addWidget(self.video_label, 1)
-
-        self.progress_widget = Video_Slider_Widget()
-        self.video_display.addWidget(self.progress_widget)
-        self.progress_widget.frame_changed.connect(self._handle_frame_change_from_comp)
-
-        self.video_side_panel_layout.addWidget(self.video_left_panel_widget)
-        self.video_side_panel_layout.addLayout(self.video_display, 1)
-        self.video_side_panel_layout.addWidget(self.video_right_panel_widget)
-        self.layout.addLayout(self.video_side_panel_layout)
-
-        # Navigation controls
-        self.nav_widget = Nav_Widget()
-        self.layout.addWidget(self.nav_widget)
-        self.nav_widget.set_collapsed(True)
-
-        self.nav_widget.frame_changed_sig.connect(self.change_frame)
-        self.nav_widget.prev_marked_frame_sig.connect(lambda:self._navigate_marked_frames("prev"))
-        self.nav_widget.next_marked_frame_sig.connect(lambda:self._navigate_marked_frames("next"))
-
-        QShortcut(QKeySequence(Qt.Key_Left | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(-10))
-        QShortcut(QKeySequence(Qt.Key_Left), self).activated.connect(lambda: self.change_frame(-1))
-        QShortcut(QKeySequence(Qt.Key_Right), self).activated.connect(lambda: self.change_frame(1))
-        QShortcut(QKeySequence(Qt.Key_Right | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(10))
+        QShortcut(QKeySequence(Qt.Key_Left | Qt.ShiftModifier), self).activated.connect(lambda: self._change_frame(-10))
+        QShortcut(QKeySequence(Qt.Key_Left), self).activated.connect(lambda: self._change_frame(-1))
+        QShortcut(QKeySequence(Qt.Key_Right), self).activated.connect(lambda: self._change_frame(1))
+        QShortcut(QKeySequence(Qt.Key_Right | Qt.ShiftModifier), self).activated.connect(lambda: self._change_frame(10))
         QShortcut(QKeySequence(Qt.Key_X), self).activated.connect(self.toggle_frame_status)
-        QShortcut(QKeySequence(Qt.Key_Up), self).activated.connect(lambda:self._navigate_marked_frames("prev"))
-        QShortcut(QKeySequence(Qt.Key_Down), self).activated.connect(lambda:self._navigate_marked_frames("next"))
-        QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.progress_widget.toggle_playback)
+        QShortcut(QKeySequence(Qt.Key_Up), self).activated.connect(self._navigate_prev)
+        QShortcut(QKeySequence(Qt.Key_Down), self).activated.connect(self._navigate_next)
+        QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.vid_play.sld.toggle_playback)
         QShortcut(QKeySequence(Qt.Key_S | Qt.ControlModifier), self).activated.connect(self.save_workspace)
         
         self.reset_state()
@@ -146,14 +120,12 @@ class Frame_View(QtWidgets.QMainWindow):
         self.is_saved = True
         self.last_saved = []
         self.plot_labeled, self.plot_pred = True, True
-        self.nav_labeled = False
+        self.navigate_labeled = False
 
         self.plot_config = Plot_Config(
             plot_opacity =1.0, point_size = 6.0, confidence_cutoff = 0.0, hide_text_labels = False, edit_mode = False)
         
         self.blob_counter = None
-
-        self.nav_widget.set_collapsed(True)
 
     def load_video(self):
         file_dialog = QFileDialog(self)
@@ -172,12 +144,12 @@ class Frame_View(QtWidgets.QMainWindow):
         self.blob_counter.video_counted.connect(self._handle_counter_from_counter)
 
         if self.is_counting:
-            self.set_left_panel_widget(self.blob_counter)
+            self.vid_play.set_left_panel_widget(self.blob_counter)
 
         self.total_frames = self.extractor.get_total_frames()
 
         self.current_frame_idx = 0
-        self.progress_widget.set_slider_range(self.total_frames)
+        self.vid_play.sld.set_slider_range(self.total_frames)
         self._refresh_slider()
         self.display_current_frame()
         self.navigation_title_controller()
@@ -344,15 +316,15 @@ class Frame_View(QtWidgets.QMainWindow):
             frame_cv2 = self.current_frame)
         
     def initialize_canon_pose(self):
-        head_idx, tail_idx = infer_head_tail_indices(self.dlc_data.keypoints)
+        head_idx, tail_idx = duh.infer_head_tail_indices(self.dlc_data.keypoints)
         if head_idx is None or tail_idx is None:
             return
         if not np.all(np.isnan(self.dlc_data.pred_data_array)):
-            self.canon_pose, _ = calculate_canonical_pose(self.dlc_data.pred_data_array, head_idx, tail_idx)
+            self.canon_pose, _ = dupe.calculate_canonical_pose(self.dlc_data.pred_data_array, head_idx, tail_idx)
         elif self.label_data_array is None:
             return
         else:
-            self.canon_pose, _ = calculate_canonical_pose(self.label_data_array, head_idx, tail_idx)
+            self.canon_pose, _ = dupe.calculate_canonical_pose(self.label_data_array, head_idx, tail_idx)
 
     def count_animals_options(self):
         if self.current_frame is None or self.extractor is None:
@@ -366,11 +338,11 @@ class Frame_View(QtWidgets.QMainWindow):
 
     def display_current_frame(self):
         if not self.extractor:
-            self.video_label.setText("No video loaded")
+            self.vid_play.display.setText("No video loaded")
 
         frame = self.extractor.get_frame(self.current_frame_idx)
         if frame is None:
-            self.video_label.setText("Failed to load current frame.")
+            self.vid_play.display.setText("Failed to load current frame.")
             return
         
         self.current_frame = frame
@@ -405,14 +377,14 @@ class Frame_View(QtWidgets.QMainWindow):
         pixmap = QtGui.QPixmap.fromImage(qt_image)
 
         # Scale pixmap to fit label
-        scaled_pixmap = pixmap.scaled(self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self.video_label.setPixmap(scaled_pixmap)
-        self.video_label.setText("")
-        self.progress_widget.set_current_frame(self.current_frame_idx) # Update slider handle's position
+        scaled_pixmap = pixmap.scaled(self.vid_play.display.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.vid_play.display.setPixmap(scaled_pixmap)
+        self.vid_play.display.setText("")
+        self.vid_play.sld.set_current_frame(self.current_frame_idx) # Update slider handle's position
 
     ###################################################################################################################################################
 
-    def change_frame(self, delta):
+    def _change_frame(self, delta):
         if self.extractor:
             new_frame_idx = self.current_frame_idx + delta
             if 0 <= new_frame_idx < self.total_frames:
@@ -424,30 +396,30 @@ class Frame_View(QtWidgets.QMainWindow):
         title_text = f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | Video: {self.video_name}"
         if self.frame_list:
             title_text += f" | Marked Frame Count: {len(self.frame_list)}"
-        self.nav_widget.setTitle(title_text)
+        self.vid_play.nav.setTitle(title_text)
         if self.current_frame_idx in self.labeled_frame_list:
-            self.nav_widget.setTitleColor("#1F32D7")  # Blue
+            self.vid_play.nav.setTitleColor("#1F32D7")  # Blue
         elif self.current_frame_idx in self.refined_frame_list:
-            self.nav_widget.setTitleColor("#009979")  # Teal/Green 
+            self.vid_play.nav.setTitleColor("#009979")  # Teal/Green 
         elif self.current_frame_idx in self.approved_frame_list:
-            self.nav_widget.setTitleColor("#68b3ff")  # Sky Blue
+            self.vid_play.nav.setTitleColor("#68b3ff")  # Sky Blue
         elif self.current_frame_idx in self.rejected_frame_list:
-            self.nav_widget.setTitleColor("#F749C6")  # Pink
+            self.vid_play.nav.setTitleColor("#F749C6")  # Pink
         elif self.current_frame_idx in self.frame_list:
-            self.nav_widget.setTitleColor("#E28F13")  # Amber/Orange
+            self.vid_play.nav.setTitleColor("#E28F13")  # Amber
         else:
-            self.nav_widget.setTitleColor("black")
+            self.vid_play.nav.setTitleColor("black")
 
     def _refresh_slider(self):
-        self.progress_widget.set_frame_category("marked_frames", self.frame_list, "#E28F13")
-        self.progress_widget.set_frame_category("refined_frames", self.refined_frame_list, "#009979", priority=6)
-        self.progress_widget.set_frame_category("approved_frames", self.approved_frame_list, "#68b3ff", priority=6)
-        self.progress_widget.set_frame_category("rejected_frames", self.rejected_frame_list, "#F749C6", priority=6)
-        self.progress_widget.set_frame_category("labeled_frames", self.labeled_frame_list, "#1F32D7", priority=7)
+        self.vid_play.sld.set_frame_category("marked_frames", self.frame_list, "#E28F13")
+        self.vid_play.sld.set_frame_category("refined_frames", self.refined_frame_list, "#009979", priority=6)
+        self.vid_play.sld.set_frame_category("approved_frames", self.approved_frame_list, "#68b3ff", priority=6)
+        self.vid_play.sld.set_frame_category("rejected_frames", self.rejected_frame_list, "#F749C6", priority=6)
+        self.vid_play.sld.set_frame_category("labeled_frames", self.labeled_frame_list, "#2A39C4", priority=7)
         if self.is_counting:
-            self.progress_widget.set_frame_category("zero_animal_frames", self.animal_0_list, "#000000", priority=10)
-            self.progress_widget.set_frame_category("one_animal_frames", self.animal_1_list, "#00E1FF", priority=10)
-            self.progress_widget.set_frame_category("muliple_animal_frames", self.animal_n_list, "#FBFF00", priority=10)
+            self.vid_play.sld.set_frame_category("zero_animal_frames", self.animal_0_list, "#FF1100", priority=10)
+            self.vid_play.sld.set_frame_category("one_animal_frames", self.animal_1_list, "#0400FF", priority=10)
+            self.vid_play.sld.set_frame_category("muliple_animal_frames", self.animal_n_list, "#00FF2A", priority=10)
 
     ###################################################################################################################################################
 
@@ -484,18 +456,15 @@ class Frame_View(QtWidgets.QMainWindow):
         self._refresh_slider()
         self.navigation_title_controller()
 
-    def clear_approved_list(self):
-        self.approved_frame_list = []
-        self.rejected_frame_list = []
-        self._refresh_slider()
+    def _navigate_prev(self):
+        list_to_nav = self.labeled_frame_list if self.navigate_labeled else self.frame_list
+        navigate_to_marked_frame(
+            self, list_to_nav, self.current_frame_idx, self._handle_frame_change_from_comp, "prev")
 
-    def _navigate_marked_frames(self, direction):
-        if self.nav_labeled:
-            navigate_to_marked_frame(
-                self, self.labeled_frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, direction)
-        else:
-            navigate_to_marked_frame(
-                self, self.frame_list, self.current_frame_idx, self._handle_frame_change_from_comp, direction)
+    def _navigate_next(self):
+        list_to_nav = self.labeled_frame_list if self.navigate_labeled else self.frame_list
+        navigate_to_marked_frame(
+            self, list_to_nav, self.current_frame_idx, self._handle_frame_change_from_comp, "next")
 
     ###################################################################################################################################################
 
@@ -574,16 +543,16 @@ class Frame_View(QtWidgets.QMainWindow):
         self.display_current_frame()
 
     def toggle_labeled_nav(self):
-        self.nav_labeled = not self.nav_labeled
+        self.navigate_labeled = not self.navigate_labeled
         self.display_current_frame()
 
     def toggle_animal_counting(self):
         self.is_counting = not self.is_counting
         
         if self.is_counting:
-            self.set_left_panel_widget(self.blob_counter)
+            self.vid_play.set_left_panel_widget(self.blob_counter)
         else:
-            self.set_left_panel_widget(None)
+            self.vid_play.set_left_panel_widget(None)
 
         self.display_current_frame()
 
@@ -660,33 +629,6 @@ class Frame_View(QtWidgets.QMainWindow):
 
     ###################################################################################################################################################
 
-    def set_left_panel_widget(self, widget: QtWidgets.QWidget | None):
-        """Set or clear the left side panel widget."""
-        # Remove existing widget if any
-        if self.video_left_panel_layout.count() > 0:
-            old_widget = self.video_left_panel_layout.takeAt(0).widget()
-            if old_widget:
-                old_widget.setParent(None)  # or deleteLater() if owned
-
-        if widget is not None:
-            self.video_left_panel_layout.addWidget(widget)
-            self.video_left_panel_widget.setVisible(True)
-        else:
-            self.video_left_panel_widget.setVisible(False)
-
-    def set_right_panel_widget(self, widget: QtWidgets.QWidget | None):
-        """Set or clear the right side panel widget."""
-        if self.video_right_panel_layout.count() > 0:
-            old_widget = self.video_right_panel_layout.takeAt(0).widget()
-            if old_widget:
-                old_widget.setParent(None)
-
-        if widget is not None:
-            self.video_right_panel_layout.addWidget(widget)
-            self.video_right_panel_widget.setVisible(True)
-        else:
-            self.video_right_panel_widget.setVisible(False)
-
     def determine_save_status(self):
         if set(self.last_saved) == set(self.frame_list):
             self.is_saved = True
@@ -758,20 +700,25 @@ class Frame_View(QtWidgets.QMainWindow):
             detailed_message = f"{error_message}\n\nTraceback:\n{traceback.format_exc()}"
             QMessageBox.warning(self, "Labeler Failed", detailed_message)
 
-    def dlc_inference(self):
+    def dlc_inference_marked(self):
+        inference_list = list(set(self.frame_list) - set(self.approved_frame_list) - set(self.rejected_frame_list) - set(self.refined_frame_list))
+
+        if not inference_list:
+            self.statusBar().showMessage("No unapproved / unrejected/ unrefined marked frames to inference.")
+            return
+        
+        self.call_inference(inference_list)
+
+    def dlc_inference_all(self):
+        pass
+    
+    def call_inference(self, inference_list:list):
         if not self.video_file:
             QMessageBox.warning(self, "Video Not Loaded", "No video is loaded, load a video first!")
             return
         if not self.frame_list:
             QMessageBox.warning(self, "No Marked Frame", "No frame has been marked, please mark some frames first.")
             return
-        
-        inference_list = list(set(self.frame_list) - set(self.approved_frame_list) - set(self.rejected_frame_list) - set(self.refined_frame_list))
-
-        if not inference_list:
-            self.statusBar().showMessage("No unapproved / unrejected/ unrefined marked frames to inference.")
-            return
-
         if self.dlc_data is None:
             QMessageBox.information(self, "Load DLC Config", "You need to load DLC config to inference with DLC models.")
 
@@ -937,7 +884,7 @@ class Frame_View(QtWidgets.QMainWindow):
         super().changeEvent(event)
 
     def closeEvent(self, event: QCloseEvent):
-        ui.handle_unsaved_changes_on_close(self, event, self.is_saved, self.save_workspace)
+        duh.handle_unsaved_changes_on_close(self, event, self.is_saved, self.save_workspace)
 
 #######################################################################################################################################################
 

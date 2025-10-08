@@ -36,11 +36,11 @@ class Swap_Calculation_Config:
 
 @dataclass
 class Plot_Config:
-    plot_opacity:float
-    point_size:float
+    plot_opacity: float
+    point_size: float
     confidence_cutoff: float
-    hide_text_labels:bool
-    edit_mode:bool
+    hide_text_labels: bool
+    edit_mode: bool
 
 @dataclass
 class Labeler_Plotter_Callbacks:
@@ -48,3 +48,9 @@ class Labeler_Plotter_Callbacks:
     keypoint_object_callback: Callable[[object], None]
     box_coords_callback: Callable[[int, float, float], None]
     box_object_callback: Callable[[object], None]
+
+@dataclass
+class Nav_Callback:
+    change_frame_callback: Callable[[int], None]
+    nav_prev_callback: Callable[[], None]
+    nav_next_callback: Callable[[], None]
