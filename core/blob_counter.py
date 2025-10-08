@@ -29,27 +29,33 @@ class Blob_Counter(QtWidgets.QGroupBox):
         self.kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
 
         # UI parameters
-        self.threshold = 100
+        self.threshold = 50
         self.double_blob_area_threshold = 6000
         self.min_blob_area = 500
         self.bg_removal_method = "None"
         self.blob_type = "Dark Blobs (Max)"
         self._dragging_threshold = False
 
-        self.layout = QtWidgets.QVBoxLayout(self)
+        self.blb_layout = QtWidgets.QVBoxLayout(self)
         self.setFixedWidth(200)
 
         # Image display
-        self.image_label = QtWidgets.QLabel("No background image to display")
-        self.image_label.setAlignment(Qt.AlignCenter)
+        self.bg_display = QtWidgets.QHBoxLayout()
+        self.bg_label = QtWidgets.QLabel("Background Image:")
+        self.bg_label.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+
+        self.image_label = QtWidgets.QLabel("None")
         self.image_label.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         self.image_label.setCursor(Qt.PointingHandCursor)
         self.image_label.mousePressEvent = lambda e: self._show_background_in_dialog()
-        self.layout.addWidget(self.image_label, 1)
+
+        self.bg_display.addWidget(self.bg_label, 1)
+        self.bg_display.addWidget(self.image_label, 1)
+        self.blb_layout.addLayout(self.bg_display)
 
         # Histogram for blob sizes
         self.histogram_layout = QtWidgets.QVBoxLayout()
-        self.layout.addLayout(self.histogram_layout)
+        self.blb_layout.addLayout(self.histogram_layout)
 
         self.histogram_label = QtWidgets.QLabel("Blob Size Distribution (computing...)")
         self.histogram_layout.addWidget(self.histogram_label)
@@ -68,7 +74,7 @@ class Blob_Counter(QtWidgets.QGroupBox):
         self.control_gbox = QtWidgets.QGroupBox(self)
         self.controls_layout = QtWidgets.QVBoxLayout(self.control_gbox)
         self.control_gbox.setTitle("Blob Counter Control")
-        self.layout.addWidget(self.control_gbox)
+        self.blb_layout.addWidget(self.control_gbox)
 
         # Threshold
         self.threshold_label = QtWidgets.QLabel("Threshold:")
@@ -120,17 +126,17 @@ class Blob_Counter(QtWidgets.QGroupBox):
 
         self.refresh_hist_btn = QtWidgets.QPushButton("Refresh Histogram")
         self.refresh_hist_btn.clicked.connect(self.plot_blob_histogram)
-        self.layout.addWidget(self.refresh_hist_btn)
+        self.blb_layout.addWidget(self.refresh_hist_btn)
 
         # Add button to count animals in entire video
         self.count_all_btn = QtWidgets.QPushButton("Count Animals in Entire Video")
         self.count_all_btn.clicked.connect(self._count_entire_video)
-        self.layout.addWidget(self.count_all_btn)
+        self.blb_layout.addWidget(self.count_all_btn)
 
         # Count display
         self.count_label = QtWidgets.QLabel("Animal Count: 0")
         self.count_label.setAlignment(Qt.AlignCenter)
-        self.layout.addWidget(self.count_label)
+        self.blb_layout.addWidget(self.count_label)
 
         # Connect parameter changes to reprocessing
         self.parameters_changed.connect(self._reprocess_current_frame)
@@ -163,7 +169,7 @@ class Blob_Counter(QtWidgets.QGroupBox):
     def _update_background_display(self):
         method = self.bg_removal_method
         if method == "None":
-            self.image_label.setText("No background image to display")
+            self.image_label.setText("None")
             return
 
         if method not in self.background_frames:
