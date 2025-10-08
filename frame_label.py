@@ -18,9 +18,10 @@ from ui import (
     Menu_Widget, Progress_Indicator_Dialog, Video_Player_Widget,
     Pose_Rotation_Dialog, Head_Tail_Dialog
 )
-from core import (
+from core import io as dio
+from core.tool import (
     Outlier_Finder, Canonical_Pose_Dialog, Prediction_Plotter,
-    Plot_Config_Menu, Canvas, io as dio, navigate_to_marked_frame
+    Plot_Config_Menu, Canvas, navigate_to_marked_frame
 )
 from core.dataclass import Export_Settings, Plot_Config, Labeler_Plotter_Callbacks, Nav_Callback
 

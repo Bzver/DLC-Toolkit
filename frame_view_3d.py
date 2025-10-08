@@ -22,7 +22,8 @@ from core.dataclass import Plot_Config, Nav_Callback
 from ui import (
     Menu_Widget, Video_Slider_Widget, Nav_Widget, Clickable_Video_Label, Progress_Indicator_Dialog
     )
-from core import Adjust_Property_Dialog, Prediction_Plotter, io as dio, navigate_to_marked_frame
+from core.io import Prediction_Loader, determine_save_path, save_prediction_to_existing_h5
+from core.tool import Adjust_Property_Dialog, Prediction_Plotter, navigate_to_marked_frame
 
 import traceback
 
@@ -158,7 +159,7 @@ class Frame_View_3D(QtWidgets.QMainWindow):
         self.deviance_threshold = 50
         self.velocity_threshold = 20
 
-        self.data_loader = dio.Prediction_Loader(None, None)
+        self.data_loader = Prediction_Loader(None, None)
         self.dlc_data = None
         self.keypoint_to_idx = {}
 
@@ -1095,10 +1096,10 @@ class Frame_View_3D(QtWidgets.QMainWindow):
                 continue # Skip if no prediction loaded for this camera
 
             prediction_idx = self.prediction_list.index(prediction)
-            pred_file_to_save_path = dio.determine_save_path(prediction, suffix="_3D_plotter_")
+            pred_file_to_save_path = determine_save_path(prediction, suffix="_3D_plotter_")
 
             pred_data_array = self.pred_data_array[:, prediction_idx, :, :].copy() # Extract the prediction data for this camera
-            status, msg = dio.save_prediction_to_existing_h5(pred_file_to_save_path, pred_data_array)
+            status, msg = save_prediction_to_existing_h5(pred_file_to_save_path, pred_data_array)
             if not status:
                 error_views.append((prediction_idx, msg))
 

@@ -12,14 +12,17 @@ from PySide6.QtWidgets import QMessageBox, QFileDialog
 import traceback
 
 from utils import helper as duh, pose as dupe
-from core.io import Prediction_Loader, Exporter, Frame_Extractor
+from core.io import (
+    Prediction_Loader, Exporter, Frame_Extractor,
+    remove_confidence_score, append_new_video_to_dlc_config
+)
 from core.dataclass import Export_Settings, Plot_Config, Nav_Callback
 from ui import (
     Menu_Widget, Clear_Mark_Dialog, Video_Player_Widget
     )
-from core import (
+from core.tool import (
     Prediction_Plotter, Mark_Generator, Canonical_Pose_Dialog,
-    Plot_Config_Menu, Blob_Counter, navigate_to_marked_frame, io as dio
+    Plot_Config_Menu, Blob_Counter, navigate_to_marked_frame,
     )
 
 class Frame_View(QtWidgets.QMainWindow):
@@ -807,7 +810,7 @@ class Frame_View(QtWidgets.QMainWindow):
             exporter = Exporter(self.dlc_data, exp_set, self.frame_list)
         else:
             exp_set.export_mode = "Merge"
-            pred_data_array_for_export = dio.remove_confidence_score(self.dlc_data.pred_data_array)
+            pred_data_array_for_export = remove_confidence_score(self.dlc_data.pred_data_array)
             exporter = Exporter(self.dlc_data, exp_set, self.refined_frame_list, pred_data_array_for_export)
         
         if self.dlc_data:
@@ -816,7 +819,7 @@ class Frame_View(QtWidgets.QMainWindow):
                 QMessageBox.information(self, "Success", "Successfully exported frames and prediction to DLC.")
             except Exception as e:
                 QMessageBox.critical(self, "Error Save Data", f"Error saving data to DLC: {e}")
-            dio.append_new_video_to_dlc_config(self.dlc_data.dlc_config_filepath, self.video_name)
+            append_new_video_to_dlc_config(self.dlc_data.dlc_config_filepath, self.video_name)
 
             if exp_set.export_mode == "Merge":
                 self.process_labeled_frame()
@@ -878,7 +881,7 @@ class Frame_View(QtWidgets.QMainWindow):
 
             self.label_data_array[self.refined_frame_list, :, :] = self.dlc_data.pred_data_array[self.refined_frame_list, :, :]
             merge_frame_list = list(set(self.labeled_frame_list) | set(self.refined_frame_list))
-            label_data_array_export = dio.remove_confidence_score(self.label_data_array)
+            label_data_array_export = remove_confidence_score(self.label_data_array)
 
             exporter = Exporter(dlc_data=self.dlc_data,
                                 export_settings=exp_set,

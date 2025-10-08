@@ -9,7 +9,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
 from ui import Progress_Indicator_Dialog
-from .io import Frame_Extractor
+from core.io import Frame_Extractor
 
 class Blob_Counter(QtWidgets.QGroupBox):
     parameters_changed = Signal()  # No args needed, store state internally

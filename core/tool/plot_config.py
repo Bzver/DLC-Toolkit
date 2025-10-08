@@ -2,7 +2,7 @@ from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QGroupBox, QDialog, QVBoxLayout, QCheckBox
 
-from .dataclass import Plot_Config
+from core.dataclass import Plot_Config
 
 class Plot_Config_Menu(QGroupBox):
     config_changed = Signal(object)
