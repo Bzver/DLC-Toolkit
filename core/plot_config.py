@@ -7,7 +7,7 @@ from .dataclass import Plot_Config
 class Plot_Config_Menu(QGroupBox):
     config_changed = Signal(object)
 
-    def __init__(self, plot_config:Plot_Config, parent=None):
+    def __init__(self, plot_config:Plot_Config, skip_opacity=False, parent=None):
         super().__init__(parent)
         self.setTitle("Plot Config Menu")
         self.plot_config = plot_config
@@ -15,24 +15,25 @@ class Plot_Config_Menu(QGroupBox):
         layout = QVBoxLayout(self)
         self.conf_box = Adjust_Property_Box(
             property_name="Confidence Cutoff", property_val=self.plot_config.confidence_cutoff, range=(0.00, 1.00), parent=self)
+        layout.addWidget(self.conf_box)
+        self.conf_box.property_changed.connect(self._on_conf_change)
+
         self.ps_box = Adjust_Property_Box(
             property_name="Point Size", property_val=self.plot_config.point_size, range=(0.1, 10.0), parent=self)
-        self.po_box = Adjust_Property_Box(
-            property_name="Point Opacity", property_val=self.plot_config.plot_opacity, range=(0.00, 1.00), parent=self)
+        layout.addWidget(self.ps_box)
+        self.ps_box.property_changed.connect(self._on_ps_change)
+
+        if not skip_opacity:
+            self.po_box = Adjust_Property_Box(
+                property_name="Point Opacity", property_val=self.plot_config.plot_opacity, range=(0.00, 1.00), parent=self)
+            layout.addWidget(self.po_box)
+            self.po_box.property_changed.connect(self._on_po_change)
         
         self.label_vis = QCheckBox("Label Text Visibility")
         self.label_vis.setChecked(True)
-
-        layout.addWidget(self.conf_box)
-        layout.addWidget(self.ps_box)
-        layout.addWidget(self.po_box)
         layout.addWidget(self.label_vis)
-        
-        self.conf_box.property_changed.connect(self._on_conf_change)
-        self.ps_box.property_changed.connect(self._on_ps_change)
-        self.po_box.property_changed.connect(self._on_po_change)
         self.label_vis.toggled.connect(self._on_vis_toggled)
-
+        
     def _on_conf_change(self, val):
         self.plot_config.confidence_cutoff = val
         self.config_changed.emit(self.plot_config)

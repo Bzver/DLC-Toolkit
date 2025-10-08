@@ -485,7 +485,7 @@ class Frame_View(QtWidgets.QMainWindow):
 
         if self.open_config:
             self.open_mark_gen = False
-            plot_config_widget = Plot_Config_Menu(plot_config=self.plot_config)
+            plot_config_widget = Plot_Config_Menu(plot_config=self.plot_config, skip_opacity=True)
             plot_config_widget.config_changed.connect(self._handle_config_from_config)
             self.vid_play.set_right_panel_widget(plot_config_widget)
         else:

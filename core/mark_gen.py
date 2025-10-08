@@ -94,7 +94,7 @@ class Mark_Generator(QtWidgets.QGroupBox):
         layout.addWidget(self.outlier_container)
 
         # Confirmation buttons
-        confirm_frame = QHBoxLayout()
+        confirm_frame = QVBoxLayout()
         self.keep_old_checkbox = QtWidgets.QCheckBox("Keep Existing Marks")
         self.keep_old_checkbox.setChecked(True)
         confirm_frame.addWidget(self.keep_old_checkbox)
