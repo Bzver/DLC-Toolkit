@@ -1,5 +1,3 @@
-import os
-import yaml
 import pandas as pd
 import numpy as np
 
@@ -14,7 +12,9 @@ from utils.helper import handle_unsaved_changes_on_close, frame_to_pixmap
 from core.io import Frame_Extractor
 from core.data_man import Data_Manager
 from core.dataclass import Plot_Config, Nav_Callback
-from core.palette import NAV_COLOR_PALETTE as nvp, NAV_COLOR_PALETTE_COUNTING as nvpc
+from core.palette import (
+    NAV_COLOR_PALETTE as nvp, NAV_COLOR_PALETTE_COUNTING as nvpc,
+    LABEL_INST_PALETTE as lip)
 from ui import (
     Menu_Widget, Clear_Mark_Dialog, Video_Player_Widget
     )
@@ -206,7 +206,7 @@ class Frame_View(QtWidgets.QMainWindow):
                 self.plotter.frame_cv2 = frame
                 self.plotter.current_frame_data = self.dm.label_data_array[self.dm.current_frame_idx,:,:]
                 old_colors = self.plotter.color.copy()
-                self.plotter.color = [(200, 130, 0), (40, 200, 40), (40, 120, 200), (200, 40, 40), (200, 200, 80)]
+                self.plotter.color = lip
                 frame = self.plotter.plot_predictions()
                 self.plotter.color = old_colors
 
@@ -291,8 +291,7 @@ class Frame_View(QtWidgets.QMainWindow):
         if self.current_frame is None:
             QtWidgets.QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
             return
-        
-        if not self.dlc_data:
+        if not self.dm.dlc_data:
             QtWidgets.QMessageBox.warning(self, "No Prediction", "No prediction has been loaded, please load prediction first.")
             return
         
@@ -330,7 +329,7 @@ class Frame_View(QtWidgets.QMainWindow):
             mark_clear_dialog.exec()
 
     def view_canonical_pose(self):
-        dialog = Canonical_Pose_Dialog(self.dlc_data, self.dm.canon_pose)
+        dialog = Canonical_Pose_Dialog(self.dm.dlc_data, self.dm.canon_pose)
         dialog.exec()
 
     ###################################################################################################################################################
@@ -370,7 +369,7 @@ class Frame_View(QtWidgets.QMainWindow):
         self._refresh_and_display()
 
     def _handle_rerun_frames_exported(self, frame_tuple):
-        self.dm.approved_frame_list, self.rejected_frame_list = frame_tuple
+        self.dm.approved_frame_list, self.dm.rejected_frame_list = frame_tuple
         self._refresh_and_display()
 
     def _handle_frame_change_from_comp(self, new_frame_idx: int):
@@ -409,38 +408,6 @@ class Frame_View(QtWidgets.QMainWindow):
 
     def call_labeler(self, track_only=False):
         pass
-        # if not self.video_file:
-        #     QMessageBox.warning(self, "Video Not Loaded", "No video is loaded, load a video first!")
-        #     return
-        # if not self.dlc_data:
-        #     QMessageBox.warning(self, "DLC Data Not Loaded", "No DLC data has been loaded, load them to export to Labeler.")
-        #     return
-        
-        # from frame_label import Frame_Label
-
-        # try:
-        #     self.labeler_window = Frame_Label()
-        #     self.labeler_window.video_file = self.video_file
-        #     self.labeler_window.initialize_loaded_video()
-        #     self.labeler_window.dlc_data = self.dlc_data
-        #     if not track_only:
-        #         self.labeler_window.marked_roi_frame_list = self.frame_list
-        #         self.labeler_window.refined_roi_frame_list = self.refined_frame_list
-        #     self.labeler_window.current_frame_idx = self.dm.current_frame_idx
-        #     self.labeler_window.prediction = self.dlc_data.prediction_filepath
-        #     self.labeler_window.initialize_loaded_data()
-        #     self.labeler_window.display_current_frame()
-        #     self.labeler_window._navigation_title_controller()
-        #     if self.frame_list and not track_only:
-        #         self.labeler_window.direct_keypoint_edit()
-        #         self.labeler_window.refined_frames_exported.connect(self._handle_refined_frames_exported)
-        #     self.labeler_window.show()
-        #     self.labeler_window.prediction_saved.connect(self.reload_prediction) # Reload from prediction provided by Labeler
-            
-        # except Exception as e:
-        #     error_message = f"Labeler failed to initialize. Error: {e}"
-        #     detailed_message = f"{error_message}\n\nTraceback:\n{traceback.format_exc()}"
-        #     QMessageBox.warning(self, "Labeler Failed", detailed_message)
 
     def dlc_inference_marked(self):
         inference_list = self.dm.get_inference_list()
@@ -454,7 +421,7 @@ class Frame_View(QtWidgets.QMainWindow):
         pass
     
     def call_inference(self, inference_list:list):
-        if not self.video_file:
+        if not self.dm.video_file:
             QMessageBox.warning(self, "Video Not Loaded", "No video is loaded, load a video first!")
             return
         if not self.dm.frame_list:
@@ -490,6 +457,8 @@ class Frame_View(QtWidgets.QMainWindow):
         if hasattr(self, "inference_window") and self.inference_window:
             self.inference_window.close()
             self.inference_window = None
+        if hasattr(self, 'plotter'):
+            delattr(self, 'plotter')
 
     def export_marked_to_clipboard(self):
         df = pd.DataFrame([self.dm.frame_list])
