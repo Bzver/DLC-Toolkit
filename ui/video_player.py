@@ -1,7 +1,7 @@
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QGridLayout, QHBoxLayout, QPushButton, QLabel
-from PySide6.QtGui import QFont
+from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QGridLayout, QPushButton, QLabel, QLineEdit
+from PySide6.QtGui import QFont,  QIntValidator
 
 from typing import Callable
 
@@ -17,7 +17,7 @@ class Video_Player_Widget(QtWidgets.QWidget):
         super().__init__(parent)
         self.slider_callback = slider_callback
         
-        self.vid_layout = QtWidgets.QVBoxLayout(self)
+        self.vid_layout = QVBoxLayout(self)
         self.video_side_panel_layout = QHBoxLayout()
         self.video_left_panel_widget = QtWidgets.QWidget()
         self.video_left_panel_widget.setVisible(False)  # Hidden by default
@@ -52,6 +52,14 @@ class Video_Player_Widget(QtWidgets.QWidget):
 
         self.vid_layout.addLayout(self.video_side_panel_layout)
         self.vid_layout.addWidget(self.video_bottom_panel_widget)
+
+    def set_current_frame(self, frame_idx:int):
+        self.nav.set_current_frame(frame_idx)
+        self.sld.set_current_frame(frame_idx)
+
+    def set_total_frames(self, total_frames:int):
+        self.nav.set_total_frames(total_frames)
+        self.sld.set_slider_range(total_frames)
 
     def set_left_panel_widget(self, widget: QtWidgets.QWidget | None):
         self.clear_layout(self.video_left_panel_layout)
@@ -117,24 +125,31 @@ class Nav_Widget(QtWidgets.QWidget):
         self.header_layout.setContentsMargins(6, 4, 6, 4)
         self.header_layout.setSpacing(6)
 
-        # Toggle button
-        self.toggle_button = QPushButton("►")
-        self.toggle_button.setFixedSize(16, 16)
         font = QFont("Arial", 8)
         font.setBold(True)
+        self.toggle_button = QPushButton("►")
+        self.toggle_button.setFixedSize(16, 16)
         self.toggle_button.setFont(font)
         self.toggle_button.clicked.connect(self._toggle_collapsed)
 
-        # Title label
         self.title_label = QLabel("Video Navigation")
         self.title_label.setFont(QFont("Arial", 9, QFont.Bold))
-        self.title_label.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        self.fin = Nav_Frame_Input()
+        self.fin.frame_changed_sig.connect(self.nvc.change_frame_callback)
 
         self.header_layout.addWidget(self.toggle_button)
+        self.header_layout.addLayout(self.fin)
         self.header_layout.addWidget(self.title_label)
         self.header_layout.addStretch()
 
         self.ctrl = None
+
+    def set_current_frame(self, frame_idx:int):
+        self.fin.set_current_frame(frame_idx)
+
+    def set_total_frames(self, total_frames:int):
+        self.fin.set_total_frames(total_frames)
 
     def set_marked_list_name(self, list_name:str):
         self.marked_name = list_name
@@ -182,12 +197,52 @@ class Nav_Widget(QtWidgets.QWidget):
             self.toggle_button.setText("▲")
             self._show_control_dialog()
 
+class Nav_Frame_Input(QHBoxLayout):
+    frame_changed_sig = Signal(int, int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.max_frame = 1
+
+        self.frame_input = QLineEdit("0")
+        validator = QIntValidator(0, 2147483647, self)
+        self.frame_input.setValidator(validator)
+        self.frame_input.textChanged.connect(self._on_frame_idx_input)
+
+        separator = QLabel("/")
+        self.total_line = QLineEdit("0")
+        self.total_line.setReadOnly(True)
+
+        self.frame_input.setFixedWidth(60)
+        separator.setFixedWidth(10)
+        self.total_line.setFixedWidth(60)
+
+        self.addWidget(self.frame_input)
+        self.addWidget(separator)
+        self.addWidget(self.total_line)
+
+    def set_current_frame(self, frame_idx:int):
+        self.frame_input.blockSignals(True)
+        self.frame_input.setText(str(frame_idx))
+        self.frame_input.blockSignals(False)
+
+    def set_total_frames(self, total_frames:int):
+        self.total_line.setText(str(total_frames))
+        self.max_frame = total_frames - 1
+
+    def _on_frame_idx_input(self):
+        frame_idx = int(self.frame_input.text())
+        if frame_idx > self.max_frame:
+            self.frame_input.setText(str(self.max_frame))
+
+        self.frame_changed_sig.emit(0, frame_idx)
+
 class Nav_Control_Dialog(QtWidgets.QDialog):
     frame_changed_sig = Signal(int)
     prev_marked_frame_sig = Signal()
     next_marked_frame_sig = Signal()
 
-    def __init__(self, marked_name, parent=None):
+    def __init__(self, marked_name:str, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Navigation Controls")
         self.setModal(False) 
