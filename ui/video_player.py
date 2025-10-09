@@ -138,10 +138,10 @@ class Nav_Widget(QtWidgets.QWidget):
         self.fin = Nav_Frame_Input()
         self.fin.frame_changed_sig.connect(self.nvc.change_frame_callback)
 
-        self.header_layout.addWidget(self.toggle_button)
         self.header_layout.addLayout(self.fin)
         self.header_layout.addWidget(self.title_label)
         self.header_layout.addStretch()
+        self.header_layout.addWidget(self.toggle_button)
 
         self.ctrl = None
 
@@ -210,16 +210,19 @@ class Nav_Frame_Input(QHBoxLayout):
         self.frame_input.textChanged.connect(self._on_frame_idx_input)
 
         separator = QLabel("/")
+        separator_2 = QLabel("|")
         self.total_line = QLineEdit("0")
         self.total_line.setReadOnly(True)
 
-        self.frame_input.setFixedWidth(60)
+        self.frame_input.setFixedWidth(50)
         separator.setFixedWidth(10)
-        self.total_line.setFixedWidth(60)
+        self.total_line.setFixedWidth(50)
+        separator_2.setFixedWidth(10)
 
         self.addWidget(self.frame_input)
         self.addWidget(separator)
         self.addWidget(self.total_line)
+        self.addWidget(separator_2)
 
     def set_current_frame(self, frame_idx:int):
         self.frame_input.blockSignals(True)
