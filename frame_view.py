@@ -29,6 +29,10 @@ class Frame_View(QtWidgets.QMainWindow):
         self.setWindowTitle("Frame Viewer")
         self.setGeometry(100, 100, 1200, 960)
 
+        self.dm = Data_Manager(
+            init_vid_callback = self.initialize_loaded_video,
+            refresh_callback = self._refresh_ui, parent=self)
+
         self.menu_widget = Menu_Widget(self)
         self.setMenuBar(self.menu_widget)
         extractor_menu_config = {
@@ -94,8 +98,6 @@ class Frame_View(QtWidgets.QMainWindow):
             )
 
         self.app_layout.addWidget(self.vid_play)
-
-        self.dm = Data_Manager(refresh_callback=self._refresh_ui, parent=self)
         self._setup_shortcut()        
         self.reset_state()
 
@@ -122,7 +124,6 @@ class Frame_View(QtWidgets.QMainWindow):
         self.navigate_labeled = False
 
         self.is_counting = False
-        self.is_saved = True
 
     def load_video(self):
         file_dialog = QFileDialog(self)
@@ -156,43 +157,9 @@ class Frame_View(QtWidgets.QMainWindow):
         self.display_current_frame()
 
     def load_workspace(self):
-        file_dialog = QFileDialog(self)
-        marked_frame_path, _ = file_dialog.getOpenFileName(self, "Load Status", "", "YAML Files (*.yaml);;All Files (*)")
-
-        if marked_frame_path:
-            self.reset_state()
-            with open(marked_frame_path, "r") as fmkf:
-                fmk = yaml.safe_load(fmkf)
-
-            if not "frame_list" in fmk.keys():
-                QMessageBox.warning(self, "File Error", "Not a extractor status file, make sure to load the correct file.")
-                return
-            
-            video_file = fmk["video_path"]
-
-            if not os.path.isfile(video_file):
-                QMessageBox.warning(self, "Warning", "Video path in file is not valid, has the video been moved?")
-                return
-            
-            self.dm.update_video_path(video_file)
-            self.initialize_loaded_video()
-
-            dlc_config = fmk["dlc_config"]
-            prediction = fmk["prediction"]
-
-            if dlc_config and prediction:
-                self.dm.load_pred_to_dm(dlc_config, prediction)
-
-            self.dm.frame_list = fmk["frame_list"]
-            if "refined_frame_list" in fmk.keys():
-                self.dm.refined_frame_list = fmk["refined_frame_list"]
-            if "approved_frame_list" in fmk.keys():
-                self.dm.approved_frame_list = fmk["approved_frame_list"]
-            if "rejected_frame_list" in fmk.keys():
-                self.dm.rejected_frame_list = fmk["rejected_frame_list"]
-                
-            self.dm.process_labeled_frame()
-            self._refresh_and_display()
+        self.reset_state()
+        self.dm.load_workspace()
+        self.display_current_frame()
 
     def initialize_plotter(self):
         current_frame_data = np.full((self.dm.dlc_data.instance_count, self.dm.dlc_data.num_keypoint*3), np.nan)
@@ -438,7 +405,7 @@ class Frame_View(QtWidgets.QMainWindow):
         return True
 
     def save_workspace(self):
-        pass
+        self.dm.save_workspace()
 
     def call_labeler(self, track_only=False):
         pass
@@ -547,7 +514,7 @@ class Frame_View(QtWidgets.QMainWindow):
         super().changeEvent(event)
 
     def closeEvent(self, event: QCloseEvent):
-        handle_unsaved_changes_on_close(self, event, self.is_saved, self.save_workspace)
+        handle_unsaved_changes_on_close(self, event, False, self.save_workspace)
 
 #######################################################################################################################################################
 

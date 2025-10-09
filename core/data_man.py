@@ -1,4 +1,6 @@
 import os
+import pickle
+import yaml
 import numpy as np
 
 from PySide6.QtWidgets import QMessageBox, QFileDialog
@@ -17,8 +19,12 @@ from .dataclass import Plot_Config, Loaded_DLC_Data, Export_Settings
 class Data_Manager:
     HexColor = str
 
-    def __init__(self, refresh_callback:Callable[[], None], parent=None):
+    def __init__(self, 
+                init_vid_callback:Callable[[], None],
+                refresh_callback:Callable[[], None],
+                parent=None):
         self.main = parent
+        self.init_vid_callback = init_vid_callback
         self.refresh_callback = refresh_callback
 
         self.reset_dm_vars()
@@ -292,7 +298,122 @@ class Data_Manager:
         self.canon_pose, _ = calculate_canonical_pose(canon_pred_to_use, head_idx, tail_idx)
 
     ###################################################################################################################################################
+
+    def save_workspace(self):
+        """Save the current workspace state (all vars from reset_dm_vars) to a pickle file."""
+        if not self.video_file:
+            QMessageBox.warning(self.main, "No Video Loaded", "Please load a video before saving the workspace.")
+            return
+
+        default_name = f"{self.video_name}_workspace.pkl"
+        file_path = os.path.join(os.path.dirname(self.video_file), default_name)
+
+        workspace_state = {
+            'total_frames': self.total_frames,
+            'current_frame_idx': self.current_frame_idx,
+            'video_file': self.video_file,
+            'video_name': self.video_name,
+            'project_dir': self.project_dir,
+            'dlc_data': self.dlc_data,
+            'canon_pose': self.canon_pose,
+            'labeled_frame_list': self.labeled_frame_list,
+            'frame_list': self.frame_list,
+            'refined_frame_list': self.refined_frame_list,
+            'approved_frame_list': self.approved_frame_list,
+            'rejected_frame_list': self.rejected_frame_list,
+            'animal_0_list': self.animal_0_list,
+            'animal_1_list': self.animal_1_list,
+            'animal_n_list': self.animal_n_list,
+            'label_data_array': self.label_data_array,
+            'plot_config': self.plot_config,
+            'blob_config': self.blob_config,
+        }
+
+        try:
+            with open(file_path, 'wb') as f:
+                pickle.dump(workspace_state, f)
+            QMessageBox.information(self.main, "Success", f"Workspace saved to:\n{file_path}")
+        except Exception as e:
+            QMessageBox.critical(self.main, "Error Saving Workspace", f"Failed to save workspace:\n{e}")
+
+    def load_workspace(self):
+        """Load a previously saved workspace state."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self.main, "Load Workspace", "", "Pickle Files (*.pkl);;YAML Files (*.yaml *.yml);;All Files (*)"
+        )
+        if not file_path:
+            return
+
+        if file_path.endswith(".yaml"):
+            self._load_workspace_legacy(file_path)
+            return
+
+        try:
+            with open(file_path, 'rb') as f:
+                workspace_state = pickle.load(f)
+
+            # Restore all attributes
+            self.total_frames = workspace_state.get('total_frames', 0)
+            self.current_frame_idx = workspace_state.get('current_frame_idx', 0)
+            self.video_file = workspace_state.get('video_file')
+            self.video_name = workspace_state.get('video_name')
+            self.project_dir = workspace_state.get('project_dir')
+            self.dlc_data = workspace_state.get('dlc_data')
+            self.canon_pose = workspace_state.get('canon_pose')
+            self.labeled_frame_list = workspace_state.get('labeled_frame_list', [])
+            self.frame_list = workspace_state.get('frame_list', [])
+            self.refined_frame_list = workspace_state.get('refined_frame_list', [])
+            self.approved_frame_list = workspace_state.get('approved_frame_list', [])
+            self.rejected_frame_list = workspace_state.get('rejected_frame_list', [])
+            self.animal_0_list = workspace_state.get('animal_0_list', [])
+            self.animal_1_list = workspace_state.get('animal_1_list', [])
+            self.animal_n_list = workspace_state.get('animal_n_list', [])
+            self.label_data_array = workspace_state.get('label_data_array')
+            self.plot_config = workspace_state.get('plot_config')
+            self.blob_config = workspace_state.get('blob_config')
+
+            self.init_vid_callback()
+            self.refresh_callback()
+            QMessageBox.information(self.main, "Success", "Workspace loaded successfully.")
+        except Exception as e:
+            QMessageBox.critical(self.main, "Error Loading Workspace", f"Failed to load workspace:\n{e}")
+
+    def _load_workspace_legacy(self, file_path:str):
+        with open(file_path, "r") as fmkf:
+            fmk = yaml.safe_load(fmkf)
+
+        if not "frame_list" in fmk.keys():
+            QMessageBox.warning(self.main, "File Error", "Not a extractor status file, make sure to load the correct file.")
+            return
         
+        video_file = fmk["video_path"]
+
+        if not os.path.isfile(video_file):
+            QMessageBox.warning(self.main, "Warning", "Video path in file is not valid, has the video been moved?")
+            return
+        
+        self.update_video_path(video_file)
+        self.init_vid_callback()
+
+        dlc_config = fmk["dlc_config"]
+        prediction = fmk["prediction"]
+
+        if dlc_config and prediction:
+            self.load_pred_to_dm(dlc_config, prediction)
+
+        self.frame_list = fmk["frame_list"]
+        if "refined_frame_list" in fmk.keys():
+            self.refined_frame_list = fmk["refined_frame_list"]
+        if "approved_frame_list" in fmk.keys():
+            self.approved_frame_list = fmk["approved_frame_list"]
+        if "rejected_frame_list" in fmk.keys():
+            self.rejected_frame_list = fmk["rejected_frame_list"]
+            
+        self.process_labeled_frame()
+        self.refresh_callback()
+
+    ###################################################################################################################################################
+
     def save_to_dlc(self):
         dlc_dir = os.path.dirname(self.dlc_data.dlc_config_filepath)
         exp_set = Export_Settings(video_filepath=self.video_file, video_name=self.video_name,
