@@ -15,8 +15,12 @@ from typing import List, Literal
 
 from ui import Clickable_Video_Label, Video_Slider_Widget, Progress_Indicator_Dialog
 from core.dataclass import Loaded_DLC_Data, Export_Settings
-from core.io import Exporter, Prediction_Loader
-from core import Prediction_Plotter, io as dio
+from core.io import (
+    Exporter, Prediction_Loader, save_predictions_to_new_h5,
+    save_prediction_to_existing_h5, determine_save_path
+)
+from core import io as dio
+from core.tool import Prediction_Plotter
 from utils.helper import log_print, handle_unsaved_changes_on_close
 from utils.pose import calculate_pose_centroids
 from utils.track import hungarian_matching
@@ -461,8 +465,8 @@ class DLC_Inference(QtWidgets.QDialog):
             if reply == QMessageBox.No:
                 return False 
 
-        pred_file_to_save_path = dio.determine_save_path(self.dlc_data.prediction_filepath, suffix="_rerun_")
-        status, msg = dio.save_prediction_to_existing_h5(pred_file_to_save_path, self.dlc_data.pred_data_array)
+        pred_file_to_save_path = determine_save_path(self.dlc_data.prediction_filepath, suffix="_rerun_")
+        status, msg = save_prediction_to_existing_h5(pred_file_to_save_path, self.dlc_data.pred_data_array)
         
         if not status:
             QMessageBox.critical(self, "Saving Error", f"An error occurred during saving: {msg}")
@@ -578,7 +582,7 @@ class DLC_Inference(QtWidgets.QDialog):
             pred_filepath = os.path.join(video_path, pred_filename)
             self.dlc_data.prediction_filepath = pred_filepath # So that it will be picked up by prediction_to_csv later
             self.export_set.save_path = video_path
-            status, msg = dio.save_predictions_to_new_h5(
+            status, msg = save_predictions_to_new_h5(
                 dlc_data=self.dlc_data,
                 pred_data_array=self.new_data_array,
                 export_settings=self.export_set)
