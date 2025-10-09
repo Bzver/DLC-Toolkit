@@ -1,4 +1,6 @@
 import numpy as np
+import cv2
+from PySide6 import QtGui
 from PySide6.QtWidgets import QMessageBox
 from typing import List, Tuple, Callable
 
@@ -308,3 +310,13 @@ def calculate_snapping_zoom_level(
     new_zoom_level = max(0.1, min(new_zoom_level, 10.0))
 
     return new_zoom_level, center_x, center_y
+
+###########################################################################################
+
+def frame_to_pixmap(frame):
+    rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    h, w, ch = rgb_image.shape
+    bytes_per_line = ch * w
+    qt_image = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
+    pixmap = QtGui.QPixmap.fromImage(qt_image)
+    return pixmap
