@@ -30,10 +30,7 @@ class Video_Player_Widget(QtWidgets.QWidget):
         self.video_right_panel_layout.setContentsMargins(0, 0, 0, 0)
 
         self.video_display = QVBoxLayout()
-        self.display = QtWidgets.QLabel("No video loaded")
-        self.display.setAlignment(Qt.AlignCenter)
-        self.display.setStyleSheet("background-color: black; color: white;")
-        self.display.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        self._setup_display()
         self.video_display.addWidget(self.display, 1)
 
         self._setup_slider()
@@ -90,8 +87,13 @@ class Video_Player_Widget(QtWidgets.QWidget):
 
     def swap_display_for_graphics_view(self, graphics_view:QtWidgets.QWidget):
         self.clear_layout(self.video_display)
-
         self.video_display.addWidget(graphics_view)
+        self._setup_slider()
+
+    def swap_back_to_display(self):
+        self.clear_layout(self.video_display)
+        self._setup_display()
+        self.video_display.addWidget(self.display)
         self._setup_slider()
 
     def clear_layout(self, layout: QGridLayout | QHBoxLayout | QVBoxLayout):
@@ -106,6 +108,12 @@ class Video_Player_Widget(QtWidgets.QWidget):
             elif item.layout(): # Recursively clear child layouts
                 self.clear_layout(item.layout())
                 item.layout().deleteLater()
+
+    def _setup_display(self):
+        self.display = QtWidgets.QLabel("No video loaded")
+        self.display.setAlignment(Qt.AlignCenter)
+        self.display.setStyleSheet("background-color: black; color: white;")
+        self.display.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
 
     def _setup_slider(self):
         self.sld = Video_Slider_Widget()
