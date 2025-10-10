@@ -63,7 +63,7 @@ class Canvas(QGraphicsView):
             self.setDragMode(QGraphicsView.NoDrag)
             self.wheelEvent = super(QGraphicsView, self).wheelEvent
 
-    def set_kp_edit(self):
+    def toggle_kp_edit(self):
         self.is_kp_edit = not self.is_kp_edit
         for item in self.gscene.items():
             if isinstance(item, Draggable_Keypoint):

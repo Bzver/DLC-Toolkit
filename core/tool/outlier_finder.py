@@ -2,7 +2,7 @@ import numpy as np
 
 from PySide6 import QtWidgets
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QPushButton, QHBoxLayout, QVBoxLayout, QDialog, QLabel, QMessageBox
+from PySide6.QtWidgets import QPushButton, QHBoxLayout, QVBoxLayout, QGroupBox, QLabel, QMessageBox
 
 from typing import Optional
 
@@ -16,14 +16,13 @@ from utils.pose import (
     outlier_size,
 )
 
-class Outlier_Finder(QDialog):
+class Outlier_Finder(QGroupBox):
     list_changed = Signal(list)
     mask_changed = Signal(object)
-    closing = Signal()
 
     def __init__(self, pred_data_array:np.ndarray, canon_pose:Optional[np.ndarray]=None, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Outlier Finder")
+        self.setTitle("Outlier Finder")
         self.pred_data_array = pred_data_array
         self.outlier_mask = None
         
@@ -50,7 +49,7 @@ class Outlier_Finder(QDialog):
     def get_outlier_mask(self):
         outlier_mask = self.outlier_container.get_combined_mask()
         if outlier_mask is None or not np.any(outlier_mask):
-            QMessageBox.information(self, "No Outliers Found", "No outlier instance matched the selected outlier criteria.")
+            self.list_changed.emit([])
             return
         self.outliers = outlier_mask
 
@@ -64,11 +63,6 @@ class Outlier_Finder(QDialog):
         self.get_outlier_mask()
         if self.outliers is not None:
             self.mask_changed.emit(self.outliers)
-
-    def closeEvent(self, event):
-        self.closing.emit()
-        self.outliers = None
-        super().closeEvent(event)
 
 class Outlier_Container(QtWidgets.QWidget):
     def __init__(self, pred_data_array:np.ndarray, canon_pose:Optional[np.ndarray]=None, parent=None):

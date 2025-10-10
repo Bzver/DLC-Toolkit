@@ -73,7 +73,7 @@ class Frame_View(QtWidgets.QMainWindow):
                     ("Toggle Navigating Labeled Frames", self._toggle_labeled_nav, {"checkable": True, "checked": False}),
                     ("Toggle Animal Counting", self._toggle_animal_counting, {"checkable": True, "checked": False}),
                     ("View Canonical Pose", self.view_canonical_pose),
-                    ("Count Animals Options", self.count_animals_options),
+                    ("Animal Counting Menu", self.count_animals_options),
                 ]
             },
             "Mark": {
@@ -119,6 +119,7 @@ class Frame_View(QtWidgets.QMainWindow):
         if self.dm.video_file:
             self.save_workspace()
         self.dm.reset_dm_vars()
+        self.vm.reset_vm()
         self.blob_counter = None
         self.vid_play.set_total_frames(0)
 
@@ -126,6 +127,7 @@ class Frame_View(QtWidgets.QMainWindow):
         self.plot_labeled, self.plot_pred = True, True
         self.navigate_labeled = False
         self.is_counting = False
+        self._refresh_ui()
 
     def load_video(self):
         self.reset_state()
@@ -135,9 +137,11 @@ class Frame_View(QtWidgets.QMainWindow):
 
     def _initialize_loaded_video(self, video_path:str):
         self.dm.update_video_path(video_path)
+        dlc_config_path, pred_path = self.dm.auto_loader()
+        if dlc_config_path and pred_path:
+            self.dm.load_pred_to_dm(dlc_config_path, pred_path)
         self.vm.init_extractor(video_path)
         self.dm.total_frames = self.vm.get_frame_counts()
-        
         self.vid_play.set_total_frames(self.dm.total_frames)
 
         self.blob_counter = Blob_Counter(frame_extractor=self.vm.extractor, parent=self)
@@ -150,12 +154,9 @@ class Frame_View(QtWidgets.QMainWindow):
         print(f"Video loaded: {self.dm.video_file}")
 
     def load_prediction(self):
-        if not self.vm.get_status():
-            QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
-            return
-
-        self.dm.pred_file_dialog()
-        self.display_current_frame()
+        if self.vm.check_status_msg():
+            self.dm.pred_file_dialog()
+            self.display_current_frame()
 
     def initialize_plotter(self):
         current_frame_data = np.full((self.dm.dlc_data.instance_count, self.dm.dlc_data.num_keypoint*3), np.nan)
@@ -164,17 +165,14 @@ class Frame_View(QtWidgets.QMainWindow):
             plot_config = self.dm.plot_config, frame_cv2 = self.vm.current_frame)
 
     def count_animals_options(self):
-        if not self.vm.get_status():
-            QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
-            return
-        
-        if self.blob_counter:
-            self.blob_counter.show()
+        if self.vm.check_status_msg():  
+            if self.blob_counter:
+                self.blob_counter.show()
 
 ###################################################################################################################################################
 
     def display_current_frame(self):
-        if not self.vm.get_status():
+        if not self.vm.check_status_msg():
             self.vid_play.display.setText("No video loaded")
 
         frame = self.vm.get_frame(self.dm.current_frame_idx)
@@ -240,22 +238,15 @@ class Frame_View(QtWidgets.QMainWindow):
             self.vid_play.sld.set_frame_category("muliple_animal_frames", self.dm.animal_n_list, nvpc[3], priority=3)
         else:
             self.vid_play.sld.set_frame_category("marked_frames", self.dm.frame_list, nvp[1], 1)
-            self.vid_play.sld.set_frame_category("refined_frames", self.dm.refined_frame_list, nvp[2], 2)
+            self.vid_play.sld.set_frame_category("rejected_frames", self.dm.rejected_frame_list, nvp[2], 2)
             self.vid_play.sld.set_frame_category("approved_frames", self.dm.approved_frame_list, nvp[3], 3)
-            self.vid_play.sld.set_frame_category("rejected_frames", self.dm.rejected_frame_list, nvp[4], 4)
+            self.vid_play.sld.set_frame_category("refined_frames", self.dm.refined_frame_list, nvp[4], 4)
             self.vid_play.sld.set_frame_category("labeled_frames", self.dm.labeled_frame_list, nvp[5], 5)
 
     ###################################################################################################################################################
 
-    def _toggle_frame_status(self):
-        if not self.vm.get_status():
-            QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
-            return
-
-        self.dm.toggle_frame_status()
-
     def _change_frame(self, delta, absolute=None):
-        if not self.vm.get_status():
+        if self.vm.get_frame(0) is None:
             return
         if absolute is None:
             new_frame_idx = self.dm.current_frame_idx + delta
@@ -266,20 +257,26 @@ class Frame_View(QtWidgets.QMainWindow):
             self._refresh_and_display()
 
     def _navigate_prev(self):
-        list_to_nav = self.dm.labeled_frame_list if self.navigate_labeled else self.dm.frame_list
+        list_to_nav = self._determine_list_to_nav()
         navigate_to_marked_frame(
             self, list_to_nav, self.dm.current_frame_idx, self._handle_frame_change_from_comp, "prev")
 
     def _navigate_next(self):
-        list_to_nav = self.dm.labeled_frame_list if self.navigate_labeled else self.dm.frame_list
+        list_to_nav = self._determine_list_to_nav()
         navigate_to_marked_frame(
             self, list_to_nav, self.dm.current_frame_idx, self._handle_frame_change_from_comp, "next")
+
+    def _determine_list_to_nav(self):
+        return self.dm.labeled_frame_list if self.navigate_labeled else self.dm.frame_list
+
+    def _toggle_frame_status(self):
+        if self.vm.check_status_msg():
+            self.dm.toggle_frame_status_fview()
 
     ###################################################################################################################################################
 
     def open_plot_config_menu(self):
-        if not self.vm.get_status():
-            QtWidgets.QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
+        if not self.vm.check_status_msg():
             return
         if not self.dm.dlc_data:
             QtWidgets.QMessageBox.warning(self, "No Prediction", "No prediction has been loaded, please load prediction first.")
@@ -296,12 +293,10 @@ class Frame_View(QtWidgets.QMainWindow):
             self.vid_play.set_right_panel_widget(None)
 
     def toggle_mark_gen_menu(self):
-        if not self.vm.get_status():
-            QtWidgets.QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
+        if not self.vm.check_status_msg():
             return
         
         self.open_mark_gen = not self.open_mark_gen
-
         if self.open_mark_gen:
             self.open_config = False
             mark_gen = Mark_Generator(self.dm.total_frames, self.dm.dlc_data, self.dm.canon_pose, parent=self)
@@ -352,10 +347,6 @@ class Frame_View(QtWidgets.QMainWindow):
 
     ###################################################################################################################################################
 
-    def _handle_refined_frames_exported(self, refined_frames):
-        self.dm.refined_frame_list = refined_frames
-        self._refresh_and_display()
-
     def _handle_rerun_frames_exported(self, frame_tuple):
         self.dm.approved_frame_list, self.dm.rejected_frame_list = frame_tuple
         self._refresh_and_display()
@@ -383,8 +374,7 @@ class Frame_View(QtWidgets.QMainWindow):
     ###################################################################################################################################################
 
     def pre_saving_sanity_check(self):
-        if not self.vm.get_status():
-            QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
+        if not self.vm.check_status_msg():
             return False
         if not self.dm.frame_list:
             QMessageBox.warning(self, "No Marked Frame", "No frame has been marked, please mark some frames first.")
@@ -473,12 +463,12 @@ class Frame_View(QtWidgets.QMainWindow):
         self._refresh_ui()
 
     def changeEvent(self, event):
-        if event.type() == QEvent.Type.WindowStateChange and self.vm.get_status():
+        if event.type() == QEvent.Type.WindowStateChange:
             self.display_current_frame()
         super().changeEvent(event)
 
     def closeEvent(self, event: QCloseEvent):
-        if self.vm.get_status():
+        if self.vm.check_status_msg():
             handle_unsaved_changes_on_close(self, event, False, self.save_workspace)
 
 #######################################################################################################################################################
