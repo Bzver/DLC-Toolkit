@@ -4,13 +4,12 @@ import numpy as np
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, QEvent
 from PySide6.QtGui import QShortcut, QKeySequence, QCloseEvent
-from PySide6.QtWidgets import QMessageBox, QFileDialog
+from PySide6.QtWidgets import QMessageBox
 
 import traceback
 
 from utils.helper import handle_unsaved_changes_on_close, frame_to_pixmap
 from core import Data_Manager, Video_Manager
-from core.io import Frame_Extractor
 from core.dataclass import Plot_Config, Nav_Callback
 from core.palette import (
     NAV_COLOR_PALETTE as nvp, NAV_COLOR_PALETTE_COUNTING as nvpc,
