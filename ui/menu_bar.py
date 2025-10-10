@@ -4,7 +4,7 @@ class Menu_Widget(QMenuBar):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-    def add_menu_from_config(self, menu_config):
+    def add_menu_from_config(self, menu_config, clear_menu:bool=True):
         """
         Adds menus and their actions based on a configuration dictionary.
         Args:
@@ -40,6 +40,8 @@ class Menu_Widget(QMenuBar):
                     ]
                 }
         """
+        if clear_menu:
+            self.clear()
         for menu_name, config in menu_config.items():
             display_name = config.get("display_name", menu_name)
             menu = self.addMenu(display_name)
@@ -47,6 +49,25 @@ class Menu_Widget(QMenuBar):
             buttons = config.get("buttons", [])
             for item in buttons:
                 self._add_menu_item(menu, item)
+
+    def append_to_menu(self, menu_title: str, items: list):
+        """
+        Append new items to an existing top-level menu.
+        
+        Args:
+            menu_title (str): Display name of the existing menu (e.g., "View").
+            items (list): List of button definitions (same format as in menu_config).
+                        Each item can be:
+                            - ("Label", callback)
+                            - ("Label", callback, {options})
+                            - {submenu dict...}
+        """
+        menu = self.find_menu_by_title(menu_title)
+        if menu is None:
+            raise ValueError(f"No top-level menu found with title '{menu_title}'")
+        
+        for item in items:
+            self._add_menu_item(menu, item)
 
     def _add_menu_item(self, parent_menu, item):
         """Recursively adds an action or submenu to the given parent menu."""
