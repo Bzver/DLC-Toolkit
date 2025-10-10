@@ -9,8 +9,8 @@ from PySide6.QtWidgets import QMessageBox, QFileDialog
 import traceback
 
 from utils.helper import handle_unsaved_changes_on_close, frame_to_pixmap
+from core import Data_Manager, Video_Manager
 from core.io import Frame_Extractor
-from core.data_man import Data_Manager
 from core.dataclass import Plot_Config, Nav_Callback
 from core.palette import (
     NAV_COLOR_PALETTE as nvp, NAV_COLOR_PALETTE_COUNTING as nvpc,
@@ -30,12 +30,36 @@ class Frame_View(QtWidgets.QMainWindow):
         self.setGeometry(100, 100, 1200, 960)
 
         self.dm = Data_Manager(
-            init_vid_callback = self.initialize_loaded_video,
-            refresh_callback = self._refresh_ui, parent=self)
+            init_vid_callback = self._initialize_loaded_video,
+            refresh_callback = self._refresh_ui, parent = self)
+        self.vm = Video_Manager(parent=self)
 
+        self._setup_menu()
+
+        self.central_widget = QtWidgets.QWidget()
+        self.setCentralWidget(self.central_widget)
+        self.app_layout = QtWidgets.QVBoxLayout(self.central_widget)
+
+        # Video display area
+        nav_callback = Nav_Callback(
+            change_frame_callback = self._change_frame,
+            nav_prev_callback = self._navigate_prev,
+            nav_next_callback = self._navigate_next,
+        )
+        self.vid_play = Video_Player_Widget(
+            slider_callback = self._handle_frame_change_from_comp,
+            nav_callback = nav_callback,
+            parent = self,
+            )
+
+        self.app_layout.addWidget(self.vid_play)
+        self._setup_shortcut()        
+        self.reset_state()
+
+    def _setup_menu(self):
         self.menu_widget = Menu_Widget(self)
         self.setMenuBar(self.menu_widget)
-        extractor_menu_config = {
+        menu_config = {
             "File": {
                 "buttons": [
                     ("Load Video", self.load_video),
@@ -55,7 +79,7 @@ class Frame_View(QtWidgets.QMainWindow):
             },
             "Mark": {
                 "buttons": [
-                    ("Mark / Unmark Current Frame (X)", self.toggle_frame_status),
+                    ("Mark / Unmark Current Frame (X)", self._toggle_frame_status),
                     ("Clear Frame Marks of Category", self.show_clear_mark_dialog),
                     ("Automatic Mark Generation", self.toggle_mark_gen_menu),
                     ("Plot Config Menu", self.open_plot_config_menu),
@@ -79,69 +103,47 @@ class Frame_View(QtWidgets.QMainWindow):
                 ]
             }
         }
-        self.menu_widget.add_menu_from_config(extractor_menu_config)
-
-        self.central_widget = QtWidgets.QWidget()
-        self.setCentralWidget(self.central_widget)
-        self.app_layout = QtWidgets.QVBoxLayout(self.central_widget)
-
-        # Video display area
-        nav_callback = Nav_Callback(
-            change_frame_callback = self._change_frame,
-            nav_prev_callback = self._navigate_prev,
-            nav_next_callback = self._navigate_next,
-        )
-        self.vid_play = Video_Player_Widget(
-            slider_callback = self._handle_frame_change_from_comp,
-            nav_callback = nav_callback,
-            parent = self,
-            )
-
-        self.app_layout.addWidget(self.vid_play)
-        self._setup_shortcut()        
-        self.reset_state()
+        self.menu_widget.add_menu_from_config(menu_config)
 
     def _setup_shortcut(self):
         QShortcut(QKeySequence(Qt.Key_Left | Qt.ShiftModifier), self).activated.connect(lambda: self._change_frame(-10))
         QShortcut(QKeySequence(Qt.Key_Left), self).activated.connect(lambda: self._change_frame(-1))
         QShortcut(QKeySequence(Qt.Key_Right), self).activated.connect(lambda: self._change_frame(1))
         QShortcut(QKeySequence(Qt.Key_Right | Qt.ShiftModifier), self).activated.connect(lambda: self._change_frame(10))
-        QShortcut(QKeySequence(Qt.Key_X), self).activated.connect(self.toggle_frame_status)
+        QShortcut(QKeySequence(Qt.Key_X), self).activated.connect(self._toggle_frame_status)
         QShortcut(QKeySequence(Qt.Key_Up), self).activated.connect(self._navigate_prev)
         QShortcut(QKeySequence(Qt.Key_Down), self).activated.connect(self._navigate_next)
         QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.vid_play.sld.toggle_playback)
         QShortcut(QKeySequence(Qt.Key_S | Qt.ControlModifier), self).activated.connect(self.save_workspace)
 
     def reset_state(self):
+        if self.dm.video_file:
+            self.save_workspace()
         self.dm.reset_dm_vars()
-        self.extractor = None
         self.blob_counter = None
-        self.current_frame = None # Stored local to denote a successful load
         self.vid_play.set_total_frames(0)
 
         self.open_mark_gen, self.open_config = False, False
         self.plot_labeled, self.plot_pred = True, True
         self.navigate_labeled = False
-
         self.is_counting = False
 
     def load_video(self):
-        file_dialog = QFileDialog(self)
-        video_path, _ = file_dialog.getOpenFileName(self, "Load Video", "", "Video Files (*.mp4 *.avi *.mov *.mkv);;All Files (*)")
+        self.reset_state()
+        video_path = self.vm.load_video_dialog()
         if video_path:
-            self.reset_state()
-            self.dm.update_video_path(video_path)
-            self.initialize_loaded_video()
+            self._initialize_loaded_video(video_path)
 
-    def initialize_loaded_video(self):
-        self.extractor = Frame_Extractor(video_path=self.dm.video_file)
-        self.blob_counter = Blob_Counter(frame_extractor=self.extractor, parent=self)
-        self.blob_counter.frame_processed.connect(self._plot_current_frame)
-        self.blob_counter.video_counted.connect(self._handle_counter_from_counter)
-
-        self.dm.total_frames = self.extractor.get_total_frames()
+    def _initialize_loaded_video(self, video_path:str):
+        self.dm.update_video_path(video_path)
+        self.vm.init_extractor(video_path)
+        self.dm.total_frames = self.vm.get_frame_counts()
+        
         self.vid_play.set_total_frames(self.dm.total_frames)
 
+        self.blob_counter = Blob_Counter(frame_extractor=self.vm.extractor, parent=self)
+        self.blob_counter.frame_processed.connect(self._plot_current_frame)
+        self.blob_counter.video_counted.connect(self._handle_counter_from_counter)
         if self.is_counting:
             self.vid_play.set_left_panel_widget(self.blob_counter)
 
@@ -149,26 +151,21 @@ class Frame_View(QtWidgets.QMainWindow):
         print(f"Video loaded: {self.dm.video_file}")
 
     def load_prediction(self):
-        if self.current_frame is None:
+        if not self.vm.get_status():
             QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
             return
-        
-        self.dm.pred_file_dialog()
-        self.display_current_frame()
 
-    def load_workspace(self):
-        self.reset_state()
-        self.dm.load_workspace()
+        self.dm.pred_file_dialog()
         self.display_current_frame()
 
     def initialize_plotter(self):
         current_frame_data = np.full((self.dm.dlc_data.instance_count, self.dm.dlc_data.num_keypoint*3), np.nan)
         self.plotter = Prediction_Plotter(
             dlc_data = self.dm.dlc_data, current_frame_data = current_frame_data,
-            plot_config = self.dm.plot_config, frame_cv2 = self.current_frame)
+            plot_config = self.dm.plot_config, frame_cv2 = self.vm.current_frame)
 
     def count_animals_options(self):
-        if self.current_frame is None or self.extractor is None:
+        if not self.vm.get_status():
             QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
             return
         
@@ -178,17 +175,16 @@ class Frame_View(QtWidgets.QMainWindow):
 ###################################################################################################################################################
 
     def display_current_frame(self):
-        if not self.extractor:
+        if not self.vm.get_status():
             self.vid_play.display.setText("No video loaded")
 
-        frame = self.extractor.get_frame(self.dm.current_frame_idx)
+        frame = self.vm.get_frame(self.dm.current_frame_idx)
         if frame is None:
             self.vid_play.display.setText("Failed to load current frame.")
             return
         
-        self.current_frame = frame
         if self.is_counting:
-            self.blob_counter.set_current_frame(frame=frame)
+            self.blob_counter.set_current_frame(frame)
         else:
             self._plot_current_frame(frame)
 
@@ -210,7 +206,7 @@ class Frame_View(QtWidgets.QMainWindow):
                 frame = self.plotter.plot_predictions()
                 self.plotter.color = old_colors
 
-        pixmap = frame_to_pixmap(frame)
+        pixmap, _, _ = frame_to_pixmap(frame)
 
         # Scale pixmap to fit label
         scaled_pixmap = pixmap.scaled(self.vid_play.display.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
@@ -229,13 +225,10 @@ class Frame_View(QtWidgets.QMainWindow):
         self._refresh_slider()
 
     def _navigation_title_controller(self):
-        title_text = f"Video Navigation | Video: {self.dm.video_name}"
-        if self.dm.frame_list:
-            title_text += f" | Marked Frame Count: {len(self.dm.frame_list)}"
+        title_text = self.dm.get_title_text()
         self.vid_play.nav.setTitle(title_text)
         
         color = self.dm.determine_nav_color_counting() if self.is_counting else self.dm.determine_nav_color_fview()
-  
         if color:
             self.vid_play.nav.setTitleColor(color)
         else:
@@ -255,22 +248,20 @@ class Frame_View(QtWidgets.QMainWindow):
 
     ###################################################################################################################################################
 
-    def toggle_frame_status(self):
-        if self.current_frame is None:
+    def _toggle_frame_status(self):
+        if not self.vm.get_status():
             QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
             return
 
         self.dm.toggle_frame_status()
 
     def _change_frame(self, delta, absolute=None):
-        if not self.extractor:
+        if not self.vm.get_status():
             return
-        
         if absolute is None:
             new_frame_idx = self.dm.current_frame_idx + delta
         else:
             new_frame_idx = absolute
-
         if 0 <= new_frame_idx < self.dm.total_frames:
             self.dm.current_frame_idx = new_frame_idx
             self._refresh_and_display()
@@ -288,7 +279,7 @@ class Frame_View(QtWidgets.QMainWindow):
     ###################################################################################################################################################
 
     def open_plot_config_menu(self):
-        if self.current_frame is None:
+        if not self.vm.get_status():
             QtWidgets.QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
             return
         if not self.dm.dlc_data:
@@ -306,7 +297,7 @@ class Frame_View(QtWidgets.QMainWindow):
             self.vid_play.set_right_panel_widget(None)
 
     def toggle_mark_gen_menu(self):
-        if self.current_frame is None:
+        if not self.vm.get_status():
             QtWidgets.QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
             return
         
@@ -348,12 +339,10 @@ class Frame_View(QtWidgets.QMainWindow):
 
     def _toggle_animal_counting(self):
         self.is_counting = not self.is_counting
-        
         if self.is_counting:
             self.vid_play.set_left_panel_widget(self.blob_counter)
         else:
             self.vid_play.set_left_panel_widget(None)
-
         self.display_current_frame()
 
     def _clear_category(self, frame_category):
@@ -395,7 +384,7 @@ class Frame_View(QtWidgets.QMainWindow):
     ###################################################################################################################################################
 
     def pre_saving_sanity_check(self):
-        if self.current_frame is None:
+        if not self.vm.get_status():
             QMessageBox.warning(self, "No Video", "No video has been loaded, please load a video first.")
             return False
         if not self.dm.frame_list:
@@ -403,8 +392,15 @@ class Frame_View(QtWidgets.QMainWindow):
             return False
         return True
 
+    def load_workspace(self):
+        self.reset_state()
+        self.dm.load_workspace()
+        self.display_current_frame()
+
     def save_workspace(self):
-        self.dm.save_workspace()
+        if self.dm.video_file:
+            self.statusBar().showMessage(f"Workspace Saved to {self.dm.video_file}")
+            self.dm.save_workspace()
 
     def call_labeler(self, track_only=False):
         pass
@@ -478,12 +474,13 @@ class Frame_View(QtWidgets.QMainWindow):
         self._refresh_ui()
 
     def changeEvent(self, event):
-        if event.type() == QEvent.Type.WindowStateChange and self.extractor:
+        if event.type() == QEvent.Type.WindowStateChange and self.vm.get_status():
             self.display_current_frame()
         super().changeEvent(event)
 
     def closeEvent(self, event: QCloseEvent):
-        handle_unsaved_changes_on_close(self, event, False, self.save_workspace)
+        if self.vm.get_status():
+            handle_unsaved_changes_on_close(self, event, False, self.save_workspace)
 
 #######################################################################################################################################################
 

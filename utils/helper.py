@@ -319,4 +319,4 @@ def frame_to_pixmap(frame):
     bytes_per_line = ch * w
     qt_image = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
     pixmap = QtGui.QPixmap.fromImage(qt_image)
-    return pixmap
+    return pixmap, w, h

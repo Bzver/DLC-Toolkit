@@ -3,48 +3,57 @@ import pickle
 import yaml
 import numpy as np
 
-from PySide6.QtWidgets import QMessageBox, QFileDialog
+from PySide6.QtWidgets import QMessageBox, QFileDialog, QDialog
 
 from typing import Callable, Literal, List, Optional
 
-from utils.helper import infer_head_tail_indices
+from utils.helper import infer_head_tail_indices, build_angle_map
 from utils.pose import calculate_canonical_pose
-from .palette import NAV_COLOR_PALETTE as nvp, NAV_COLOR_PALETTE_COUNTING as nvpc
+from .palette import (
+    NAV_COLOR_PALETTE as nvp, NAV_COLOR_PALETTE_COUNTING as nvpc,
+    NAV_COLOR_PALETTE_FLAB as nvpl)
 from .io import (
     Prediction_Loader, Exporter,
     remove_confidence_score, append_new_video_to_dlc_config
 )
+from ui import Head_Tail_Dialog
 from .dataclass import Plot_Config, Loaded_DLC_Data, Export_Settings
 
 class Data_Manager:
     HexColor = str
 
     def __init__(self, 
-                init_vid_callback:Callable[[], None],
+                init_vid_callback:Callable[[str], None],
                 refresh_callback:Callable[[], None],
                 parent=None):
         self.main = parent
         self.init_vid_callback = init_vid_callback
         self.refresh_callback = refresh_callback
-
         self.reset_dm_vars()
 
     def reset_dm_vars(self):
-        self.total_frames = 0
-        self.current_frame_idx = 0
+        # Shared
+        self.total_frames, self.current_frame_idx  = 0, 0
 
         self.video_file, self.video_name, self.project_dir = None, None, None
         self.dlc_data, self.canon_pose = None, None
 
-        self.labeled_frame_list, self.frame_list = [], []
-        self.refined_frame_list, self.approved_frame_list, self.rejected_frame_list = [], [], []
-        self.animal_0_list, self.animal_1_list, self.animal_n_list = [], [], []
-
-        self.label_data_array = None
-
+        self.refined_frame_list, self.frame_list = [], []
         self.plot_config = Plot_Config(
             plot_opacity =1.0, point_size = 6.0, confidence_cutoff = 0.0, hide_text_labels = False, edit_mode = False)
+        
+        # fview only
         self.blob_config = None
+        self.labeled_frame_list, self.approved_frame_list, self.rejected_frame_list = [], [], []
+        self.animal_0_list, self.animal_1_list, self.animal_n_list = [], [], []
+        self.label_data_array, self.inst_count_per_frame_vid = None, None
+
+        # flabel only
+        self.prediction = None  # To track modified prediction file
+        self.angle_map_data = None
+        self.inst_count_per_frame_pred = None
+
+        self.roi_frame_list, self.marked_roi_frame_list, self.refined_roi_frame_list = [], [], []
 
     def update_video_path(self, video_path:str):
         self.video_file = video_path
@@ -58,49 +67,31 @@ class Data_Manager:
 
         prediction_filename = str(os.path.basename(prediction_path))
         if prediction_filename.startswith("CollectedData_"):
-            is_label_data = True
-            QMessageBox.information(self.main, "Labeled Data Selected", "Labeled data selected, now loading DLC config.")
+            if self.dlc_data:
+                self._process_labeled_frame()
+            else:
+                self.load_dlc_label()   
         else:
-            is_label_data = False
             QMessageBox.information(self.main, "Prediction Selected", "Prediction selected, now loading DLC config.")
-
-        dlc_config = self.config_file_dialog()
-        if dlc_config:
-            self.load_pred_to_dm(dlc_config, prediction_path, is_label_data)
+            dlc_config = self.config_file_dialog()
+            if dlc_config:
+                self.load_pred_to_dm(dlc_config, prediction_path)
 
     def config_file_dialog(self) -> Optional[str]:
         file_dialog = QFileDialog(self.main)
         dlc_config, _ = file_dialog.getOpenFileName(self.main, "Select DLC Config", "", "YAML Files (config.yaml);;All Files (*)")
         return dlc_config
 
-    def load_pred_to_dm(self, dlc_config:Loaded_DLC_Data, prediction_path:str, is_label_data:bool=False):
-        data_loader = Prediction_Loader(dlc_config, prediction_path)
+    def load_pred_to_dm(self, dlc_config:Loaded_DLC_Data, prediction_path:str):
+        data_loader = Prediction_Loader(dlc_config, prediction_path)           
 
-        if is_label_data:
-            if not self.dlc_data:
-                try:
-                    self.dlc_data = data_loader.load_data(metadata_only=True)
-                except Exception as e:
-                    QMessageBox.critical(self.main, "Error Loading Prediction",
-                                         f"Unexpected error during prediction loading: {e}.")
-                
-                self.dlc_data.pred_data_array = np.full(
-                    (self.total_frames, self.dlc_data.instance_count, self.dlc_data.num_keypoint*3),
-                    np.nan)
-                
-                self.dlc_data.pred_frame_count = self.total_frames
-                self.dlc_data.prediction_filepath = prediction_path
+        try:
+            self.dlc_data = data_loader.load_data()
+        except Exception as e:
+            QMessageBox.critical(self.main, "Error Loading Prediction",
+                                    f"Unexpected error during prediction loading: {e}.")
 
-            self.process_labeled_frame(prediction_path)
-        else:
-            try:
-                self.dlc_data = data_loader.load_data()
-            except Exception as e:
-                QMessageBox.critical(self.main, "Error Loading Prediction",
-                                     f"Unexpected error during prediction loading: {e}.")
-            self.process_labeled_frame()
-
-        self._init_canon_pose()
+        self._init_loaded_data()
 
     def load_metadata_to_dm(self, dlc_config:Loaded_DLC_Data):
         data_loader = Prediction_Loader(dlc_config)
@@ -111,44 +102,45 @@ class Data_Manager:
             QMessageBox.critical(self.main, "Error Loading DLC Config",
                                     f"Unexpected error during DLC Config loading: {e}.")
 
+    def load_dlc_label(self, image_folder:str, prediction_path:Optional[str]=None):
+        """Load DLC Label without a preexisting prediction"""
+        if not prediction_path:
+            h5_candidates = [f for f in os.listdir(image_folder) if f.startswith("CollectedData_") and f.endswith(".h5")]
+            if not h5_candidates:
+                QMessageBox.warning(self.main, "No H5 File", "No 'CollectedData_*.h5' file found in the selected folder.")
+                return
+            prediction_path = os.path.join(image_folder, h5_candidates[0])
+
+        self.prediction = prediction_path
+        dlc_dir = os.path.dirname(os.path.dirname(image_folder))
+        dlc_config = os.path.join(dlc_dir, "config.yaml")
+
+        # Set video file to folder path (for naming)
+        self.video_file = image_folder
+        self.video_name = os.path.basename(image_folder)
+
+        data_loader = Prediction_Loader(dlc_config, prediction_path)
+        try:
+            self.dlc_data = data_loader.load_data(force_load_pred=True)
+            self.pred_data_array = self.dlc_data.pred_data_array
+        except Exception as e:
+            QMessageBox.critical(self.main, "Error Loading Prediction", f"Failed to load prediction: {e}")
+            return
+      
+        self._init_loaded_data()
+        self.refresh_callback()
+
+    def _init_loaded_data(self):
+        self.prediction = self.dlc_data.prediction_filepath
+        self.pred_data_array = self.dlc_data.pred_data_array
+        self._process_labeled_frame()
+        self._init_canon_pose()
+
     def reload_pred_to_dm(self, prediction_path:str):
         data_loader = Prediction_Loader(self.dlc_data.dlc_config_filepath, prediction_path)
         self.dlc_data = data_loader.load_data()
         self.approved_frame_list[:] = list(set(self.approved_frame_list) - set(self.refined_frame_list))
         self.rejected_frame_list[:] = list(set(self.rejected_frame_list) - set(self.refined_frame_list))
-
-    def process_labeled_frame(self, lbf:str=None):
-        if lbf is None:
-            dlc_dir = os.path.dirname(self.dlc_data.dlc_config_filepath)
-            self.project_dir = os.path.join(dlc_dir, "labeled-data", self.video_name)
-
-            if not os.path.isdir(self.project_dir):
-                return
-        
-            scorer = self.dlc_data.scorer
-            label_data_filename = f"CollectedData_{scorer}.h5"
-            label_data_filepath = os.path.join(self.project_dir, label_data_filename)
-        else:
-            label_data_filepath = lbf
-            self.project_dir = os.path.dirname(lbf)
-
-        self.label_data_array = np.full_like(self.dlc_data.pred_data_array, np.nan)
-
-        data_loader = Prediction_Loader(self.dlc_data.dlc_config_filepath, label_data_filepath)
-        label_data = data_loader.load_data()
-        label_array = label_data.pred_data_array
-        self.label_data_array[range(label_array.shape[0])] = label_array
-
-        self.labeled_frame_list = np.where(
-            np.any(~np.isnan(self.label_data_array), axis=(1, 2))
-            )[0].tolist()
-
-        self.frame_list = list(set(self.frame_list) - set(self.labeled_frame_list))
-        self.refined_frame_list = list(set(self.refined_frame_list) - set(self.labeled_frame_list))
-        self.approved_frame_list = list(set(self.approved_frame_list) - set(self.labeled_frame_list))
-        self.rejected_frame_list = list(set(self.rejected_frame_list) - set(self.labeled_frame_list))
-        self.frame_list.sort()
-        self.refresh_callback()
 
     ###################################################################################################################################################
 
@@ -273,6 +265,13 @@ class Data_Manager:
         ]
         return nvpc[self._get_max_priority(frame_lists, range(1, 4))]
 
+    def determine_nav_color_flabel(self) -> HexColor:
+        frame_lists = [
+            self.roi_frame_list,
+            self.refined_roi_frame_list
+        ]
+        return nvpl[self._get_max_priority(frame_lists, range(1, 3))]
+
     def _get_max_priority(self, frame_lists:List[List[int]], priorities:range) -> int:
         """Get the highest priority for current frame."""
         color_code = 0
@@ -281,30 +280,70 @@ class Data_Manager:
                 color_code = max(color_code, priority)
         return color_code
 
+    def get_title_text(self, labeler:bool=False, kp_edit:bool=False):
+        title_text = f"Video Navigation | Video: {self.video_name}"
+        if labeler:
+            if self.refined_roi_frame_list and self.marked_roi_frame_list:
+                title_text += f"Manual Refining Progress: {len(self.refined_roi_frame_list)} \
+                    / {len(self.marked_roi_frame_list)} Frames Refined"
+            if kp_edit and self.current_frame_idx:
+                title_text += " ----- KEYPOINTS EDITING MODE ----- "
+        elif self.frame_list:
+            title_text += f" | Marked Frame Count: {len(self.frame_list)}"
+            
+        return title_text
+
     ###################################################################################################################################################
+
+    def _process_labeled_frame(self, label_file:str=None):
+        """Load labeled frames as an separate overlay to the current prediction file."""
+        if label_file is None:
+            dlc_dir = os.path.dirname(self.dlc_data.dlc_config_filepath)
+            self.project_dir = os.path.join(dlc_dir, "labeled-data", self.video_name)
+
+            if not os.path.isdir(self.project_dir):
+                return
         
+            scorer = self.dlc_data.scorer
+            label_data_filename = f"CollectedData_{scorer}.h5"
+            label_data_filepath = os.path.join(self.project_dir, label_data_filename)
+        else:
+            label_data_filepath = label_file
+            self.project_dir = os.path.dirname(label_file)
+
+        self.label_data_array = np.full_like(self.dlc_data.pred_data_array, np.nan)
+
+        data_loader = Prediction_Loader(self.dlc_data.dlc_config_filepath, label_data_filepath)
+        label_data = data_loader.load_data()
+        label_array = label_data.pred_data_array
+        self.label_data_array[range(label_array.shape[0])] = label_array
+
+        self.labeled_frame_list = np.where(
+            np.any(~np.isnan(self.label_data_array), axis=(1, 2))
+            )[0].tolist()
+
+        self.frame_list = list(set(self.frame_list) - set(self.labeled_frame_list))
+        self.refined_frame_list = list(set(self.refined_frame_list) - set(self.labeled_frame_list))
+        self.approved_frame_list = list(set(self.approved_frame_list) - set(self.labeled_frame_list))
+        self.rejected_frame_list = list(set(self.rejected_frame_list) - set(self.labeled_frame_list))
+        self.frame_list.sort()
+        self.refresh_callback()
+
     def _init_canon_pose(self):
         head_idx, tail_idx = infer_head_tail_indices(self.dlc_data.keypoints)
-        if head_idx is None or tail_idx is None:
-            return
-        if np.all(np.isnan(self.dlc_data.pred_data_array)) and self.label_data_array is None:
-            return
 
-        if not np.all(np.isnan(self.dlc_data.pred_data_array)):
-            canon_pred_to_use = self.dlc_data.pred_data_array
-        else:
-            canon_pred_to_use = self.label_data_array
-        
-        self.canon_pose, _ = calculate_canonical_pose(canon_pred_to_use, head_idx, tail_idx)
+        if head_idx is None or tail_idx is None:
+            dialog = Head_Tail_Dialog(self.dlc_data.keypoints, self)
+            if dialog.exec() == QDialog.Accepted:
+                head_idx, tail_idx = dialog.get_selected_indices()
+
+        self.canon_pose, all_frame_pose = calculate_canonical_pose(self.dlc_data.pred_data_array, head_idx, tail_idx)
+        self.angle_map_data = build_angle_map(self.canon_pose, all_frame_pose, head_idx, tail_idx)
 
     ###################################################################################################################################################
 
     def save_workspace(self):
         """Save the current workspace state (all vars from reset_dm_vars) to a pickle file."""
-        if not self.video_file:
-            QMessageBox.warning(self.main, "No Video Loaded", "Please load a video before saving the workspace.")
-            return
-
         default_name = f"{self.video_name}_workspace.pkl"
         file_path = os.path.join(os.path.dirname(self.video_file), default_name)
 
@@ -372,7 +411,7 @@ class Data_Manager:
             self.plot_config = workspace_state.get('plot_config')
             self.blob_config = workspace_state.get('blob_config')
 
-            self.init_vid_callback()
+            self.init_vid_callback(self.video_file)
             self.refresh_callback()
             QMessageBox.information(self.main, "Success", "Workspace loaded successfully.")
         except Exception as e:
@@ -393,7 +432,7 @@ class Data_Manager:
             return
         
         self.update_video_path(video_file)
-        self.init_vid_callback()
+        self.init_vid_callback(video_file)
 
         dlc_config = fmk["dlc_config"]
         prediction = fmk["prediction"]
@@ -409,7 +448,8 @@ class Data_Manager:
         if "rejected_frame_list" in fmk.keys():
             self.rejected_frame_list = fmk["rejected_frame_list"]
             
-        self.process_labeled_frame()
+        self._process_labeled_frame()
+        self.init_vid_callback(self.video_file)
         self.refresh_callback()
 
     ###################################################################################################################################################
@@ -439,7 +479,7 @@ class Data_Manager:
             append_new_video_to_dlc_config(self.dlc_data.dlc_config_filepath, self.video_name)
 
             if exp_set.export_mode == "Merge":
-                self.process_labeled_frame()
+                self._process_labeled_frame()
         else:
             reply = QMessageBox.question(
                 self.main,
@@ -484,7 +524,7 @@ class Data_Manager:
             except Exception as e:
                 QMessageBox.critical(self, "Error Merge Data", f"Error merging data to DLC: {e}")
 
-            self.process_labeled_frame()
+            self._process_labeled_frame()
 
     def save_to_dlc_frame_only(self, exporter:Exporter):
         QMessageBox.information(self.main, "Frame Only Mode", "Choose the directory of DLC project.")

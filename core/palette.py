@@ -15,4 +15,10 @@ NAV_COLOR_PALETTE_COUNTING = {
     3: "#ff00bf",  # Violet
 }
 
+NAV_COLOR_PALETTE_FLAB = {
+    0: None,
+    1: "#FF1100",  # Red
+    2: "#009979",  # Teal
+}
+
 LABEL_INST_PALETTE = [(200, 130, 0), (40, 200, 40), (40, 120, 200), (200, 40, 40), (200, 200, 80)]
