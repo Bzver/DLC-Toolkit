@@ -13,7 +13,7 @@ from .dialog import (
 
 from .video_slider import Slider_With_Marks, Video_Slider_Widget
 from .video_player import Video_Player_Widget, Nav_Widget
-from .menu_bar import Menu_Widget
+from .menu_shortcut import Menu_Widget, Shortcut_Manager
 
 __all__ = (
     Slider_With_Marks,
@@ -25,6 +25,7 @@ __all__ = (
     Head_Tail_Dialog,
     Progress_Indicator_Dialog,
     Menu_Widget,
+    Shortcut_Manager,
     Video_Slider_Widget,
     Video_Player_Widget,
     Nav_Widget,

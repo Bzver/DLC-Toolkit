@@ -32,7 +32,7 @@ class Data_Manager:
         self.refresh_callback = refresh_callback
         self.reset_dm_vars()
 
-    def reset_dm_vars(self):
+    def reset_dm(self):
         # Shared
         self.total_frames, self.current_frame_idx  = 0, 0
 

@@ -26,7 +26,7 @@ class Keypoint_Edit_Manager:
         self.edit_callback = edit_callback
         self.reset_kem_vars()
 
-    def reset_kem_vars(self):
+    def reset_kem(self):
         self.total_frames = 0
         self.pred_data_array = None
         self.current_prediction_file = None
@@ -41,10 +41,11 @@ class Keypoint_Edit_Manager:
         return self.pred_data_array[frame_idx, :, :].copy()
 
     def check_pred_data(self):
-        if self.pred_data_array is None:
+        if self.pred_data_array is not None:
+            return True
+        else:
             QMessageBox.warning(self.main, "Error", "Prediction data not loaded. Please load a prediction file first.")
             return False
-        return True
 
     ##############################################################################################
 

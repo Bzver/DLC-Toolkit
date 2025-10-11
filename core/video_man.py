@@ -33,6 +33,11 @@ class Video_Manager:
     def load_img_from_folder(self, image_folder):
         img_exts = ('.png', '.jpg')
         self.image_files = sorted([f for f in os.listdir(image_folder) if f.lower().endswith(img_exts) and f.startswith("img")])
+        if not self.vm.image_files:
+            return True
+        else:
+            QMessageBox.warning(self.main, "No Images", "No image files found in the selected folder.")
+            return False
 
     def init_extractor(self, video_path:str):
         self.video_file = video_path
@@ -58,10 +63,11 @@ class Video_Manager:
         return self.current_frame is not None
 
     def check_status_msg(self) -> bool:
-        if self.current_frame is None and not self.get_extractor_status():
+        if self.current_frame is not None or self.get_extractor_status():
+            return True
+        else:
             QMessageBox.warning(self.main, "No Video", "No video has been loaded, please load a video first.")
             return False
-        return True
 
     def get_frame_counts(self) -> int:
         return self.extractor.get_total_frames()
