@@ -24,7 +24,7 @@ class Keypoint_Edit_Manager:
     def __init__(self, edit_callback:Callable[[], None], parent=None):
         self.main = parent
         self.edit_callback = edit_callback
-        self.reset_kem_vars()
+        self.reset_kem()
 
     def reset_kem(self):
         self.total_frames = 0

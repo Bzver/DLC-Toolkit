@@ -30,7 +30,7 @@ class Data_Manager:
         self.main = parent
         self.init_vid_callback = init_vid_callback
         self.refresh_callback = refresh_callback
-        self.reset_dm_vars()
+        self.reset_dm()
 
     def reset_dm(self):
         # Shared
