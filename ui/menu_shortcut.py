@@ -1,7 +1,8 @@
-from PySide6.QtWidgets import QMenuBar
+from PySide6.QtWidgets import QMenuBar, QWidget
+from PySide6.QtGui import QShortcut, QKeySequence
 
 class Menu_Widget(QMenuBar):
-    def __init__(self, parent=None):
+    def __init__(self, parent:QWidget=None):
         super().__init__(parent)
 
     def add_menu_from_config(self, menu_config, clear_menu:bool=True):
@@ -101,3 +102,72 @@ class Menu_Widget(QMenuBar):
                     action.setChecked(options.get("checked", False))
         else:
             raise ValueError("Menu item must be a tuple or dict (submenu)")
+
+class Shortcut_Manager:
+    def __init__(self, parent: QWidget):
+        """
+        Manages keyboard shortcuts for a widget.
+        
+        Args:
+            parent (QWidget): The widget that will be the parent/context for shortcuts.
+        """
+        self.parent = parent
+        self._shortcuts = {}
+
+    def add_shortcuts_from_config(self, shortcut_config, clear_first: bool = True):
+        """
+        Adds shortcuts from a configuration dict.
+        
+        Args:
+            shortcut_config (dict): Mapping of shortcut names to config.
+                Format:
+                {
+                    "prev_frame_fast": {
+                        "key": "Shift+Left",
+                        "callback": lambda: self._change_frame(-10)
+                    },
+                    "toggle_play": {
+                        "key": "Space",
+                        "callback": self.vid_play.sld.toggle_playback
+                    },
+                    "save": {
+                        "key": "Ctrl+S",
+                        "callback": self.save_file
+                    }
+                }
+            clear_first (bool): If True, removes all existing managed shortcuts.
+        """
+        if clear_first:
+            self.clear()
+
+        for name, config in shortcut_config.items():
+            key = config["key"]
+            callback = config["callback"]
+
+            shortcut = QShortcut(self._parse_shortcut(key), self.parent)
+            shortcut.activated.connect(callback)
+            self._shortcuts[name] = shortcut
+
+    def clear(self):
+        """Remove and delete all managed shortcuts."""
+        for shortcut in self._shortcuts.values():
+            shortcut.deleteLater()
+        self._shortcuts.clear()
+
+    def remove_shortcut(self, name:str):
+        """Remove a specific shortcut by name."""
+        if name in self._shortcuts:
+            self._shortcuts[name].deleteLater()
+            del self._shortcuts[name]
+
+    def add_shortcut(self, name: str, key, callback):
+        """Add a single shortcut by name."""
+        shortcut = QShortcut(QKeySequence(key), self.parent)
+        shortcut.activated.connect(callback)
+        self._shortcuts[name] = shortcut
+
+    def _parse_shortcut(self, key) -> QKeySequence:
+        seq = QKeySequence(key)
+        if seq.isEmpty():
+            raise ValueError(f"Invalid key sequence: {key!r}")
+        return seq
