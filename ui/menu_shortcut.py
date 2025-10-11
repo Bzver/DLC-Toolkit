@@ -154,6 +154,10 @@ class Shortcut_Manager:
             shortcut.deleteLater()
         self._shortcuts.clear()
 
+    def set_enabled(self, enabled: bool):
+        for sc in self._shortcuts.values():
+            sc.setEnabled(enabled)
+
     def remove_shortcut(self, name:str):
         """Remove a specific shortcut by name."""
         if name in self._shortcuts:
