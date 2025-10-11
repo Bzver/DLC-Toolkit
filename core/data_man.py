@@ -398,6 +398,11 @@ class Data_Manager:
             'label_data_array': self.label_data_array,
             'plot_config': self.plot_config,
             'blob_config': self.blob_config,
+            'prediction': self.prediction,
+            'angle_map_data': self.angle_map_data,
+            'inst_count_per_frame_pred': self.inst_count_per_frame_pred,
+            'roi_frame_list': self.roi_frame_list,
+            'outlier_frame_list': self.outlier_frame_list,
         }
 
         try:
@@ -442,6 +447,11 @@ class Data_Manager:
             self.label_data_array = workspace_state.get('label_data_array')
             self.plot_config = workspace_state.get('plot_config')
             self.blob_config = workspace_state.get('blob_config')
+            self.prediction = workspace_state.get('prediction')
+            self.angle_map_data = workspace_state.get('angle_map_data')
+            self.inst_count_per_frame_pred = workspace_state.get('inst_count_per_frame_pred')
+            self.roi_frame_list = workspace_state.get('roi_frame_list', [])
+            self.outlier_frame_list = workspace_state.get('outlier_frame_list', [])
 
             self.init_vid_callback(self.video_file)
             self._init_loaded_data()
