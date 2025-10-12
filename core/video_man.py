@@ -49,7 +49,9 @@ class Video_Manager:
         if self.get_extractor_status():
             return self.get_frame_extractor(frame_idx)
 
-    def get_frame_extractor(self, frame_idx:int) -> NDArray:
+    def get_frame_extractor(self, frame_idx:int) -> Optional[NDArray]:
+        if not self.extractor:
+            return None
         self.current_frame = self.extractor.get_frame(frame_idx)
         return self.current_frame
 
