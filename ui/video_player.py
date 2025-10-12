@@ -20,18 +20,19 @@ class Video_Player_Widget(QtWidgets.QWidget):
         self.vid_layout = QVBoxLayout(self)
         self.video_side_panel_layout = QHBoxLayout()
         self.video_left_panel_widget = QtWidgets.QWidget()
-        self.video_left_panel_widget.setVisible(False)  # Hidden by default
+        self.video_left_panel_widget.setVisible(False)
         self.video_left_panel_layout = QVBoxLayout(self.video_left_panel_widget)
         self.video_left_panel_layout.setContentsMargins(0, 0, 0, 0)
 
         self.video_right_panel_widget = QtWidgets.QWidget()
-        self.video_right_panel_widget.setVisible(False)  # Hidden by default
+        self.video_right_panel_widget.setVisible(False)
         self.video_right_panel_layout = QVBoxLayout(self.video_right_panel_widget)
         self.video_right_panel_layout.setContentsMargins(0, 0, 0, 0)
 
         self.video_display = QVBoxLayout()
+        self.display_stack = QtWidgets.QStackedWidget()
+        self.video_display.addWidget(self.display_stack, 1)
         self._setup_display()
-        self.video_display.addWidget(self.display, 1)
 
         self._setup_slider()
 
@@ -40,7 +41,7 @@ class Video_Player_Widget(QtWidgets.QWidget):
         self.video_side_panel_layout.addWidget(self.video_right_panel_widget)
 
         self.video_bottom_panel_widget = QtWidgets.QWidget()
-        self.video_bottom_panel_widget.setVisible(False)  # Hidden by default
+        self.video_bottom_panel_widget.setVisible(False)
         self.video_bottom_panel_layout = QVBoxLayout(self.video_bottom_panel_widget)
         self.video_bottom_panel_layout.setContentsMargins(0, 0, 0, 0)
 
@@ -86,15 +87,19 @@ class Video_Player_Widget(QtWidgets.QWidget):
             self.video_bottom_panel_widget.setVisible(False)
 
     def swap_display_for_graphics_view(self, graphics_view:QtWidgets.QWidget):
-        self.clear_layout(self.video_display)
-        self.video_display.addWidget(graphics_view)
-        self._setup_slider()
+        """Switch display to Graphics_View mode (labeler)."""
+        if self.display_stack.count() > 1:
+            old_widget = self.display_stack.widget(1)
+            if old_widget != graphics_view:
+                self.display_stack.removeWidget(old_widget)
+                old_widget.deleteLater()
 
-    def swap_back_to_display(self):
-        self.clear_layout(self.video_display)
-        self._setup_display()
-        self.video_display.addWidget(self.display)
-        self._setup_slider()
+        self.display_stack.insertWidget(1, graphics_view)
+        self.display_stack.setCurrentIndex(1)
+
+    def swap_display_for_label(self):
+        """Switch back to QLabel mode (viewer)."""
+        self.display_stack.setCurrentIndex(0)
 
     def clear_layout(self, layout: QGridLayout | QHBoxLayout | QVBoxLayout):
         while layout.count():
@@ -114,6 +119,9 @@ class Video_Player_Widget(QtWidgets.QWidget):
         self.display.setAlignment(Qt.AlignCenter)
         self.display.setStyleSheet("background-color: black; color: white;")
         self.display.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        
+        self.display_stack.addWidget(self.display)
+        self.display_stack.setCurrentWidget(self.display)
 
     def _setup_slider(self):
         self.sld = Video_Slider_Widget()

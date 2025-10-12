@@ -5,14 +5,13 @@ class Menu_Widget(QMenuBar):
     def __init__(self, parent:QWidget=None):
         super().__init__(parent)
 
-    def add_menu_from_config(self, menu_config, clear_menu:bool=True):
+    def add_menu_from_config(self, menu_config):
         """
         Adds menus and their actions based on a configuration dictionary.
         Args:
             menu_config (dict): A dictionary defining the menu structure.
             Example:
                 "File": {
-                    "display_name": "File",
                     "buttons": [
                         ("Load Video", load_video_function),
                         {
@@ -34,18 +33,14 @@ class Menu_Widget(QMenuBar):
                     ]
                 },
                 "View": {
-                    "display_name": "View",
                     "buttons": [
                         ("Show Axis", lambda: print("Toggle axis"), {"checkable": True, "checked": True}),
                         ("Fullscreen", lambda: print("Fullscreen"), {})
                     ]
                 }
         """
-        if clear_menu:
-            self.clear()
         for menu_name, config in menu_config.items():
-            display_name = config.get("display_name", menu_name)
-            menu = self.addMenu(display_name)
+            menu = self.addMenu(menu_name)
 
             buttons = config.get("buttons", [])
             for item in buttons:
@@ -63,17 +58,27 @@ class Menu_Widget(QMenuBar):
                             - ("Label", callback, {options})
                             - {submenu dict...}
         """
-        menu = self.find_menu_by_title(menu_title)
+        menu = self._find_menu_by_title(menu_title)
         if menu is None:
             raise ValueError(f"No top-level menu found with title '{menu_title}'")
         
         for item in items:
             self._add_menu_item(menu, item)
 
+    def remove_entire_menu(self, menu_title: str):
+        """Remove a top-level menu by its exact display title."""
+        for action in self.actions():
+            try:
+                if action.menu() and action.text() == menu_title:
+                    self.removeAction(action)
+                    action.menu().deleteLater()
+                    return
+            except RuntimeError:
+                continue
+
     def _add_menu_item(self, parent_menu, item):
         """Recursively adds an action or submenu to the given parent menu."""
         if isinstance(item, dict):
-            # It's a submenu
             submenu_key = item.get("submenu")
             if not submenu_key:
                 raise ValueError("Submenu dictionary must have 'submenu' key")
@@ -92,7 +97,6 @@ class Menu_Widget(QMenuBar):
                 action_text, action_func, options = item
             else:
                 raise ValueError("Menu item must be tuple of length 2 (text, func) or 3 (text, func, options)")
-
             action = parent_menu.addAction(action_text)
             action.triggered.connect(action_func)
 
@@ -102,6 +106,14 @@ class Menu_Widget(QMenuBar):
                     action.setChecked(options.get("checked", False))
         else:
             raise ValueError("Menu item must be a tuple or dict (submenu)")
+
+    def _find_menu_by_title(self, title: str):
+        """Find a top-level menu by its display title."""
+        for action in self.actions():
+            menu = action.menu()
+            if menu and menu.title() == title:
+                return menu
+        return None
 
 class Shortcut_Manager:
     def __init__(self, parent: QWidget):
