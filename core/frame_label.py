@@ -67,7 +67,6 @@ class Frame_Label:
         self.shortcuts.add_shortcut("del_kp", "Backspace", self._on_keypoint_delete)
         self.shortcuts.add_shortcut("undo", "Ctrl+Z", self._undo_changes)
         self.shortcuts.add_shortcut("redo", "Ctrl+Y", self._redo_changes)
-        self.shortcuts.add_shortcut("save_pred", "Ctrl+S", self.save_prediction)
         self.shortcuts.add_shortcut("zoom", "Z", self._toggle_zoom_mode)
         self.shortcuts.add_shortcut("snap_to_inst", "E", self._toggle_snap_to_instances)
         self.shortcuts.set_enabled(True)

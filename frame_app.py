@@ -85,6 +85,7 @@ class Frame_App(QMainWindow):
             "prev_mark":{"key": "Up", "callback": self._navigate_prev},
             "next_mark":{"key": "Down", "callback": self._navigate_next},
             "playback":{"key": "Space", "callback": self._toggle_playback},
+            "save":{"key": "Ctrl+S", "callback": self._save_workspace},
         }
         self.shortcuts.add_shortcuts_from_config(common_shortcut)
 
@@ -179,7 +180,7 @@ class Frame_App(QMainWindow):
 
     def _save_workspace(self):
         if self.dm.video_file:
-            self.status_bar.showMessage(f"Workspace Saved to {self.dm.video_file}")
+            self.status_bar.show_message(f"Workspace Saved to {self.dm.video_file}")
             self.dm.save_workspace()
 
    ###################################################################################################

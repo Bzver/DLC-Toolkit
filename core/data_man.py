@@ -6,6 +6,7 @@ import numpy as np
 from PySide6.QtWidgets import QMessageBox, QFileDialog, QDialog
 
 from typing import Callable, Literal, List, Optional
+import traceback
 
 from utils.helper import infer_head_tail_indices, build_angle_map
 from utils.pose import calculate_canonical_pose
@@ -139,7 +140,7 @@ class Data_Manager:
     def auto_loader(self):
         """Automaticaly load coreesponding prediction file and config when there has not been one"""
         if self.prediction:
-           return
+           return None, None
         video_folder = os.path.dirname(self.video_file)
         pred_candidates = []
         for f in os.listdir(video_folder):
@@ -156,7 +157,7 @@ class Data_Manager:
                 found = True
                 break
         if not found:
-            return
+            return None, None
         dlc_dir = self.video_file.split(fn)[0]
         dlc_config = os.path.join(dlc_dir, "config.yaml")
         print(f"DLC config found: {dlc_config}")
@@ -405,6 +406,7 @@ class Data_Manager:
             'inst_count_per_frame_pred': self.inst_count_per_frame_pred,
             'roi_frame_list': self.roi_frame_list,
             'outlier_frame_list': self.outlier_frame_list,
+            'inst_count_per_frame_vid': self.inst_count_per_frame_vid,
         }
 
         try:
@@ -454,6 +456,7 @@ class Data_Manager:
             self.inst_count_per_frame_pred = workspace_state.get('inst_count_per_frame_pred')
             self.roi_frame_list = workspace_state.get('roi_frame_list', [])
             self.outlier_frame_list = workspace_state.get('outlier_frame_list', [])
+            self.inst_count_per_frame_vid = workspace_state.get('inst_count_per_frame_vid')
 
             self.init_vid_callback(self.video_file)
             self._init_loaded_data()
@@ -461,6 +464,7 @@ class Data_Manager:
             QMessageBox.information(self.main, "Success", "Workspace loaded successfully.")
         except Exception as e:
             QMessageBox.critical(self.main, "Error Loading Workspace", f"Failed to load workspace:\n{e}")
+            traceback.print_exc()
 
     def _load_workspace_legacy(self, file_path:str):
         with open(file_path, "r") as fmkf:
