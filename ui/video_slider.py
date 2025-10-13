@@ -1,7 +1,7 @@
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtWidgets import QPushButton, QHBoxLayout, QStyle, QStyleOptionSlider, QSlider
-from PySide6.QtGui import QPainter, QColor
+from PySide6.QtWidgets import QPushButton, QHBoxLayout, QStyle, QStyleOptionSlider, QSlider, QLineEdit, QLabel
+from PySide6.QtGui import QPainter, QColor, QIntValidator, QFont
 from typing import List
 
 class Video_Slider_Widget(QtWidgets.QWidget):
@@ -11,7 +11,7 @@ class Video_Slider_Widget(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
         self.total_frames = 0
-        self.current_frame = 0
+        self.current_frame_idx = 0
         self.is_playing = False
         
         self.slider_layout = QHBoxLayout(self)
@@ -20,12 +20,16 @@ class Video_Slider_Widget(QtWidgets.QWidget):
         self.play_button.setFixedWidth(20)
         self.play_button.clicked.connect(self.toggle_playback)
 
+        self.fin = Frame_Input()
+        self.fin.frame_changed_sig.connect(self._handle_frame_input)
+
         self.progress_slider = Slider_With_Marks(Qt.Orientation.Horizontal)
         self.progress_slider.setRange(0, 0)
         self.progress_slider.setTracking(True)
-        self.progress_slider.sliderMoved.connect(self.handle_slider_move)
-        self.progress_slider.frame_changed.connect(self.handle_slider_move)
+        self.progress_slider.sliderMoved.connect(self._handle_slider_move)
+        self.progress_slider.frame_changed.connect(self._handle_slider_move)
 
+        self.slider_layout.addLayout(self.fin)
         self.slider_layout.addWidget(self.play_button)
         self.slider_layout.addWidget(self.progress_slider)
 
@@ -51,17 +55,25 @@ class Video_Slider_Widget(QtWidgets.QWidget):
         """
         self.progress_slider.set_frame_category(category_name, frame_list, color, priority)
 
-    def set_slider_range(self, total_frames:int):
+    def set_total_frames(self, total_frames:int):
         self.total_frames = total_frames
         self.progress_slider.setRange(0, self.total_frames - 1)
+        self.fin.set_total_frames(self.total_frames - 1)
     
     def set_current_frame(self, frame_idx:int):
-        self.current_frame = frame_idx
-        self.progress_slider.setValue(self.current_frame)
+        self.current_frame_idx = frame_idx
+        self.progress_slider.setValue(self.current_frame_idx)
+        self.fin.set_current_frame(self.current_frame_idx)
 
-    def handle_slider_move(self, value:int):
-        self.current_frame = value
-        self.frame_changed.emit(self.current_frame)
+    def _handle_slider_move(self, value:int):
+        self.current_frame_idx = value
+        self.fin.set_current_frame(value)
+        self.frame_changed.emit(self.current_frame_idx)
+
+    def _handle_frame_input(self, value:int):
+        self.current_frame_idx = value
+        self.progress_slider.setValue(value)
+        self.frame_changed.emit(self.current_frame_idx)
 
     def toggle_playback(self):
         if not self.is_playing:
@@ -70,10 +82,10 @@ class Video_Slider_Widget(QtWidgets.QWidget):
             self._stop_playback()
         
     def advance_frame(self):
-        if self.current_frame < self.total_frames - 1:
-            self.current_frame += 1
-            self.set_current_frame(self.current_frame)
-            self.frame_changed.emit(self.current_frame)
+        if self.current_frame_idx < self.total_frames - 1:
+            self.current_frame_idx += 1
+            self.set_current_frame(self.current_frame_idx)
+            self.frame_changed.emit(self.current_frame_idx)
         else:
             self._stop_playback()
             
@@ -194,3 +206,44 @@ class Slider_With_Marks(QSlider):
         self.setValue(int(new_value))
         self.frame_changed.emit(new_value)
         super().mousePressEvent(event)
+
+class Frame_Input(QHBoxLayout):
+    frame_changed_sig = Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.max_frame = 1
+
+        self.frame_input = QLineEdit("0")
+        validator = QIntValidator(0, 2147483647, self)
+        self.frame_input.setValidator(validator)
+        self.frame_input.textChanged.connect(self._on_frame_idx_input)
+
+        separator = QLabel("|")
+        self.total_line = QLineEdit("0")
+        self.total_line.setReadOnly(True)
+
+        self.frame_input.setFixedWidth(50)
+        separator.setFixedWidth(10)
+        separator.setFont(QFont("Arial", 10, QFont.Bold))
+        self.total_line.setFixedWidth(50)
+
+        self.addWidget(self.frame_input)
+        self.addWidget(separator)
+        self.addWidget(self.total_line)
+
+    def set_current_frame(self, frame_idx:int):
+        self.frame_input.blockSignals(True)
+        self.frame_input.setText(str(frame_idx))
+        self.frame_input.blockSignals(False)
+
+    def set_total_frames(self, total_frames:int):
+        self.total_line.setText(str(total_frames))
+        self.max_frame = total_frames
+
+    def _on_frame_idx_input(self):
+        frame_idx = int(self.frame_input.text())
+        if frame_idx > self.max_frame:
+            self.frame_input.setText(str(self.max_frame))
+
+        self.frame_changed_sig.emit(frame_idx)
