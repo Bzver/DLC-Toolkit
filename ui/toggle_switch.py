@@ -1,27 +1,40 @@
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel, QFrame
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QGroupBox, QLabel, QFrame
 from PySide6.QtCore import Signal, Qt, QPropertyAnimation, QEasingCurve, Property
 from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QFont
 
 class Toggle_Switch(QWidget):
     toggled = Signal(bool)
 
-    def __init__(self, label_text: str = "", parent: QWidget = None):
+    def __init__(self, label_text: str = "", vertical: bool = False, gbox: bool = False, parent: QWidget = None):
         super().__init__(parent)
         self._is_checked = False
         self._label_text = label_text
-        self._setup_ui()
-
-    def _setup_ui(self):
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setAlignment(Qt.AlignLeft)
-
-        if self._label_text:
-            self.label = QLabel(self._label_text)
-            layout.addWidget(self.label)
+        self._vertical = vertical
+        self._gbox_mode = gbox
 
         self.track = Toggle_Track(self)
-        layout.addWidget(self.track)
+
+        if gbox:
+            self._container = QGroupBox(label_text, parent)
+            layout = QVBoxLayout(self._container)
+            layout.setContentsMargins(5, 15, 5, 5)
+            layout.addWidget(self.track, 0, Qt.AlignCenter)
+        else:
+            self._container = self
+            layout = QVBoxLayout(self) if vertical else QHBoxLayout(self)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setAlignment(Qt.AlignLeft)
+
+            if label_text:
+                self.label = QLabel(label_text)
+                layout.addWidget(self.label)
+                
+            layout.addWidget(self.track)
+
+        if gbox:
+            outer_layout = QVBoxLayout(self)
+            outer_layout.addWidget(self._container)
+            outer_layout.setContentsMargins(0, 0, 0, 0)
 
     def _on_clicked(self):
         self.set_checked(not self._is_checked)
@@ -37,12 +50,14 @@ class Toggle_Switch(QWidget):
 
     def set_label_text(self, text: str):
         self._label_text = text
-        if hasattr(self, 'label'):
+        if self._gbox_mode:
+            self._container.setTitle(text)
+        elif hasattr(self, 'label'):
             self.label.setText(text)
         else:
             self.label = QLabel(text)
-            self.layout().insertWidget(0, self.label)
-
+            layout = self.layout()
+            layout.insertWidget(0, self.label)
 
 class Toggle_Track(QFrame):
     def __init__(self, parent=None):
