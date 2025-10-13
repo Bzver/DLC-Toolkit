@@ -33,6 +33,10 @@ class Video_Slider_Widget(QtWidgets.QWidget):
         self.playback_timer.setInterval(int(1000/50)) # ~50 FPS
         self.playback_timer.timeout.connect(self.advance_frame)
 
+    def clear_frame_category(self):
+        """Public API to clear existing categories"""
+        self.progress_slider.clear_frame_category()
+
     def set_frame_category(self, category_name:str, frame_list:List[int], color:HexColor="#183539", priority:int=0):
         """
         Public API to pass the slider mark properties
@@ -109,6 +113,11 @@ class Slider_With_Marks(QSlider):
                 border-radius: 3px;
             }
         """)
+
+    def clear_frame_category(self):
+        self.frame_categories.clear()
+        self.category_colors.clear()
+        self.category_priorities.clear()
 
     def set_frame_category(self, category_name, frames, color, priority):
         self.frame_categories[category_name] = set(frames)
