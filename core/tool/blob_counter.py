@@ -8,6 +8,8 @@ matplotlib.use("QtAgg")
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
+from typing import Optional
+
 from ui import Progress_Indicator_Dialog
 from core.io import Frame_Extractor
 from core.dataclass import Blob_Config
@@ -17,7 +19,7 @@ class Blob_Counter(QtWidgets.QGroupBox):
     frame_processed = Signal(object, int)  # emit processed QImage and count
     video_counted = Signal(list)
 
-    def __init__(self, frame_extractor: Frame_Extractor, parent=None):
+    def __init__(self, frame_extractor: Frame_Extractor, config: Optional[Blob_Config]=None,  parent=None):
         super().__init__(parent)
         self.setTitle("Blob-based Animal Counting Controls")
 
@@ -143,6 +145,9 @@ class Blob_Counter(QtWidgets.QGroupBox):
         self.parameters_changed.connect(self._reprocess_current_frame)
         self._update_background_display()  # Initial background display
 
+        if config is not None:
+            self._apply_config(config)
+
     def set_current_frame(self, frame):
         self.current_frame = frame
         self._reprocess_current_frame()
@@ -158,6 +163,30 @@ class Blob_Counter(QtWidgets.QGroupBox):
             background_frames = self.background_frames,
         )
         return config
+
+    def _apply_config(self, config: Blob_Config):
+        self.bg_sample_frame_count = config.bg_sample_frame_count
+        self.threshold = config.threshold
+        self.double_blob_area_threshold = config.double_blob_area_threshold
+        self.min_blob_area = config.min_blob_area
+        self.bg_removal_method = config.bg_removal_method
+        self.blob_type = config.blob_type
+        self.background_frames = config.background_frames or {}
+
+        # Update UI widgets to reflect config
+        self.threshold_slider.setValue(self.threshold)
+        self.threshold_value_label.setText(str(self.threshold))
+
+        self.min_area_slider.setValue(self.min_blob_area)
+        self.min_area_value_label.setText(str(self.min_blob_area))
+
+        self.blob_type_combo.setCurrentText(self.blob_type)
+        
+        self.bg_removal_combo.setCurrentText(self.bg_removal_method)
+        self.bg_frame_count_spin.setValue(self.bg_sample_frame_count)
+
+        # Re-emit parameters_changed to trigger reprocessing (optional but safe)
+        self.parameters_changed.emit()
 
     def _on_threshold_changed(self, value):
         self.threshold = value
