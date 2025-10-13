@@ -22,41 +22,65 @@ class Exporter:
 
         os.makedirs(self.export_settings.save_path, exist_ok=True)
 
-    def export_data_to_DLC(self, frame_only:bool=False) -> Tuple[bool, str]:
+    def export_data_to_DLC(self, frame_only:bool=False):
         self._extract_frame()
         if frame_only:
             return
         self._extract_pred()
 
-    def _extract_frame(self) -> Tuple[bool, str]:
+    def _extract_frame(self):
         try:
             cap = cv2.VideoCapture(self.export_settings.video_filepath)
             if not cap.isOpened():
-                raise RuntimeError(f"Error: Could not open video {self.export_settings.video_filepath}")
-            
-            frames_to_extract = set(self.frame_list)
-            if self.progress_callback:
-                self.progress_callback.setMaximum(len(frames_to_extract))
+                raise FileNotFoundError(f"Could not open video {self.export_settings.video_filepath}")
 
-            for i, frame in enumerate(frames_to_extract):
-                if self.progress_callback:
-                    self.progress_callback.setValue(i)
-                    if self.progress_callback.wasCanceled():
-                        break
-                image_path = f"img{str(int(frame)).zfill(8)}.png"
-                image_output_path = os.path.join(self.export_settings.save_path, image_path)
-                cap.set(cv2.CAP_PROP_POS_FRAMES, frame)
-                ret, frame = cap.read()
-                if ret:
-                    cv2.imwrite(image_output_path, frame)
-            
+            total_video_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            frame_set = set(self.frame_list)
+            max_needed = max(frame_set) if frame_set else -1
+
+            valid_frames = {f for f in frame_set if 0 <= f < total_video_frames}
+            if self.progress_callback:
+                self.progress_callback.setMaximum(len(valid_frames))
+
+            extracted_count = 0
+            current_frame = 0
+
+            while current_frame <= max_needed:
+                ret, img = cap.read()
+                if not ret:
+                    break  # End of video
+
+                if current_frame in valid_frames:
+                    image_path = f"img{str(current_frame).zfill(8)}.png"
+                    image_output_path = os.path.join(self.export_settings.save_path, image_path)
+                    cv2.imwrite(image_output_path, img)
+                    extracted_count += 1
+
+                    if self.progress_callback:
+                        self.progress_callback.setValue(extracted_count)
+                        if self.progress_callback.wasCanceled():
+                            cap.release()
+                            if self.progress_callback:
+                                self.progress_callback.close()
+                            raise Exception("Frame extraction canceled by user.")
+
+                current_frame += 1
+
+            cap.release()
             if self.progress_callback:
                 self.progress_callback.close()
-                    
-        except Exception as e:
-            raise RuntimeError(f"Error extracting frame: {e}") from e
 
-    def _extract_pred(self) -> Tuple[bool, str]:
+            if extracted_count != len(valid_frames):
+                raise Exception(f"Only extracted {extracted_count}/{len(valid_frames)} frames.")
+
+        except Exception as e:
+            if 'cap' in locals():
+                cap.release()
+            if self.progress_callback:
+                self.progress_callback.close()
+            raise RuntimeError(f"Error extracting frames: {e}")
+
+    def _extract_pred(self):
         if self.pred_data_array is None:
             pred_data_array = self.dlc_data.pred_data_array[self.frame_list, :, :]
         else:
