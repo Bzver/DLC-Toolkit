@@ -308,7 +308,9 @@ class Data_Manager:
         return color_code
 
     def get_title_text(self, labeler:bool=False, kp_edit:bool=False):
-        title_text = f"Video Navigation | Video: {self.video_name}"
+        title_text = ""
+        if self.video_name:
+            title_text += f"Video Loaded: {self.video_name}"
         if labeler:
             if self.refined_frame_list and self.frame_list:
                 title_text += f"Manual Refining Progress: {len(self.refined_frame_list)} / {len(self.frame_list)} Frames Refined"

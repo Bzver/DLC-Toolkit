@@ -1,10 +1,9 @@
-
 from PySide6 import QtWidgets
 from PySide6.QtCore import QEvent
 from PySide6.QtGui import QCloseEvent
-from PySide6.QtWidgets import QMainWindow, QVBoxLayout, QMessageBox
+from PySide6.QtWidgets import QMainWindow, QVBoxLayout, QMessageBox, QHBoxLayout
 
-from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Toggle_Switch
+from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Toggle_Switch, Status_Bar
 from utils.helper import handle_unsaved_changes_on_close
 from core import Data_Manager, Video_Manager, Keypoint_Edit_Manager
 from core.frame_view import Frame_View
@@ -39,15 +38,19 @@ class Frame_App(QMainWindow):
             )
         self.app_layout.addWidget(self.vid_play)
 
+        status_layout = QHBoxLayout()
+        self.status_bar = Status_Bar(self)
         self.mode_toggle = Toggle_Switch("Labeling Mode", parent=self)
         self.mode_toggle.toggled.connect(self._on_mode_toggle)
-        self.app_layout.addWidget(self.mode_toggle)
+        status_layout.addWidget(self.status_bar)
+        status_layout.addStretch()
+        status_layout.addWidget(self.mode_toggle)
+        self.app_layout.addLayout(status_layout)
 
         self._setup_menu()
         self._setup_shortcut()
         self._init_both_submod()
         self._switch_to_fview()
-        self._reset_state()
 
     def _setup_menu(self):
         self.menu_widget = Menu_Widget(self)
@@ -100,8 +103,9 @@ class Frame_App(QMainWindow):
         self.at.refresh_ui()
 
     def _init_both_submod(self):
-        self.fview = Frame_View(self.dm, self.vm, self.vid_play, self._handle_right_panel_menu_change, self)
-        self.flabel = Frame_Label(self.dm, self.vm, self.kem, self.vid_play, self._handle_right_panel_menu_change, self._plot_config_callback, self)
+        self.fview = Frame_View(self.dm, self.vm, self.vid_play, self.status_bar, self._handle_right_panel_menu_change, self)
+        self.flabel = Frame_Label(
+            self.dm, self.vm, self.kem, self.vid_play, self.status_bar, self._handle_right_panel_menu_change, self._plot_config_callback, self)
 
     def _switch_to_fview(self):
         if hasattr(self, 'at') and self.at == self.flabel:
@@ -146,7 +150,7 @@ class Frame_App(QMainWindow):
         self.at.init_loaded_vid()
 
         self.at.refresh_and_display()
-        print(f"Video loaded: {self.dm.video_file}")
+        self.status_bar.show_message(f"Video loaded: {self.dm.video_file}", duration_ms=2000)
 
     def _load_prediction(self):
         if not self.vm.check_status_msg():
@@ -175,18 +179,15 @@ class Frame_App(QMainWindow):
 
     def _save_workspace(self):
         if self.dm.video_file:
-            self.statusBar().showMessage(f"Workspace Saved to {self.dm.video_file}")
+            self.status_bar.showMessage(f"Workspace Saved to {self.dm.video_file}")
             self.dm.save_workspace()
 
    ###################################################################################################
 
-    def _change_frame(self, delta, absolute=None):
+    def _change_frame(self, delta):
         if self.vm.get_frame(0) is None:
             return
-        if absolute is None:
-            new_frame_idx = self.dm.current_frame_idx + delta
-        else:
-            new_frame_idx = absolute
+        new_frame_idx = self.dm.current_frame_idx + delta
         if 0 <= new_frame_idx < self.dm.total_frames:
             self.dm.current_frame_idx = new_frame_idx
             self.at.refresh_and_display()
@@ -207,6 +208,8 @@ class Frame_App(QMainWindow):
     ###################################################################################################
 
     def _view_canonical_pose(self):
+        if not self.vm.check_status_msg():
+            return
         dialog = Canonical_Pose_Dialog(self.dm.dlc_data, self.dm.canon_pose)
         dialog.exec()
 
@@ -269,7 +272,7 @@ class Frame_App(QMainWindow):
         if not self.vm.video_file:
             return
         if self.vm.check_status_msg():
-            handle_unsaved_changes_on_close(self, event, False, self._save_workspace)
+            handle_unsaved_changes_on_close(self, event, True, self._save_workspace)
 
 #######################################################################################################################################################
 

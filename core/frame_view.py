@@ -7,25 +7,27 @@ from PySide6.QtWidgets import QMessageBox
 
 import traceback
 
-from ui import Menu_Widget, Video_Player_Widget, Clear_Mark_Dialog, Shortcut_Manager
+from ui import Menu_Widget, Video_Player_Widget, Clear_Mark_Dialog, Shortcut_Manager, Status_Bar
 from utils.helper import frame_to_pixmap
 from .data_man import Data_Manager
 from .video_man import  Video_Manager
 from .tool import Mark_Generator, Blob_Counter, Prediction_Plotter
 from .palette import (
-    NAV_COLOR_PALETTE as nvp, NAV_COLOR_PALETTE_COUNTING as nvpc,
-    LABEL_INST_PALETTE as lip)
+    NAV_COLOR_PALETTE as nvp, NAV_COLOR_PALETTE_COUNTING as nvpc, LABEL_INST_PALETTE as lip
+    )
 
 class Frame_View:
     def __init__(self,
                  data_manager: Data_Manager,
                  video_manager: Video_Manager,
                  video_play_widget: Video_Player_Widget,
+                 status_bar: Status_Bar,
                  menu_slot_callback: callable,
                  parent: QtWidgets.QWidget):
         self.dm = data_manager
         self.vm = video_manager
         self.vid_play = video_play_widget
+        self.status_bar = status_bar
         self.menu_slot_callback = menu_slot_callback
         self.main = parent
 
@@ -49,6 +51,7 @@ class Frame_View:
     def _setup_shortcuts(self):
         self.shortcuts = Shortcut_Manager(self.main)
         self.shortcuts.add_shortcut("mark", "X", self._toggle_frame_status)
+        self.shortcuts.set_enabled(True)
 
     def reset_state(self):
         if self.dm.video_file:
@@ -161,7 +164,7 @@ class Frame_View:
 
     def navigation_title_controller(self):
         title_text = self.dm.get_title_text()
-        self.vid_play.nav.setTitle(title_text)
+        self.status_bar.show_message(title_text, duration_ms=0)
         color = self.dm.determine_nav_color_counting() if self.is_counting else self.dm.determine_nav_color_fview()
         if color:
             self.vid_play.nav.setTitleColor(color)
@@ -265,13 +268,18 @@ class Frame_View:
     def dlc_inference_marked(self):
         inference_list = self.dm.get_inference_list()
         if not inference_list:
-            self.main.statusBar().showMessage("No unapproved / unrejected/ unrefined marked frames to inference.")
+            self.main.statusBar().show_message("No unapproved / unrejected/ unrefined marked frames to inference.")
             return
         
         self.call_inference(inference_list)
 
     def dlc_inference_all(self):
-        pass
+        if self.dm.total_frames > 9000:
+            self.status_bar.show_message("It's over nine thousands!")
+        else:
+            inference_list = list(range(self.dm.total_frames))
+        
+        self.call_inference(inference_list)
     
     def call_inference(self, inference_list:list):
         if not self.dm.video_file:
@@ -306,7 +314,7 @@ class Frame_View:
         """Reload prediction data from file and update visualization"""
         self.dm.reload_pred_to_dm(prediction_path)
         self.refresh_and_display()
-        self.main.statusBar().showMessage("Prediction successfully reloaded")
+        self.main.statusBar().show_message("Prediction successfully reloaded")
         if hasattr(self, "inference_window") and self.inference_window:
             self.inference_window.close()
             self.inference_window = None
@@ -316,7 +324,7 @@ class Frame_View:
     def export_marked_to_clipboard(self):
         df = pd.DataFrame([self.dm.frame_list])
         df.to_clipboard(sep=',', index=False, header=False)
-        self.main.statusBar().showMessage("Marked frames exported to clipboard.")
+        self.main.statusBar().show_message("Marked frames exported to clipboard.")
 
     def save_to_dlc(self):
         if not self.pre_saving_sanity_check():

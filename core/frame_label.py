@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QTransform
 from PySide6.QtWidgets import QMessageBox
 
-from ui import Menu_Widget, Video_Player_Widget, Pose_Rotation_Dialog, Shortcut_Manager
+from ui import Menu_Widget, Video_Player_Widget, Pose_Rotation_Dialog, Shortcut_Manager, Status_Bar
 from utils.helper import frame_to_pixmap, calculate_snapping_zoom_level
 from .data_man import Data_Manager
 from .video_man import Video_Manager
@@ -20,6 +20,7 @@ class Frame_Label:
                  video_manager: Video_Manager,
                  keypoint_manager: Keypoint_Edit_Manager,
                  video_play_widget: Video_Player_Widget,
+                 status_bar: Status_Bar,
                  menu_slot_callback: callable,
                  plot_config_callback: callable,
                  parent: QtWidgets.QWidget):
@@ -27,6 +28,7 @@ class Frame_Label:
         self.vm = video_manager
         self.kem = keypoint_manager
         self.vid_play = video_play_widget
+        self.status_bar = status_bar
         self.menu_slot_callback = menu_slot_callback
         self.plot_config_callback = plot_config_callback
         self.main = parent
@@ -56,7 +58,7 @@ class Frame_Label:
         self.shortcuts = Shortcut_Manager(self.main)
         self.shortcuts.add_shortcut("swp_trk_sg", "W", self._swap_track_single)
         self.shortcuts.add_shortcut("swp_trk_ct", "Shift+W", self._swap_track_continous)
-        self.shortcuts.add_shortcut("del_trk", "X", self._delete_track)
+        self.shortcuts.add_shortcut("del_trk", "D", self._delete_track)
         self.shortcuts.add_shortcut("intp_trk", "T", self._interpolate_track)
         self.shortcuts.add_shortcut("intp_ms_kp", "Shift+T", self._interpolate_missing_kp)
         self.shortcuts.add_shortcut("gen_inst", "G", self._generate_inst)
@@ -68,6 +70,7 @@ class Frame_Label:
         self.shortcuts.add_shortcut("save_pred", "Ctrl+S", self.save_prediction)
         self.shortcuts.add_shortcut("zoom", "Z", self._toggle_zoom_mode)
         self.shortcuts.add_shortcut("snap_to_inst", "E", self._toggle_snap_to_instances)
+        self.shortcuts.set_enabled(True)
 
     def reset_state(self):
         self.open_outlier = False
@@ -102,7 +105,7 @@ class Frame_Label:
                     {
                         "submenu": "Delete",
                         "items": [
-                            ("Delete Selected Instance On Current Frame (X)", self._delete_track),
+                            ("Delete Selected Instance On Current Frame (D)", self._delete_track),
                             ("Delete All Prediction Inside Selected Area", self._designate_no_mice_zone),
                         ]
                     },
@@ -216,7 +219,7 @@ class Frame_Label:
 
     def navigation_title_controller(self):
         title_text = self.dm.get_title_text(labeler=True, kp_edit=self.gview.is_kp_edit)
-        self.vid_play.nav.setTitle(title_text)
+        self.status_bar.show_message(title_text, duration_ms=0)
 
         if self.open_outlier or self.dm.plot_config.navigate_roi:
             color = self.dm.determine_nav_color_flabel()
@@ -335,11 +338,11 @@ class Frame_Label:
         self.navigation_title_controller()
 
         if self.gview.is_kp_edit:
-            self.main.statusBar().showMessage(
+            self.status_bar.show_message(
                 "Keypoint editing mode is ON. Drag to adjust. Press Backspace to delete a keypoint."
             )
         else:
-            self.main.statusBar().showMessage("Keypoint editing mode is OFF.")
+            self.status_bar.show_message("Keypoint editing mode is OFF.")
 
         self.navigation_title_controller()
         self.display_current_frame() # Refresh the frame to get the kp edit status through to plotter
@@ -420,11 +423,11 @@ class Frame_Label:
             self._mark_refined()
             instance_id = self.gview.drag_kp.instance_id
             keypoint_id = self.gview.drag_kp.keypoint_id
-            self.kem.del_kp()
-            print(f"{self.dm.dlc_data.keypoints[keypoint_id]} of instance {instance_id} deleted.")
+            self.kem.del_kp(self.dm.current_frame_idx, instance_id, keypoint_id)
+            self.status_bar.show_message(f"{self.dm.dlc_data.keypoints[keypoint_id]} of instance {instance_id} deleted.")
             self.gview.drag_kp = None
             self.is_saved = False
-            self.refresh_and_display(self.dm.current_frame_idx, instance_id, keypoint_id)
+            self.refresh_and_display()
 
     def _on_rotation_changed(self, instance_idx, angle_delta: float):
         angle_delta = np.radians(angle_delta)
@@ -449,7 +452,7 @@ class Frame_Label:
         self._mark_refined()
         self.kem.update_kp_pos(
             self.dm.current_frame_idx, instance_id, keypoint_id, new_x, new_y)
-        print(f"{self.dm.dlc_data.keypoints[keypoint_id]} of instance {instance_id} moved by ({new_x}, {new_y})")
+        self.status_bar.show_message(f"{self.dm.dlc_data.keypoints[keypoint_id]} of instance {instance_id} moved by ({new_x}, {new_y})")
         self.is_saved = False
         self.refresh_ui()
         QTimer.singleShot(0, self.display_current_frame)
@@ -457,7 +460,7 @@ class Frame_Label:
     def _update_instance_position(self, instance_id, dx, dy):
         self._mark_refined()
         self.kem.update_inst_pos(self.dm.current_frame_idx, instance_id, dx, dy)
-        print(f"Instance {instance_id} moved by ({dx}, {dy})")
+        self.status_bar.show_message(f"Instance {instance_id} moved by ({dx}, {dy})")
         self.is_saved = False
         self.refresh_ui()
         QTimer.singleShot(0, self.display_current_frame)
@@ -470,7 +473,6 @@ class Frame_Label:
         save_path, status, msg = self.dm.save_pred(self.kem.pred_data_array, is_label_file)
         if not status:
             QMessageBox.critical(self, "Saving Error", f"An error occurred during saving: {msg}")
-            print(f"An error occurred during saving: {msg}")
             return
         self._reload_prediction(save_path)
         QMessageBox.information(self, "Save Successful", str(msg))
@@ -492,7 +494,7 @@ class Frame_Label:
     def _reload_prediction(self, prediction_path):
         self.dm.reload_pred_to_dm(prediction_path)
         self.refresh_and_display()
-        self.main.statusBar().showMessage("Prediction successfully reloaded")
+        self.status_bar.show_message("Prediction successfully reloaded")
         self.kem.set_pred_data(self.dm.dlc_data.pred_data_array)
         if hasattr(self, 'plotter'):
             delattr(self, 'plotter')

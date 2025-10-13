@@ -149,7 +149,7 @@ class Keypoint_Edit_Manager:
         if not self.check_pred_data():
             return
         selected_instance_idx = self._instance_multi_select(frame_idx, selected_instance)
-        if not selected_instance_idx:
+        if selected_instance_idx is None:
             return
         self._save_state_for_undo()
         try:
@@ -201,7 +201,7 @@ class Keypoint_Edit_Manager:
 
         current_frame_inst = get_instances_on_current_frame(self.pred_data_array, frame_idx)
         missing_instances = [inst for inst in range(instance_count) if inst not in current_frame_inst]
-        if not missing_instances:
+        if missing_instances is None:
             QMessageBox.information(self.main, "No Missing Instances", "No missing instances found in the current frame to fill.")
             return
 
