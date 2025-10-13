@@ -68,15 +68,11 @@ class Canonical_Pose_Dialog(QDialog):
         # Create a dummy dlc_data for the plotter to use the skeleton and keypoint names
         dummy_dlc_data = self.dlc_data
         dummy_dlc_data.instance_count = 1
-        
-        plot_config = Plot_Config(
-            plot_opacity=1.0, point_size=6.0, confidence_cutoff=0.0, hide_text_labels=False, edit_mode=False)
 
         plotter = Prediction_Plotter(
             dlc_data=dummy_dlc_data,
             current_frame_data=reshaped_pose,
             frame_cv2=blank_image,
-            plot_config=plot_config,
         )
         plotted_image = plotter.plot_predictions()
 
