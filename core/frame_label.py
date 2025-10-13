@@ -301,10 +301,10 @@ class Frame_Label:
         if not self.kem.check_pred_data():
             return
         if self.gview.is_kp_edit:
-            QMessageBox.warning(self, "Not Allowed", "Please finish editing keypoints before using this function.")
+            QMessageBox.warning(self.main, "Not Allowed", "Please finish editing keypoints before using this function.")
             return False
         if self.open_outlier:
-            QMessageBox.warning(self, "Outlier Cleaning Pending",
+            QMessageBox.warning(self.main, "Outlier Cleaning Pending",
             "An outlier cleaning operation is pending.\n"
             "Please dismiss the outlier widget first."
         )
@@ -314,7 +314,7 @@ class Frame_Label:
     def _suggest_outlier_clean(self):
         if not self.is_cleaned and not self.skip_outlier_clean:
             reply = QMessageBox.question(
-                self, "Outliers Not Cleaned",
+                self.main, "Outliers Not Cleaned",
             "You are about to apply temporal correction on uncleaned tracking data.\n"
             "This may lead to error propagation or inaccurate smoothing.\n"
             "It is strongly recommended cleaning outliers first.\n\n"
@@ -353,7 +353,7 @@ class Frame_Label:
         self.gview.setCursor(Qt.CrossCursor)
         self.gview.is_drawing_zone = True
         self.kem._save_state_for_undo()
-        QMessageBox.information(self, "Designate No Mice Zone", "Click and drag on the video to select a zone. Release to apply.")
+        QMessageBox.information(self.main, "Designate No Mice Zone", "Click and drag on the video to select a zone. Release to apply.")
 
     def _temporal_track_correct(self):
         if not self._track_edit_blocker():
@@ -380,7 +380,7 @@ class Frame_Label:
 
     def _tri_swap_not_implemented(self):
         if self.dm.dlc_data.instance_count > 2:
-            QMessageBox.information(self, "Not Implemented",
+            QMessageBox.information(self.main, "Not Implemented",
                 "Swapping while instance count is larger than 2 has not been implemented.")
             return False
         return True
@@ -472,10 +472,10 @@ class Frame_Label:
         is_label_file = True if self.vm.image_files else False
         save_path, status, msg = self.dm.save_pred(self.kem.pred_data_array, is_label_file)
         if not status:
-            QMessageBox.critical(self, "Saving Error", f"An error occurred during saving: {msg}")
+            QMessageBox.critical(self.main, "Saving Error", f"An error occurred during saving: {msg}")
             return
         self._reload_prediction(save_path)
-        QMessageBox.information(self, "Save Successful", str(msg))
+        QMessageBox.information(self.main, "Save Successful", str(msg))
         self.is_saved = True
 
     def save_prediction_as_csv(self):
