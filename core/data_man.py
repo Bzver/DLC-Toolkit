@@ -310,15 +310,13 @@ class Data_Manager:
 
     def get_title_text(self, labeler:bool=False, kp_edit:bool=False):
         title_text = ""
-        if self.video_name:
-            title_text += f"Video Loaded: {self.video_name}"
         if labeler:
             if self.refined_frame_list and self.frame_list:
-                title_text += f"Manual Refining Progress: {len(self.refined_frame_list)} / {len(self.frame_list)} Frames Refined"
+                title_text += f"    Manual Refining Progress: {len(self.refined_frame_list)} | {len(self.frame_list)} Frames Refined    "
             if kp_edit and self.current_frame_idx:
-                title_text += " ----- KEYPOINTS EDITING MODE ----- "
+                title_text += "    ----- KEYPOINTS EDITING MODE -----    "
         elif self.frame_list:
-            title_text += f" | Marked Frame Count: {len(self.frame_list)}"
+            title_text += f"    Marked Frame Count: {len(self.frame_list)}    "
             
         return title_text
 

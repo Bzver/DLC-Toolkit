@@ -225,9 +225,9 @@ class Frame_Label:
         else:
             color = self.dm.determine_nav_color_fview()
         if color:
-            self.vid_play.nav.setTitleColor(color)
+            self.vid_play.nav.set_title_color(color)
         else:
-            self.vid_play.nav.setTitleColor("black")
+            self.vid_play.nav.set_title_color("black")
 
     def _refresh_slider(self):
         self.vid_play.sld.clear_frame_category()

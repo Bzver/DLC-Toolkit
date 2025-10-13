@@ -94,6 +94,7 @@ class Frame_App(QMainWindow):
         self.vm.reset_vm()
         self.kem.reset_kem()
         self.vid_play.set_total_frames(0)
+        self.vid_play.nav.set_current_video_name("---")
         if hasattr(self, 'at'):
             self.at.reset_state()
 
@@ -151,6 +152,7 @@ class Frame_App(QMainWindow):
         self.at.init_loaded_vid()
 
         self.at.refresh_and_display()
+        self.vid_play.nav.set_current_video_name(self.dm.video_name)
         self.status_bar.show_message(f"Video loaded: {self.dm.video_file}", duration_ms=2000)
 
     def _load_prediction(self):

@@ -137,86 +137,43 @@ class Nav_Widget(QtWidgets.QWidget):
         self.nvc = nav_callback
 
         self.header_layout = QHBoxLayout(self)
-        self.header_layout.setContentsMargins(6, 4, 6, 4)
+        self.header_layout.setContentsMargins(6, 2, 6, 2)
         self.header_layout.setSpacing(6)
 
-        self.toggle_button = QPushButton("◀")
-        self.toggle_button.setFixedSize(16, 16)
-        self.toggle_button.setFont(QFont("Arial", 9, QFont.Bold))
-        self.toggle_button.clicked.connect(self._toggle_collapsed)
+        font = QFont("Arial", 10, QFont.Bold)
 
         self.title_label = QLabel("Video Navigation")
-        self.title_label.setFont(QFont("Arial", 10, QFont.Bold))
+        self.title_label.setFont(font)
+
+        self.video_label = QLabel("Current Video: ---")
+        self.video_label.setFont(font)
 
         self.control_btn_frame = self._build_control_btn_frame()
         self.control_btn_frame.setFixedHeight(26)
-        self.control_btn_frame.setFixedWidth(140)
 
         self.header_layout.addWidget(self.title_label)
+        self.header_layout.addWidget(self.video_label)
         self.header_layout.addStretch()
         self.header_layout.addWidget(self.control_btn_frame)
-        self.header_layout.addWidget(self.toggle_button)
 
         self.ctrl_dialog = None
 
     def set_marked_list_name(self, list_name:str):
         self.marked_name = list_name
 
-    def setTitle(self, title_text:str):
-        self.title_label.setText(title_text)
+    def set_current_video_name(self, video_name:str):
+        self.video_label.setText(f"Current Video: {video_name}")
 
-    def setTitleColor(self, color_hex:HexColor):
+    def set_title_color(self, color_hex:HexColor):
         self.title_label.setStyleSheet(f"color: {color_hex}; font-weight: bold;")
+        self.video_label.setStyleSheet(f"color: {color_hex}; font-weight: bold;")
 
     def _build_control_btn_frame(self):
-        control_btn_frame = Nav_Control(abridged=True)
+        control_btn_frame = Nav_Control()
         control_btn_frame.frame_changed_sig.connect(self.nvc.change_frame_callback)
         control_btn_frame.prev_marked_frame_sig.connect(self.nvc.nav_prev_callback)
         control_btn_frame.next_marked_frame_sig.connect(self.nvc.nav_next_callback)
         return control_btn_frame
-
-    def _update_dialog_buttons(self):
-        if not self.ctrl_dialog:
-            return
-        buttons = self.ctrl_dialog.findChildren(QPushButton)
-        for btn in buttons:
-            if "Prev Marked" in btn.text() or "Next Marked" in btn.text():
-                btn.setText(btn.text().replace("Marked", self.marked_name))
-
-    def _show_control_dialog(self):
-        self.control_btn_frame.setVisible(False)
-        if self.ctrl_dialog is None:
-            self.ctrl_dialog = QtWidgets.QDialog(self)
-            self.ctrl_dialog.setWindowTitle("Navigation Control")
-            nav_contol = Nav_Control(self.marked_name)
-            nav_contol.frame_changed_sig.connect(self.nvc.change_frame_callback)
-            nav_contol.prev_marked_frame_sig.connect(self.nvc.nav_prev_callback)
-            nav_contol.next_marked_frame_sig.connect(self.nvc.nav_next_callback)
-            dialog_layout = QVBoxLayout(self.ctrl_dialog)
-            dialog_layout.addWidget(nav_contol)
-            self.ctrl_dialog.finished.connect(self._on_dialog_finished)
-        self.ctrl_dialog.show()
-        self.ctrl_dialog.raise_()
-        self.ctrl_dialog.activateWindow()
-        self.collapsed = False
-        self.toggle_button.setText("▲")
-
-    def _on_dialog_finished(self):
-        self.control_btn_frame.setVisible(True)
-        self.ctrl_dialog = None
-        self.collapsed = True
-        self.toggle_button.setText("◀")
-        
-    def _toggle_collapsed(self):
-        """Toggle collapse/expand by showing/hiding content."""
-        self.collapsed = not self.collapsed
-        if self.collapsed:
-            self.toggle_button.setText("◀")
-            self.ctrl_dialog.accept()
-            self.ctrl_dialog = None
-        else:
-            self.toggle_button.setText("▲")
-            self._show_control_dialog()
 
 class Nav_Control(QGroupBox):
     frame_changed_sig = Signal(int)
@@ -241,12 +198,9 @@ class Nav_Control(QGroupBox):
         self.prev_10_frames_button = QPushButton("↞") if self.abridged else QPushButton("  ◄ Prev 10 (Shift + ←)  ")
         self.next_10_frames_button = QPushButton("↠") if self.abridged else QPushButton("  ► Next 10 (Shift + →)  ")
 
-        if self.abridged:
-            btn_layout = QHBoxLayout(self)
-            btn_layout.setContentsMargins(0, 0, 0, 0)
-            btn_layout.setSpacing(1)
-        else:
-            btn_layout = QVBoxLayout(self)
+        btn_layout = QHBoxLayout(self)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setSpacing(1)
         btn_layout.addWidget(self.prev_frame_button)
         btn_layout.addWidget(self.next_frame_button)
         btn_layout.addWidget(self.prev_marked_frame_button)

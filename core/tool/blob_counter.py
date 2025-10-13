@@ -15,8 +15,8 @@ from core.io import Frame_Extractor
 from core.dataclass import Blob_Config
 
 class Blob_Counter(QtWidgets.QGroupBox):
-    parameters_changed = Signal()  # No args needed, store state internally
-    frame_processed = Signal(object, int)  # emit processed QImage and count
+    parameters_changed = Signal()
+    frame_processed = Signal(object, int)
     video_counted = Signal(list)
 
     def __init__(self, frame_extractor: Frame_Extractor, config: Optional[Blob_Config]=None,  parent=None):
@@ -49,6 +49,7 @@ class Blob_Counter(QtWidgets.QGroupBox):
 
         self.image_label = QtWidgets.QLabel("None")
         self.image_label.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
+        self.image_label.setMaximumHeight(50)
         self.image_label.setCursor(Qt.PointingHandCursor)
         self.image_label.mousePressEvent = lambda e: self._show_background_in_dialog()
 
