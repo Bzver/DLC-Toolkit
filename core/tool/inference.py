@@ -320,7 +320,7 @@ class DLC_Inference(QtWidgets.QDialog):
         container_layout.addLayout(self.video_layout)
 
         self.progress_widget= Video_Slider_Widget()
-        self.progress_widget.set_slider_range(self.total_marked_frames)
+        self.progress_widget.set_total_frames(self.total_marked_frames)
         self.progress_widget.set_current_frame(0)
         self.progress_widget.set_frame_category("Unprocessed", self.unprocessed_list)
         self.progress_widget.frame_changed.connect(self._handle_frame_change_from_comp)
