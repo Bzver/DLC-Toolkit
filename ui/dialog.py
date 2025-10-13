@@ -2,7 +2,7 @@ from functools import partial
 
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QPushButton, QHBoxLayout, QVBoxLayout, QDialog, QLabel, QMessageBox
+from PySide6.QtWidgets import QPushButton, QHBoxLayout, QVBoxLayout, QDialog, QLabel, QMessageBox, QSpinBox
 
 from typing import List
 
@@ -125,3 +125,57 @@ class Progress_Indicator_Dialog(QtWidgets.QProgressDialog):
         self.setWindowTitle(title)
         self.setWindowModality(Qt.WindowModal)
         self.setValue(0)
+
+###################################################################################################################################################
+
+class Inference_interval_Dialog(QDialog):
+    intervals_selected = Signal(dict)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Set Inference Intervals")
+        self.setMinimumWidth(300)
+
+        self._init_ui()
+
+    def _init_ui(self):
+        main_layout = QVBoxLayout(self)
+
+        # Labels and SpinBoxes for intervals
+        self.interval_widgets = {}
+        categories = {
+            "No Animals (0)": "interval_0_animals",
+            "One Animal (1)": "interval_1_animal",
+            "Multiple Animals (2+)": "interval_n_animals"
+        }
+
+        for label_text, key in categories.items():
+            h_layout = QHBoxLayout()
+            label = QLabel(label_text)
+            spin_box = QSpinBox()
+            spin_box.setMinimum(1)
+            spin_box.setMaximum(1000) # Arbitrary max, can be adjusted
+            spin_box.setValue(1) # Default to 1 (every frame)
+            h_layout.addWidget(label)
+            h_layout.addStretch()
+            h_layout.addWidget(spin_box)
+            main_layout.addLayout(h_layout)
+            self.interval_widgets[key] = spin_box
+
+        # Buttons
+        button_layout = QHBoxLayout()
+        ok_button = QPushButton("OK")
+        cancel_button = QPushButton("Cancel")
+
+        ok_button.clicked.connect(self._accept_input)
+        cancel_button.clicked.connect(self.reject)
+
+        button_layout.addStretch()
+        button_layout.addWidget(ok_button)
+        button_layout.addWidget(cancel_button)
+        main_layout.addLayout(button_layout)
+
+    def _accept_input(self):
+        intervals = {key: widget.value() for key, widget in self.interval_widgets.items()}
+        self.intervals_selected.emit(intervals)
+        self.accept()

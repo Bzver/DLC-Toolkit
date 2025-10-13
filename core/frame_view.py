@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QMessageBox
 
 import traceback
 
-from ui import Menu_Widget, Video_Player_Widget, Clear_Mark_Dialog, Shortcut_Manager, Status_Bar
+from ui import Menu_Widget, Video_Player_Widget, Clear_Mark_Dialog, Shortcut_Manager, Status_Bar, Inference_interval_Dialog
 from utils.helper import frame_to_pixmap
 from .data_man import Data_Manager
 from .video_man import  Video_Manager
@@ -60,6 +60,7 @@ class Frame_View:
 
         self.open_mark_gen = False
         self.is_counting = False
+        self.skip_counting = False
 
         self.viewer_menu_config = {
             "View":{
@@ -95,7 +96,7 @@ class Frame_View:
         self._init_blob_counter()
 
     def _init_blob_counter(self):
-        self.blob_counter = Blob_Counter(frame_extractor=self.vm.extractor, parent=self.main)
+        self.blob_counter = Blob_Counter(frame_extractor=self.vm.extractor, config=self.dm.blob_config, parent=self.main)
         self.blob_counter.frame_processed.connect(self._plot_current_frame)
         self.blob_counter.video_counted.connect(self._handle_counter_from_counter)
         if self.is_counting:
@@ -201,7 +202,7 @@ class Frame_View:
             self._init_blob_counter()
         else:
             self.vid_play.set_left_panel_widget(None)
-        self.display_current_frame()
+        self.refresh_and_display()
 
     def _clear_category(self, frame_category):
         self.dm.clear_frame_cat(frame_category)
@@ -233,7 +234,7 @@ class Frame_View:
     def show_clear_mark_dialog(self):
         frame_categories = self.dm.get_frame_cat()
         if frame_categories:
-            mark_clear_dialog = Clear_Mark_Dialog(frame_categories, parent=self)
+            mark_clear_dialog = Clear_Mark_Dialog(frame_categories, parent=self.main)
             mark_clear_dialog.frame_category_to_clear.connect(self._clear_category)
             mark_clear_dialog.exec()
 
@@ -253,6 +254,8 @@ class Frame_View:
         self.dm.animal_0_list = list(np.where(count_array==0)[0])
         self.dm.animal_1_list = list(np.where(count_array==1)[0])
         self.dm.animal_n_list = list(np.where((count_array!=1) & (count_array!=0))[0])
+        self.dm.inst_count_per_frame_vid = count_list
+        self.dm.blob_config = self.blob_counter.get_config()
         self.refresh_ui()
 
     ###################################################################################################################################################
@@ -261,7 +264,7 @@ class Frame_View:
         if not self.vm.check_status_msg():
             return False
         if not self.dm.frame_list:
-            QMessageBox.warning(self, "No Marked Frame", "No frame has been marked, please mark some frames first.")
+            QMessageBox.warning(self.main, "No Marked Frame", "No frame has been marked, please mark some frames first.")
             return False
         return True
 
@@ -275,42 +278,93 @@ class Frame_View:
 
     def dlc_inference_all(self):
         if self.dm.total_frames > 9000:
-            self.status_bar.show_message("It's over nine thousands!")
+            self.status_bar.show_message("It's over nine thousands!", duration_ms=100)
+            self._suggest_animal_counting()
+            if self.dm.inst_count_per_frame_vid is None and not self.skip_counting:
+                return
+            elif self.dm.inst_count_per_frame_vid is not None:
+                dialog = Inference_interval_Dialog(self.main)
+                dialog.intervals_selected.connect(self._handle_inference_intervals)
+                dialog.exec()
         else:
             inference_list = list(range(self.dm.total_frames))
-        
-        self.call_inference(inference_list)
+            self.call_inference(inference_list)
     
     def call_inference(self, inference_list:list):
         if not self.dm.video_file:
-            QMessageBox.warning(self, "Video Not Loaded", "No video is loaded, load a video first!")
+            QMessageBox.warning(self.main, "Video Not Loaded", "No video is loaded, load a video first!")
             return
-        if not self.dm.frame_list:
-            QMessageBox.warning(self, "No Marked Frame", "No frame has been marked, please mark some frames first.")
+        if not self.dm.frame_list and not inference_list:
+            QMessageBox.warning(self.main, "No Marked Frame", "No frame has been marked, please mark some frames first.")
             return
+        if self.is_counting:
+            self._toggle_animal_counting()
         if self.dm.dlc_data is None:
-            QMessageBox.information(self, "Load DLC Config", "You need to load DLC config to inference with DLC models.")
+            QMessageBox.information(self.main, "Load DLC Config", "You need to load DLC config to inference with DLC models.")
 
             dlc_config = self.dm.config_file_dialog()
             if not dlc_config:
                 return
 
             self.dm.load_metadata_to_dm(dlc_config)
+            if not inference_list:
+                inference_list = self.dm.frame_list
 
         from core.tool import DLC_Inference
         try:
             self.inference_window = DLC_Inference(
-                dlc_data=self.dm.dlc_data, frame_list=inference_list, video_filepath=self.dm.video_file, parent=self)
+                dlc_data=self.dm.dlc_data, frame_list=inference_list, video_filepath=self.dm.video_file, parent=self.main)
             self.inference_window.show()
             self.inference_window.frames_exported.connect(self._handle_rerun_frames_exported)
-            self.inference_window.prediction_saved.connect(self.reload_prediction)
+            self.inference_window.prediction_saved.connect(self._reload_prediction)
         except Exception as e:
             error_message = f"Inference Process failed to initialize. Exception: {e}"
             detailed_message = f"{error_message}\n\nTraceback:\n{traceback.format_exc()}"
-            QMessageBox.warning(self, "Inference Failed", detailed_message)
+            QMessageBox.warning(self.main, "Inference Failed", detailed_message)
             return
 
-    def reload_prediction(self, prediction_path):
+    def _suggest_animal_counting(self):
+        if self.dm.inst_count_per_frame_vid is None and not self.skip_counting and not self.is_counting:
+            reply = QMessageBox.question(
+                self.main, "Animal Not Counted",
+                "Animal counting has not been performed for this video. For videos with a large "
+                "number of frames, skipping animal counting may lead to a significantly slower "
+                "inference process. Do you wish to skip animal counting and proceed directly to inference?"
+            )
+            if reply == QMessageBox.No:
+                self._toggle_animal_counting()
+            else:
+                self.skip_counting = True
+
+    def _handle_inference_intervals(self, intervals: dict):
+        inference_list = []
+        last_inferenced_frame = 0
+
+        for frame_idx in range(self.dm.total_frames):
+            animal_count = self.dm.inst_count_per_frame_vid[frame_idx]
+            
+            current_interval = 1
+
+            if animal_count == 0:
+                current_interval = intervals["interval_0_animals"]
+            elif animal_count == 1:
+                current_interval = intervals["interval_1_animal"]
+            else: # animal_count >= 2
+                current_interval = intervals["interval_n_animals"]
+            
+            if frame_idx - last_inferenced_frame >= current_interval:
+                inference_list.append(frame_idx)
+                last_inferenced_frame = frame_idx
+        
+        inference_set = set(inference_list)
+        reply = QMessageBox.question(
+            self.main, "Inference List Calculated",
+            f"A total of {len(inference_set)} frames out of {self.dm.total_frames} will be inferenced, confirm?"
+        )
+        if reply == QMessageBox.Yes:
+            self.call_inference(sorted(list(inference_set)))
+
+    def _reload_prediction(self, prediction_path):
         """Reload prediction data from file and update visualization"""
         self.dm.reload_pred_to_dm(prediction_path)
         self.refresh_and_display()
