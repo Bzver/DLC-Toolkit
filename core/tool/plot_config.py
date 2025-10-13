@@ -1,13 +1,14 @@
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QGroupBox, QDialog, QVBoxLayout, QCheckBox
+from PySide6.QtWidgets import QGroupBox, QDialog, QVBoxLayout
 
+from ui import Toggle_Switch
 from core.dataclass import Plot_Config
 
 class Plot_Config_Menu(QGroupBox):
     config_changed = Signal(object)
 
-    def __init__(self, plot_config:Plot_Config, skip_opacity=False, parent=None):
+    def __init__(self, plot_config:Plot_Config, label_mode=False, parent=None):
         super().__init__(parent)
         self.setTitle("Plot Config Menu")
         self.plot_config = plot_config
@@ -23,16 +24,60 @@ class Plot_Config_Menu(QGroupBox):
         layout.addWidget(self.ps_box)
         self.ps_box.property_changed.connect(self._on_ps_change)
 
-        if not skip_opacity:
-            self.po_box = Adjust_Property_Box(
-                property_name="Point Opacity", property_val=self.plot_config.plot_opacity, range=(0.00, 1.00), parent=self)
-            layout.addWidget(self.po_box)
-            self.po_box.property_changed.connect(self._on_po_change)
+        self.po_box = Adjust_Property_Box(
+            property_name="Point Opacity", property_val=self.plot_config.plot_opacity, range=(0.00, 1.00), parent=self)
+        self.po_box.property_changed.connect(self._on_po_change)
+        self.po_box.setVisible(False)
+
+        self.auto_snap = Toggle_Switch("Snap to Animals (E)", gbox=True, parent=self)
+        self.auto_snap.toggled.connect(self._on_auto_snap_toggle)
+        self.auto_snap.setVisible(False)
+
+        self.roi_nav = Toggle_Switch("Navigate ROI Frames", gbox=True, parent=self)
+        self.roi_nav.toggled.connect(self._on_roi_nav_toggle)
+        self.roi_nav.setVisible(False)
+
+        self.label_plot = Toggle_Switch("Plot Labeled Data", gbox=True, parent=self)
+        self.label_plot.toggled.connect(self._on_label_plot_toggle)
+        self.label_plot.setVisible(False)
+
+        self.pred_plot = Toggle_Switch("Plot Prediction Data", gbox=True, parent=self)
+        self.pred_plot.toggled.connect(self._on_pred_plot_toggle)
+        self.pred_plot.setVisible(False)
+
+        self.label_nav = Toggle_Switch("Navigate Labeled Frames", gbox=True, parent=self)
+        self.label_nav.toggled.connect(self._on_label_nav_toggle)
+        self.label_nav.setVisible(False)
         
-        self.label_vis = QCheckBox("Label Text Visibility")
-        self.label_vis.setChecked(True)
-        layout.addWidget(self.label_vis)
-        self.label_vis.toggled.connect(self._on_vis_toggled)
+        self.text_vis = Toggle_Switch("Label Text Visibility", gbox=True, parent=self)
+        self.text_vis.toggled.connect(self._on_text_vis_toggle)
+
+        if label_mode:
+            layout.addWidget(self.po_box)
+            self.po_box.setVisible(True)
+            layout.addWidget(self.auto_snap)
+            self.auto_snap.setVisible(True)
+            layout.addWidget(self.roi_nav)
+            self.roi_nav.setVisible(True)
+        else:
+            layout.addWidget(self.label_plot)
+            self.label_plot.setVisible(True)
+            layout.addWidget(self.pred_plot)
+            self.pred_plot.setVisible(True)
+            layout.addWidget(self.label_nav)
+            self.label_nav.setVisible(True)
+
+        layout.addWidget(self.text_vis)
+
+        self.refresh_toggle_state()
+
+    def refresh_toggle_state(self):
+        self.auto_snap.set_checked(self.plot_config.auto_snapping)
+        self.roi_nav.set_checked(self.plot_config.navigate_roi)
+        self.label_plot.set_checked(self.plot_config.plot_labeled)
+        self.pred_plot.set_checked(self.plot_config.plot_pred)
+        self.label_nav.set_checked(self.plot_config.navigate_labeled)
+        self.text_vis.set_checked(not self.plot_config.hide_text_labels)
         
     def _on_conf_change(self, val):
         self.plot_config.confidence_cutoff = val
@@ -46,7 +91,27 @@ class Plot_Config_Menu(QGroupBox):
         self.plot_config.plot_opacity = val
         self.config_changed.emit(self.plot_config)
 
-    def _on_vis_toggled(self, checked):
+    def _on_auto_snap_toggle(self, checked):
+        self.plot_config.auto_snapping = checked
+        self.config_changed.emit(self.plot_config)
+
+    def _on_roi_nav_toggle(self, checked):
+        self.plot_config.navigate_roi = checked
+        self.config_changed.emit(self.plot_config)
+
+    def _on_label_plot_toggle(self, checked):
+        self.plot_config.plot_labeled = checked
+        self.config_changed.emit(self.plot_config)
+
+    def _on_pred_plot_toggle(self, checked):
+        self.plot_config.plot_pred = checked
+        self.config_changed.emit(self.plot_config)
+
+    def _on_label_nav_toggle(self, checked):
+        self.plot_config.navigate_labeled = checked
+        self.config_changed.emit(self.plot_config)
+
+    def _on_text_vis_toggle(self, checked):
         self.plot_config.hide_text_labels = not checked
         self.config_changed.emit(self.plot_config)
 

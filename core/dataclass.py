@@ -38,9 +38,16 @@ class Swap_Calculation_Config:
 class Plot_Config:
     plot_opacity: float
     point_size: float
-    confidence_cutoff: float
     hide_text_labels: bool
     edit_mode: bool
+
+    plot_labeled: bool
+    plot_pred: bool
+    navigate_labeled: bool
+
+    confidence_cutoff: float
+    auto_snapping: bool
+    navigate_roi: bool
 
 @dataclass
 class Plotter_Callbacks:

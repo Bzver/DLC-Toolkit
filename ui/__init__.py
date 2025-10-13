@@ -14,6 +14,7 @@ from .dialog import (
 from .video_slider import Slider_With_Marks, Video_Slider_Widget
 from .video_player import Video_Player_Widget, Nav_Widget
 from .menu_shortcut import Menu_Widget, Shortcut_Manager
+from .toggle_switch import Toggle_Switch
 
 __all__ = (
     Slider_With_Marks,
@@ -28,5 +29,6 @@ __all__ = (
     Shortcut_Manager,
     Video_Slider_Widget,
     Video_Player_Widget,
+    Toggle_Switch,
     Nav_Widget,
 )

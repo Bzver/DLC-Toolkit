@@ -33,7 +33,6 @@ class Data_Manager:
         self.reset_dm()
 
     def reset_dm(self):
-        # Shared
         self.total_frames, self.current_frame_idx  = 0, 0
 
         self.video_file, self.video_name, self.project_dir = None, None, None
@@ -41,7 +40,8 @@ class Data_Manager:
 
         self.refined_frame_list, self.frame_list = [], []
         self.plot_config = Plot_Config(
-            plot_opacity =1.0, point_size = 6.0, confidence_cutoff = 0.0, hide_text_labels = False, edit_mode = False)
+            plot_opacity =1.0, point_size = 6.0, confidence_cutoff = 0.0, hide_text_labels = False, edit_mode = False,
+            plot_labeled = True, plot_pred = True, navigate_labeled = False, auto_snapping = False, navigate_roi = False)
         
         # fview only
         self.blob_config = None
