@@ -100,6 +100,7 @@ class Frame_App(QMainWindow):
 
         self.open_config = False
         self.plot_config_widget = None
+        self._reset_ui_during_mode_switch()
 
     def _refresh_ui(self):
         self.at.refresh_ui()

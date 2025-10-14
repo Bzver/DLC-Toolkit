@@ -410,7 +410,6 @@ class Data_Manager:
         try:
             with open(file_path, 'wb') as f:
                 pickle.dump(workspace_state, f)
-            QMessageBox.information(self.main, "Success", f"Workspace saved to:\n{file_path}")
         except Exception as e:
             QMessageBox.critical(self.main, "Error Saving Workspace", f"Failed to save workspace:\n{e}")
 
@@ -459,7 +458,6 @@ class Data_Manager:
             self.init_vid_callback(self.video_file)
             self._init_loaded_data()
             self.refresh_callback()
-            QMessageBox.information(self.main, "Success", "Workspace loaded successfully.")
         except Exception as e:
             QMessageBox.critical(self.main, "Error Loading Workspace", f"Failed to load workspace:\n{e}")
             traceback.print_exc()

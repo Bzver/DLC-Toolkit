@@ -133,7 +133,6 @@ class Nav_Widget(QtWidgets.QWidget):
         super().__init__(parent)
         self.setFixedHeight(30)
         self.marked_name = "Marked"
-        self.collapsed = True
         self.nvc = nav_callback
 
         self.header_layout = QHBoxLayout(self)
