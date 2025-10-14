@@ -20,7 +20,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from utils import helper as duh, utils3d as utls3
 from core.dataclass import Plot_Config, Nav_Callback
 from ui import (
-    Menu_Widget, Video_Slider_Widget, Nav_Widget, Clickable_Video_Label, Progress_Indicator_Dialog
+    Menu_Widget, Video_Slider_Widget, Nav_Widget, Clickable_Video_Label, Progress_Indicator_Dialog, Status_Bar
     )
 from core.io import Prediction_Loader, determine_save_path, save_prediction_to_existing_h5
 from core.tool import Adjust_Property_Dialog, Prediction_Plotter, navigate_to_marked_frame
@@ -30,14 +30,14 @@ import traceback
 # Todo: Add support fot sleap-anipose / anipose toml calibration file
 
 DLC_CONFIG_DEBUG = "D:/Project/DLC-Models/COM3D/config.yaml"
-CALIB_FILE_DEBUG = "D:/Project/SDANNCE-Models/4CAM-250620/SD-20250705-MULTI/sync_dannce.mat"
-VIDEO_FOLDER_DEBUG = "D:/Project/SDANNCE-Models/4CAM-250620/SD-20250705-MULTI/Videos"
+CALIB_FILE_DEBUG = "D:/Project/SDANNCE-Models/4CAM-3D-2ETUP/SD-20250705-MULTI/sync_dannce.mat"
+VIDEO_FOLDER_DEBUG = "D:/Project/SDANNCE-Models/4CAM-3D-2ETUP/SD-20250705-MULTI/Videos"
 
 class Frame_View_3D(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.is_debug = False
+        self.is_debug = True
         self.setWindowTitle(duh.format_title("Frame Viewer 3D", self.is_debug))
         self.setGeometry(100, 100, 1600, 960)
 
@@ -70,7 +70,6 @@ class Frame_View_3D(QtWidgets.QMainWindow):
                     ("Reset Marked Frames", self.reset_marked_frames),
                     ("Check Camera Geometry", self.plot_camera_geometry),
                     ("Auto 3D View Perspective", self.toggle_auto_3d_perspective, {"checkable": True, "checked": True}),
-                    ("Toogle Persistent 3D Skeleton Rendering", self.toggle_persistent_3d_render, {"checkable": True, "checked": False})
                 ]
             },
             "Track": {
@@ -78,7 +77,6 @@ class Frame_View_3D(QtWidgets.QMainWindow):
                 "buttons": [
                     ("Automatic Track Correction", self.automatic_track_correction),
                     ("Manual Swap Selected View (X)", self.manual_swap_frame_view),
-                    ("Call Track Refiner", self.call_track_refiner)
                 ]
             },
             "Save": {
@@ -101,18 +99,18 @@ class Frame_View_3D(QtWidgets.QMainWindow):
         self.display_layout = QtWidgets.QHBoxLayout()
         self.video_layout = QtWidgets.QGridLayout()
         
-        self.video_labels = [] # Store video labels in a list for easy access
+        self.video_labels = []
         for row in range(2):
             for col in range(2):
-                cam_idx = row * 2 + col # 0-indexed camera index
-                label = Clickable_Video_Label(cam_idx, self) # Use the custom label
+                cam_idx = row * 2 + col 
+                label = Clickable_Video_Label(cam_idx, self)
                 label.setText(f"Video {cam_idx }")
-                label.setAlignment(Qt.AlignCenter) # Center the "Video X" text
-                label.setFixedSize(480, 360) # Set a fixed size for video display
-                label.setStyleSheet("border: 1px solid gray;") # Add a border for visibility
+                label.setAlignment(Qt.AlignCenter)
+                label.setFixedSize(360, 270)
+                label.setStyleSheet("border: 1px solid gray;")
                 self.video_layout.addWidget(label, row, col)
                 self.video_labels.append(label)
-                label.clicked.connect(self.set_selected_camera) # Connect the clicked signal
+                label.clicked.connect(self.set_selected_camera)
 
         # Store 3D plot
         self.plot_layout = QtWidgets.QVBoxLayout()
@@ -139,6 +137,9 @@ class Frame_View_3D(QtWidgets.QMainWindow):
         )
         self.nav = Nav_Widget(nav_callback)
         self.app_layout.addWidget(self.nav)
+
+        self.status_bar = Status_Bar()
+        self.app_layout.addWidget(self.status_bar)
 
         QShortcut(QKeySequence(Qt.Key_Left | Qt.ShiftModifier), self).activated.connect(lambda: self.change_frame(-10))
         QShortcut(QKeySequence(Qt.Key_Left), self).activated.connect(lambda: self.change_frame(-1))
@@ -175,7 +176,8 @@ class Frame_View_3D(QtWidgets.QMainWindow):
         self.correction_progress = None
 
         self.plot_config = Plot_Config(
-            plot_opacity=1.0, point_size = 6.0, confidence_cutoff = 0.6, hide_text_labels = False, edit_mode = False)
+            plot_opacity =1.0, point_size = 6.0, confidence_cutoff = 0.0, hide_text_labels = False, edit_mode = False,
+            plot_labeled = True, plot_pred = True, navigate_labeled = False, auto_snapping = False, navigate_roi = False)
         
         self.plot_lim = 150
         self.instance_color = [
@@ -191,7 +193,7 @@ class Frame_View_3D(QtWidgets.QMainWindow):
         self.current_view_mode_idx = 0
 
         self.is_saved, self.auto_perspective = True, True
-        self.is_playing, self.persist_3D_render = False, False
+        self.is_playing = False
 
         self.roi_frame_list, self.failed_frame_list, self.skipped_frame_list = [], [], []
         self.check_range = 100
@@ -312,6 +314,7 @@ class Frame_View_3D(QtWidgets.QMainWindow):
         self.cap_list = [None] * self.num_cam
         folder_list = [None] * self.num_cam
         self.prediction_list = [None] * self.num_cam
+        self.nav.set_current_video_name(folder_path)
 
         print(f"LOADER | Loading videos from: {folder_path}")
         
@@ -334,7 +337,7 @@ class Frame_View_3D(QtWidgets.QMainWindow):
             folder_list[i] = folder
         
         self.total_frames = temp_total_frames # Set the global total_frames
-        self.progress_widget.set_slider_range(self.total_frames)
+        self.progress_widget.set_total_frames(self.total_frames)
 
         # Initialize the swap detection score array
         self.swap_detection_score_array = np.full((self.total_frames, 3), np.nan)
@@ -365,8 +368,7 @@ class Frame_View_3D(QtWidgets.QMainWindow):
 
         self.base_folder = folder_path # Store the base folder path for saving later
         self.current_frame_idx = 0
-        self.progress_widget.set_slider_range(self.total_frames)
-        self.nav.set_collapsed(False)
+        self.progress_widget.set_total_frames(self.total_frames)
         self.navigation_title_controller()
         self.display_current_frame() # Display the first frames
 
@@ -411,32 +413,6 @@ class Frame_View_3D(QtWidgets.QMainWindow):
         self.cam_dir = np.array(cam_dir)
 
     ###################################################################################################################################################
-
-    def call_track_refiner(self): 
-        from frame_label import Frame_Label
-
-        if not hasattr(self, "video_list") or not hasattr(self, "prediction_list") or self.dlc_data is None:
-            QMessageBox.warning(self, "Warning", "Predictions or DLC config are not loaded, load predictions and config first!")
-            return
-
-        # The cam_idx is now directly passed from the clicked video label
-        if self.selected_cam_idx is None:
-            QMessageBox.information(self, "No Camera View Selected", "Please select a camera view first.")
-            return
-        
-        selected_value = self.selected_cam_idx 
-        self.refiner_window = Frame_Label()
-        self.refiner_window.video_file = self.video_list[selected_value]
-        self.refiner_window.initialize_loaded_video()
-        self.dlc_data.pred_data_array = self.pred_data_array[:,selected_value,:,:].copy()
-        self.refiner_window.dlc_data = self.dlc_data
-        self.refiner_window.initialize_loaded_data()
-        self.refiner_window.current_frame_idx = self.current_frame_idx
-        self.refiner_window.prediction = self.prediction_list[selected_value]
-        self.refiner_window.display_current_frame()
-        self.refiner_window.navigation_title_controller()
-        self.refiner_window.show()
-        self.refiner_window.prediction_saved.connect(self.reload_prediction)
 
     def reload_prediction(self, pred_file_path):
         """Reload prediction data from file and update visualization"""
@@ -513,12 +489,7 @@ class Frame_View_3D(QtWidgets.QMainWindow):
             
             self.progress_widget.set_current_frame(self.current_frame_idx) # Update slider handle's position
 
-        if not self.is_playing or self.persist_3D_render:
-            self.canvas.setVisible(True)
-            self.plot_3d_points()
-        else:
-            self.canvas.setVisible(False)
-
+        self.plot_3d_points()
         self._refresh_selected_cam()
     
     def plot_3d_points(self):
@@ -926,28 +897,28 @@ class Frame_View_3D(QtWidgets.QMainWindow):
         self.canvas.draw_idle()
 
     def navigation_title_controller(self):
-        title_text = f"Video Navigation | Frame: {self.current_frame_idx} / {self.total_frames-1} | View Mode: {self.view_mode_choice[self.current_view_mode_idx]}"\
+        title_text = f"    View Mode: {self.view_mode_choice[self.current_view_mode_idx]}    "
         
         if self.swap_detection_score_array is not None and self.swap_detection_score_array.shape[0] > 0:
             deviance_scores = self.swap_detection_score_array[:, 1]
-            title_text += f" | Deviance Score: {deviance_scores[self.current_frame_idx]:.2f}"
+            title_text += f"    Deviance Score: {deviance_scores[self.current_frame_idx]:.2f}    "
         
         if self.avg_velocity_array is not None:
             for inst_idx in range(self.dlc_data.instance_count):
                 inst_vel = self.avg_velocity_array[self.current_frame_idx, inst_idx]
                 if np.isnan(inst_vel):
                     continue
-                title_text += f" | Instance {inst_idx} Velocity: {inst_vel}"
+                title_text += f"   Instance {inst_idx} Velocity: {inst_vel}    "
 
-        self.nav.setTitle(title_text)
+        self.status_bar.show_message(title_text, duration_ms=0)
         if self.current_frame_idx in self.failed_frame_list:
-            self.nav.setTitleColor("#FF0000")  # Red
+            self.nav.set_title_color("#FF0000")  # Red
         elif self.current_frame_idx in self.skipped_frame_list:
-            self.nav.setTitleColor("#3D3D3D")  # Dark Gray
+            self.nav.set_title_color("#3D3D3D")  # Dark Gray
         elif self.current_frame_idx in self.roi_frame_list:
-            self.nav.setTitleColor("#F79F1C")  # Amber/Orange
+            self.nav.set_title_color("#F79F1C")  # Amber/Orange
         else:
-            self.nav.setTitleColor("black")
+            self.nav.set_title_color("black")
 
     ###################################################################################################################################################
 
@@ -956,10 +927,6 @@ class Frame_View_3D(QtWidgets.QMainWindow):
         self.ax.view_init(elev=30, azim=-60)
         self.canvas.draw_idle()
 
-    def toggle_persistent_3d_render(self):
-        self.persist_3D_render = not self.persist_3D_render
-        self.canvas.setVisible(True)
-        self.plot_3d_points()
 
     def toggle_playback_wrapper(self):
         self.progress_widget.toggle_playback()

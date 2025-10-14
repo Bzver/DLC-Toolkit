@@ -152,6 +152,7 @@ class Nav_Widget(QtWidgets.QWidget):
         self.control_btn_frame.setFixedHeight(26)
 
         self.header_layout.addWidget(self.title_label)
+        self.header_layout.addStretch()
         self.header_layout.addWidget(self.video_label)
         self.header_layout.addStretch()
         self.header_layout.addWidget(self.control_btn_frame)
