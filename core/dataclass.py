@@ -64,7 +64,7 @@ class Nav_Callback:
 
 @dataclass
 class Blob_Config:
-    bg_sample_frame_count: int
+    sample_frame_count: int
     threshold: int
     double_blob_area_threshold: int
     min_blob_area: int
