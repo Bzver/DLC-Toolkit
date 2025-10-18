@@ -274,7 +274,7 @@ class Frame_View:
     def dlc_inference_marked(self):
         inference_list = self.dm.get_inference_list()
         if not inference_list:
-            self.main.statusBar().show_message("No unapproved / unrejected/ unrefined marked frames to inference.")
+            self.status_bar.show_message("No unapproved / unrejected/ unrefined marked frames to inference.")
             return
         
         self.call_inference(inference_list)
@@ -371,7 +371,7 @@ class Frame_View:
         """Reload prediction data from file and update visualization"""
         self.dm.reload_pred_to_dm(prediction_path)
         self.refresh_and_display()
-        self.main.statusBar().show_message("Prediction successfully reloaded")
+        self.status_bar.show_message("Prediction successfully reloaded")
         if hasattr(self, "inference_window") and self.inference_window:
             self.inference_window.close()
             self.inference_window = None
@@ -381,7 +381,7 @@ class Frame_View:
     def export_marked_to_clipboard(self):
         df = pd.DataFrame([self.dm.frame_list])
         df.to_clipboard(sep=',', index=False, header=False)
-        self.main.statusBar().show_message("Marked frames exported to clipboard.")
+        self.status_bar.show_message("Marked frames exported to clipboard.")
 
     def save_to_dlc(self):
         if not self.pre_saving_sanity_check():
