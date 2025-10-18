@@ -45,7 +45,7 @@ class Blob_Counter(QGroupBox):
 
         # Image Display
         self.bg_display = Blob_Background(self.frame_extractor)
-        self.blb_layout.addLayout(self.bg_display)
+        self.blb_layout.addWidget(self.bg_display)
 
         # Histogram for blob sizes
         self.blb_hist = Blob_Histogram(self.frame_extractor)
@@ -332,13 +332,14 @@ class Blob_Counter(QGroupBox):
         progress_dialog.close()
         return all_areas
 
-class Blob_Background(QHBoxLayout):
+class Blob_Background(QtWidgets.QWidget):
     def __init__(self, extractor:Frame_Extractor, parent=None):
-        super().__init__()
+        super().__init__(parent)
         self.bg_removal_method = "None"
         self.background_frames = {}
         self.frame_extractor = extractor
 
+        layout = QHBoxLayout(self)
         self.bg_label = QLabel("Background Image:")
         self.bg_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
@@ -348,8 +349,8 @@ class Blob_Background(QHBoxLayout):
         self.image_label.setCursor(Qt.PointingHandCursor)
         self.image_label.mousePressEvent = lambda e: self._show_background_in_dialog()
 
-        self.addWidget(self.bg_label, 1)
-        self.addWidget(self.image_label, 1)
+        layout.addWidget(self.bg_label, 1)
+        layout.addWidget(self.image_label, 1)
 
     def get_background_frame(self, sample_frame_count):
         method = self.bg_removal_method

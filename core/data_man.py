@@ -147,6 +147,8 @@ class Data_Manager:
             if f.endswith(".h5") and self.video_name in f:
                 full_path = os.path.join(video_folder, f)
                 pred_candidates.append(full_path)
+        if not pred_candidates:
+            return None, None
         newest_pred = max(pred_candidates, key=os.path.getmtime)
         print(f"Automatically fetched the newest prediction: {newest_pred}")
 
