@@ -230,6 +230,7 @@ class DLC_Inference(QtWidgets.QDialog):
         return config_text, True
 
     def _get_shuffle_folder(self):
+        shuffle_folder = None
         for f in os.listdir(self.iteration_folder):
             fullpath = os.path.join(self.iteration_folder, f)
             if f"shuffle{self.shuffle_idx}" in f and os.path.isdir(fullpath):
