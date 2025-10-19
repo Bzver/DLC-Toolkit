@@ -38,40 +38,57 @@ class Exporter:
             frame_set = set(self.frame_list)
             max_needed = max(frame_set) if frame_set else -1
 
-            valid_frames = {f for f in frame_set if 0 <= f < total_video_frames}
-            if self.progress_callback:
-                self.progress_callback.setMaximum(len(valid_frames))
-
-            extracted_count = 0
-            current_frame = 0
-
-            while current_frame <= max_needed:
-                ret, img = cap.read()
-                if not ret:
-                    break  # End of video
-
-                if current_frame in valid_frames:
-                    image_path = f"img{str(current_frame).zfill(8)}.png"
-                    image_output_path = os.path.join(self.export_settings.save_path, image_path)
-                    cv2.imwrite(image_output_path, img)
-                    extracted_count += 1
-
+            if len(frame_set) < 0.1 * total_video_frames: # sparse extraction
+                for i, frame in enumerate(frame_set):
                     if self.progress_callback:
-                        self.progress_callback.setValue(extracted_count)
+                        self.progress_callback.setValue(i)
+                        self.progress_callback.setMaximum(len(frame_set))
                         if self.progress_callback.wasCanceled():
-                            cap.release()
-                            if self.progress_callback:
-                                self.progress_callback.close()
-                            raise Exception("Frame extraction canceled by user.")
+                            break
+                    image_path = f"img{str(int(frame)).zfill(8)}.png"
+                    image_output_path = os.path.join(self.export_settings.save_path, image_path)
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame)
+                    ret, frame = cap.read()
+                    if ret:
+                        cv2.imwrite(image_output_path, frame)
+                
+                if self.progress_callback:
+                    self.progress_callback.close()
+            else:
+                valid_frames = {f for f in frame_set if 0 <= f < total_video_frames}
+                if self.progress_callback:
+                    self.progress_callback.setMaximum(len(valid_frames))
 
-                current_frame += 1
+                extracted_count = 0
+                current_frame = 0
 
-            cap.release()
-            if self.progress_callback:
-                self.progress_callback.close()
+                while current_frame <= max_needed:
+                    ret, img = cap.read()
+                    if not ret:
+                        break  # End of video
 
-            if extracted_count != len(valid_frames):
-                raise Exception(f"Only extracted {extracted_count}/{len(valid_frames)} frames.")
+                    if current_frame in valid_frames:
+                        image_path = f"img{str(current_frame).zfill(8)}.png"
+                        image_output_path = os.path.join(self.export_settings.save_path, image_path)
+                        cv2.imwrite(image_output_path, img)
+                        extracted_count += 1
+
+                        if self.progress_callback:
+                            self.progress_callback.setValue(extracted_count)
+                            if self.progress_callback.wasCanceled():
+                                cap.release()
+                                if self.progress_callback:
+                                    self.progress_callback.close()
+                                raise Exception("Frame extraction canceled by user.")
+
+                    current_frame += 1
+
+                cap.release()
+                if self.progress_callback:
+                    self.progress_callback.close()
+
+                if extracted_count != len(valid_frames):
+                    raise Exception(f"Only extracted {extracted_count}/{len(valid_frames)} frames.")
 
         except Exception as e:
             if 'cap' in locals():
