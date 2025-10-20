@@ -122,6 +122,9 @@ class Frame_App(QMainWindow):
             self.fview.deactivate(self.menu_widget)
         self.flabel.activate(self.menu_widget)
         self.at = self.flabel
+        if self.kem.pred_data_array is None and self.dm.dlc_data.pred_data_array is not None:
+            self.kem.pred_data_array = self.dm.dlc_data.pred_data_array
+
         self.mode_toggle.set_checked(True)
 
     def _on_mode_toggle(self, is_checked: bool):

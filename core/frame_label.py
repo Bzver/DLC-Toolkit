@@ -92,7 +92,6 @@ class Frame_Label:
             },
             "Refine": {
                 "buttons": [
-                    ("Direct Keypoint Edit (Q)", self._direct_keypoint_edit),
                     {
                         "submenu": "Interpolate",
                         "items": [
@@ -129,6 +128,8 @@ class Frame_Label:
             },
             "Edit": {
                 "buttons": [
+                    ("Direct Keypoint Edit (Q)", self._direct_keypoint_edit),
+                    ("Open Outlier Cleaning Menu", self._call_outlier_finder),
                     ("Remove Current Frame From Refine Task", self.toggle_frame_status),
                     ("Mark All As Refined", self._mark_all_as_refined),
                     ("Undo Changes (Ctrl+Z)", self._undo_changes),
@@ -289,7 +290,7 @@ class Frame_Label:
 
         if self.open_outlier:
             self.menu_slot_callback()
-            self.outlier_finder = Outlier_Finder(self.kem.pred_data_array, canon_pose=self.dm.canon_pose, parent=self)
+            self.outlier_finder = Outlier_Finder(self.kem.pred_data_array, canon_pose=self.dm.canon_pose, parent=self.main)
             self.outlier_finder.mask_changed.connect(self._handle_outlier_mask_from_comp)
             self.outlier_finder.list_changed.connect(self._handle_frame_list_from_comp)
             self.vid_play.set_right_panel_widget(self.outlier_finder)
@@ -406,7 +407,7 @@ class Frame_Label:
         selected_instance_idx, current_rotation = self.kem.rot_inst_prep(
             self.dm.current_frame_idx, self.gview.sbox, self.dm.angle_map_data)
         if selected_instance_idx:
-            self.rotation_dialog = Pose_Rotation_Dialog(selected_instance_idx, current_rotation, parent=self)
+            self.rotation_dialog = Pose_Rotation_Dialog(selected_instance_idx, current_rotation, parent=self.main)
             self.rotation_dialog.rotation_changed.connect(self._on_rotation_changed)
             self.rotation_dialog.show()
 
