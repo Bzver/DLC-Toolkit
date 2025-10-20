@@ -1,24 +1,25 @@
 import cv2
 import numpy as np
 from PySide6 import QtWidgets, QtGui
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QSizePolicy, 
     QSlider, QDialog, QSpinBox, QComboBox, QPushButton,
 )
-from PySide6.QtCore import Qt, Signal
 
 import matplotlib
 matplotlib.use("QtAgg")
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
-from typing import Optional
+from typing import Optional, Tuple, List
 
 from ui import Progress_Indicator_Dialog
 from core.io import Frame_Extractor
 from core.dataclass import Blob_Config
 
 class Blob_Counter(QGroupBox):
+    Frame_CV2 = np.ndarray
     parameters_changed = Signal()
     frame_processed = Signal(object, int)
     video_counted = Signal(list)
@@ -126,11 +127,11 @@ class Blob_Counter(QGroupBox):
         if config is not None:
             self._apply_config(config)
 
-    def set_current_frame(self, frame):
+    def set_current_frame(self, frame:Frame_CV2):
         self.current_frame = frame
         self._reprocess_current_frame()
 
-    def get_config(self):
+    def get_config(self) -> Blob_Config:
         config = Blob_Config(
             sample_frame_count = self.sample_frame_count,
             threshold = self.threshold,
@@ -141,6 +142,23 @@ class Blob_Counter(QGroupBox):
             background_frames = self.bg_display.background_frames,
         )
         return config
+    
+    def get_blob_bbox(self, frame:Frame_CV2) -> Tuple[int, int, int, int]:
+        vid_h, vid_w = frame.shape[:2]
+        filtered_contours = self._process_contour_from_frame(frame)
+
+        if not filtered_contours:
+            return (0, 0, vid_w, vid_h)
+
+        min_x, max_x, min_y, max_y = vid_w, 0, vid_h, 0
+        for cnt in filtered_contours:
+            x, y, w, h = cv2.boundingRect(cnt)
+            min_x = max(min(min_x, x - 50), 0)
+            max_x = min(max(max_x, x + w + 50), vid_w)
+            min_y = max(min(min_y, y - 50), 0)
+            max_y = min(max(max_y, y + h + 50), vid_h)
+
+        return (int(min_x), int(min_y), int(max_x), int(max_y))
 
     def _apply_config(self, config: Blob_Config):
         self.sample_frame_count = config.sample_frame_count
@@ -163,34 +181,6 @@ class Blob_Counter(QGroupBox):
 
         self.parameters_changed.emit()
 
-    def _on_threshold_changed(self, value:int):
-        self.threshold = value
-        self.threshold_value_label.setText(str(value))
-        self.parameters_changed.emit()
-
-    def _on_min_area_changed(self, value:int):
-        self.min_blob_area = value
-        self.min_area_value_label.setText(str(value))
-        self.parameters_changed.emit()
-
-    def _on_blob_type_changed(self, text:str):
-        self.blob_type = text
-        self.parameters_changed.emit()
-
-    def _on_bg_removal_changed(self, text:str):
-        self.bg_display.bg_removal_method = text
-        self.parameters_changed.emit()
-        self.bg_display.update_background_display(self.sample_frame_count)
-
-    def _on_sample_count_changed(self, value:int):
-        self.sample_frame_count = value
-        self.bg_display.background_frames.clear()
-        self.bg_display.update_background_display(self.sample_frame_count)
-
-    def _on_blb_hist_change(self, value:int):
-        self.blb_hist.double_blob_area_threshold = value
-        self._reprocess_current_frame()
-
     def _reprocess_current_frame(self):
         if self.current_frame is None:
             self.count_label.setText("Animal Count: 0")
@@ -198,7 +188,6 @@ class Blob_Counter(QGroupBox):
         result = self._perform_blob_counting(self.current_frame)
         if result is not None:
             display_frame, count = result
-            # Convert to QImage for display if needed (optional)
             self.frame_processed.emit(display_frame, count)
 
     def _get_total_frames(self):
@@ -246,7 +235,7 @@ class Blob_Counter(QGroupBox):
         progress.close()
         self.video_counted.emit(counts_per_frame)
         
-    def _perform_blob_counting(self, current_frame, skip_draw=False):
+    def _perform_blob_counting(self, current_frame:Frame_CV2, skip_draw=False) -> Tuple[Frame_CV2, int]:
         if current_frame is None:
             self.count_label.setText("Animal Count: 0")
             return None, 0
@@ -268,7 +257,7 @@ class Blob_Counter(QGroupBox):
         self.count_label.setText(f"Animal Count: {animal_count}")
         return display_frame, animal_count
 
-    def _process_contour_from_frame(self, frame):
+    def _process_contour_from_frame(self, frame:Frame_CV2) -> List[np.ndarray]:
         frame_to_process = frame
         gray_frame = cv2.cvtColor(frame_to_process, cv2.COLOR_BGR2GRAY)
 
@@ -290,7 +279,7 @@ class Blob_Counter(QGroupBox):
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         return [cnt for cnt in contours if cv2.contourArea(cnt) > self.min_blob_area]
 
-    def _draw_mask(self, current_frame, filtered_contours):
+    def _draw_mask(self, current_frame:Frame_CV2, filtered_contours) -> Frame_CV2:
         mask = np.zeros_like(current_frame, dtype=np.uint8)
         cv2.drawContours(mask, filtered_contours, -1, (0, 255, 0), cv2.FILLED)
         alpha = 0.3
@@ -302,7 +291,7 @@ class Blob_Counter(QGroupBox):
         areas = self._compute_blob_areas()
         self.blb_hist.plot_histogram(areas)
     
-    def _compute_blob_areas(self):
+    def _compute_blob_areas(self) -> List[float]:
         if not self.frame_extractor:
             return []
 
@@ -324,13 +313,41 @@ class Blob_Counter(QGroupBox):
                 continue
 
             contours = self._process_contour_from_frame(frame)
-            areas = [cv2.contourArea(c) for c in contours if cv2.contourArea(c) > self.min_blob_area]
+            areas = [cv2.contourArea(c) for c in contours]
             all_areas.extend(areas)
 
             progress_dialog.setValue(i + 1)
 
         progress_dialog.close()
         return all_areas
+
+    def _on_threshold_changed(self, value:int):
+        self.threshold = value
+        self.threshold_value_label.setText(str(value))
+        self.parameters_changed.emit()
+
+    def _on_min_area_changed(self, value:int):
+        self.min_blob_area = value
+        self.min_area_value_label.setText(str(value))
+        self.parameters_changed.emit()
+
+    def _on_blob_type_changed(self, text:str):
+        self.blob_type = text
+        self.parameters_changed.emit()
+
+    def _on_bg_removal_changed(self, text:str):
+        self.bg_display.bg_removal_method = text
+        self.parameters_changed.emit()
+        self.bg_display.update_background_display(self.sample_frame_count)
+
+    def _on_sample_count_changed(self, value:int):
+        self.sample_frame_count = value
+        self.bg_display.background_frames.clear()
+        self.bg_display.update_background_display(self.sample_frame_count)
+
+    def _on_blb_hist_change(self, value:int):
+        self.blb_hist.double_blob_area_threshold = value
+        self._reprocess_current_frame()
 
 class Blob_Background(QtWidgets.QWidget):
     def __init__(self, extractor:Frame_Extractor, parent=None):
@@ -352,7 +369,7 @@ class Blob_Background(QtWidgets.QWidget):
         layout.addWidget(self.bg_label, 1)
         layout.addWidget(self.image_label, 1)
 
-    def get_background_frame(self, sample_frame_count):
+    def get_background_frame(self, sample_frame_count:int):
         method = self.bg_removal_method
         if method in self.background_frames:
             return self.background_frames[method]
@@ -420,7 +437,7 @@ class Blob_Background(QtWidgets.QWidget):
         self.background_frames[method] = background_frame
         return background_frame
 
-    def update_background_display(self, sample_frame_count):
+    def update_background_display(self, sample_frame_count:int):
         if self.bg_removal_method == "None":
             self.image_label.setText("None")
             return

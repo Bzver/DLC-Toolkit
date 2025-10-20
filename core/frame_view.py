@@ -7,14 +7,14 @@ from PySide6.QtWidgets import QMessageBox
 
 import traceback
 
-from ui import Menu_Widget, Video_Player_Widget, Clear_Mark_Dialog, Shortcut_Manager, Status_Bar, Inference_interval_Dialog
+from ui import (
+    Menu_Widget, Video_Player_Widget, Clear_Mark_Dialog, Shortcut_Manager, Status_Bar,
+      Inference_interval_Dialog, Progress_Indicator_Dialog)
 from utils.helper import frame_to_pixmap
 from .data_man import Data_Manager
 from .video_man import  Video_Manager
 from .tool import Mark_Generator, Blob_Counter, Prediction_Plotter
-from .palette import (
-    NAV_COLOR_PALETTE as nvp, NAV_COLOR_PALETTE_COUNTING as nvpc, LABEL_INST_PALETTE as lip
-    )
+from .palette import (NAV_COLOR_PALETTE as nvp, NAV_COLOR_PALETTE_COUNTING as nvpc, LABEL_INST_PALETTE as lip)
 
 class Frame_View:
     def __init__(self,
@@ -281,14 +281,15 @@ class Frame_View:
 
     def dlc_inference_all(self):
         if self.dm.total_frames > 9000:
-            self.status_bar.show_message("It's over nine thousands!", duration_ms=100)
+            self.status_bar.show_message("It's over nine thousands!", duration_ms=500)
             self._suggest_animal_counting()
-            if self.dm.inst_count_per_frame_vid is None and not self.skip_counting:
-                return
-            elif self.dm.inst_count_per_frame_vid is not None:
+            if self.dm.inst_count_per_frame_vid is not None:
                 dialog = Inference_interval_Dialog(self.main)
                 dialog.intervals_selected.connect(self._handle_inference_intervals)
                 dialog.exec()
+            elif self.skip_counting:
+                inference_list = list(range(self.dm.total_frames))
+                self.call_inference(inference_list)
         else:
             inference_list = list(range(self.dm.total_frames))
             self.call_inference(inference_list)
@@ -320,6 +321,7 @@ class Frame_View:
             self.inference_window.show()
             self.inference_window.frames_exported.connect(self._handle_rerun_frames_exported)
             self.inference_window.prediction_saved.connect(self._reload_prediction)
+            self.inference_window.crop_coords_requested.connect(self._update_inference_crop_coords)
         except Exception as e:
             error_message = f"Inference Process failed to initialize. Exception: {e}"
             detailed_message = f"{error_message}\n\nTraceback:\n{traceback.format_exc()}"
@@ -332,9 +334,9 @@ class Frame_View:
                 self.main, "Animal Not Counted",
                 "Animal counting has not been performed for this video. For videos with a large "
                 "number of frames, skipping animal counting may lead to a significantly slower "
-                "inference process. Do you wish to skip animal counting and proceed directly to inference?"
+                "inference process. Do you want to count animals now?"
             )
-            if reply == QMessageBox.No:
+            if reply == QMessageBox.Yes:
                 self._toggle_animal_counting()
             else:
                 self.skip_counting = True
@@ -367,7 +369,30 @@ class Frame_View:
         if reply == QMessageBox.Yes:
             self.call_inference(sorted(list(inference_set)))
 
-    def _reload_prediction(self, prediction_path):
+    def _update_inference_crop_coords(self, frame_list:list):
+        if not frame_list:
+             return
+        
+        crop_dict = {}
+        self._init_blob_counter()
+        progress = Progress_Indicator_Dialog(
+            0, len(frame_list), "Getting Crop Coords", "Acquring crop coordinates from Blob_Counter...", self.main)
+        for i, frame_idx in enumerate(frame_list):
+            progress.setValue(i)
+            if progress.wasCanceled():
+                return
+            frame = self.vm.get_frame(frame_idx)
+            bbox = self.blob_counter.get_blob_bbox(frame)
+            crop_dict[frame_idx] = bbox
+            
+        progress.close()
+        if crop_dict:
+            self.inference_window.crop_coords = crop_dict
+            self.inference_window.inference_workflow()
+        else:
+            QMessageBox.critical(self.main, "Failed", "Failed to Extract Crop Coords.")
+
+    def _reload_prediction(self, prediction_path:str):
         """Reload prediction data from file and update visualization"""
         self.dm.reload_pred_to_dm(prediction_path)
         self.refresh_and_display()
