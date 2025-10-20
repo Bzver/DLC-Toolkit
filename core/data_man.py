@@ -297,6 +297,13 @@ class Data_Manager:
 
     def determine_nav_color_flabel(self) -> HexColor:
         frame_lists = [
+            self.frame_list,
+            self.refined_frame_list
+        ]
+        return nvp[self._get_max_priority(frame_lists, range(1, 3))]
+    
+    def determine_nav_color_fro(self) -> HexColor:
+        frame_lists = [
             self.roi_frame_list,
             self.outlier_frame_list,
         ]

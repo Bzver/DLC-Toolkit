@@ -49,6 +49,7 @@ class Frame_Label:
     def deactivate(self, menu_widget:Menu_Widget):
         self._remove_menu(menu_widget)
         self.shortcuts.set_enabled(False)
+        self.save_prediction()
         
     def _remove_menu(self, menu_widget:Menu_Widget):
         for menu in self.labeler_menu_config.keys():
@@ -222,9 +223,9 @@ class Frame_Label:
         self.status_bar.show_message(title_text, duration_ms=0)
 
         if self.open_outlier or self.dm.plot_config.navigate_roi:
-            color = self.dm.determine_nav_color_flabel()
+            color = self.dm.determine_nav_color_fro()
         else:
-            color = self.dm.determine_nav_color_fview()
+            color = self.dm.determine_nav_color_flabel()
         if color:
             self.vid_play.nav.set_title_color(color)
         else:
