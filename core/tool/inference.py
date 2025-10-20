@@ -20,7 +20,7 @@ from core.io import (
     save_prediction_to_existing_h5, determine_save_path, save_predictions_to_new_h5,
 )
 from core.tool import Prediction_Plotter
-from utils.helper import log_print, handle_unsaved_changes_on_close
+from utils.helper import log_print, handle_unsaved_changes_on_close, crop_coords_to_array
 from utils.pose import calculate_pose_centroids
 from utils.track import hungarian_matching
 
@@ -659,7 +659,13 @@ class DLC_Inference(QtWidgets.QDialog):
         loaded_data = loader.load_data()
         new_data_array = np.full(
             (self.dlc_data.pred_frame_count, self.dlc_data.instance_count, self.dlc_data.num_keypoint*3), np.nan)
-        new_data_array[self.frame_list, :, :] = loaded_data.pred_data_array
+        temp_data_array = loaded_data.pred_data_array
+
+        if self.crop_coords:
+            coords_array = crop_coords_to_array(self.crop_coords, temp_data_array.shape)
+            temp_data_array = temp_data_array + coords_array
+
+        new_data_array[self.frame_list, :, :] = temp_data_array
         self.new_data_array = new_data_array
         return h5_files[-1]
 

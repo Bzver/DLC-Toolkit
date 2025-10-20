@@ -2,7 +2,7 @@ import numpy as np
 import cv2
 from PySide6 import QtGui
 from PySide6.QtWidgets import QMessageBox
-from typing import List, Tuple, Callable
+from typing import List, Tuple, Callable, Dict
 
 def get_instances_on_current_frame(pred_data_array:np.ndarray, current_frame_idx:int) -> List[int]:
     """
@@ -320,3 +320,17 @@ def frame_to_pixmap(frame):
     qt_image = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
     pixmap = QtGui.QPixmap.fromImage(qt_image)
     return pixmap, w, h
+
+###########################################################################################
+
+def crop_coords_to_array(coords_dict:Dict[int, Tuple[int, int, int, int]], arr_shape:Tuple[int, int, int]):
+    coords_array = np.zeros(arr_shape)
+    sorted_coords = dict(sorted(coords_dict.items()))
+    crop_offsets = np.array(list(sorted_coords.values()))
+    
+    x_per_frame = crop_offsets[:, 0][:, np.newaxis, np.newaxis]
+    y_per_frame = crop_offsets[:, 1][:, np.newaxis, np.newaxis]
+    
+    coords_array[:, :, 0::3] = x_per_frame
+    coords_array[:, :, 1::3] = y_per_frame
+    return coords_array

@@ -5,6 +5,7 @@ import cv2
 from typing import Tuple, List, Optional, Dict
 
 from .csv_op import prediction_to_csv, csv_to_h5
+from utils.helper import crop_coords_to_array
 from ui import Progress_Indicator_Dialog
 from core.dataclass import Loaded_DLC_Data, Export_Settings
 
@@ -25,9 +26,6 @@ class Exporter:
         self.pred_data_array = pred_data_array
         self.progress_callback = progress_callback
         self.crop_coords = crop_coords
-
-        if DEBUG:
-            self.export_settings.export_mode = "Append"
 
         os.makedirs(self.export_settings.save_path, exist_ok=True)
 
@@ -121,18 +119,8 @@ class Exporter:
             pred_data_array = self.pred_data_array[self.frame_list, :, :] # (F, I, K*3)
 
         if self.crop_coords:
-            coords_array_final = np.zeros_like(pred_data_array)
-            sorted_coords = dict(sorted(self.crop_coords.items()))
-            crop_offsets = np.array(list(sorted_coords.values()))
-            
-            x_per_frame = crop_offsets[:, 0][:, np.newaxis, np.newaxis]
-            y_per_frame = crop_offsets[:, 1][:, np.newaxis, np.newaxis]
-
-            coords_array_final[:, :, 0::3] = x_per_frame
-            coords_array_final[:, :, 1::3] = y_per_frame
-            
-            pred_data_array = pred_data_array - coords_array_final
-
+            coords_array = crop_coords_to_array(self.crop_coords, pred_data_array.shape)
+            pred_data_array = pred_data_array - coords_array
         try:
             if not prediction_to_csv(self.dlc_data, pred_data_array, self.export_settings, self.frame_list):
                 raise RuntimeError("Error exporting predictions to csv.")
