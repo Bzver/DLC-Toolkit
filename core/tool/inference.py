@@ -553,8 +553,8 @@ class DLC_Inference(QtWidgets.QDialog):
 
         info_label = QtWidgets.QLabel(
             "This action usually takes between a few seconds and one minute, "
-            "depending on number of marked frames. "
-            "Check out the terminal if it is taking longer than usual."
+            "depending on number of marked frames unless mode is inferencing all"
+            "Check out the terminal to see the progress."
         )
         info_label.setWordWrap(True)
         info_label.setStyleSheet("QLabel { color: gray; }")

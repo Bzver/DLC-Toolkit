@@ -295,7 +295,7 @@ class Outlier_Container(QtWidgets.QWidget):
         self.enveloped_spinbox = QtWidgets.QDoubleSpinBox()
         self.enveloped_spinbox.setRange(0.0, 1.0)
         self.enveloped_spinbox.setSingleStep(0.05)
-        self.enveloped_spinbox.setValue(0.9)
+        self.enveloped_spinbox.setValue(0.6)
         self.enveloped_spinbox.setDecimals(2)
         layout.addWidget(label)
         layout.addWidget(self.enveloped_spinbox)

@@ -224,7 +224,7 @@ def outlier_flicker(pred_data_array:np.ndarray, min_duration:int=2) -> np.ndarra
 
     return flicker_mask
 
-def outlier_enveloped(pred_data_array:np.ndarray, threshold:float=0.9) -> np.ndarray:
+def outlier_enveloped(pred_data_array:np.ndarray, threshold:float=0.6) -> np.ndarray:
     """
     Flags smaller instances that are largely contained within the bounding box of a larger, nearby instance.
 
