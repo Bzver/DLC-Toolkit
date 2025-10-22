@@ -1,9 +1,8 @@
-import os
 import numpy as np
 import pandas as pd
 
 from PySide6 import QtWidgets
-from PySide6.QtWidgets import QMessageBox, QFileDialog
+from PySide6.QtWidgets import QMessageBox
 
 from typing import Callable, Optional
 
@@ -16,7 +15,6 @@ from utils.pose import (
     calculate_pose_centroids, calculate_pose_rotations
 )
 from ui import Progress_Indicator_Dialog, Selectable_Instance
-from .io import parse_idt_df_into_ndarray
 
 DEBUG = False
 
@@ -56,49 +54,12 @@ class Keypoint_Edit_Manager:
         progress = Progress_Indicator_Dialog(0, self.total_frames, title, dialog, self.main)
 
         self.pred_data_array, changes_applied = track_correction(
-            pred_data_array=self.pred_data_array,
-            idt_traj_array=None,
-            progress=progress,
-            debug_status=DEBUG
-            )
+            pred_data_array=self.pred_data_array, progress=progress, debug_status=DEBUG)
         progress.close()
 
         if not changes_applied:
             QMessageBox.information(self.main, "No Changes Applied", "No changes were applied.")
             return
-        QMessageBox.information(self.main, "Track Correction Finished", f"Applied {changes_applied} changes to the current track.")
-
-        self.edit_callback()
-
-    def correct_track_using_idtrackerai(self):
-        folder_path = QFileDialog.getExistingDirectory(self.main, "Select Video Folder")
-        if not folder_path:
-            return
-        idt_csv = os.path.join(folder_path, "trajectories", "trajectories_csv", "trajectories.csv")
-        conf_csv = os.path.join(folder_path, "trajectories", "trajectories_csv", "id_probabilities.csv")
-        if not os.path.isfile(idt_csv):
-            QMessageBox.warning(self.main, "File Not Found", f"idTracker.ai trajectories file not found:\n{idt_csv}")
-        df_idt = pd.read_csv(idt_csv, header=0)
-        df_conf = pd.read_csv(conf_csv, header=0)
-        idt_traj_array = parse_idt_df_into_ndarray(df_idt, df_conf)
-        self._save_state_for_undo()
-
-        dialog = "Fixing track from idTracker.ai trajectories..."
-        title = f"Fix Track Using idTracker.ai"
-        progress = Progress_Indicator_Dialog(0, self.total_frames, title, dialog, self.main)
-
-        self.pred_data_array, changes_applied = track_correction(
-            pred_data_array=self.pred_data_array,
-            idt_traj_array=idt_traj_array,
-            progress=progress,
-            debug_status=DEBUG,
-            )
-        progress.close()
-
-        if not changes_applied:
-            QMessageBox.information(self.main, "No Changes Applied", "No changes were applied.")
-            return
-
         QMessageBox.information(self.main, "Track Correction Finished", f"Applied {changes_applied} changes to the current track.")
 
         self.edit_callback()

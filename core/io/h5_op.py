@@ -5,7 +5,7 @@ import h5py
 from typing import Tuple
 import traceback
 
-from .parser import convert_prediction_array_to_save_format
+from .io_helper import convert_prediction_array_to_save_format
 from .csv_op import prediction_to_csv, csv_to_h5
 from core.dataclass import Loaded_DLC_Data, Export_Settings
 

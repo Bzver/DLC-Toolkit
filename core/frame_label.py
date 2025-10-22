@@ -115,14 +115,7 @@ class Frame_Label:
                             ("Swap Until The End (Shift + W)", self._swap_track_continous)
                         ]
                     },
-                    {
-                        "submenu": "Correct",
-                        "display_name": "Auto Correction",
-                        "items": [
-                            ("Correct Track Using Temporal Consistency", self._temporal_track_correct),
-                            ("Correct Track Using Idtrackerai Trajectories", self._idtrackerai_track_correct),
-                        ]
-                    },
+                    ("Correct Track Using Temporal Consistency", self._temporal_track_correct),
                     ("Generate Instance (G)", self._generate_inst),
                     ("Rotate Selected Instance (R)", self._rotate_inst),
                 ]
@@ -361,12 +354,6 @@ class Frame_Label:
             return
         self._suggest_outlier_clean()
         self.kem.correct_track_using_temporal()
-
-    def _idtrackerai_track_correct(self):
-        if not self._track_edit_blocker():
-            return
-        self._suggest_outlier_clean()
-        self.kem.correct_track_using_idtrackerai()
 
     def _delete_track(self):
         self.kem.del_trk(self.dm.current_frame_idx, self.gview.sbox)

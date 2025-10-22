@@ -3,10 +3,10 @@ import numpy as np
 import cv2
 
 from typing import Tuple, List, Optional, Dict
+from PySide6.QtWidgets import QProgressDialog
 
 from .csv_op import prediction_to_csv, csv_to_h5
 from utils.helper import crop_coords_to_array
-from ui import Progress_Indicator_Dialog
 from core.dataclass import Loaded_DLC_Data, Export_Settings
 
 DEBUG = False
@@ -17,7 +17,7 @@ class Exporter:
 
     def __init__(self, dlc_data: Loaded_DLC_Data, export_settings: Export_Settings,
             frame_list: List[int], pred_data_array:Optional[np.ndarray]=None,
-            progress_callback:Optional[Progress_Indicator_Dialog]=None,
+            progress_callback:Optional[QProgressDialog]=None,
             crop_coords:Optional[Dict[int, Tuple[int, int, int, int]]]=None,
             ):
         self.dlc_data = dlc_data

@@ -2,8 +2,9 @@ import os
 import shutil
 import yaml
 import numpy as np
+from typing import List, Tuple
 
-def backup_existing_prediction(save_filepath):
+def backup_existing_prediction(save_filepath:str):
     if not os.path.isfile(save_filepath):
         return
 
@@ -41,7 +42,7 @@ def determine_save_path(prediction_filepath:str, suffix:str) -> str:
     print(f"Saved modified prediction to: {pred_file_to_save_path}")
     return pred_file_to_save_path
     
-def append_new_video_to_dlc_config(config_path, video_name):
+def append_new_video_to_dlc_config(config_path:str, video_name:str):
     dlc_dir = os.path.dirname(config_path)
     config_backup = os.path.join(dlc_dir, "config_bak.yaml")
     print("Backup up the original config.yaml as config_bak.yaml")
@@ -106,7 +107,7 @@ def unflatten_data_array(array:np.ndarray, inst_count:int) -> np.ndarray:
         new_array[:, inst_idx, :] = array[:, start_col:end_col]
     return new_array
 
-def remove_confidence_score(array:np.ndarray):
+def remove_confidence_score(array:np.ndarray) -> np.ndarray:
     array_dim = len(array.shape) # Always check for dimension first
     if array_dim == 2:
         rows, cols = array.shape
@@ -120,7 +121,17 @@ def remove_confidence_score(array:np.ndarray):
         new_array[:,:,1::2] = array[:,:,1::3]
     return new_array
 
-def nuke_negative_val_in_loaded_pred(array:np.ndarray):
+def nuke_negative_val_in_loaded_pred(array:np.ndarray) -> np.ndarray:
     array = array.copy()
     array[array<0] = np.nan
     return array
+
+def convert_prediction_array_to_save_format(pred_data_array: np.ndarray) -> List[Tuple[int, np.ndarray]]:
+    new_data = []
+    num_frames = pred_data_array.shape[0]
+
+    for frame_idx in range(num_frames):
+        frame_data = pred_data_array[frame_idx, :, :].flatten()
+        new_data.append((frame_idx, frame_data))
+
+    return new_data
