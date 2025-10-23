@@ -1,10 +1,11 @@
 import numpy as np
 from itertools import combinations
 
-from typing import Tuple
+from typing import Tuple, Dict
 
-from utils.helper import get_instances_on_current_frame, get_instance_count_per_frame
-from .pose_analysis import calculate_pose_centroids, calculate_pose_bbox
+from utils.helper import get_instances_on_current_frame
+from .pose_analysis import calculate_pose_centroids, calculate_pose_bbox, calculate_pose_rotations
+from .pose_worker import pose_alignment_worker
 
 def outlier_removal(pred_data_array:np.ndarray, outlier_mask:np.ndarray) -> Tuple[np.ndarray, int, int]:
     """
@@ -66,30 +67,6 @@ def outlier_bodypart(pred_data_array:np.ndarray, threshold:int=2) -> np.ndarray:
         discovered_bodyparts > 0) # No need to include empty instances
     
     return low_bp_mask
-
-def outlier_instance(pred_data_array:np.ndarray, threshold:int) -> np.ndarray:
-    """
-    Flags all instances in frames where the total number of detected instances is below a threshold.
-
-    Used to remove frames with abnormally low instance counts across the board.
-
-    Args:
-        pred_data_array (np.ndarray): Prediction array of shape (num_frames, num_instances, num_keypoints * 3).
-        threshold (int): Minimum number of instances required per frame.
-
-    Returns:
-        np.ndarray: Boolean mask of shape (num_frames, num_instances) where all instances in underpopulated 
-                    frames are flagged.
-    """
-    instance_count = pred_data_array.shape[1]
-
-    instance_count_per_frame = get_instance_count_per_frame(pred_data_array)
-    low_instance_mask_frame = instance_count_per_frame < threshold
-
-    # Broadcast to all instances: if frame is bad, all instances are flagged
-    low_instance_mask = np.tile(low_instance_mask_frame[:, np.newaxis], (1, instance_count))
-
-    return low_instance_mask
 
 def outlier_duplicate(
         pred_data_array:np.ndarray,
@@ -180,51 +157,104 @@ def outlier_size(
 
     return np.logical_or(small_mask, large_mask)
 
-def outlier_flicker(pred_data_array:np.ndarray, min_duration:int=2) -> np.ndarray:
+def outlier_pose(
+    pred_data_array: np.ndarray,
+    angle_map_data: Dict[str, any],
+    quant_step: float = 1.0,
+    min_samples: int = 3
+) -> np.ndarray:
     """
-    Flags instances that appear and disappear rapidly (flickering), indicating unstable detection.
-
-    An instance is considered flickering if it appears for fewer than `min_duration` consecutive frames.
+    Flags pose outliers using pose quantization and frequency counting across all frames and instances.
 
     Args:
-        pred_data_array (np.ndarray): Prediction array of shape (num_frames, num_instances, num_keypoints * 3).
-        min_duration (int): Minimum number of consecutive frames an instance must be present to avoid being flagged.
+        pred_data_array (np.ndarray): Shape (F, I, 3*K)
+        angle_map_data : Dict with 'head_idx', 'tail_idx', 'angle_map'.
+            - angle map: list of (i, j, offset, weight) of each connection
+        quant_step (float): Grid spacing for quantization (e.g., 0.25). Smaller = stricter.
+        min_samples (int): Minimum number of occurrences for a quantized pose to be considered valid.
+            Poses appearing fewer than this threshold are flagged as outliers.
 
     Returns:
-        np.ndarray: Boolean mask of shape (num_frames, num_instances) where True indicates flickering behavior.
+        np.ndarray: Boolean mask (F, I) where True = outlier pose.
     """
-    total_frames, instance_count, xyconf = pred_data_array.shape
+    angle_map = angle_map_data["angle_map"]
+    num_kp = max(max(entry["i"], entry["j"]) for entry in angle_map) + 1
 
-    inst_buffer = np.full((1, instance_count, xyconf), np.nan)
-    pred_data_with_buffer = np.concatenate((inst_buffer, pred_data_array), axis=0)
-    inst_presence = np.any(~np.isnan(pred_data_with_buffer), axis=2).astype(int)
-    appear_mask = np.diff(inst_presence, axis=0) == 1
-    disappear_mask = np.diff(inst_presence, axis=0) == -1
+    scores = np.zeros(num_kp)
+    for entry in angle_map:
+        i, j, w = entry["i"], entry["j"], entry["weight"]
+        scores[i] += w
+        scores[j] += w
 
-    flicker_mask = np.zeros((total_frames, instance_count), dtype=bool)
+    top_indices = np.argsort(scores)[::-1][:6]
 
-    for inst_idx in range(instance_count):
-        appear_frames = np.where(appear_mask[:, inst_idx])[0]
-        disappear_frames = np.where(disappear_mask[:, inst_idx])[0]
+    _, local_coords = calculate_pose_centroids(pred_data_array) # (F, I, K*2)
+    local_coords = np.nan_to_num(local_coords, nan=0.0)
 
-        # Extend disappear_frames to handle "still present at end"
-        if inst_presence[-1, inst_idx]:
-            disappear_frames = np.append(disappear_frames, total_frames)
+    local_x_all, local_y_all = local_coords[:,:,0::2], local_coords[:,:,1::2]
 
-        # Match each appearance with next disappearance
-        for a_frame in appear_frames:
-            post_dis = disappear_frames[disappear_frames > a_frame]
-            if len(post_dis) == 0:
-                continue
-            d_frame = post_dis[0]
-            duration = d_frame - a_frame  # how long it stayed
+    local_max = np.max(np.sqrt(local_x_all**2 + local_y_all**2), axis=2) # (F, I)
+    outlier_mask = np.zeros_like(local_max, dtype=bool)
+    local_max[local_max < 1e-6] = 1.0
+    
+    local_norm = local_coords / local_max[..., np.newaxis]
+    local_norm_flat = local_norm.reshape(-1,  local_norm.shape[-1])  # (F*I, K*2)
 
-            if duration < min_duration:
-                flicker_mask[a_frame:d_frame, inst_idx] = True
+    slice_indices = np.sort(np.concatenate([2 * top_indices, 2 * top_indices + 1]))
+
+    local_norm_sliced = local_norm_flat[:, slice_indices]
+    valid_mask = ~np.all(local_norm_sliced == 0.0, axis=1)
+    valid_indices = np.where(valid_mask)[0]
+
+    local_norm_filtered = local_norm_sliced[valid_mask]
+    angles = calculate_pose_rotations(
+        local_x=local_norm_filtered[:, 0::2],
+        local_y=local_norm_filtered[:, 1::2],
+        angle_map_data=angle_map_data)
+    local_norm_rotated = pose_alignment_worker(local_norm_filtered, angles=angles)
+
+    if quant_step > 0:
+        X_quantized = np.round(local_norm_rotated / quant_step) * quant_step
+    else:
+        X_quantized = local_norm_rotated.copy()
+
+    _, inverse_indices, counts = np.unique(
+        X_quantized, axis=0, return_inverse=True, return_counts=True
+    )
+
+    outlier_valid = counts[inverse_indices] < min_samples
+
+    for idx, is_outlier in enumerate(outlier_valid):
+        if is_outlier:
+            global_idx = valid_indices[idx]
+            f = global_idx // pred_data_array.shape[1]
+            i = global_idx % pred_data_array.shape[1]
+            outlier_mask[f, i] = True
+
+    return outlier_mask
+
+def outlier_flicker(pred_data_array: np.ndarray) -> np.ndarray:
+    """
+    Flags instances that appear only in the current frame but not in adjacent frames (flickering).
+    
+    Args:
+        pred_data_array (np.ndarray): Shape (num_frames, num_instances, num_keypoints * 3).
+
+    Returns:
+        np.ndarray: Boolean mask of shape (num_frames, num_instances) where True = flickering.
+    """
+    all_x, all_y = pred_data_array[:, :, 0::3], pred_data_array[:, :, 1::3]
+    presence = np.any(~np.isnan(all_x) & ~np.isnan(all_y), axis=2)
+
+    instance_count = presence.shape[1]
+
+    prev_presence = np.concatenate([np.zeros((1, instance_count), dtype=bool), presence[:-1]], axis=0)
+    next_presence = np.concatenate([presence[1:], np.zeros((1, instance_count), dtype=bool)], axis=0)
+    flicker_mask = presence & (~prev_presence) & (~next_presence)
 
     return flicker_mask
 
-def outlier_enveloped(pred_data_array:np.ndarray, threshold:float=0.6) -> np.ndarray:
+def outlier_enveloped(pred_data_array:np.ndarray, threshold:float=0.8) -> np.ndarray:
     """
     Flags smaller instances that are largely contained within the bounding box of a larger, nearby instance.
 

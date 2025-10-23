@@ -15,11 +15,11 @@ from .outlier import (
     outlier_removal,
     outlier_bodypart,
     outlier_confidence,
-    outlier_instance,
     outlier_duplicate,
     outlier_enveloped,
     outlier_flicker,
     outlier_size,
+    outlier_pose
 )
 from .instance_op import (
     rotate_selected_inst,
@@ -41,9 +41,9 @@ __all__ = (
     outlier_removal,
     outlier_bodypart,
     outlier_confidence,
-    outlier_instance,
     outlier_duplicate,
     outlier_enveloped,
     outlier_flicker,
     outlier_size,
+    outlier_pose,
 )

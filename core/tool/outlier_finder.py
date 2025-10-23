@@ -4,30 +4,35 @@ from PySide6 import QtWidgets
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QPushButton, QHBoxLayout, QVBoxLayout, QGroupBox, QLabel, QMessageBox
 
-from typing import Optional
+from typing import Optional, Any, Dict
 
 from utils.pose import (
     outlier_bodypart,
     outlier_confidence,
-    outlier_instance,
     outlier_duplicate,
     outlier_enveloped,
     outlier_flicker,
     outlier_size,
+    outlier_pose,
 )
 
 class Outlier_Finder(QGroupBox):
     list_changed = Signal(list)
     mask_changed = Signal(object)
 
-    def __init__(self, pred_data_array:np.ndarray, canon_pose:Optional[np.ndarray]=None, parent=None):
+    def __init__(self,
+                pred_data_array:np.ndarray,
+                canon_pose:Optional[np.ndarray]=None,
+                angle_map_data:Optional[Dict[str, Any]]=None,
+                parent=None):
         super().__init__(parent)
         self.setTitle("Outlier Finder")
         self.pred_data_array = pred_data_array
         self.outlier_mask = None
         
         layout = QVBoxLayout(self)
-        self.outlier_container = Outlier_Container(self.pred_data_array, canon_pose=canon_pose)
+        self.outlier_container = Outlier_Container(
+            self.pred_data_array, canon_pose=canon_pose, angle_map_data=angle_map_data)
         layout.addWidget(self.outlier_container)
 
         button_frame = self._build_button_frame()
@@ -48,55 +53,64 @@ class Outlier_Finder(QGroupBox):
 
     def get_outlier_mask(self):
         outlier_mask = self.outlier_container.get_combined_mask()
+        self.outliers = outlier_mask
         if outlier_mask is None or not np.any(outlier_mask):
             self.list_changed.emit([])
             return
-        self.outliers = outlier_mask
 
     def outlier_preview(self):
         self.get_outlier_mask()
         if self.outliers is not None:
             outlier_frames = np.where(np.any(self.outliers, axis=1))[0].tolist()
             self.list_changed.emit(outlier_frames)
+        else:
+            self.list_changed.emit([])
 
     def outlier_delete(self):
         self.get_outlier_mask()
         if self.outliers is not None:
             self.mask_changed.emit(self.outliers)
+            self.list_changed.emit([])
 
 class Outlier_Container(QtWidgets.QWidget):
-    def __init__(self, pred_data_array:np.ndarray, canon_pose:Optional[np.ndarray]=None, parent=None):
+    def __init__(self,
+                pred_data_array:np.ndarray,
+                canon_pose:Optional[np.ndarray]=None,
+                angle_map_data:Optional[Dict[str, Any]]=None,
+                parent=None):
         super().__init__(parent)
         self.pred_data_array = pred_data_array
         self.canon_pose = canon_pose
+        self.angle_map_data = angle_map_data
 
         layout = QVBoxLayout(self)
 
         self.logic_widget = self._build_or_and_radio_widget()
         self.outlier_confidence_gbox = self._build_outlier_confidence_gbox()
         self.outlier_bodypart_gbox = self._build_outlier_bodypart_gbox()
-        self.outlier_instance_gbox = self._build_outlier_instance_gbox()
         self.outlier_duplicate_gbox = self._build_outlier_duplicate_gbox()
         self.outlier_size_gbox = self._build_outlier_size_gbox()
-        self.outlier_flicker_gbox = self._build_outlier_flicker_gbox()
         self.outlier_enveloped_gbox = self._build_outlier_enveloped_gbox()
+        self.outlier_pose_gbox = self._build_outlier_pose_gbox()
+        self.outlier_flicker_gbox = self._build_outlier_flicker_gbox()
 
         layout.addWidget(self.logic_widget)
         layout.addWidget(self.outlier_confidence_gbox)
         layout.addWidget(self.outlier_bodypart_gbox)
-        layout.addWidget(self.outlier_instance_gbox)
         layout.addWidget(self.outlier_duplicate_gbox)
         layout.addWidget(self.outlier_size_gbox)
-        layout.addWidget(self.outlier_flicker_gbox)
         layout.addWidget(self.outlier_enveloped_gbox)
+        layout.addWidget(self.outlier_pose_gbox)
+        layout.addWidget(self.outlier_flicker_gbox)
 
         if self.canon_pose is None:
             self.outlier_size_gbox.setEnabled(False)
+        if self.angle_map_data is None:
+            self.outlier_pose_gbox.setEnabled(False)
 
     def get_combined_mask(self) -> Optional[np.ndarray]:
         masks = []
 
-        # Confidence outlier
         if self.outlier_confidence_gbox.isChecked():
             mask = outlier_confidence(
                 self.pred_data_array,
@@ -104,7 +118,6 @@ class Outlier_Container(QtWidgets.QWidget):
             )
             masks.append(mask)
 
-        # Bodypart outlier
         if self.outlier_bodypart_gbox.isChecked():
             mask = outlier_bodypart(
                 self.pred_data_array,
@@ -112,15 +125,6 @@ class Outlier_Container(QtWidgets.QWidget):
             )
             masks.append(mask)
 
-        # Instance outlier
-        if self.outlier_instance_gbox.isChecked():
-            mask = outlier_instance(
-                self.pred_data_array,
-                threshold=self.instance_spinbox.value()
-            )
-            masks.append(mask)
-
-        # Duplicate outlier
         if self.outlier_duplicate_gbox.isChecked():
             mask = outlier_duplicate(
                 self.pred_data_array,
@@ -129,7 +133,6 @@ class Outlier_Container(QtWidgets.QWidget):
             )
             masks.append(mask)
 
-        # Size outlier
         if self.outlier_size_gbox.isChecked():
             mask = outlier_size(
                 self.pred_data_array,
@@ -139,15 +142,10 @@ class Outlier_Container(QtWidgets.QWidget):
             )
             masks.append(mask)
 
-        # Flicker outlier
         if self.outlier_flicker_gbox.isChecked():
-            mask = outlier_flicker(
-                self.pred_data_array,
-                min_duration=self.flicker_spinbox.value()
-            )
+            mask = outlier_flicker(self.pred_data_array)
             masks.append(mask)
 
-        # Enveloped outlier
         if self.outlier_enveloped_gbox.isChecked():
             mask = outlier_enveloped(
                 self.pred_data_array,
@@ -155,15 +153,22 @@ class Outlier_Container(QtWidgets.QWidget):
             )
             masks.append(mask)
 
+        if self.outlier_pose_gbox.isChecked():
+            mask = outlier_pose(
+                self.pred_data_array,
+                angle_map_data=self.angle_map_data,
+                quant_step=self.pose_step_spinbox.value(),
+                min_samples=self.pose_sample_spinbox.value(),
+            )
+            masks.append(mask)
         if not masks:
             QMessageBox.warning(self, "No Detectors Enabled", "All outlier detectors are disabled.")
         else:
-            # Combine using OR or AND
             combined = masks[0]
             if self.radio_or.isChecked():
                 for m in masks[1:]:
                     combined = np.logical_or(combined, m)
-            else:  # use_and, stricter
+            else:
                 for m in masks[1:]:
                     combined = np.logical_and(combined, m)
 
@@ -197,20 +202,6 @@ class Outlier_Container(QtWidgets.QWidget):
         self.bodypart_spinbox.setValue(2)
         layout.addWidget(label)
         layout.addWidget(self.bodypart_spinbox)
-        return gbox
-
-    def _build_outlier_instance_gbox(self):
-        gbox = QtWidgets.QGroupBox("Outlier Instance")
-        gbox.setCheckable(True)
-        gbox.setChecked(False)
-        layout = QHBoxLayout(gbox)
-
-        label = QLabel("Instance Threshold:")
-        self.instance_spinbox = QtWidgets.QSpinBox()
-        self.instance_spinbox.setRange(1, 20)
-        self.instance_spinbox.setValue(1)
-        layout.addWidget(label)
-        layout.addWidget(self.instance_spinbox)
         return gbox
 
     def _build_outlier_duplicate_gbox(self):
@@ -275,14 +266,11 @@ class Outlier_Container(QtWidgets.QWidget):
         gbox = QtWidgets.QGroupBox("Outlier Flicker")
         gbox.setCheckable(True)
         gbox.setChecked(False)
-        layout = QHBoxLayout(gbox)
 
-        label = QLabel("Min Duration (frames):")
-        self.flicker_spinbox = QtWidgets.QSpinBox()
-        self.flicker_spinbox.setRange(1, 100)
-        self.flicker_spinbox.setValue(2)
-        layout.addWidget(label)
-        layout.addWidget(self.flicker_spinbox)
+        layout = QtWidgets.QVBoxLayout()
+        gbox.setLayout(layout)
+        gbox.setFixedHeight(15)
+
         return gbox
 
     def _build_outlier_enveloped_gbox(self):
@@ -295,12 +283,39 @@ class Outlier_Container(QtWidgets.QWidget):
         self.enveloped_spinbox = QtWidgets.QDoubleSpinBox()
         self.enveloped_spinbox.setRange(0.0, 1.0)
         self.enveloped_spinbox.setSingleStep(0.05)
-        self.enveloped_spinbox.setValue(0.6)
+        self.enveloped_spinbox.setValue(0.8)
         self.enveloped_spinbox.setDecimals(2)
         layout.addWidget(label)
         layout.addWidget(self.enveloped_spinbox)
         return gbox
-    
+
+    def _build_outlier_pose_gbox(self):
+        gbox = QtWidgets.QGroupBox("Outlier Pose")
+        gbox.setCheckable(True)
+        gbox.setChecked(False)
+        layout = QVBoxLayout(gbox)
+
+        step_frame = QHBoxLayout()
+        step_label = QLabel("Quantization Step:")
+        self.pose_step_spinbox = QtWidgets.QDoubleSpinBox()
+        self.pose_step_spinbox.setRange(0.05, 2.0)
+        self.pose_step_spinbox.setSingleStep(0.05)
+        self.pose_step_spinbox.setValue(0.5)
+        step_frame.addWidget(step_label)
+        step_frame.addWidget(self.pose_step_spinbox)
+        layout.addLayout(step_frame)
+
+        sample_frame = QHBoxLayout()
+        sample_label = QLabel("Min Samples:")
+        self.pose_sample_spinbox = QtWidgets.QSpinBox()
+        self.pose_sample_spinbox.setRange(1, 10)
+        self.pose_sample_spinbox.setValue(1)
+        sample_frame.addWidget(sample_label)
+        sample_frame.addWidget(self.pose_sample_spinbox)
+        layout.addLayout(sample_frame)
+
+        return gbox
+
     def _build_or_and_radio_widget(self):
         logic_widget = QtWidgets.QWidget()
         layout = QHBoxLayout(logic_widget)

@@ -49,7 +49,9 @@ class Frame_Label:
     def deactivate(self, menu_widget:Menu_Widget):
         self._remove_menu(menu_widget)
         self.shortcuts.set_enabled(False)
-        self.save_prediction()
+
+        if not np.array_equal(self.kem.pred_data_array, self.dm.dlc_data.pred_data_array, equal_nan=True):
+            self.save_prediction()
         
     def _remove_menu(self, menu_widget:Menu_Widget):
         for menu in self.labeler_menu_config.keys():
@@ -284,7 +286,9 @@ class Frame_Label:
 
         if self.open_outlier:
             self.menu_slot_callback()
-            self.outlier_finder = Outlier_Finder(self.kem.pred_data_array, canon_pose=self.dm.canon_pose, parent=self.main)
+            self.outlier_finder = Outlier_Finder(
+                self.kem.pred_data_array, angle_map_data=self.dm.angle_map_data,
+                canon_pose=self.dm.canon_pose, parent=self.main)
             self.outlier_finder.mask_changed.connect(self._handle_outlier_mask_from_comp)
             self.outlier_finder.list_changed.connect(self._handle_frame_list_from_comp)
             self.vid_play.set_right_panel_widget(self.outlier_finder)
