@@ -275,8 +275,7 @@ def outlier_enveloped(pred_data_array:np.ndarray, threshold:float=0.8) -> np.nda
     min_x_array, min_y_array, max_x_array, max_y_array = calculate_pose_bbox(all_x, all_y)
     size_array = (max_y_array - min_y_array) * (max_x_array - min_x_array)
     valid_sizes = size_array[~np.isnan(size_array)]
-    mean_size = np.nanmean(valid_sizes)
-    bbox_length = np.sqrt(mean_size) 
+    bbox_length = np.sqrt(np.nanmax(valid_sizes)) 
 
     enveloped_mask = np.zeros((total_frames, instance_count), dtype=bool)
 
@@ -308,13 +307,24 @@ def outlier_enveloped(pred_data_array:np.ndarray, threshold:float=0.8) -> np.nda
             small_x = all_x[frame_idx, small_inst]
             small_y = all_y[frame_idx, small_inst]
 
+            min_x = min_x_array[frame_idx, large_inst]
+            max_x = max_x_array[frame_idx, large_inst]
+            min_y = min_y_array[frame_idx, large_inst]
+            max_y = max_y_array[frame_idx, large_inst]
+            width = max_x - min_x
+            height = max_y - min_y
+            padded_min_x = min_x - width * 0.1
+            padded_max_x = max_x + width * 0.1
+            padded_min_y = min_y - height * 0.1
+            padded_max_y = max_y + height * 0.1
+
             valid = np.logical_and(~np.isnan(small_x), ~np.isnan(small_y))
             in_bbox_mask = (
-                    (small_x >= min_x_array[frame_idx, large_inst]) &
-                    (small_x <= max_x_array[frame_idx, large_inst]) &
-                    (small_y >= min_y_array[frame_idx, large_inst]) &
-                    (small_y <= max_y_array[frame_idx, large_inst])
-                )
+                (small_x >= padded_min_x) &
+                (small_x <= padded_max_x) &
+                (small_y >= padded_min_y) &
+                (small_y <= padded_max_y)
+            )
 
             in_ratio = np.sum(in_bbox_mask & valid) / np.sum(valid)
             if in_ratio >= threshold:

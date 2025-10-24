@@ -23,8 +23,9 @@ class Blob_Counter(QGroupBox):
     parameters_changed = Signal()
     frame_processed = Signal(object, int)
     video_counted = Signal(list)
+    config_ready = Signal()
 
-    def __init__(self, frame_extractor: Frame_Extractor, config: Optional[Blob_Config]=None,  parent=None):
+    def __init__(self, frame_extractor: Frame_Extractor, config: Optional[Blob_Config]=None, request:bool=False, parent=None):
         super().__init__(parent)
         self.setTitle("Blob-based Animal Counting Controls")
 
@@ -114,6 +115,12 @@ class Blob_Counter(QGroupBox):
         self.count_all_btn = QPushButton("Count Animals in Entire Video")
         self.count_all_btn.clicked.connect(self._count_entire_video)
         self.blb_layout.addWidget(self.count_all_btn)
+        self.count_all_btn.setVisible(not request)
+
+        self.request_btn = QPushButton("Blob Config Ready")
+        self.request_btn.clicked.connect(self._config_ready)
+        self.blb_layout.addWidget(self.request_btn)
+        self.request_btn.setVisible(request)
 
         self.count_label = QLabel("Animal Count: 0")
         self.count_label.setAlignment(Qt.AlignCenter)
@@ -142,7 +149,10 @@ class Blob_Counter(QGroupBox):
             background_frames = self.bg_display.background_frames,
         )
         return config
-    
+
+    def _config_ready(self):
+        self.config_ready.emit()
+
     def get_blob_bbox(self, frame:Frame_CV2) -> Tuple[int, int, int, int]:
         vid_h, vid_w = frame.shape[:2]
         filtered_contours = self._process_contour_from_frame(frame)

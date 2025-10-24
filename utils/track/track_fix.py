@@ -1,12 +1,12 @@
 import numpy as np
 
 from PySide6.QtWidgets import QProgressDialog
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 
 from .hungarian import Hungarian
 from utils.pose import (
-    calculate_pose_centroids, outlier_removal, 
-    outlier_confidence, outlier_pose, outlier_bodypart, outlier_duplicate, outlier_size
+    calculate_pose_centroids, outlier_removal, outlier_confidence, outlier_pose, 
+    outlier_bodypart, outlier_duplicate, outlier_size, outlier_enveloped,
     )
 from utils.helper import log_print, clean_log
 
@@ -15,9 +15,9 @@ DEBUG = False
 class Track_Fixer:
     def __init__(self,
                 pred_data_array:np.ndarray,
-                canon_pose:np.ndarray,
-                angle_map: Dict[str, Any],
-                progress:QProgressDialog,
+                canon_pose:Optional[np.ndarray]=None,
+                angle_map:Optional[Dict[str, Any]]=None,
+                progress:Optional[QProgressDialog]=None,
                 ):
         self.pred_data_array = pred_data_array
         self.canon_pose = canon_pose
@@ -41,10 +41,11 @@ class Track_Fixer:
         ref_last_updated = np.full(self.instance_count, -2 * lookback_window)
 
         for frame_idx in range(self.total_frames):
-            self.progress.setValue(frame_idx)
-            if self.progress.wasCanceled():
-                self.progress.close()
-                return self.pred_data_array, 0
+            if self.progress:
+                self.progress.setValue(frame_idx)
+                if self.progress.wasCanceled():
+                    self.progress.close()
+                    return self.pred_data_array, 0
             
             if debug_print:
                 log_print(f"---------- frame: {frame_idx} ---------- ")
@@ -105,17 +106,23 @@ class Track_Fixer:
             ref_centroids[fixed_pred_mask] = fixed_pred_centroids[fixed_pred_mask]
             ref_last_updated[fixed_pred_mask] = frame_idx
                     
-        self.progress.close()
+        if self.progress:
+            self.progress.close()
 
         return self.corrected_pred_data, self.changes_applied
 
     def _pose_cleaning(self) -> np.ndarray:
+        no_mask = np.zeros((self.total_frames, self.instance_count), dtype=bool)
         conf_mask = outlier_confidence(self.pred_data_array, 0.4)
         bp_mask = outlier_bodypart(self.pred_data_array, 2)
         dp_mask = outlier_duplicate(self.pred_data_array)
-        size_mask = outlier_size(self.pred_data_array, self.canon_pose, 0.2, 2.5)
-        pose_mask = outlier_pose(self.pred_data_array, self.angle_map, 1, 3)
-        combined_mask = conf_mask | bp_mask | dp_mask | size_mask | pose_mask
+        env_mask = outlier_enveloped(self.pred_data_array)
+        if self.canon_pose is None or self.angle_map is None:
+            size_mask = pose_mask = no_mask
+        else:
+            size_mask = outlier_size(self.pred_data_array, self.canon_pose, 0.5, 2.5)
+            pose_mask = outlier_pose(self.pred_data_array, self.angle_map, 1.0, 2)
+        combined_mask = conf_mask | bp_mask | dp_mask | size_mask | pose_mask | env_mask
 
         corrected_data_array, _, _ = outlier_removal(self.pred_data_array, combined_mask)
         return corrected_data_array

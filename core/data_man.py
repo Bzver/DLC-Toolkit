@@ -542,6 +542,7 @@ class Data_Manager:
         self.dlc_data = data_loader.load_data()
         self.approved_frame_list[:] = list(set(self.approved_frame_list) - set(self.refined_frame_list))
         self.rejected_frame_list[:] = list(set(self.rejected_frame_list) - set(self.refined_frame_list))
+        self._init_canon_pose()
 
     ###################################################################################################################################################
 

@@ -95,8 +95,8 @@ class Frame_View:
     def init_loaded_vid(self):
         self._init_blob_counter()
 
-    def _init_blob_counter(self):
-        self.blob_counter = Blob_Counter(frame_extractor=self.vm.extractor, config=self.dm.blob_config, parent=self.main)
+    def _init_blob_counter(self, request:bool=False):
+        self.blob_counter = Blob_Counter(frame_extractor=self.vm.extractor, config=self.dm.blob_config, request=request, parent=self.main)
         self.blob_counter.frame_processed.connect(self._plot_current_frame)
         self.blob_counter.parameters_changed.connect(self._handle_counter_config_change)
         self.blob_counter.video_counted.connect(self._handle_counter_from_counter)
@@ -126,7 +126,7 @@ class Frame_View:
             plot_config = self.dm.plot_config, frame_cv2 = self.vm.current_frame)
 
     def _plot_current_frame(self, frame, count=None):
-        if self.dm.dlc_data is not None:
+        if self.dm.dlc_data is not None and self.dm.dlc_data.pred_data_array is not None:
             if not hasattr(self, "plotter"):
                 self._initialize_plotter()
 
@@ -289,7 +289,7 @@ class Frame_View:
                 dialog.exec()
             elif self.skip_counting:
                 inference_list = list(range(self.dm.total_frames))
-                self.call_inference(inference_list)
+                self.call_inference(inference_list, True)
         else:
             inference_list = list(range(self.dm.total_frames))
             self.call_inference(inference_list)
@@ -317,7 +317,10 @@ class Frame_View:
         from core.tool import DLC_Inference
         try:
             self.inference_window = DLC_Inference(
-                dlc_data=self.dm.dlc_data, frame_list=inference_list, video_filepath=self.dm.video_file, parent=self.main)
+                dlc_data=self.dm.dlc_data,
+                frame_list=inference_list,
+                video_filepath=self.dm.video_file,
+                parent=self.main)
             self.inference_window.show()
             self.inference_window.frames_exported.connect(self._handle_rerun_frames_exported)
             self.inference_window.prediction_saved.connect(self._reload_prediction)
@@ -372,9 +375,26 @@ class Frame_View:
     def _update_inference_crop_coords(self, frame_list:list):
         if not frame_list:
              return
-        
+        if self.dm.blob_config is None:
+            self.is_counting = True
+            self._init_blob_counter(True)
+            try:
+                self.blob_counter.config_ready.disconnect()
+            except:
+                pass
+            self.blob_counter.config_ready.connect(lambda:self._crop_coords_for_inference(frame_list))
+            self.display_current_frame()
+            self.inference_window.hide()
+            self.status_bar.show_message(
+                "Blob config not set. Adjust the blob parameters by interacting with the left panel, click 'Config Ready' Button to continue.", duration_ms=3000)
+        else:
+            self._crop_coords_for_inference(frame_list)
+            
+    def _crop_coords_for_inference(self, frame_list):
+        self.inference_window.show()
         crop_dict = {}
-        self._init_blob_counter()
+        if not hasattr(self, "blob_counter"):
+            self._init_blob_counter()
         progress = Progress_Indicator_Dialog(
             0, len(frame_list), "Getting Crop Coords", "Acquring crop coordinates from Blob_Counter...", self.main)
         for i, frame_idx in enumerate(frame_list):

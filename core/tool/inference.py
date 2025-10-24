@@ -20,9 +20,10 @@ from core.io import (
     save_prediction_to_existing_h5, determine_save_path, save_predictions_to_new_h5,
 )
 from core.tool import Prediction_Plotter
-from utils.helper import log_print, handle_unsaved_changes_on_close, crop_coords_to_array
-from utils.pose import calculate_pose_centroids
-from utils.track import Hungarian
+from utils.helper import (
+    log_print, handle_unsaved_changes_on_close, crop_coords_to_array, infer_head_tail_indices, build_angle_map)
+from utils.pose import calculate_pose_centroids, calculate_canonical_pose
+from utils.track import Hungarian, Track_Fixer
 
 DEBUG = False
 
@@ -50,11 +51,10 @@ class DLC_Inference(QtWidgets.QDialog):
             parent: Parent widget.
         """
         super().__init__(parent)
-        self.setWindowTitle("Re-run Predictions With Selected Frames in DLC")
+        self.setWindowTitle("Re-run Predictions in DLC")
         self.dlc_data = dlc_data
         self.frame_list = frame_list
         self.video_filepath = video_filepath
-        video_name = os.path.basename(self.video_filepath).split(".")[0]
         self.setFixedWidth(600)
 
         self.frame_list.sort()
@@ -62,6 +62,7 @@ class DLC_Inference(QtWidgets.QDialog):
         self.auto_cropping = False
         self.crop_coords = None
 
+        video_name = os.path.basename(self.video_filepath).split(".")[0]
         self.temp_directory = tempfile.TemporaryDirectory()
         self.temp_dir = self.temp_directory.name
         self.export_set = Export_Settings(
@@ -553,8 +554,8 @@ class DLC_Inference(QtWidgets.QDialog):
 
         info_label = QtWidgets.QLabel(
             "This action usually takes between a few seconds and one minute, "
-            "depending on number of marked frames unless mode is inferencing all"
-            "Check out the terminal to see the progress."
+            "depending on number of marked frames unless mode is inferencing all. "
+            "Check the terminal to see the progress."
         )
         info_label.setWordWrap(True)
         info_label.setStyleSheet("QLabel { color: gray; }")
@@ -624,7 +625,7 @@ class DLC_Inference(QtWidgets.QDialog):
 
         self._load_and_remap_new_prediction()
 
-        self._correct_new_prediction_track()
+        self._crossref_existing_pred()
         self._display_current_frame()
 
     def _extract_marked_frame_images(self, crop_coords=None) -> bool:
@@ -665,11 +666,29 @@ class DLC_Inference(QtWidgets.QDialog):
             coords_array = crop_coords_to_array(self.crop_coords, temp_data_array.shape)
             temp_data_array = temp_data_array + coords_array
 
+        temp_data_array = self._correct_new_pred(temp_data_array)
+
         new_data_array[self.frame_list, :, :] = temp_data_array
         self.new_data_array = new_data_array
         return h5_files[-1]
 
-    def _correct_new_prediction_track(self):
+    def _correct_new_pred(self, temp_data_array:np.ndarray) -> np.ndarray:
+        head_idx, tail_idx = infer_head_tail_indices(self.dlc_data.keypoints)
+        if head_idx is None or tail_idx is None:
+            canon_pose, angle_map_data = None, None
+        else:
+            canon_pose, all_frame_pose = calculate_canonical_pose(temp_data_array, head_idx, tail_idx)
+            angle_map_data = build_angle_map(canon_pose, all_frame_pose, head_idx, tail_idx)
+
+        dialog = "Fixing track using temporal consistency..."
+        title = f"Fix Track Using Temporal"
+        progress = Progress_Indicator_Dialog(0, temp_data_array.shape[0], title, dialog, self)
+        tf = Track_Fixer(temp_data_array, canon_pose, angle_map_data, progress)
+        temp_data_array, ttsfsd = tf.track_correction()
+        print(f"Track correct called: {ttsfsd} terminated.")
+        return temp_data_array
+
+    def _crossref_existing_pred(self):
         for frame_idx in self.frame_list:
             pred_centroids, _ = calculate_pose_centroids(self.new_data_array, frame_idx)
             ref_centroids, _ = calculate_pose_centroids(self.dlc_data.pred_data_array, frame_idx)
