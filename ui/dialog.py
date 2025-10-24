@@ -5,6 +5,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QPushButton, QHBoxLayout, QVBoxLayout, QDialog, QLabel, QMessageBox, QSpinBox
 
 from typing import List
+from time import time
 
 class Pose_Rotation_Dialog(QDialog):
     rotation_changed = Signal(int, float)  # (selected_instance_idx, angle_delta)
@@ -116,16 +117,66 @@ class Head_Tail_Dialog(QtWidgets.QDialog):
 ###################################################################################################################################################
 
 class Progress_Indicator_Dialog(QtWidgets.QProgressDialog):
-    def __init__(self, min, max, title, text, parent=None):
+    def __init__(self, min_val, max_val, title, text, parent=None):
         super().__init__(parent)
         self.setLabelText(text)
-        self.setMinimum(min)
-        self.setMaximum(max)
+        self.setMinimum(min_val)
+        self.setMaximum(max_val)
         self.setCancelButtonText("Cancel")
         self.setWindowTitle(title)
         self.setWindowModality(Qt.WindowModal)
         self.setValue(0)
 
+        self._start_time = time()
+        self._last_update_time = self._start_time
+        self._last_value = min_val
+        self._base_text = text
+
+    def setValue(self, value):
+        super().setValue(value)
+
+        if value <= self.minimum():
+            return
+
+        current_time = time()
+        elapsed = current_time - self._start_time
+        if elapsed <= 0:
+            return
+
+        delta_value = value - self._last_value
+        delta_time = current_time - self._last_update_time
+        if delta_time > 0:
+            it_per_sec = delta_value / delta_time
+        else:
+            it_per_sec = 0
+
+        total_items = self.maximum() - self.minimum()
+        completed_items = value - self.minimum()
+        if it_per_sec > 0 and completed_items > 0:
+            eta = (total_items - completed_items) / it_per_sec
+        else:
+            eta = float('inf')
+
+        elapsed_str = self._format_time(elapsed)
+        if eta == float('inf'):
+            eta_str = "--:--:--"
+        else:
+            eta_str = self._format_time(eta)
+
+        new_text = f"{self._base_text}\nElapsed: {elapsed_str} | Remaining: {eta_str} | {it_per_sec:.1f} it/s"
+        self.setLabelText(new_text)
+
+        self._last_update_time = current_time
+        self._last_value = value
+
+    def _format_time(self, seconds):
+        seconds = int(seconds)
+        h = seconds // 3600
+        m = (seconds % 3600) // 60
+        s = seconds % 60
+
+        return f"{h:02d}:{m:02d}:{s:02d}"
+    
 ###################################################################################################################################################
 
 class Inference_interval_Dialog(QDialog):
