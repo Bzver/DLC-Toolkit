@@ -5,14 +5,14 @@ from .track_op import (
     interpolate_track_all,
 )
 
-from .track_fix import track_correction
-from .hungarian import hungarian_matching
+from .track_fix import Track_Fixer
+from .hungarian import Hungarian
 
 __all__ = (
+    Track_Fixer,
+    Hungarian,
     delete_track,
     swap_track,
     interpolate_track,
     interpolate_track_all,
-    track_correction,
-    hungarian_matching,
 )

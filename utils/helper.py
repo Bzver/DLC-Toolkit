@@ -182,6 +182,14 @@ def log_print(*args, **kwargs):
     except:
         pass
 
+def clean_log():
+    try:
+        log_file = "D:/Project/debug_log.txt"
+        with open(log_file, 'w', encoding='utf-8') as f:
+            pass
+    except:
+        pass
+
 #########################################################################################################################################################1
 
 def clean_inconsistent_nans(pred_data_array:np.ndarray):

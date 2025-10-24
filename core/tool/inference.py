@@ -22,7 +22,7 @@ from core.io import (
 from core.tool import Prediction_Plotter
 from utils.helper import log_print, handle_unsaved_changes_on_close, crop_coords_to_array
 from utils.pose import calculate_pose_centroids
-from utils.track import hungarian_matching
+from utils.track import Hungarian
 
 DEBUG = False
 
@@ -669,21 +669,19 @@ class DLC_Inference(QtWidgets.QDialog):
         self.new_data_array = new_data_array
         return h5_files[-1]
 
-    def _correct_new_prediction_track(self, max_dist: float = 10.0):
+    def _correct_new_prediction_track(self):
         for frame_idx in self.frame_list:
             pred_centroids, _ = calculate_pose_centroids(self.new_data_array, frame_idx)
             ref_centroids, _ = calculate_pose_centroids(self.dlc_data.pred_data_array, frame_idx)
 
             valid_pred_mask = np.all(~np.isnan(pred_centroids), axis=1)
             valid_ref_mask = np.all(~np.isnan(ref_centroids), axis=1)
-            
-            valid_pred_centroids = pred_centroids[valid_pred_mask]
-            valid_ref_centroids = ref_centroids[valid_ref_mask]
 
             if DEBUG:
                 log_print(f"------ Processing Frame {frame_idx} ------")
-            corrected_order = hungarian_matching(
-                valid_pred_centroids, valid_ref_centroids, valid_pred_mask, valid_ref_mask, max_dist, debug_print=DEBUG)
+
+            hun = Hungarian(pred_centroids, ref_centroids, valid_pred_mask, valid_ref_mask, debug_print=DEBUG)
+            corrected_order = hun.hungarian_matching()
             
             if corrected_order:
                 self.new_data_array[frame_idx, :, :] = self.new_data_array[frame_idx, corrected_order, :]

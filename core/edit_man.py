@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QMessageBox
 from typing import Callable, Optional
 
 from utils.track import (
-    interpolate_track_all, track_correction, delete_track, swap_track, interpolate_track,
+    interpolate_track_all, delete_track, swap_track, interpolate_track, Track_Fixer,
     )
 from utils.helper import get_instances_on_current_frame, get_instance_count_per_frame
 from utils.pose import (
@@ -47,15 +47,14 @@ class Keypoint_Edit_Manager:
 
     ##############################################################################################
 
-    def correct_track_using_temporal(self):
+    def correct_track_using_temporal(self, canon_pose, angle_map_data):
         self._save_state_for_undo()
         dialog = "Fixing track using temporal consistency..."
         title = f"Fix Track Using Temporal"
         progress = Progress_Indicator_Dialog(0, self.total_frames, title, dialog, self.main)
 
-        self.pred_data_array, changes_applied = track_correction(
-            pred_data_array=self.pred_data_array, progress=progress, debug_status=DEBUG)
-        progress.close()
+        tf = Track_Fixer(self.pred_data_array, canon_pose, angle_map_data, progress)
+        self.pred_data_array, changes_applied = tf.track_correction()
 
         if not changes_applied:
             QMessageBox.information(self.main, "No Changes Applied", "No changes were applied.")

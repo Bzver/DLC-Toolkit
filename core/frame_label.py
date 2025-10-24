@@ -76,7 +76,7 @@ class Frame_Label:
 
     def reset_state(self):
         self.open_outlier = False
-        self.skip_outlier_clean, self.is_cleaned = False, False
+        self.skip_outlier_clean= False
         self.is_saved = True
 
         self.plotter_callback = Plotter_Callbacks(
@@ -161,7 +161,7 @@ class Frame_Label:
             self.gview.clear_graphic_scene()
             return
 
-        self.gview.clear_graphic_scene() # Clear previous graphics items
+        self.gview.clear_graphic_scene()
         self._plot_current_frame(frame)
 
     def _initialize_plotter(self):
@@ -309,22 +309,6 @@ class Frame_Label:
             return False
         return True
 
-    def _suggest_outlier_clean(self):
-        if not self.is_cleaned and not self.skip_outlier_clean:
-            reply = QMessageBox.question(
-                self.main, "Outliers Not Cleaned",
-            "You are about to apply temporal correction on uncleaned tracking data.\n"
-            "This may lead to error propagation or inaccurate smoothing.\n"
-            "It is strongly recommended cleaning outliers first.\n\n"
-            "Do you still want to continue without cleaning?",
-            )
-
-            if reply == QMessageBox.No:
-                self._call_outlier_finder()
-                return
-            else:
-                self.skip_outlier_clean = True
-
     ###################################################################################################################################################
 
     def _direct_keypoint_edit(self):
@@ -356,8 +340,7 @@ class Frame_Label:
     def _temporal_track_correct(self):
         if not self._track_edit_blocker():
             return
-        self._suggest_outlier_clean()
-        self.kem.correct_track_using_temporal()
+        self.kem.correct_track_using_temporal(self.dm.canon_pose, self.dm.angle_map_data)
 
     def _delete_track(self):
         self.kem.del_trk(self.dm.current_frame_idx, self.gview.sbox)
@@ -434,7 +417,6 @@ class Frame_Label:
     def _handle_outlier_mask_from_comp(self, outlier_mask:np.ndarray):
         self.kem.del_outlier(outlier_mask)
         self.dm.outlier_frame_list.clear()
-        self.is_cleaned = True
 
     def _handle_config_from_config(self, new_config:Plot_Config):
         self.dm.plot_config = new_config
