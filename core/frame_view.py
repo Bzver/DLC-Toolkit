@@ -8,8 +8,8 @@ from PySide6.QtWidgets import QMessageBox
 import traceback
 
 from ui import (
-    Menu_Widget, Video_Player_Widget, Clear_Mark_Dialog, Shortcut_Manager, Status_Bar,
-      Inference_interval_Dialog, Progress_Indicator_Dialog)
+    Menu_Widget, Video_Player_Widget, Clear_Mark_Dialog, Shortcut_Manager, Status_Bar, Inference_interval_Dialog
+      )
 from utils.helper import frame_to_pixmap
 from .data_man import Data_Manager
 from .video_man import  Video_Manager
@@ -188,8 +188,12 @@ class Frame_View:
 
     ###################################################################################################################################################
 
-    def determine_list_to_nav(self):
-        return self.dm.labeled_frame_list if self.dm.plot_config.navigate_labeled else self.dm.frame_list
+    def determine_list_to_nav(self) -> list:
+        if self.is_counting and self.dm.animal_n_list:
+            return self.dm.animal_n_list
+        if self.dm.plot_config.navigate_labeled and self.dm.labeled_frame_list:
+            return self.dm.labeled_frame_list
+        return self.dm.frame_list
 
     def _toggle_frame_status(self):
         if self.vm.check_status_msg():
@@ -243,6 +247,7 @@ class Frame_View:
 
     def _handle_rerun_frames_exported(self, frame_tuple):
         self.dm.approved_frame_list, self.dm.rejected_frame_list = frame_tuple
+        self.frame_list = list(set(self.dm.approved_frame_list) | set(self.dm.rejected_frame_list))
         self.refresh_and_display()
 
     def _handle_frame_list_from_comp(self, frame_list):
@@ -250,12 +255,13 @@ class Frame_View:
         self.dm.frame_list[:] = list(frame_set)
         self.refresh_and_display()
 
-    def _handle_counter_from_counter(self, count_list):
+    def _handle_counter_from_counter(self, count_list, bbox_list):
         count_array = np.array(count_list)
         self.dm.animal_0_list = list(np.where(count_array==0)[0])
         self.dm.animal_1_list = list(np.where(count_array==1)[0])
         self.dm.animal_n_list = list(np.where((count_array!=1) & (count_array!=0))[0])
         self.dm.inst_count_per_frame_vid = count_list
+        self.dm.bbox_list = bbox_list
         self.refresh_ui()
 
     def _handle_counter_config_change(self):
@@ -346,6 +352,7 @@ class Frame_View:
 
     def _handle_inference_intervals(self, intervals: dict):
         inference_list = []
+        bbox_ready_set = {i for i, f in enumerate(self.dm.bbox_list) if f is not None}
         last_inferenced_frame = 0
 
         for frame_idx in range(self.dm.total_frames):
@@ -360,9 +367,21 @@ class Frame_View:
             else: # animal_count >= 2
                 current_interval = intervals["interval_n_animals"]
             
-            if frame_idx - last_inferenced_frame >= current_interval:
-                inference_list.append(frame_idx)
-                last_inferenced_frame = frame_idx
+            if frame_idx - last_inferenced_frame < current_interval:
+                continue
+
+            candidate = None
+            search_end = min(frame_idx + current_interval, self.dm.total_frames)
+            
+            for f in range(frame_idx, search_end):
+                if f in bbox_ready_set:
+                    candidate = f
+                    break
+
+            selected_frame_idx = frame_idx if candidate is None else candidate
+
+            inference_list.append(selected_frame_idx)
+            last_inferenced_frame = selected_frame_idx
         
         inference_set = set(inference_list)
         reply = QMessageBox.question(
@@ -392,20 +411,12 @@ class Frame_View:
             
     def _crop_coords_for_inference(self, frame_list):
         self.inference_window.show()
-        crop_dict = {}
-        if not hasattr(self, "blob_counter"):
-            self._init_blob_counter()
-        progress = Progress_Indicator_Dialog(
-            0, len(frame_list), "Getting Crop Coords", "Acquring crop coordinates from Blob_Counter...", self.main)
-        for i, frame_idx in enumerate(frame_list):
-            progress.setValue(i)
-            if progress.wasCanceled():
-                return
-            frame = self.vm.get_frame(frame_idx)
-            bbox = self.blob_counter.get_blob_bbox(frame)
-            crop_dict[frame_idx] = bbox
+        
+        self._init_blob_counter()
+
+        crop_dict, bbox_list = self.blob_counter.get_full_crop_dict(frame_list, self.dm.bbox_list)
+        self.dm.bbox_list = bbox_list # We waste nothing
             
-        progress.close()
         if crop_dict:
             self.inference_window.crop_coords = crop_dict
             self.inference_window.inference_workflow()

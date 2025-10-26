@@ -47,7 +47,7 @@ class Data_Manager:
         # fview only
         self.blob_config = None
         self.labeled_frame_list, self.approved_frame_list, self.rejected_frame_list = [], [], []
-        self.animal_0_list, self.animal_1_list, self.animal_n_list = [], [], []
+        self.animal_0_list, self.animal_1_list, self.animal_n_list, self.bbox_list = [], [], [], []
         self.label_data_array, self.inst_count_per_frame_vid = None, None
 
         # flabel only
@@ -405,6 +405,7 @@ class Data_Manager:
             'animal_0_list': self.animal_0_list,
             'animal_1_list': self.animal_1_list,
             'animal_n_list': self.animal_n_list,
+            'bbox_list': self.bbox_list,
             'label_data_array': self.label_data_array,
             'plot_config': self.plot_config,
             'blob_config': self.blob_config,
@@ -454,6 +455,7 @@ class Data_Manager:
             self.animal_0_list = workspace_state.get('animal_0_list', [])
             self.animal_1_list = workspace_state.get('animal_1_list', [])
             self.animal_n_list = workspace_state.get('animal_n_list', [])
+            self.bbox_list = workspace_state.get('bbox_list', [])
             self.label_data_array = workspace_state.get('label_data_array')
             self.plot_config = workspace_state.get('plot_config')
             self.blob_config = workspace_state.get('blob_config')
@@ -465,7 +467,8 @@ class Data_Manager:
             self.inst_count_per_frame_vid = workspace_state.get('inst_count_per_frame_vid')
 
             self.init_vid_callback(self.video_file)
-            self._init_loaded_data()
+            if self.dlc_data is not None:
+                self._init_loaded_data()
             self.refresh_callback()
         except Exception as e:
             QMessageBox.critical(self.main, "Error Loading Workspace", f"Failed to load workspace:\n{e}")
