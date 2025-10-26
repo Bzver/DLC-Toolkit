@@ -45,17 +45,14 @@ class Hungarian:
 
         try:
             row_ind, col_ind = linear_sum_assignment(cost_matrix)
-            if self.debug_print:
-                log_print(f"[HUN] Hungarian assignment: row_ind={row_ind}, col_ind={col_ind}")
+            log_print(f"[HUN] Hungarian assignment: row_ind={row_ind}, col_ind={col_ind}", enabled=self.debug_print)
         except Exception as e:
-            if self.debug_print:
-                log_print(f"[HUN] Hungarian failed: {e}. Returning None.")
+            log_print(f"[HUN] Hungarian failed: {e}. Returning None.", enabled=self.debug_print)
             return None  # Hungarian failed
         else:
             if self.full_set:
                 if not self._dist_improv_comp(row_ind, col_ind):
-                    if self.debug_print:
-                        log_print(f"[HUN] Hungarian assignment does not improve geometric distances sufficiently.")
+                    log_print(f"[HUN] Hungarian assignment does not improve geometric distances sufficiently.", enabled=self.debug_print)
                     return self.inst_list
 
         return self._build_new_order(row_ind, col_ind)
@@ -77,32 +74,26 @@ class Hungarian:
     def _skip_cost_matrix_check(self) -> Optional[list]:
         K, M = len(self.pred_centroids), len(self.ref_centroids)
         if K == 0 or M == 0:
-            if self.debug_print:
-                log_print(f"[HUN] No valid data for Hungarian matching (K={K}, M={M}). Returning default order.")
+            log_print(f"[HUN] No valid data for Hungarian matching (K={K}, M={M}). Returning default order.", enabled=self.debug_print)
             return self.inst_list
 
         if K == 1 and M == 1:
             dist = np.linalg.norm(self.pred_centroids[0] - self.ref_centroids[0])
-            if self.debug_print:
-                log_print(f"[HUN] Single pair matching. Distance: {dist:.2f}, Max_dist: {self.max_dist}")
+            log_print(f"[HUN] Single pair matching. Distance: {dist:.2f}, Max_dist: {self.max_dist}", enabled=self.debug_print)
             if dist < self.max_dist:
                 new_order = self.inst_list.copy()
                 new_order[self.ref_indices[0]] = self.pred_indices[0]
-                if self.debug_print:
-                    log_print(f"[HUN] Single pair matched. New order: {new_order}")
+                log_print(f"[HUN] Single pair matched. New order: {new_order}", enabled=self.debug_print)
                 return new_order
             else:
-                if self.debug_print:
-                    log_print(f"[HUN] Single pair not matched (distance too high). Returning default order.")
-                return self.inst_list
+                log_print(f"[HUN] Single pair not matched (Dist: {dist:.2f} > {self.max_dist}).", enabled=self.debug_print)
+                return None
 
         if self.full_set:
             distances = np.linalg.norm(self.pred_centroids - self.ref_centroids, axis=1)
-            if self.debug_print:
-                log_print(f"[HUN] All instances present and masks match. Distances: {distances}, Max_dist: {self.max_dist}")
+            log_print(f"[HUN] All instances present and masks match. Distances: {distances}, Max_dist: {self.max_dist}", enabled=self.debug_print)
             if np.all(distances < self.max_dist):
-                if self.debug_print:
-                    log_print(f"[HUNG] All identities stable. Returning default order.")
+                log_print("[HUN] All identities stable. Returning default order.", enabled=self.debug_print)
                 return self.inst_list
 
     def _build_new_order(self, row_ind:np.ndarray, col_ind:np.ndarray) -> list:
@@ -113,37 +104,31 @@ class Hungarian:
             target_identity = self.ref_indices[c]
             source_instance = self.pred_indices[r]
             processed[target_identity] = source_instance
-        if self.debug_print:
-            log_print(f"[HUN] Processed matches: {processed}")
+        log_print(f"[HUN] Processed matches: {processed}", enabled=self.debug_print)
 
         unprocessed = [inst_idx for inst_idx in all_inst if inst_idx not in processed.keys()]
         unassigned = [inst_idx for inst_idx in all_inst if inst_idx not in processed.values()]
-        if self.debug_print:
-            log_print(f"[HUN] Unprocessed identities: {unprocessed}, Unassigned instances: {unassigned}")
+        log_print(f"[HUN] Unprocessed identities: {unprocessed}, Unassigned instances: {unassigned}", enabled=self.debug_print)
 
         for target_identity in unprocessed:  # First loop, find remaining pair without idx change
             if target_identity in unassigned:
                 source_instance = target_identity
                 processed[target_identity] = source_instance
                 unassigned.remove(source_instance)
-        if self.debug_print:
-            log_print(f"[HUN] Processed after first loop (self-assignment): {processed}")
+        log_print(f"[HUN] Processed after first loop (self-assignment): {processed}", enabled=self.debug_print)
         
         unprocessed[:] = [inst_idx for inst_idx in all_inst if inst_idx not in processed.keys()]
-        if self.debug_print:
-            log_print(f"[HUN] Unprocessed identities after first loop: {unprocessed}")
+        log_print(f"[HUN] Unprocessed identities after first loop: {unprocessed}", enabled=self.debug_print)
 
         for target_identity in unprocessed:  # Second loop, arbitarily reassign
             source_instance = unassigned[-1]
             processed[target_identity] = source_instance
             unassigned.remove(source_instance)
-        if self.debug_print:
-            log_print(f"[HUN] Processed after second loop (arbitrary assignment): {processed}")
+        log_print(f"[HUN] Processed after second loop (arbitrary assignment): {processed}", enabled=self.debug_print)
             
         sorted_processed = {k: processed[k] for k in sorted(processed)}
         new_order = list(sorted_processed.values())
-        if self.debug_print:
-            log_print(f"[HUN] Final new_order: {new_order}")
+        log_print(f"[HUN] Final new_order: {new_order}", enabled=self.debug_print)
 
         return new_order
     

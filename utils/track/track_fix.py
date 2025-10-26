@@ -47,23 +47,20 @@ class Track_Fixer:
                     self.progress.close()
                     return self.pred_data_array, 0
             
-            if debug_print:
-                log_print(f"---------- frame: {frame_idx} ---------- ")
+            log_print(f"---------- frame: {frame_idx} ---------- ", enabled=self.debug_print)
 
             pred_centroids, _ = calculate_pose_centroids(self.corrected_pred_data, frame_idx)
             valid_pred_mask = np.all(~np.isnan(pred_centroids), axis=1)
             self.current_frame_data = self.corrected_pred_data[frame_idx]
 
-            if debug_print:
-                for i in range(self.instance_count):
-                    log_print(f"x,y in pred: inst {i}: ({pred_centroids[i,0]:.1f}, {pred_centroids[i,1]:.1f})")
+            for i in range(self.instance_count):
+                log_print(f"x,y in pred: inst {i}: ({pred_centroids[i,0]:.1f}, {pred_centroids[i,1]:.1f})", enabled=self.debug_print)
                     
             valid_ref_mask = ref_last_updated > frame_idx - lookback_window
 
-            if debug_print:
-                for i in range(self.instance_count):
+            for i in range(self.instance_count):
                     log_print(f"x,y in ref: inst {i}: ({ref_centroids[i,0]:.1f}, {ref_centroids[i,1]:.1f}) | "
-                              f"last updated: {ref_last_updated[i]} | valid: {valid_ref_mask[i]}")
+                              f"last updated: {ref_last_updated[i]} | valid: {valid_ref_mask[i]}", enabled=self.debug_print)
 
             if not np.any(valid_ref_mask):
                 ref_centroids[valid_pred_mask] = pred_centroids[valid_pred_mask]
@@ -78,26 +75,22 @@ class Track_Fixer:
                     new_order = last_order
                     self._applying_last_order(last_order)
                     skip_matching = True
-                    if debug_print:
-                        log_print(f"[TMOD] SWAP, reusing the last order.")
+                    log_print(f"[TMOD] SWAP, reusing the last order.", enabled=self.debug_print)
 
             if not skip_matching:
                 new_order = hun.hungarian_matching()
 
                 if new_order is None:
-                    if debug_print:
-                        log_print(f"[TMOD] Failed to build new order with Hungarian.")
+                    log_print(f"[TMOD] Failed to build new order with Hungarian.", enabled=self.debug_print)
                     self._applying_last_order(last_order)
                 elif new_order == self.inst_list:
                     last_order = new_order
-                    if debug_print:
-                        log_print(f"[TMOD] NO SWAP, already the best solution.")
+                    log_print(f"[TMOD] NO SWAP, already the best solution.", enabled=self.debug_print)
                 else:
                     self.current_frame_data[:, :] = self.current_frame_data[new_order, :]
                     last_order = new_order
                     self.changes_applied += 1
-                    if debug_print:
-                        log_print(f"[TMOD] SWAP, new_order: {new_order}.")
+                    log_print(f"[TMOD] SWAP, new_order: {new_order}.", enabled=self.debug_print)
 
             self.corrected_pred_data[frame_idx] = self.current_frame_data
             fixed_pred_centroids = pred_centroids[new_order] if new_order else pred_centroids
@@ -129,11 +122,9 @@ class Track_Fixer:
 
     def _applying_last_order(self, last_order:List[int]):
         if last_order is None or last_order == self.inst_list:
-            if DEBUG:
-                log_print(f"[TMOD]NO SWAP.")
+            log_print(f"[TMOD]NO SWAP.", enabled=DEBUG)
             return
 
         self.current_frame_data[:, :] = self.current_frame_data[last_order, :]
         self.changes_applied += 1
-        if DEBUG:
-            log_print(f"[TMOD] SWAP, Applying the last order: {last_order}")
+        log_print(f"[TMOD] SWAP, Applying the last order: {last_order}", enabled=DEBUG)

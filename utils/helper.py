@@ -174,7 +174,9 @@ def build_angle_map(canon_pose:np.ndarray, all_frame_poses:np.ndarray , head_idx
 
 #########################################################################################################################################################1
 
-def log_print(*args, **kwargs):
+def log_print(*args, enabled=True, **kwargs):
+    if not enabled:
+        return
     try:
         log_file = "D:/Project/debug_log.txt"
         with open(log_file, 'a', encoding='utf-8') as f:

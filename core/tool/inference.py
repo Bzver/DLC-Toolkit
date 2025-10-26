@@ -51,7 +51,7 @@ class DLC_Inference(QtWidgets.QDialog):
             parent: Parent widget.
         """
         super().__init__(parent)
-        self.setWindowTitle("Re-run Predictions in DLC")
+        self.setWindowTitle("Run Predictions in DLC")
         self.dlc_data = dlc_data
         self.frame_list = frame_list
         self.video_filepath = video_filepath
@@ -287,7 +287,7 @@ class DLC_Inference(QtWidgets.QDialog):
         self.global_frame_label.setFont(font)
         self.selected_frame_label.setFont(font)
         self.global_frame_label.setStyleSheet("color: black;")
-        self.selected_frame_label.setStyleSheet("color: #1E90FF;")  # Dodger blue for emphasis
+        self.selected_frame_label.setStyleSheet("color: #1E90FF;")
         frame_info_layout.addStretch()
         frame_info_layout.addWidget(self.global_frame_label)
         frame_info_layout.addWidget(self.selected_frame_label)
@@ -684,8 +684,7 @@ class DLC_Inference(QtWidgets.QDialog):
         title = f"Fix Track Using Temporal"
         progress = Progress_Indicator_Dialog(0, temp_data_array.shape[0], title, dialog, self)
         tf = Track_Fixer(temp_data_array, canon_pose, angle_map_data, progress)
-        temp_data_array, ttsfsd = tf.track_correction()
-        print(f"Track correct called: {ttsfsd} terminated.")
+        temp_data_array, _ = tf.track_correction()
         return temp_data_array
 
     def _crossref_existing_pred(self):
@@ -696,8 +695,7 @@ class DLC_Inference(QtWidgets.QDialog):
             valid_pred_mask = np.all(~np.isnan(pred_centroids), axis=1)
             valid_ref_mask = np.all(~np.isnan(ref_centroids), axis=1)
 
-            if DEBUG:
-                log_print(f"------ Processing Frame {frame_idx} ------")
+            log_print(f"------ Processing Frame {frame_idx} ------", enabled=DEBUG)
 
             hun = Hungarian(pred_centroids, ref_centroids, valid_pred_mask, valid_ref_mask, debug_print=DEBUG)
             corrected_order = hun.hungarian_matching()
