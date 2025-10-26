@@ -4,7 +4,7 @@ import numpy as np
 from collections import OrderedDict
 import cv2
 
-from typing import Optional
+from typing import Optional, Tuple
 
 class Frame_Extractor:
     def __init__(self, video_path: str):
@@ -48,6 +48,13 @@ class Frame_Extractor:
         else:
             print(f"OpenCV failed to read frame {frame_index}")
             return None
+
+    def get_frame_dim(self) -> Tuple[int, int]:
+        frame = self.get_frame(0)
+        if frame is not None:
+            return frame.shape[:2]
+        else:
+            return 0, 0
 
     def clear_cache(self):
         self._frame_cache.clear()
