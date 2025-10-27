@@ -2,7 +2,7 @@ import os
 import numpy as np
 import cv2
 
-from typing import Tuple, List, Optional, Dict
+from typing import List, Optional
 from PySide6.QtWidgets import QProgressDialog
 
 from .csv_op import prediction_to_csv, csv_to_h5
@@ -18,7 +18,7 @@ class Exporter:
     def __init__(self, dlc_data: Loaded_DLC_Data, export_settings: Export_Settings,
             frame_list: List[int], pred_data_array:Optional[np.ndarray]=None,
             progress_callback:Optional[QProgressDialog]=None,
-            crop_coords:Optional[Dict[int, Tuple[int, int, int, int]]]=None,
+            crop_coords:Optional[np.ndarray]=None,
             ):
         self.dlc_data = dlc_data
         self.export_settings = export_settings
@@ -64,7 +64,7 @@ class Exporter:
                     cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
                     ret, frame = cap.read()
 
-                    if self.crop_coords:
+                    if self.crop_coords is not None:
                         frame = self._apply_crop(frame, frame_idx)
 
                     if ret:
@@ -83,7 +83,7 @@ class Exporter:
                         image_path = f"img{str(current_frame_idx).zfill(8)}.png"
                         image_output_path = os.path.join(self.export_settings.save_path, image_path)
 
-                        if self.crop_coords:
+                        if self.crop_coords is not None:
                             frame = self._apply_crop(frame, current_frame_idx)
 
                         cv2.imwrite(image_output_path, frame)
@@ -118,7 +118,7 @@ class Exporter:
         else:
             pred_data_array = self.pred_data_array[self.frame_list, :, :] # (F, I, K*3)
 
-        if self.crop_coords:
+        if self.crop_coords is not None:
             coords_array = crop_coords_to_array(self.crop_coords, pred_data_array.shape)
             pred_data_array = pred_data_array - coords_array
         try:
@@ -132,7 +132,7 @@ class Exporter:
             raise RuntimeError(f"Error extracting prediction: {e}") from e
         
     def _apply_crop(self, frame:Frame_CV2, frame_idx:int):
-        if self.crop_coords is None or frame_idx not in self.crop_coords:
+        if self.crop_coords is None:
             return frame
         x1, y1, x2, y2 = self.crop_coords[frame_idx]
         return frame[y1:y2, x1:x2]

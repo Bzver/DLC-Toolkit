@@ -47,8 +47,8 @@ class Data_Manager:
         # fview only
         self.blob_config = None
         self.labeled_frame_list, self.approved_frame_list, self.rejected_frame_list = [], [], []
-        self.animal_0_list, self.animal_1_list, self.animal_n_list, self.bbox_list = [], [], [], []
-        self.label_data_array, self.inst_count_per_frame_vid = None, None
+        self.animal_0_list, self.animal_1_list, self.animal_n_list, self.blob_merged_list = [], [], [], []
+        self.label_data_array, self.blob_array = None, None
 
         # flabel only
         self.prediction = None  # To track modified prediction file
@@ -405,16 +405,16 @@ class Data_Manager:
             'animal_0_list': self.animal_0_list,
             'animal_1_list': self.animal_1_list,
             'animal_n_list': self.animal_n_list,
-            'bbox_list': self.bbox_list,
+            'blob_merged_list': self.blob_merged_list,
             'label_data_array': self.label_data_array,
             'plot_config': self.plot_config,
             'blob_config': self.blob_config,
             'prediction': self.prediction,
             'angle_map_data': self.angle_map_data,
             'inst_count_per_frame_pred': self.inst_count_per_frame_pred,
+            'blob_array': self.blob_array,
             'roi_frame_list': self.roi_frame_list,
             'outlier_frame_list': self.outlier_frame_list,
-            'inst_count_per_frame_vid': self.inst_count_per_frame_vid,
         }
 
         try:
@@ -455,16 +455,16 @@ class Data_Manager:
             self.animal_0_list = workspace_state.get('animal_0_list', [])
             self.animal_1_list = workspace_state.get('animal_1_list', [])
             self.animal_n_list = workspace_state.get('animal_n_list', [])
-            self.bbox_list = workspace_state.get('bbox_list', [])
+            self.blob_merged_list = workspace_state.get('blob_merged_list', [])
             self.label_data_array = workspace_state.get('label_data_array')
             self.plot_config = workspace_state.get('plot_config')
             self.blob_config = workspace_state.get('blob_config')
             self.prediction = workspace_state.get('prediction')
             self.angle_map_data = workspace_state.get('angle_map_data')
             self.inst_count_per_frame_pred = workspace_state.get('inst_count_per_frame_pred')
+            self.blob_array = workspace_state.get('blob_array')
             self.roi_frame_list = workspace_state.get('roi_frame_list', [])
             self.outlier_frame_list = workspace_state.get('outlier_frame_list', [])
-            self.inst_count_per_frame_vid = workspace_state.get('inst_count_per_frame_vid')
 
             self.init_vid_callback(self.video_file)
             if self.dlc_data is not None:

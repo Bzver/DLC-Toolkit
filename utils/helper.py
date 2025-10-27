@@ -333,13 +333,11 @@ def frame_to_pixmap(frame):
 
 ###########################################################################################
 
-def crop_coords_to_array(coords_dict:Dict[int, Tuple[int, int, int, int]], arr_shape:Tuple[int, int, int]):
+def crop_coords_to_array(crop_coords:np.ndarray, arr_shape:Tuple[int, int, int]):
     coords_array = np.zeros(arr_shape)
-    sorted_coords = dict(sorted(coords_dict.items()))
-    crop_offsets = np.array(list(sorted_coords.values()))
     
-    x_per_frame = crop_offsets[:, 0][:, np.newaxis, np.newaxis]
-    y_per_frame = crop_offsets[:, 1][:, np.newaxis, np.newaxis]
+    x_per_frame = crop_coords[:, 0][:, np.newaxis, np.newaxis]
+    y_per_frame = crop_coords[:, 1][:, np.newaxis, np.newaxis]
     
     coords_array[:, :, 0::3] = x_per_frame
     coords_array[:, :, 1::3] = y_per_frame

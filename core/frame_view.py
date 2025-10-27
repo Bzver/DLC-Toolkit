@@ -96,7 +96,9 @@ class Frame_View:
         self._init_blob_counter()
 
     def _init_blob_counter(self, request:bool=False):
-        self.blob_counter = Blob_Counter(frame_extractor=self.vm.extractor, config=self.dm.blob_config, request=request, parent=self.main)
+        self.blob_counter = Blob_Counter(
+            frame_extractor=self.vm.extractor, config=self.dm.blob_config, 
+            blob_array=self.dm.blob_array, request=request, parent=self.main)
         self.blob_counter.frame_processed.connect(self._plot_current_frame)
         self.blob_counter.parameters_changed.connect(self._handle_counter_config_change)
         self.blob_counter.video_counted.connect(self._handle_counter_from_counter)
@@ -115,7 +117,7 @@ class Frame_View:
             return
         
         if self.is_counting:
-            self.blob_counter.set_current_frame(frame)
+            self.blob_counter.set_current_frame(frame, self.dm.current_frame_idx)
         else:
             self._plot_current_frame(frame)
 
@@ -179,6 +181,7 @@ class Frame_View:
             self.vid_play.sld.set_frame_category("zero_animal_frames", self.dm.animal_0_list, nvpc[1], priority=1)
             self.vid_play.sld.set_frame_category("one_animal_frames", self.dm.animal_1_list, nvpc[2], priority=2)
             self.vid_play.sld.set_frame_category("muliple_animal_frames", self.dm.animal_n_list, nvpc[3], priority=3)
+            self.vid_play.sld.set_frame_category("muliple_animal_frames (with merge)", self.dm.blob_merged_list, nvpc[4], priority=4)
         else:
             self.vid_play.sld.set_frame_category("marked_frames", self.dm.frame_list, nvp[1], 1)
             self.vid_play.sld.set_frame_category("rejected_frames", self.dm.rejected_frame_list, nvp[2], 2)
@@ -255,13 +258,12 @@ class Frame_View:
         self.dm.frame_list[:] = list(frame_set)
         self.refresh_and_display()
 
-    def _handle_counter_from_counter(self, count_list, bbox_list):
-        count_array = np.array(count_list)
-        self.dm.animal_0_list = list(np.where(count_array==0)[0])
-        self.dm.animal_1_list = list(np.where(count_array==1)[0])
-        self.dm.animal_n_list = list(np.where((count_array!=1) & (count_array!=0))[0])
-        self.dm.inst_count_per_frame_vid = count_list
-        self.dm.bbox_list = bbox_list
+    def _handle_counter_from_counter(self, blob_array:np.ndarray):
+        self.dm.blob_array = blob_array
+        self.dm.animal_0_list = list(np.where(blob_array[:, 0]==0)[0])
+        self.dm.animal_1_list = list(np.where(blob_array[:, 0]==1)[0])
+        self.dm.animal_n_list = list(np.where((blob_array[:, 0]!=1) & (blob_array[:, 0]!=0))[0])
+        self.dm.blob_merged_list = list(np.where(blob_array[:, 1]==0)[0])
         self.refresh_ui()
 
     def _handle_counter_config_change(self):
@@ -289,7 +291,7 @@ class Frame_View:
         if self.dm.total_frames > 9000:
             self.status_bar.show_message("It's over nine thousands!", duration_ms=500)
             self._suggest_animal_counting()
-            if self.dm.inst_count_per_frame_vid is not None:
+            if self.dm.blob_array is not None:
                 dialog = Inference_interval_Dialog(self.main)
                 dialog.intervals_selected.connect(self._handle_inference_intervals)
                 dialog.exec()
@@ -338,7 +340,7 @@ class Frame_View:
             return
 
     def _suggest_animal_counting(self):
-        if self.dm.inst_count_per_frame_vid is None and not self.skip_counting and not self.is_counting:
+        if self.dm.blob_array is None and not self.skip_counting and not self.is_counting:
             reply = QMessageBox.question(
                 self.main, "Animal Not Counted",
                 "Animal counting has not been performed for this video. For videos with a large "
@@ -352,11 +354,10 @@ class Frame_View:
 
     def _handle_inference_intervals(self, intervals: dict):
         inference_list = []
-        bbox_ready_set = {i for i, f in enumerate(self.dm.bbox_list) if f is not None}
         last_inferenced_frame = 0
 
         for frame_idx in range(self.dm.total_frames):
-            animal_count = self.dm.inst_count_per_frame_vid[frame_idx]
+            animal_count = self.dm.blob_array[frame_idx, 0]
             
             current_interval = 1
 
@@ -374,8 +375,7 @@ class Frame_View:
             search_end = min(frame_idx + current_interval, self.dm.total_frames)
             
             for f in range(frame_idx, search_end):
-                if f in bbox_ready_set:
-                    candidate = f
+                if self.dm.blob_array[f, 5] != 0:
                     break
 
             selected_frame_idx = frame_idx if candidate is None else candidate
@@ -383,13 +383,12 @@ class Frame_View:
             inference_list.append(selected_frame_idx)
             last_inferenced_frame = selected_frame_idx
         
-        inference_set = set(inference_list)
         reply = QMessageBox.question(
             self.main, "Inference List Calculated",
-            f"A total of {len(inference_set)} frames out of {self.dm.total_frames} will be inferenced, confirm?"
+            f"A total of {len(inference_list)} frames out of {self.dm.total_frames} will be inferenced, confirm?"
         )
         if reply == QMessageBox.Yes:
-            self.call_inference(sorted(list(inference_set)))
+            self.call_inference(inference_list)
 
     def _update_inference_crop_coords(self, frame_list:list):
         if not frame_list:
@@ -411,17 +410,14 @@ class Frame_View:
             
     def _crop_coords_for_inference(self, frame_list):
         self.inference_window.show()
-        
         self._init_blob_counter()
 
-        crop_dict, bbox_list = self.blob_counter.get_full_crop_dict(frame_list, self.dm.bbox_list)
-        self.dm.bbox_list = bbox_list # We waste nothing
-            
-        if crop_dict:
-            self.inference_window.crop_coords = crop_dict
+        try:
+            crop_array = self.blob_counter.get_full_crop_array(frame_list, self.dm.blob_array)
+            self.inference_window.crop_coords = crop_array
             self.inference_window.inference_workflow()
-        else:
-            QMessageBox.critical(self.main, "Failed", "Failed to Extract Crop Coords.")
+        except Exception as e:
+            QMessageBox.critical(self.main, "Failed", "Failed to Extract Crop Coords: {e}")
 
     def _reload_prediction(self, prediction_path:str):
         """Reload prediction data from file and update visualization"""

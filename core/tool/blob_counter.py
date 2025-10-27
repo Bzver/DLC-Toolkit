@@ -22,10 +22,15 @@ class Blob_Counter(QGroupBox):
     Frame_CV2 = np.ndarray
     parameters_changed = Signal()
     frame_processed = Signal(object, int)
-    video_counted = Signal(list, list)
+    video_counted = Signal(object)
     config_ready = Signal()
 
-    def __init__(self, frame_extractor: Frame_Extractor, config: Optional[Blob_Config]=None, request:bool=False, parent=None):
+    def __init__(self,
+                 frame_extractor:Frame_Extractor,
+                 config: Optional[Blob_Config]=None,
+                 request:bool=False,
+                 blob_array=False,
+                 parent=None):
         super().__init__(parent)
         self.setTitle("Blob-based Animal Counting Controls")
 
@@ -33,8 +38,6 @@ class Blob_Counter(QGroupBox):
         self.current_frame = None
         self.total_frames = 0
         self.sample_frame_count = 100
-        self.counts_per_frame = []
-        self.bbox_per_frame = []
         self.vid_h, self.vid_w = self.frame_extractor.get_frame_dim()
 
         self.kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
@@ -42,7 +45,7 @@ class Blob_Counter(QGroupBox):
 
         # UI parameters
         self.threshold = 50
-        self.min_blob_area = 500
+        self.min_blob_area = 2000
         self.blob_type = "Dark Blobs (Max)"
 
         self.blb_layout = QVBoxLayout(self)
@@ -77,7 +80,7 @@ class Blob_Counter(QGroupBox):
         # Min Blob Area
         self.min_area_label = QLabel("Min Blob Area:")
         self.min_area_slider = QSlider(Qt.Horizontal)
-        self.min_area_slider.setRange(10, 5000)
+        self.min_area_slider.setRange(10, 20000)
         self.min_area_slider.setValue(self.min_blob_area)
         self.min_area_slider.valueChanged.connect(self._on_min_area_changed)
         self.min_area_value_label = QLabel(str(self.min_blob_area))
@@ -131,43 +134,45 @@ class Blob_Counter(QGroupBox):
 
         self._get_total_frames()
 
-        self.parameters_changed.connect(self._reprocess_current_frame)
+        self.parameters_changed.connect(self._reset_and_reprocess)
         self.bg_display.update_background_display(self.sample_frame_count)
 
         if config is not None:
             self._apply_config(config)
+        else:
+            self._reset_blob_array()
 
-    def set_current_frame(self, frame:Frame_CV2):
+        self.blob_array = blob_array
+
+    def set_current_frame(self, frame:Frame_CV2, frame_idx:int):
         self.current_frame = frame
+        self.frame_idx = frame_idx
         self._reprocess_current_frame()
 
-    def get_full_crop_dict(
-            self, frame_list:List[int], bbox_list:List[Tuple[int, int, int, int] | None]
-            ) -> Tuple[Dict[int, Tuple[int, int, int, int]], List[Tuple[int, int, int, int] | None]]:
+    def get_full_crop_array(self, frame_list:List[int], blob_array:np.ndarray) -> np.ndarray:
+        self.blob_array = blob_array  # Not using .copy() is intentional
+
         progress = Progress_Indicator_Dialog(
             0, len(frame_list), "Getting Crop Coords", "Acquring crop coordinates from Blob_Counter...", self)
-
-        crop_dict = {}
+ 
         for i, frame_idx in enumerate(frame_list):
             progress.setValue(i)
             if progress.wasCanceled():
                 break
 
-            if bbox_list[frame_idx] is not None:
-                crop_dict[frame_idx] = bbox_list[frame_idx]
-                continue
+            if blob_array[frame_idx, 5] == 0:
+                frame = self.frame_extractor.get_frame(frame_idx)
+                if frame is None:
+                    raise RuntimeError(f"Failed to extract frame {frame_idx}。")
+                
+                contours = self._process_contour_from_frame(frame)
+                x1, y1, x2, y2 = self._perform_bbox_calculation(contours)
+                self._update_blob_array_bbox(frame_idx, x1, y1, x2, y2)
 
-            frame = self.frame_extractor.get_frame(frame_idx)
-            if frame is None:
-                raise RuntimeError(f"Failed to extract frame {frame_idx}。")
-            
-            contours = self._process_contour_from_frame(frame)
-            bbox = self._perform_bbox_calculation(contours)
-            crop_dict[frame_idx] = bbox
-            bbox_list[frame_idx] = bbox
+        crop_array = self.blob_array[frame_list, 2:]
 
         progress.close()
-        return crop_dict, bbox_list
+        return crop_array
 
     def get_config(self) -> Blob_Config:
         config = Blob_Config(
@@ -209,29 +214,36 @@ class Blob_Counter(QGroupBox):
         if self.current_frame is None:
             self.count_label.setText("Animal Count: 0")
             return
-        contour = self._process_contour_from_frame(self.current_frame)
-        count = self._perform_blob_counting(contour)
+        
+        contours = self._process_contour_from_frame(self.current_frame)
+        count, merge = self._perform_blob_counting(contours)
+        x1, y1, x2, y2 = self._perform_bbox_calculation(contours)
+
+        if self.blob_array is None:
+            self._reset_blob_array()
+
+        self.blob_array[self.frame_idx, 0] = count
+        self.blob_array[self.frame_idx, 1] = merge
+        self._update_blob_array_bbox(self.frame_idx, x1, y1, x2, y2)
+
         self.count_label.setText(f"Animal Count: {count}")
-        if count:
-            display_frame = self._draw_mask(self.current_frame, contour)
-            self.frame_processed.emit(display_frame, count)
+        display_frame = self._draw_mask(self.current_frame, contours)
+        self.frame_processed.emit(display_frame, count)
 
     def _get_total_frames(self):
         self.total_frames = self.frame_extractor.get_total_frames()
 
     def _count_entire_video(self):
-        self.counts_per_frame = [0] * self.total_frames
-        self.bbox_per_frame = [None] * self.total_frames
-        
         try:
-            self._forward_pass_counting()
-            self._backward_pass_validation()
+            status = self._forward_pass_counting()
+            if status:
+                self._backward_pass_validation()
         except Exception as e:
             print(f"Error counting video: {e}.")
 
-        self.video_counted.emit(self.counts_per_frame, self.bbox_per_frame)
+        self.video_counted.emit(self.blob_array)
 
-    def _forward_pass_counting(self):
+    def _forward_pass_counting(self) -> bool:
         current_count = 0
         skip = 1
         max_skip_single = 40 
@@ -240,24 +252,24 @@ class Blob_Counter(QGroupBox):
         frame_idx = 0
         progress = Progress_Indicator_Dialog(0, self.total_frames, "Counting", "Adaptive forward screening...", self)
 
-        # Forward pass
         while frame_idx < self.total_frames:
             if progress.wasCanceled():
-                break
-
+                return False
             frame = self.frame_extractor.get_frame(frame_idx)
             if frame is None:
                 raise RuntimeError(f"Failed to get frame {frame_idx}.")
+            if self.blob_array[frame_idx, 5] != 0:
+                frame_idx += 1
+                continue
             
             contours = self._process_contour_from_frame(frame)
-            count = self._perform_blob_counting(contours)
-            bbox = self._perform_bbox_calculation(contours)
+            count, merged = self._perform_blob_counting(contours)
+            x1, y1, x2, y2 = self._perform_bbox_calculation(contours)
 
             next_process_frame = min(frame_idx + skip, self.total_frames)
-            for i in range(frame_idx, next_process_frame):
-                self.counts_per_frame[i] = count
-
-            self.bbox_per_frame[frame_idx] = bbox
+            self.blob_array[frame_idx:next_process_frame, 0] = count
+            self.blob_array[frame_idx:next_process_frame, 1] = merged
+            self._update_blob_array_bbox(frame_idx, x1, y1, x2, y2)
 
             progress.setValue(frame_idx)
             QtWidgets.QApplication.processEvents()
@@ -274,16 +286,19 @@ class Blob_Counter(QGroupBox):
             frame_idx = next_process_frame
             
         progress.close()
+        return True
 
     def _backward_pass_validation(self):
         frame_idx = self.total_frames - 1
         progress = Progress_Indicator_Dialog(0, self.total_frames, "Validating", "Backward pass to check counts...", self)
         for frame_idx in range(self.total_frames - 1, -1, -1):
-            if self.bbox_per_frame[frame_idx] is not None:
+            if progress.wasCanceled():
+                break
+            if self.blob_array[frame_idx, 5] != 0: # Already calculated frames
                 continue
-            if self.counts_per_frame[frame_idx] > 1:
+            if self.blob_array[frame_idx, 0] > 1 and self.blob_array[frame_idx, 1] == 0: # Non-merged multi animal frames
                 continue
-            if frame_idx < self.total_frames - 1 and self.counts_per_frame[frame_idx + 1] < 2:
+            if frame_idx < self.total_frames - 1 and self.blob_array[frame_idx + 1, 0] < 2: # Continous single/no animal frames
                 continue
 
             frame = self.frame_extractor.get_frame(frame_idx)
@@ -291,30 +306,33 @@ class Blob_Counter(QGroupBox):
                 raise RuntimeError(f"Failed to get frame {frame_idx}.")
             
             contours = self._process_contour_from_frame(frame)
-            count = self._perform_blob_counting(contours)
-            bbox = self._perform_bbox_calculation(contours)
+            count, merge = self._perform_blob_counting(contours)
+            x1, y1, x2, y2 = self._perform_bbox_calculation(contours)
 
-            self.counts_per_frame[frame_idx] = count
-            self.bbox_per_frame[frame_idx] = bbox
+            self.blob_array[frame_idx, 0] = count
+            self.blob_array[frame_idx, 1] = merge
+            self._update_blob_array_bbox(frame_idx, x1, y1, x2, y2)
 
             progress.setValue(self.total_frames - frame_idx)
             QtWidgets.QApplication.processEvents()
 
         progress.close()
 
-    def _perform_blob_counting(self, contours:List[np.ndarray]) -> int:
+    def _perform_blob_counting(self, contours:List[np.ndarray]) -> Tuple[int, int]:
         if not contours:
-            return 0
+            return 0, False
 
+        merged = 0
         animal_count = 0
         for cnt in contours:
             area = cv2.contourArea(cnt)
             if area >= self.blb_hist.double_blob_area_threshold:
                 animal_count += 2
+                merged = 1
             else:
                 animal_count += 1
 
-        return animal_count
+        return animal_count, merged
 
     def _perform_bbox_calculation(self, contours:List[np.ndarray]) -> Tuple[int, int, int, int]:
         if not contours:
@@ -350,7 +368,7 @@ class Blob_Counter(QGroupBox):
 
         # Find and filter contours
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        return [cnt for cnt in contours if cv2.contourArea(cnt) > self.min_blob_area]
+        return [cnt for cnt in contours if cv2.contourArea(cnt) > self.min_blob_area and cv2.contourArea(cnt) < self.min_blob_area * 25]
 
     def _draw_mask(self, current_frame:Frame_CV2, contours:List[np.ndarray]) -> Frame_CV2:
         mask = np.zeros_like(current_frame, dtype=np.uint8)
@@ -394,6 +412,12 @@ class Blob_Counter(QGroupBox):
         progress_dialog.close()
         return all_areas
 
+    def _update_blob_array_bbox(self, frame_idx, x1, y1, x2, y2):
+        self.blob_array[frame_idx, 2] = x1
+        self.blob_array[frame_idx, 3] = y1
+        self.blob_array[frame_idx, 4] = x2
+        self.blob_array[frame_idx, 5] = y2
+
     def _on_threshold_changed(self, value:int):
         self.threshold = value
         self.threshold_value_label.setText(str(value))
@@ -421,6 +445,13 @@ class Blob_Counter(QGroupBox):
     def _on_blb_hist_change(self, value:int):
         self.blb_hist.double_blob_area_threshold = value
         self._reprocess_current_frame()
+
+    def _reset_and_reprocess(self):
+        self._reset_blob_array()
+        self._reprocess_current_frame()
+
+    def _reset_blob_array(self):
+        self.blob_array = np.zeros((self.total_frames, 6), dtype=np.uint16) # count, is_merged, x1, y1, x2, y2
 
 class Blob_Background(QtWidgets.QWidget):
     def __init__(self, extractor:Frame_Extractor, parent=None):
