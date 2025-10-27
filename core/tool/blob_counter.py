@@ -36,9 +36,10 @@ class Blob_Counter(QGroupBox):
 
         self.frame_extractor = frame_extractor
         self.current_frame = None
-        self.total_frames = 0
+        self.total_frames, self.frame_idx = 0, 0
         self.sample_frame_count = 100
         self.vid_h, self.vid_w = self.frame_extractor.get_frame_dim()
+        self.roi = None
 
         self.kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         self.kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
@@ -114,6 +115,11 @@ class Blob_Counter(QGroupBox):
         self.controls_layout.addWidget(self.bg_removal_label)
         self.controls_layout.addWidget(self.bg_removal_combo)
 
+        # ROI
+        self.select_roi_btn = QPushButton("Select ROI")
+        self.select_roi_btn.clicked.connect(self._select_roi)
+        self.blb_layout.addWidget(self.select_roi_btn)
+
         self.refresh_hist_btn = QPushButton("Refresh Histogram")
         self.refresh_hist_btn.clicked.connect(self._plot_blob_histogram)
         self.blb_layout.addWidget(self.refresh_hist_btn)
@@ -183,6 +189,7 @@ class Blob_Counter(QGroupBox):
             bg_removal_method = self.bg_display.bg_removal_method,
             blob_type = self.blob_type,
             background_frames = self.bg_display.background_frames,
+            roi = self.roi
         )
         return config
 
@@ -195,6 +202,7 @@ class Blob_Counter(QGroupBox):
         self.min_blob_area = config.min_blob_area
         self.bg_removal_method = config.bg_removal_method
         self.blob_type = config.blob_type
+        self.roi = config.roi
 
         self.bg_display.background_frames = config.background_frames or {}
         self.bg_display.bg_removal_method = config.bg_removal_method
@@ -349,16 +357,27 @@ class Blob_Counter(QGroupBox):
         return (int(min_x), int(min_y), int(max_x), int(max_y))
 
     def _process_contour_from_frame(self, frame:Frame_CV2) -> List[np.ndarray]:
-        frame_to_process = frame
+        if self.roi is not None:
+            x1, y1, x2, y2 = self.roi
+            frame_to_process = frame[y1:y2, x1:x2].copy()
+            roi_offset = (x1, y1)
+        else:
+            frame_to_process = frame
+            roi_offset = (0, 0)
+
         gray_frame = cv2.cvtColor(frame_to_process, cv2.COLOR_BGR2GRAY)
 
         processed_frame = gray_frame
         if self.bg_display.bg_removal_method != "None":
             background_frame = self.bg_display.get_background_frame(self.sample_frame_count)
             if background_frame is not None:
-                background_gray = cv2.cvtColor(background_frame, cv2.COLOR_BGR2GRAY) if len(background_frame.shape) == 3 else background_frame
-                background_gray = background_gray.astype(gray_frame.dtype)
-                processed_frame = cv2.absdiff(gray_frame, background_gray)
+                if self.roi is not None:
+                    bg_roi = background_frame[y1:y2, x1:x2]
+                else:
+                    bg_roi = background_frame
+                bg_gray = cv2.cvtColor(bg_roi, cv2.COLOR_BGR2GRAY) if len(bg_roi.shape) == 3 else bg_roi
+                bg_gray = bg_gray.astype(gray_frame.dtype)
+                processed_frame = cv2.absdiff(gray_frame, bg_gray)
 
         # Thresholding
         if self.blob_type == "Dark Blobs (Min)":
@@ -366,9 +385,16 @@ class Blob_Counter(QGroupBox):
         else:  # Light Blobs (Max)
             _, thresh = cv2.threshold(processed_frame, self.threshold, 255, cv2.THRESH_BINARY)
 
-        # Find and filter contours
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        return [cnt for cnt in contours if cv2.contourArea(cnt) > self.min_blob_area and cv2.contourArea(cnt) < self.min_blob_area * 25]
+        filtered_contours = []
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if self.min_blob_area < area < self.min_blob_area * 25:
+                if self.roi is not None:
+                    cnt = cnt + np.array([[roi_offset]])
+                filtered_contours.append(cnt)
+
+        return filtered_contours
 
     def _draw_mask(self, current_frame:Frame_CV2, contours:List[np.ndarray]) -> Frame_CV2:
         mask = np.zeros_like(current_frame, dtype=np.uint8)
@@ -377,6 +403,25 @@ class Blob_Counter(QGroupBox):
         display_frame = cv2.addWeighted(current_frame, 1 - alpha, mask, alpha, 0)
         cv2.drawContours(display_frame, contours, -1, (0, 255, 0), 2)
         return display_frame
+
+    def _select_roi(self):
+        frame = self.frame_extractor.get_frame(0)
+        if frame is None:
+            return
+        
+        cv2.namedWindow("Select ROI ('space' to accept, 'c' to cancel)", cv2.WINDOW_NORMAL)
+        roi = cv2.selectROI("Select ROI", frame, fromCenter=False)
+        cv2.destroyWindow("Select ROI")
+        
+        if roi[2] > 0 and roi[3] > 0:
+            x, y, w, h = roi
+            self.roi = (x, y, x + w, y + h)
+            print(f"ROI set to {self.roi}")
+        else:
+            self.roi = None
+            print("ROI selection canceled.")
+        
+        self.parameters_changed.emit()
 
     def _plot_blob_histogram(self):
         areas = self._compute_blob_areas()

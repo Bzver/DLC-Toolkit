@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from typing import List, Optional, Literal, Dict, Callable
+from typing import List, Optional, Literal, Dict, Callable, Tuple
 from numpy.typing import NDArray
 
 @dataclass
@@ -71,3 +71,4 @@ class Blob_Config:
     bg_removal_method: str
     blob_type: str
     background_frames: Dict[str, NDArray]
+    roi: Optional[Tuple[int, int, int, int]] = None
