@@ -412,12 +412,11 @@ class Frame_View:
         self.inference_window.show()
         self._init_blob_counter()
 
-        try:
-            crop_array = self.blob_counter.get_full_crop_array(frame_list, self.dm.blob_array)
-            self.inference_window.crop_coords = crop_array
-            self.inference_window.inference_workflow()
-        except Exception as e:
-            QMessageBox.critical(self.main, "Failed", "Failed to Extract Crop Coords: {e}")
+        if self.dm.blob_array is None:
+            self.blob_counter._count_entire_video()
+
+        self.inference_window.crop_coords = self.dm.blob_array[frame_list, 2:]
+        self.inference_window.inference_workflow()
 
     def _reload_prediction(self, prediction_path:str):
         """Reload prediction data from file and update visualization"""
