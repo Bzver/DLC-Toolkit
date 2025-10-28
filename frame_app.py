@@ -197,7 +197,8 @@ class Frame_App(QMainWindow):
         new_frame_idx = self.dm.current_frame_idx + delta
         if 0 <= new_frame_idx < self.dm.total_frames:
             self.dm.current_frame_idx = new_frame_idx
-            self.at.refresh_and_display()
+            self.at.display_current_frame()
+            self.at.navigation_title_controller()
 
     def _navigate_prev(self):
         list_to_nav = self.at.determine_list_to_nav()
@@ -265,7 +266,8 @@ class Frame_App(QMainWindow):
 
     def _handle_frame_change_from_comp(self, new_frame_idx: int):
         self.dm.current_frame_idx = new_frame_idx
-        self.at.refresh_and_display()
+        self.at.navigation_title_controller()
+        self.at.display_current_frame()
 
     def _kem_callback(self):
         self.at.on_track_data_changed()

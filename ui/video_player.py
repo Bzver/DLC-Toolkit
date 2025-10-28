@@ -51,6 +51,8 @@ class Video_Player_Widget(QtWidgets.QWidget):
         self.vid_layout.addLayout(self.video_side_panel_layout)
         self.vid_layout.addWidget(self.video_bottom_panel_widget)
 
+        self.sld.progress_slider.setFocus()
+
     def set_current_frame(self, frame_idx:int):
         self.sld.set_current_frame(frame_idx)
 

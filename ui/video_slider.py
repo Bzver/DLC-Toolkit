@@ -1,7 +1,7 @@
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import QPushButton, QHBoxLayout, QStyle, QStyleOptionSlider, QSlider, QLineEdit, QLabel
-from PySide6.QtGui import QPainter, QColor, QIntValidator, QFont
+from PySide6.QtGui import QPainter, QColor, QIntValidator, QFont, QPixmap
 from typing import List
 
 class Video_Slider_Widget(QtWidgets.QWidget):
@@ -106,9 +106,11 @@ class Slider_With_Marks(QSlider):
 
     def __init__(self, orientation):
         super().__init__(orientation)
-        self.frame_categories = {} # {category_name: set_of_frames}
-        self.category_colors = {} # {category_name: color_string}
-        self.category_priorities = {} # {category_name: priority_int}
+        self.frame_categories = {}
+        self.category_colors = {}
+        self.category_priorities = {}
+        self._background_pixmap = None
+
         self.setStyleSheet("""
             QSlider::groove:horizontal {
                 border: 1px solid #999999;
@@ -116,7 +118,6 @@ class Slider_With_Marks(QSlider):
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #B1B1B1, stop:1 #B1B1B1);
                 margin: 2px 0;
             }
-            
             QSlider::handle:horizontal {
                 background: transparent;
                 border: 1px solid #5c5c5c;
@@ -130,82 +131,104 @@ class Slider_With_Marks(QSlider):
         self.frame_categories.clear()
         self.category_colors.clear()
         self.category_priorities.clear()
+        self._background_pixmap = None
+        self.update()
 
     def set_frame_category(self, category_name, frames, color, priority):
         self.frame_categories[category_name] = set(frames)
         self.category_colors[category_name] = color
-        self.category_priorities[category_name] = priority # Store the priority
-        self.update() # Request a repaint
+        self.category_priorities[category_name] = priority
+        self._background_pixmap = None
+        self.update()
 
-    def paintEvent(self, event):
-        painter = QPainter(self)
+    def _render_background(self):
+        if self.width() <= 0 or self.height() <= 0:
+            return
+
+        pixmap = QPixmap(self.size())
+        pixmap.fill(Qt.transparent)
+
+        painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.Antialiasing)
 
         opt = QStyleOptionSlider()
         self.initStyleOption(opt)
-        
-        # Manually draw groove only
-        groove_rect = self.style().subControlRect(
-            QStyle.CC_Slider,
-            opt,
-            QStyle.SC_SliderGroove,
-            self
-        )
+
+        # Draw groove
+        groove_rect = self.style().subControlRect(QStyle.CC_Slider, opt, QStyle.SC_SliderGroove, self)
         opt.subControls = QStyle.SC_SliderGroove
         self.style().drawComplexControl(QStyle.CC_Slider, opt, painter, self)
 
-        # Draw marks on top of groove, but below handle
+        # Draw marks
         if self.frame_categories:
             min_val = self.minimum()
             max_val = self.maximum()
+            total_frames = max(1, max_val - min_val + 1)
             available_width = groove_rect.width()
-            total_frames = max_val - min_val + 1
-            mark_width = max(1, int(available_width / total_frames))
+            if available_width > 0:
+                mark_width = max(1, int(available_width / total_frames))
+                frame_colors_to_plot = {}
 
-            frame_colors_to_plot = {}
-
-            sorted_categories = sorted(
-                self.frame_categories.keys(),
-                key=lambda cat: self.category_priorities.get(cat, float('inf'))
-            )
-
-            for category_name in sorted_categories:
-                frames = self.frame_categories.get(category_name, set())
-                color = self.category_colors.get(category_name)
-                if frames and color:
-                    for frame in frames:
-                        if min_val <= frame <= max_val:
-                            frame_colors_to_plot[frame] = color
-
-            painter.setPen(Qt.NoPen)
-            for frame, color in frame_colors_to_plot.items():
-                pos = QStyle.sliderPositionFromValue(
-                    min_val, max_val, frame, available_width, opt.upsideDown
-                ) + groove_rect.left()
-
-                painter.setBrush(QColor(color))
-                painter.drawRect(
-                    int(pos) - mark_width // 2, # Center the mark
-                    groove_rect.top(),
-                    mark_width,  # Width of mark
-                    groove_rect.height()
+                sorted_categories = sorted(
+                    self.frame_categories.keys(),
+                    key=lambda cat: self.category_priorities.get(cat, float('inf'))
                 )
 
-        # Draw the handle
+                for category_name in sorted_categories:
+                    frames = self.frame_categories.get(category_name, set())
+                    color = self.category_colors.get(category_name)
+                    if frames and color:
+                        for frame in frames:
+                            if min_val <= frame <= max_val:
+                                frame_colors_to_plot[frame] = color
+
+                painter.setPen(Qt.NoPen)
+                for frame, color in frame_colors_to_plot.items():
+                    pos = QStyle.sliderPositionFromValue(
+                        min_val, max_val, frame, available_width, opt.upsideDown
+                    ) + groove_rect.left()
+                    painter.setBrush(QColor(color))
+                    painter.drawRect(
+                        int(pos) - mark_width // 2,
+                        groove_rect.top(),
+                        mark_width,
+                        groove_rect.height()
+                    )
+
+        painter.end()
+        self._background_pixmap = pixmap
+
+    def paintEvent(self, event):
+        if self._background_pixmap is None:
+            self._render_background()
+
+        painter = QPainter(self)
+
+        if self._background_pixmap:
+            painter.drawPixmap(0, 0, self._background_pixmap)
+
+        opt = QStyleOptionSlider()
+        self.initStyleOption(opt)
         opt.subControls = QStyle.SC_SliderHandle
         self.style().drawComplexControl(QStyle.CC_Slider, opt, painter, self)
 
         painter.end()
 
+    def resizeEvent(self, event):
+        self._background_pixmap = None
+        super().resizeEvent(event)
+
     def mousePressEvent(self, event):
         if self.orientation() == Qt.Orientation.Horizontal:
             pos = event.position().x()
             slider_length = self.width()
-
-        new_value = (self.maximum() - self.minimum()) * pos / slider_length + self.minimum()
-        self.setValue(int(new_value))
-        self.frame_changed.emit(new_value)
-        super().mousePressEvent(event)
+            if slider_length <= 0:
+                return
+            new_value = (self.maximum() - self.minimum()) * pos / slider_length + self.minimum()
+            self.setValue(int(new_value))
+            self.frame_changed.emit(int(new_value))
+        else:
+            super().mousePressEvent(event)
 
 class Frame_Input(QHBoxLayout):
     frame_changed_sig = Signal(int)
@@ -218,6 +241,7 @@ class Frame_Input(QHBoxLayout):
         validator = QIntValidator(0, 2147483647, self)
         self.frame_input.setValidator(validator)
         self.frame_input.textChanged.connect(self._on_frame_idx_input)
+        self.frame_input.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
 
         separator = QLabel("|")
         self.total_line = QLineEdit("0")
@@ -242,8 +266,14 @@ class Frame_Input(QHBoxLayout):
         self.max_frame = total_frames
 
     def _on_frame_idx_input(self):
-        frame_idx = int(self.frame_input.text())
+        frame_input_text = self.frame_input.text()
+        try:
+            frame_idx = int(frame_input_text)
+        except ValueError:
+            frame_idx = 0
+
         if frame_idx > self.max_frame:
             self.frame_input.setText(str(self.max_frame))
+            frame_idx = self.max_frame
 
         self.frame_changed_sig.emit(frame_idx)
