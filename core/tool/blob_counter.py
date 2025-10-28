@@ -342,21 +342,17 @@ class Blob_Counter(QGroupBox):
         self.parameters_changed.emit()
 
     def _plot_blob_histogram(self):
-        areas = self._compute_blob_areas()
-        self.blb_hist.plot_histogram(areas)
-    
-    def _compute_blob_areas(self) -> List[float]:
         if not self.frame_extractor:
-            return []
+            return
 
         total_frames = self.frame_extractor.get_total_frames()
         if total_frames == 0:
-            return []
+            return
 
         sample_count = min(self.sample_frame_count, total_frames)
         frame_indices = np.linspace(0, total_frames - 1, sample_count, dtype=int)
 
-        all_areas = []
+        areas = []
         progress_dialog = Progress_Indicator_Dialog(0, len(frame_indices), "Blob Analysis", "Analyzing blob sizes...", self)
 
         for i, idx in enumerate(frame_indices):
@@ -368,13 +364,13 @@ class Blob_Counter(QGroupBox):
 
             contours = self._process_contour_from_frame(frame)
             areas = [cv2.contourArea(c) for c in contours]
-            all_areas.extend(areas)
+            areas.extend(areas)
 
             progress_dialog.setValue(i + 1)
 
         progress_dialog.close()
-        return all_areas
-
+        self.blb_hist.plot_histogram(areas)
+ 
     def _update_blob_array(self, frame_idx, count, merged, x1, y1, x2, y2):
         self.blob_array[frame_idx, 0] = count
         self.blob_array[frame_idx, 1] = merged

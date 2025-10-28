@@ -65,7 +65,7 @@ class Frame_View:
         self.viewer_menu_config = {
             "View":{
                 "buttons": [
-                    ("Toggle Animal Counting", self._toggle_animal_counting, {"checkable": True, "checked": False}),
+                    ("Toggle Animal Counting", self._toggle_animal_counting),
                 ]
             },
             "Mark": {
@@ -262,8 +262,8 @@ class Frame_View:
         self.dm.blob_array = blob_array
         self.dm.animal_0_list = list(np.where(blob_array[:, 0]==0)[0])
         self.dm.animal_1_list = list(np.where(blob_array[:, 0]==1)[0])
-        self.dm.animal_n_list = list(np.where((blob_array[:, 0]!=1) & (blob_array[:, 0]!=0))[0])
-        self.dm.blob_merged_list = list(np.where(blob_array[:, 1]==0)[0])
+        self.dm.animal_n_list = list(np.where(blob_array[:, 0]>1)[0])
+        self.dm.blob_merged_list = list(np.where(blob_array[:, 1]==1)[0])
         self.refresh_ui()
 
     def _handle_counter_config_change(self):
