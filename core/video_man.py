@@ -33,7 +33,7 @@ class Video_Manager:
     def load_img_from_folder(self, image_folder):
         img_exts = ('.png', '.jpg')
         self.image_files = sorted([f for f in os.listdir(image_folder) if f.lower().endswith(img_exts) and f.startswith("img")])
-        if not self.vm.image_files:
+        if not self.image_files:
             return True
         else:
             QMessageBox.warning(self.main, "No Images", "No image files found in the selected folder.")

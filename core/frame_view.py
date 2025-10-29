@@ -54,8 +54,6 @@ class Frame_View:
         self.shortcuts.set_enabled(True)
 
     def reset_state(self):
-        if self.dm.video_file:
-            self.save_workspace()
         self.vid_play.set_total_frames(0)
 
         self.open_mark_gen = False
@@ -266,6 +264,7 @@ class Frame_View:
         self.dm.animal_1_list = list(np.where(blob_array[:, 0]==1)[0])
         self.dm.animal_n_list = list(np.where(blob_array[:, 0]>1)[0])
         self.dm.blob_merged_list = list(np.where(blob_array[:, 1]==1)[0])
+        self.dm.save_workspace()
         self.refresh_ui()
 
     def _handle_counter_config_change(self):
@@ -279,6 +278,7 @@ class Frame_View:
         if not self.dm.frame_list:
             QMessageBox.warning(self.main, "No Marked Frame", "No frame has been marked, please mark some frames first.")
             return False
+        self.dm.save_workspace()
         return True
 
     def dlc_inference_marked(self):

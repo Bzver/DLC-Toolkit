@@ -243,7 +243,6 @@ class Blob_Counter(QGroupBox):
         self.frame_extractor.finish_sequential_read()
         progress.close()
 
-        self._post_count_fix()
         self.video_counted.emit(self.blob_array)
 
     def _perform_blob_counting(self, contours:List[np.ndarray]) -> Tuple[int, int]:
