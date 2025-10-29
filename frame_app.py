@@ -70,6 +70,7 @@ class Frame_App(QMainWindow):
                     ("View Canonical Pose", self._view_canonical_pose),
                     ("Config Menu", self._open_plot_config_menu),
                     ("Save the Current Workspace", self._save_workspace),
+                    ("Export Frame Lists", self._export_dm_lists)
                 ]
             },
         }
@@ -188,6 +189,11 @@ class Frame_App(QMainWindow):
         if self.dm.video_file:
             self.status_bar.show_message(f"Workspace Saved to {self.dm.video_file}")
             self.dm.save_workspace()
+
+    def _export_dm_lists(self):
+        if self.dm.video_file:
+            self.status_bar.show_message(f"Frame List Saved to {self.dm.video_file}")
+            self.dm.export_lists_json()
 
    ###################################################################################################
 

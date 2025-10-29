@@ -47,7 +47,7 @@ class Blob_Counter(QGroupBox):
         # UI parameters
         self.threshold = 50
         self.min_blob_area = 2000
-        self.blob_type = "Dark Blobs (Max)"
+        self.blob_type = "Dark Blobs"
 
         self.blb_layout = QVBoxLayout(self)
         self.setFixedWidth(200)
@@ -92,7 +92,7 @@ class Blob_Counter(QGroupBox):
         # Blob type
         self.blob_type_label = QLabel("Blob Type:")
         self.blob_type_combo = QComboBox()
-        self.blob_type_combo.addItems(["Dark Blobs (Max)", "Light Blobs (Min)"])
+        self.blob_type_combo.addItems(["Dark Blobs", "Light Blobs"])
         self.blob_type_combo.currentTextChanged.connect(self._on_blob_type_changed)
         self.controls_layout.addWidget(self.blob_type_label)
         self.controls_layout.addWidget(self.blob_type_combo)
@@ -242,6 +242,8 @@ class Blob_Counter(QGroupBox):
 
         self.frame_extractor.finish_sequential_read()
         progress.close()
+
+        self._post_count_fix()
         self.video_counted.emit(self.blob_array)
 
     def _perform_blob_counting(self, contours:List[np.ndarray]) -> Tuple[int, int]:
@@ -298,7 +300,7 @@ class Blob_Counter(QGroupBox):
                 processed_frame = cv2.absdiff(gray_frame, bg_gray)
 
         # Thresholding
-        if self.blob_type == "Dark Blobs (Min)":
+        if self.blob_type == "Dark Blobs" and self.bg_display.bg_removal_method == "None":
             _, thresh = cv2.threshold(processed_frame, self.threshold, 255, cv2.THRESH_BINARY_INV)
         else:  # Light Blobs (Max)
             _, thresh = cv2.threshold(processed_frame, self.threshold, 255, cv2.THRESH_BINARY)
@@ -307,7 +309,7 @@ class Blob_Counter(QGroupBox):
         filtered_contours = []
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if self.min_blob_area < area < self.min_blob_area * 25:
+            if area > self.min_blob_area:
                 if self.roi is not None:
                     cnt = cnt + np.array([[roi_offset]])
                 filtered_contours.append(cnt)
@@ -350,23 +352,32 @@ class Blob_Counter(QGroupBox):
             return
 
         sample_count = min(self.sample_frame_count, total_frames)
-        frame_indices = np.linspace(0, total_frames - 1, sample_count, dtype=int)
+        frame_indices = np.linspace(0, total_frames - 1, sample_count // 2, dtype=int)
+
+        interval = min(frame_indices[1] - frame_indices[0], 100)
 
         areas = []
         progress_dialog = Progress_Indicator_Dialog(0, len(frame_indices), "Blob Analysis", "Analyzing blob sizes...", self)
 
         for i, idx in enumerate(frame_indices):
+            self.frame_extractor.start_sequential_read(idx)
+            progress_dialog.setValue(i)
             if progress_dialog.wasCanceled():
+                self.frame_extractor.finish_sequential_read()
                 break
-            frame = self.frame_extractor.get_frame(idx)
-            if frame is None:
-                continue
 
-            contours = self._process_contour_from_frame(frame)
-            areas = [cv2.contourArea(c) for c in contours]
-            areas.extend(areas)
+            for k in range(interval):
+                result = self.frame_extractor.read_next_frame()
+                if result is None:
+                    break
+                actual_idx, frame = result
+                assert actual_idx == idx+k, "Frame index mismatch!"
 
-            progress_dialog.setValue(i + 1)
+                contours = self._process_contour_from_frame(frame)
+                frame_areas = [cv2.contourArea(c) for c in contours]
+                areas.extend(frame_areas)
+            
+            self.frame_extractor.finish_sequential_read()
 
         progress_dialog.close()
         self.blb_hist.plot_histogram(areas)
@@ -592,10 +603,14 @@ class Blob_Histogram(QVBoxLayout):
             return
         self.ax.clear()
 
-        _, _, _ = self.ax.hist(self.blob_areas, bins=50, color='skyblue', edgecolor='black', alpha=0.7)
+        upper_limit = float(np.percentile(self.blob_areas, 99))
+        xlim_max = upper_limit * 1.05
+
+        self.ax.hist(self.blob_areas, bins=100, range=(0, xlim_max), color='skyblue', edgecolor='black', alpha=0.7)
         self.ax.set_xlabel("Blob Area (pixels²)")
         self.ax.set_ylabel("Frequency")
         self.ax.set_title("Blob Size Distribution")
+        self.ax.set_xlim(0, xlim_max)
 
         # Add draggable threshold line
         if self.threshold_line:

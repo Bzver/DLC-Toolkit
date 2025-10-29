@@ -1,6 +1,7 @@
 import os
 import pickle
 import yaml
+import json
 import numpy as np
 
 from PySide6.QtWidgets import QMessageBox, QFileDialog, QDialog
@@ -285,34 +286,36 @@ class Data_Manager:
             self.refined_frame_list,
             self.labeled_frame_list
         ]
-        return nvp[self._get_max_priority(frame_lists, range(1, 6))]
+        return nvp[self._get_max_priority(frame_lists)]
 
     def determine_nav_color_counting(self) -> HexColor:
         frame_lists = [
             self.animal_0_list,
             self.animal_1_list,
-            self.animal_n_list
+            self.animal_n_list,
+            self.blob_merged_list,
         ]
-        return nvpc[self._get_max_priority(frame_lists, range(1, 4))]
+        return nvpc[self._get_max_priority(frame_lists)]
 
     def determine_nav_color_flabel(self) -> HexColor:
         frame_lists = [
             self.frame_list,
             self.refined_frame_list
         ]
-        return nvp[self._get_max_priority(frame_lists, range(1, 3))]
+        return nvp[self._get_max_priority(frame_lists)]
     
     def determine_nav_color_fro(self) -> HexColor:
         frame_lists = [
             self.roi_frame_list,
             self.outlier_frame_list,
         ]
-        return nvpl[self._get_max_priority(frame_lists, range(1, 3))]
+        return nvpl[self._get_max_priority(frame_lists)]
 
-    def _get_max_priority(self, frame_lists:List[List[int]], priorities:range) -> int:
+    def _get_max_priority(self, frame_lists:List[List[int]], priorities:Optional[range]=None) -> int:
         """Get the highest priority for current frame."""
+        pr = range(1, len(frame_lists) + 1) if priorities is None else priorities
         color_code = 0
-        for frame_list, priority in zip(frame_lists, priorities):
+        for frame_list, priority in zip(frame_lists, pr):
             if self.current_frame_idx in frame_list:
                 color_code = max(color_code, priority)
         return color_code
@@ -635,3 +638,35 @@ class Data_Manager:
             QMessageBox.information(self.main, "Success", "Successfully exported marked frames to DLC for labeling!")
         except Exception as e:
             QMessageBox.critical(self.main, "Error Export Frames", f"Error exporting marked frames to DLC: {e}")
+
+    def export_lists_json(self):
+        list_name = f"{self.video_name}_frame_lists.json"
+        file_path = os.path.join(os.path.dirname(self.video_file), list_name)
+
+        data = {
+            'refined_frame_list': self.refined_frame_list,
+            'frame_list': self.frame_list,
+            'labeled_frame_list': self.labeled_frame_list,
+            'approved_frame_list': self.approved_frame_list,
+            'rejected_frame_list': self.rejected_frame_list,
+            'animal_0_list': self.animal_0_list,
+            'animal_1_list': self.animal_1_list,
+            'animal_n_list': self.animal_n_list,
+            'blob_merged_list': self.blob_merged_list,
+            'roi_frame_list': self.roi_frame_list,
+            'outlier_frame_list': self.outlier_frame_list,
+        }
+
+        data = {k: v for k, v in data.items() if v}
+
+        def default_handler(obj):
+            if hasattr(obj, 'item'):  # catches np.int64, np.float32, etc.
+                return obj.item()
+            raise TypeError(f"Object of type {type(obj)} not serializable")
+        
+        try:
+            with open(file_path, 'w') as f:
+                json.dump(data, f, indent=2, default=default_handler)
+            print(f"Frame lists exported to: {file_path}")
+        except Exception as e:
+            print(f"Error exporting frame lists: {e}")

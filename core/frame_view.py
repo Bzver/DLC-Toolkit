@@ -104,6 +104,8 @@ class Frame_View:
         self.blob_counter.video_counted.connect(self._handle_counter_from_counter)
         if self.is_counting:
             self.vid_play.set_left_panel_widget(self.blob_counter)
+            if self.dm.blob_array is not None and np.any(self.dm.blob_array):
+                self._handle_counter_from_counter(self.dm.blob_array)
 
 ###################################################################################################################################################
 
