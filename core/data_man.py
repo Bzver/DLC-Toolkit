@@ -138,8 +138,17 @@ class Data_Manager:
         self._process_labeled_frame()
         self._init_canon_pose()
 
+    def auto_loader_workspace(self):
+        video_folder = os.path.dirname(self.video_file)
+
+        if f"{self.video_name}_workspace.pkl" in os.listdir(video_folder):
+            file_path = os.path.join(video_folder, f"{self.video_name}_workspace.pkl")
+            self._load_workspace_new(file_path)
+            return True
+        
+        return False
+
     def auto_loader(self):
-        """Automaticaly load coreesponding prediction file and config when there has not been one"""
         if self.prediction:
            return None, None
         video_folder = os.path.dirname(self.video_file)
@@ -438,6 +447,9 @@ class Data_Manager:
             self._load_workspace_legacy(file_path)
             return
 
+        self._load_workspace_new(file_path)
+
+    def _load_workspace_new(self, file_path:str):
         try:
             with open(file_path, 'rb') as f:
                 workspace_state = pickle.load(f)

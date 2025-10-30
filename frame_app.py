@@ -143,12 +143,17 @@ class Frame_App(QMainWindow):
         self._reset_state()
         video_path = self.vm.load_video_dialog()
         if video_path:
+            self.dm.update_video_path(video_path)
+            if self.dm.auto_loader_workspace():
+                self.status_bar.show_message("Automatically loaded workspace file.", duration_ms=10000)
+                return
             self._initialize_loaded_video(video_path)
 
     def _initialize_loaded_video(self, video_path:str):
-        self.dm.update_video_path(video_path)
         dlc_config_path, pred_path = self.dm.auto_loader()
         if dlc_config_path and pred_path:
+            if dlc_config_path == "Workspace":
+                return
             self.dm.load_pred_to_dm(dlc_config_path, pred_path)
             self.kem.set_pred_data(self.dm.dlc_data.pred_data_array)
         self.vm.init_extractor(video_path)
