@@ -65,6 +65,9 @@ class Video_Slider_Widget(QtWidgets.QWidget):
         self.progress_slider.setValue(self.current_frame_idx)
         self.fin.set_current_frame(self.current_frame_idx)
 
+    def export_background(self, file_path:str):
+        self.progress_slider.export_background_as_tif(file_path)
+
     def _handle_slider_move(self, value:int):
         self.current_frame_idx = value
         self.fin.set_current_frame(value)
@@ -140,6 +143,13 @@ class Slider_With_Marks(QSlider):
         self.category_priorities[category_name] = priority
         self._background_pixmap = None
         self.update()
+
+    def export_background_as_tif(self, file_path:str) -> bool:
+        if self._background_pixmap is None:
+            self._render_background()
+        if self._background_pixmap and not self._background_pixmap.isNull():
+            return self._background_pixmap.save(file_path, "TIFF")
+        return False
 
     def _render_background(self):
         if self.width() <= 0 or self.height() <= 0:

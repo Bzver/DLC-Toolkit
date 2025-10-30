@@ -1,3 +1,4 @@
+import os
 from PySide6 import QtWidgets
 from PySide6.QtCore import QEvent
 from PySide6.QtGui import QCloseEvent
@@ -70,7 +71,14 @@ class Frame_App(QMainWindow):
                     ("View Canonical Pose", self._view_canonical_pose),
                     ("Config Menu", self._open_plot_config_menu),
                     ("Save the Current Workspace", self._save_workspace),
-                    ("Export Frame Lists", self._export_dm_lists)
+                    {
+                        "submenu": "Export",
+                        "items": [
+                            ("Export Frame Lists", self._export_dm_lists),
+                            ("Export Slider As Tiff", self._export_slider),
+                        ]
+                    },  
+                    
                 ]
             },
         }
@@ -251,6 +259,12 @@ class Frame_App(QMainWindow):
         else:
             self.vid_play.set_right_panel_widget(None)
             self.plot_config_widget = None
+
+    def _export_slider(self):
+        path, _ = os.path.splitext(self.dm.video_file)
+        file_path = f"{path}_slider.tiff"
+        if self.dm.video_file:
+            self.vid_play.sld.export_background(file_path)
 
     def _reset_ui_during_mode_switch(self):
         self.at.sync_menu_state(close_all=True)
