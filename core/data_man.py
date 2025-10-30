@@ -6,7 +6,7 @@ import numpy as np
 
 from PySide6.QtWidgets import QMessageBox, QFileDialog, QDialog
 
-from typing import Callable, Literal, List, Optional
+from typing import Callable, Literal, List, Optional, Dict, Any
 import traceback
 
 from utils.helper import infer_head_tail_indices, build_angle_map
@@ -211,13 +211,13 @@ class Data_Manager:
     def mark_all_refined_flabel(self):
         self.refined_frame_list = self.frame_list.copy()
 
-    def get_frame_cat(self) -> List[str]:
+    def get_frame_categories(self) -> Dict[str, List[int]]:
         frame_set = set(self.frame_list)
         refined_set = set(self.refined_frame_list)
         approved_set = set(self.approved_frame_list)
         rejected_set = set(self.rejected_frame_list)
         marked_set = refined_set | approved_set | rejected_set
-        
+
         frame_options = {
             "All Marked Frames": self.frame_list,
             "Refined Frames": self.refined_frame_list,
@@ -225,20 +225,30 @@ class Data_Manager:
             "Rejected Frames": self.rejected_frame_list,
         }
 
-        frame_categories = [label for label, frame_list in frame_options.items() if frame_list]
-        marked_set = set(self.refined_frame_list) | set(self.approved_frame_list) | set(self.rejected_frame_list)
+        result = {label: lst for label, lst in frame_options.items() if lst}
 
         if refined_set:
             all_except_refined = frame_set - refined_set
             if all_except_refined:
-                frame_categories.append("All Marked Frames (Except For Refined)")
+                result["All Marked Frames (w/o Refined)"] = sorted(all_except_refined)
 
         if marked_set:
             remaining_frames = frame_set - marked_set
             if remaining_frames:
-                frame_categories.append("Remaining Frames")
+                result["Remaining Frames"] = sorted(remaining_frames)
 
-        return frame_categories
+        return result
+    
+    def get_frame_categories_counting(self):
+        frame_options = {
+            "0 Animal": self.animal_0_list,
+            "1 Animal": self.animal_1_list,
+            "2+ Animals": self.animal_n_list,
+            "Merged Blob": self.blob_merged_list,
+        }
+        result = {label: lst for label, lst in frame_options.items() if lst}
+
+        return result
     
     def clear_frame_cat(self, 
             frame_category:Literal[

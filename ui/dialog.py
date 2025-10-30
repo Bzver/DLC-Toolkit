@@ -4,7 +4,7 @@ from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QPushButton, QHBoxLayout, QVBoxLayout, QDialog, QLabel, QMessageBox, QSpinBox
 
-from typing import List
+from typing import List, Dict
 from time import time
 
 class Pose_Rotation_Dialog(QDialog):
@@ -53,23 +53,29 @@ class Pose_Rotation_Dialog(QDialog):
 
 ###################################################################################################################################################
 
-class Clear_Mark_Dialog(QDialog):
-    frame_category_to_clear = Signal(str)
+class Frame_List_Dialog(QDialog):
+    frame_list_selected = Signal(str)
+    frame_indices_acquired = Signal(list)
 
-    def __init__(self, frame_category:List[str], parent=None):
+    def __init__(self, frame_categories:Dict[str, List[int]], indices_mode:bool=False, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Clear Frame Marks")
+        self.setWindowTitle("Select Frame List")
+        self.frame_categories = frame_categories
+        self.indices_mode = indices_mode
 
         layout = QVBoxLayout(self)
-        button_frame = QHBoxLayout()
-        for category_text in frame_category:
-            button = QPushButton(category_text)
-            button_frame.addWidget(button)
-            button.clicked.connect(partial(self._on_button_clicked, category_text))
-        layout.addLayout(button_frame)
+        
+        for label, frames in self.frame_categories.items():
+            count = len(frames)
+            btn = QPushButton(f"{label} ({count})")
+            btn.clicked.connect(partial(self._on_button_clicked, label))
+            layout.addWidget(btn)
 
     def _on_button_clicked(self, category_text:str):
-        self.frame_category_to_clear.emit(category_text)
+        if self.indices_mode: 
+            self.frame_indices_acquired.emit(self.frame_categories[category_text])
+        else:
+            self.frame_list_selected.emit(category_text)
         self.accept()
 
 ###################################################################################################################################################

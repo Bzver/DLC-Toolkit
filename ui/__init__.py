@@ -6,7 +6,7 @@ from .component import (
 
 from .dialog import (
     Pose_Rotation_Dialog,
-    Clear_Mark_Dialog,
+    Frame_List_Dialog,
     Head_Tail_Dialog,
     Progress_Indicator_Dialog,
     Inference_interval_Dialog,
@@ -24,7 +24,7 @@ __all__ = (
     Selectable_Instance,
     Clickable_Video_Label,
     Pose_Rotation_Dialog,
-    Clear_Mark_Dialog,
+    Frame_List_Dialog,
     Head_Tail_Dialog,
     Progress_Indicator_Dialog,
     Inference_interval_Dialog,

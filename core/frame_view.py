@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QMessageBox
 import traceback
 
 from ui import (
-    Menu_Widget, Video_Player_Widget, Clear_Mark_Dialog, Shortcut_Manager, Status_Bar, Inference_interval_Dialog
+    Menu_Widget, Video_Player_Widget, Frame_List_Dialog, Shortcut_Manager, Status_Bar, Inference_interval_Dialog
       )
 from utils.helper import frame_to_pixmap
 from .data_man import Data_Manager
@@ -56,6 +56,7 @@ class Frame_View:
     def reset_state(self):
         self.vid_play.set_total_frames(0)
 
+        self.counter_list = []
         self.open_mark_gen = False
         self.is_counting = False
         self.skip_counting = False
@@ -64,6 +65,7 @@ class Frame_View:
             "View":{
                 "buttons": [
                     ("Toggle Animal Counting", self._toggle_animal_counting),
+                    ("Select Counter List to Navigate", self._select_counter_list),
                 ]
             },
             "Mark": {
@@ -192,8 +194,8 @@ class Frame_View:
     ###################################################################################################################################################
 
     def determine_list_to_nav(self) -> list:
-        if self.is_counting and self.dm.animal_n_list:
-            return self.dm.animal_n_list
+        if self.is_counting and self.counter_list:
+            return self.counter_list
         if self.dm.plot_config.navigate_labeled and self.dm.labeled_frame_list:
             return self.dm.labeled_frame_list
         return self.dm.frame_list
@@ -240,11 +242,18 @@ class Frame_View:
             self.vid_play.set_right_panel_widget(None)
 
     def show_clear_mark_dialog(self):
-        frame_categories = self.dm.get_frame_cat()
+        frame_categories = self.dm.get_frame_categories()
         if frame_categories:
-            mark_clear_dialog = Clear_Mark_Dialog(frame_categories, parent=self.main)
-            mark_clear_dialog.frame_category_to_clear.connect(self._clear_category)
+            mark_clear_dialog = Frame_List_Dialog(frame_categories, parent=self.main)
+            mark_clear_dialog.frame_list_selected.connect(self._clear_category)
             mark_clear_dialog.exec()
+
+    def _select_counter_list(self):
+        frame_categories = self.dm.get_frame_categories_counting()
+        if frame_categories:
+            list_select_dialog = Frame_List_Dialog(frame_categories, True, parent=self.main)
+            list_select_dialog.frame_indices_acquired.connect(self._counter_list_selected)
+            list_select_dialog.exec()
 
     ###################################################################################################################################################
 
@@ -265,10 +274,22 @@ class Frame_View:
         self.dm.animal_n_list = list(np.where(blob_array[:, 0]>1)[0])
         self.dm.blob_merged_list = list(np.where(blob_array[:, 1]==1)[0])
         self.dm.save_workspace()
+
+        for frame_list in [self.dm.animal_n_list, self.dm.animal_1_list, self.dm.animal_0_list]:
+            if frame_list:
+                self.counter_list = frame_list.copy()
+                break
+
         self.refresh_ui()
 
     def _handle_counter_config_change(self):
         self.dm.blob_config = self.blob_counter.get_config()
+
+    def _counter_list_selected(self, counter_list):
+        self.counter_list = counter_list
+        if counter_list:
+            self.dm.current_frame_idx = counter_list[0]
+            self.display_current_frame()
 
     ###################################################################################################################################################
 
