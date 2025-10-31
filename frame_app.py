@@ -196,7 +196,8 @@ class Frame_App(QMainWindow):
     def _load_workspace(self):
         self._reset_state()
         self.dm.load_workspace()
-        self.at.display_current_frame()
+        if self.dm.video_file:
+            self.at.display_current_frame()
 
     def _save_workspace(self):
         if self.dm.video_file:

@@ -612,6 +612,9 @@ class Blob_Histogram(QVBoxLayout):
         self.ax.set_title("Blob Size Distribution")
         self.ax.set_xlim(xlim_min, xlim_max)
 
+        if self.double_blob_area_threshold > xlim_max:
+            self.double_blob_area_threshold = xlim_max * 0.95   # Clamp the threshold line to prevent it falling out of plot range
+
         # Add draggable threshold line
         if self.threshold_line:
             self.threshold_line.remove()
