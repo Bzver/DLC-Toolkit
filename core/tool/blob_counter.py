@@ -32,7 +32,7 @@ class Blob_Counter(QGroupBox):
                  blob_array=False,
                  parent=None):
         super().__init__(parent)
-        self.setTitle("Blob-based Animal Counting Controls")
+        self.setTitle("Blob Counting Controls")
 
         self.frame_extractor = frame_extractor
         self.current_frame = None
@@ -604,12 +604,13 @@ class Blob_Histogram(QVBoxLayout):
 
         upper_limit = float(np.percentile(self.blob_areas, 99))
         xlim_max = upper_limit * 1.05
+        xlim_min = np.nanmin(self.blob_areas) * 0.95
 
         self.ax.hist(self.blob_areas, bins=100, range=(0, xlim_max), color='skyblue', edgecolor='black', alpha=0.7)
         self.ax.set_xlabel("Blob Area (pixels²)")
         self.ax.set_ylabel("Frequency")
         self.ax.set_title("Blob Size Distribution")
-        self.ax.set_xlim(0, xlim_max)
+        self.ax.set_xlim(xlim_min, xlim_max)
 
         # Add draggable threshold line
         if self.threshold_line:
