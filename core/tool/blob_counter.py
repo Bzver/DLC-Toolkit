@@ -467,17 +467,7 @@ class Blob_Background(QtWidgets.QWidget):
             self.background_frames[method] = None
             return None
 
-        if method == "Min":
-            accumulator = np.full_like(first_frame, 255, dtype=np.uint8)
-        elif method == "Max":
-            accumulator = np.zeros_like(first_frame, dtype=np.uint8)
-        elif method == "Mean":
-            accumulator = np.zeros_like(first_frame, dtype=np.float32)
-        elif method == "Median":
-            all_frames = []
-        else:
-            self.background_frames[method] = None
-            return None
+        all_frames = []
 
         progress_dialog = Progress_Indicator_Dialog(0, len(frames_to_iter), "Background", "Calculating background...", self)
 
@@ -488,28 +478,22 @@ class Blob_Background(QtWidgets.QWidget):
             if frame is None:
                 continue
 
-            if method == "Min":
-                accumulator = np.minimum(accumulator, frame)
-            elif method == "Max":
-                accumulator = np.maximum(accumulator, frame)
-            elif method == "Mean":
-                accumulator += frame.astype(np.float32)
-            elif method == "Median":
-                all_frames.append(frame)
-
+            all_frames.append(frame)
             progress_dialog.setValue(i + 1)
 
         progress_dialog.close()
 
+        if not all_frames:
+            return None
+
         if method == "Mean":
-            background_frame = (accumulator / len(frames_to_iter)).astype(np.uint8)
+            background_frame = np.mean(np.array(all_frames), axis=0).astype(np.uint8)
         elif method == "Median":
-            if all_frames:
-                background_frame = np.median(np.array(all_frames), axis=0).astype(np.uint8)
-            else:
-                background_frame = None
-        else:
-            background_frame = accumulator
+            background_frame = np.median(np.array(all_frames), axis=0).astype(np.uint8)
+        elif method == "Min":
+            background_frame = np.percentile(np.array(all_frames), 5, axis=0).astype(np.uint8)
+        elif method == "Max":
+            background_frame = np.percentile(np.array(all_frames), 95, axis=0).astype(np.uint8)
 
         self.background_frames[method] = background_frame
         return background_frame
