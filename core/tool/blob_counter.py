@@ -221,8 +221,7 @@ class Blob_Counter(QGroupBox):
 
         while frame_idx < self.total_frames:
             if progress.wasCanceled():
-                self.frame_extractor.finish_sequential_read()
-                return
+                break
 
             result = self.frame_extractor.read_next_frame()
             if result is None:
@@ -373,13 +372,16 @@ class Blob_Counter(QGroupBox):
                 assert actual_idx == idx+k, "Frame index mismatch!"
 
                 contours = self._process_contour_from_frame(frame)
+                count_result = self._perform_blob_counting(contours)
                 frame_areas = [cv2.contourArea(c) for c in contours]
                 areas.extend(frame_areas)
+                self.blob_array[idx+k, 0], self.blob_array[idx+k, 1] = count_result
             
             self.frame_extractor.finish_sequential_read()
 
         progress_dialog.close()
         self.blb_hist.plot_histogram(areas)
+        self.video_counted.emit(self.blob_array)
  
     def _update_blob_array(self, frame_idx, count, merged, x1, y1, x2, y2):
         self.blob_array[frame_idx, 0] = count
@@ -575,7 +577,7 @@ class Blob_Histogram(QVBoxLayout):
 
     def __init__(self, extractor:Frame_Extractor, parent=None):
         super().__init__(parent)
-        self.double_blob_area_threshold = 6000
+        self.double_blob_area_threshold = 100000
         self.frame_extractor = extractor
 
         self.blob_areas = []

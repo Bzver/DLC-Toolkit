@@ -10,7 +10,7 @@ NAV_COLOR_PALETTE = {
 
 NAV_COLOR_PALETTE_COUNTING = {
     0: None,
-    1: "#530C06",  # Deep Brown
+    1: None,
     2: "#33FF00",  # Green
     3: "#d3c54a",  # Yellow
     4: "#ff00bf",  # Violet

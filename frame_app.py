@@ -15,7 +15,7 @@ from core.dataclass import Nav_Callback, Plot_Config
 class Frame_App(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Frame Label Multitool for DeepLabCut")
+        self.setWindowTitle("BVT - Behavioral Video Toolkit")
         self.setGeometry(100, 100, 1200, 960)
         self.central_widget = QtWidgets.QWidget()
         self.setCentralWidget(self.central_widget)
@@ -77,8 +77,7 @@ class Frame_App(QMainWindow):
                             ("Export Frame Lists", self._export_dm_lists),
                             ("Export Slider As Tiff", self._export_slider),
                         ]
-                    },  
-                    
+                    },
                 ]
             },
         }
