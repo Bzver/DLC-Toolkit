@@ -122,10 +122,10 @@ class Slider_With_Marks(QSlider):
                 margin: 2px 0;
             }
             QSlider::handle:horizontal {
-                background: transparent;
-                border: 1px solid #5c5c5c;
-                width: 5px;
-                margin: -2px 0;
+                background: rgba(255, 255, 255, 150);
+                border: 2px solid #5c5c5c;
+                width: 6px;
+                margin: -2px -3px -2px -3px;
                 border-radius: 3px;
             }
         """)
@@ -230,13 +230,33 @@ class Slider_With_Marks(QSlider):
 
     def mousePressEvent(self, event):
         if self.orientation() == Qt.Orientation.Horizontal:
-            pos = event.position().x()
-            slider_length = self.width()
-            if slider_length <= 0:
-                return
-            new_value = (self.maximum() - self.minimum()) * pos / slider_length + self.minimum()
-            self.setValue(int(new_value))
-            self.frame_changed.emit(int(new_value))
+            opt = QStyleOptionSlider()
+            self.initStyleOption(opt)
+
+            groove_rect = self.style().subControlRect(QStyle.CC_Slider, opt, QStyle.SC_SliderGroove, self)
+            handle_rect = self.style().subControlRect(QStyle.CC_Slider, opt, QStyle.SC_SliderHandle, self)
+
+            pos = event.position().toPoint()
+
+            if groove_rect.contains(pos) and not handle_rect.contains(pos):
+                slider_min = self.minimum()
+                slider_max = self.maximum()
+                slider_range = slider_max - slider_min
+                if slider_range == 0:
+                    value = slider_min
+                else:
+                    groove_start = groove_rect.left()
+                    groove_end = groove_rect.right()
+                    groove_width = groove_end - groove_start
+                    if groove_width <= 0:
+                        value = slider_min
+                    else:
+                        ratio = (pos.x() - groove_start) / groove_width
+                        value = int(round(slider_min + ratio * slider_range))
+                        value = max(slider_min, min(value, slider_max))
+
+                self.setValue(value)
+                self.frame_changed.emit(value)
         else:
             super().mousePressEvent(event)
 
