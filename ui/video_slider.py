@@ -257,8 +257,9 @@ class Slider_With_Marks(QSlider):
 
                 self.setValue(value)
                 self.frame_changed.emit(value)
-        else:
-            super().mousePressEvent(event)
+                return
+            
+        super().mousePressEvent(event)
 
 class Frame_Input(QHBoxLayout):
     frame_changed_sig = Signal(int)
