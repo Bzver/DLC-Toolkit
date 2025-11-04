@@ -1,10 +1,9 @@
-import os
 from PySide6 import QtWidgets
 from PySide6.QtCore import QEvent
 from PySide6.QtGui import QCloseEvent
-from PySide6.QtWidgets import QMainWindow, QVBoxLayout, QMessageBox, QHBoxLayout
+from PySide6.QtWidgets import QMainWindow, QVBoxLayout, QMessageBox, QHBoxLayout, QApplication
 
-from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Toggle_Switch, Status_Bar
+from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Toggle_Switch, Status_Bar, Frame_List_Dialog
 from utils.helper import handle_unsaved_changes_on_close
 from core import Data_Manager, Video_Manager, Keypoint_Edit_Manager
 from core.frame_view import Frame_View
@@ -74,8 +73,8 @@ class Frame_App(QMainWindow):
                     {
                         "submenu": "Export",
                         "items": [
-                            ("Export Frame Lists", self._export_dm_lists),
-                            ("Export Slider As Tiff", self._export_slider),
+                            ("Copy Frame Lists To Clipboard", self._export_dm_lists),
+                            ("Copy Slider To Clipboard", self._export_slider),
                         ]
                     },
                 ]
@@ -204,9 +203,30 @@ class Frame_App(QMainWindow):
             self.dm.save_workspace()
 
     def _export_dm_lists(self):
+        if not self.dm.video_file:
+            return
+        
+        if hasattr(self.at, "is_counting") and self.at.is_counting:
+            frame_categories = self.dm.get_frame_categories_counting()
+        elif hasattr(self.at, "open_outlier") and any[self.at.open_outlier, self.dm.plot_config.navigate_roi]:
+            frame_categories = self.dm.get_frame_categories_flabel()
+        else:
+            frame_categories = self.dm.get_frame_categories()
+
+        if frame_categories:
+            list_select_dialog = Frame_List_Dialog(frame_categories, True, parent=self)
+            list_select_dialog.frame_indices_acquired.connect(self._frame_list_selected)
+            list_select_dialog.exec()
+
+    def _frame_list_selected(self, frame_list):
+        clipboard = QApplication.clipboard()
+        clipboard.setText(', '.join(map(str, frame_list)))
+        self.status_bar.show_message(f"Frame List copied to clipboard.")
+
+    def _export_slider(self):
         if self.dm.video_file:
-            self.status_bar.show_message(f"Frame List Saved to {self.dm.video_file}")
-            self.dm.export_lists_json()
+            self.vid_play.sld.export_background()
+            self.status_bar.show_message(f"Frame slider copied to clipboard.")
 
    ###################################################################################################
 
@@ -260,12 +280,6 @@ class Frame_App(QMainWindow):
             self.vid_play.set_right_panel_widget(None)
             self.plot_config_widget = None
 
-    def _export_slider(self):
-        path, _ = os.path.splitext(self.dm.video_file)
-        file_path = f"{path}_slider.tiff"
-        if self.dm.video_file:
-            self.vid_play.sld.export_background(file_path)
-
     def _reset_ui_during_mode_switch(self):
         self.at.sync_menu_state(close_all=True)
         self.vid_play.set_right_panel_widget(None)
@@ -311,7 +325,7 @@ class Frame_App(QMainWindow):
 #######################################################################################################################################################
 
 if __name__ == "__main__":
-    app = QtWidgets.QApplication([])
+    app = QApplication([])
     window = Frame_App()
     window.show()
     app.exec()

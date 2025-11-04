@@ -1,7 +1,6 @@
 import os
 import pickle
 import yaml
-import json
 import numpy as np
 
 from PySide6.QtWidgets import QMessageBox, QFileDialog, QDialog
@@ -245,6 +244,15 @@ class Data_Manager:
             "1 Animal": self.animal_1_list,
             "2+ Animals": self.animal_n_list,
             "Merged Blob": self.blob_merged_list,
+        }
+        result = {label: lst for label, lst in frame_options.items() if lst}
+
+        return result
+    
+    def get_frame_categories_flabel(self):
+        frame_options = {
+            "Frames with Instance Count Change": self.roi_frame_list,
+            "Outlier Frames": self.outlier_frame_list,
         }
         result = {label: lst for label, lst in frame_options.items() if lst}
 
@@ -660,35 +668,3 @@ class Data_Manager:
             QMessageBox.information(self.main, "Success", "Successfully exported marked frames to DLC for labeling!")
         except Exception as e:
             QMessageBox.critical(self.main, "Error Export Frames", f"Error exporting marked frames to DLC: {e}")
-
-    def export_lists_json(self):
-        list_name = f"{self.video_name}_frame_lists.json"
-        file_path = os.path.join(os.path.dirname(self.video_file), list_name)
-
-        data = {
-            'refined_frame_list': self.refined_frame_list,
-            'frame_list': self.frame_list,
-            'labeled_frame_list': self.labeled_frame_list,
-            'approved_frame_list': self.approved_frame_list,
-            'rejected_frame_list': self.rejected_frame_list,
-            'animal_0_list': self.animal_0_list,
-            'animal_1_list': self.animal_1_list,
-            'animal_n_list': self.animal_n_list,
-            'blob_merged_list': self.blob_merged_list,
-            'roi_frame_list': self.roi_frame_list,
-            'outlier_frame_list': self.outlier_frame_list,
-        }
-
-        data = {k: v for k, v in data.items() if v}
-
-        def default_handler(obj):
-            if hasattr(obj, 'item'):  # catches np.int64, np.float32, etc.
-                return obj.item()
-            raise TypeError(f"Object of type {type(obj)} not serializable")
-        
-        try:
-            with open(file_path, 'w') as f:
-                json.dump(data, f, indent=2, default=default_handler)
-            print(f"Frame lists exported to: {file_path}")
-        except Exception as e:
-            print(f"Error exporting frame lists: {e}")

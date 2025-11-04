@@ -93,6 +93,8 @@ class Frame_View:
         self.refresh_ui()
 
     def init_loaded_vid(self):
+        if self.dm.dlc_data is None or self.dm.dlc_data.pred_data_array is None:
+            self.is_counting = True
         self._init_blob_counter()
 
     def _init_blob_counter(self, request:bool=False):
@@ -275,7 +277,7 @@ class Frame_View:
         self.dm.blob_merged_list = list(np.where(blob_array[:, 1]==1)[0])
         self.dm.save_workspace()
 
-        for frame_list in [self.dm.animal_n_list, self.dm.animal_1_list, self.dm.animal_0_list]:
+        for frame_list in [self.dm.blob_merged_list, self.dm.animal_n_list, self.dm.animal_1_list, self.dm.animal_0_list]:
             if frame_list:
                 self.counter_list = frame_list.copy()
                 break

@@ -103,14 +103,9 @@ class Blob_Counter(QGroupBox):
         self.bg_removal_combo.addItems(["None", "Min", "Max", "Median", "Mean"])
         self.bg_removal_combo.currentTextChanged.connect(self._on_bg_removal_changed)
         
-        self.sample_count_label = QLabel("Sample Frames:")
-        self.sample_count_spin = QSpinBox()
-        self.sample_count_spin.setRange(10, 10000)
-        self.sample_count_spin.setValue(100)  # default
-        self.sample_count_spin.setSingleStep(100)
-        self.sample_count_spin.valueChanged.connect(self._on_sample_count_changed)
-        self.controls_layout.addWidget(self.sample_count_label)
-        self.controls_layout.addWidget(self.sample_count_spin) 
+        self.bg_regen_btn = QPushButton("Regenerate Background")
+        self.bg_regen_btn.clicked.connect(self._regen_bg)
+        self.blb_layout.addWidget(self.bg_regen_btn)
 
         self.controls_layout.addWidget(self.bg_removal_label)
         self.controls_layout.addWidget(self.bg_removal_combo)
@@ -141,7 +136,7 @@ class Blob_Counter(QGroupBox):
         self._get_total_frames()
 
         self.parameters_changed.connect(self._reset_and_reprocess)
-        self.bg_display.update_background_display(self.sample_frame_count)
+        self.bg_display.update_background_display()
 
         if config is not None:
             self._apply_config(config)
@@ -189,7 +184,6 @@ class Blob_Counter(QGroupBox):
         self.min_area_value_label.setText(str(self.min_blob_area))
         self.blob_type_combo.setCurrentText(self.blob_type)
         self.bg_removal_combo.setCurrentText(config.bg_removal_method)
-        self.sample_count_spin.setValue(self.sample_frame_count)
 
         self.parameters_changed.emit()
 
@@ -287,7 +281,7 @@ class Blob_Counter(QGroupBox):
 
         processed_frame = gray_frame
         if self.bg_display.bg_removal_method != "None":
-            background_frame = self.bg_display.get_background_frame(self.sample_frame_count)
+            background_frame = self.bg_display.get_background_frame()
             if background_frame is not None:
                 if self.roi is not None:
                     bg_roi = background_frame[y1:y2, x1:x2]
@@ -322,6 +316,10 @@ class Blob_Counter(QGroupBox):
         cv2.drawContours(display_frame, contours, -1, (0, 255, 0), 2)
         return display_frame
 
+    def _regen_bg(self):
+        self.bg_display.background_frames.clear()
+        self.bg_display.update_background_display()
+
     def _select_roi(self):
         frame = self.frame_extractor.get_frame(0)
         if frame is None:
@@ -349,7 +347,7 @@ class Blob_Counter(QGroupBox):
         if total_frames == 0:
             return
 
-        sample_count = min(self.sample_frame_count, total_frames)
+        sample_count = min(100, total_frames)
         frame_indices = np.linspace(0, total_frames - 1, sample_count // 2, dtype=int)
 
         interval = min(frame_indices[1] - frame_indices[0], 100)
@@ -408,12 +406,7 @@ class Blob_Counter(QGroupBox):
     def _on_bg_removal_changed(self, text:str):
         self.bg_display.bg_removal_method = text
         self.parameters_changed.emit()
-        self.bg_display.update_background_display(self.sample_frame_count)
-
-    def _on_sample_count_changed(self, value:int):
-        self.sample_frame_count = value
-        self.bg_display.background_frames.clear()
-        self.bg_display.update_background_display(self.sample_frame_count)
+        self.bg_display.update_background_display()
 
     def _on_blb_hist_change(self, value:int):
         self.blb_hist.double_blob_area_threshold = value
@@ -446,7 +439,7 @@ class Blob_Background(QtWidgets.QWidget):
         layout.addWidget(self.bg_label, 1)
         layout.addWidget(self.image_label, 1)
 
-    def get_background_frame(self, sample_frame_count:int):
+    def get_background_frame(self, bg_frame_list:Optional[List[int]]=None):
         method = self.bg_removal_method
         if method in self.background_frames:
             return self.background_frames[method]
@@ -457,10 +450,12 @@ class Blob_Background(QtWidgets.QWidget):
             self.background_frames[method] = None
             return None
 
-        if total_frames <= sample_frame_count:
+        if total_frames <= 100:
             frames_to_iter = range(total_frames)
+        elif bg_frame_list:
+            frames_to_iter = bg_frame_list
         else:
-            frames_to_iter = np.linspace(0, total_frames - 1, sample_frame_count, dtype=int)
+            frames_to_iter = np.linspace(0, total_frames - 1, 100, dtype=int)
 
         first_frame = self.frame_extractor.get_frame(0)
         if first_frame is None:
@@ -498,13 +493,13 @@ class Blob_Background(QtWidgets.QWidget):
         self.background_frames[method] = background_frame
         return background_frame
 
-    def update_background_display(self, sample_frame_count:int):
+    def update_background_display(self, bg_frame_list:Optional[List[int]]=None):
         if self.bg_removal_method == "None":
             self.image_label.setText("None")
             return
 
         if self.bg_removal_method not in self.background_frames:
-            self.get_background_frame(sample_frame_count)
+            self.get_background_frame(bg_frame_list)
 
         frame = self.background_frames.get(self.bg_removal_method)
         if frame is None:

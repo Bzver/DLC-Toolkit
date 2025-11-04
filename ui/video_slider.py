@@ -1,6 +1,6 @@
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtWidgets import QPushButton, QHBoxLayout, QStyle, QStyleOptionSlider, QSlider, QLineEdit, QLabel
+from PySide6.QtWidgets import QPushButton, QHBoxLayout, QStyle, QStyleOptionSlider, QSlider, QLineEdit, QLabel, QApplication
 from PySide6.QtGui import QPainter, QColor, QIntValidator, QFont, QPixmap
 from typing import List
 
@@ -65,8 +65,8 @@ class Video_Slider_Widget(QtWidgets.QWidget):
         self.progress_slider.setValue(self.current_frame_idx)
         self.fin.set_current_frame(self.current_frame_idx)
 
-    def export_background(self, file_path:str):
-        self.progress_slider.export_background_as_tif(file_path)
+    def export_background(self):
+        self.progress_slider.copy_background_to_clipboard()
 
     def _handle_slider_move(self, value:int):
         self.current_frame_idx = value
@@ -144,12 +144,12 @@ class Slider_With_Marks(QSlider):
         self._background_pixmap = None
         self.update()
 
-    def export_background_as_tif(self, file_path:str) -> bool:
+    def copy_background_to_clipboard(self) -> bool:
         if self._background_pixmap is None:
             self._render_background()
         if self._background_pixmap and not self._background_pixmap.isNull():
-            return self._background_pixmap.save(file_path, "TIFF")
-        return False
+            clipboard = QApplication.clipboard()
+            clipboard.setPixmap(self._background_pixmap)
 
     def _render_background(self):
         if self.width() <= 0 or self.height() <= 0:
