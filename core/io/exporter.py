@@ -154,5 +154,4 @@ class Exporter:
         if self.crop_coords is None:
             return frame
         x1, y1, x2, y2 = self.crop_coords[frame_idx]
-        print(f"x1:{x1}, y1:{y1}, x2:{x2}, y2:{y2}")
         return frame[y1:y2, x1:x2]

@@ -421,7 +421,6 @@ class Data_Manager:
             (np.nanmin(x1_array, axis=1), np.nanmin(y1_array, axis=1), np.nanmax(x2_array, axis=1), np.nanmax(y2_array, axis=1))
             )
         crop_coords = np.clip(crop_coords, 0, [max_x, max_y, max_x, max_y]).astype(int)
-        print(crop_coords)
         return crop_coords
 
     ###################################################################################################################################################
