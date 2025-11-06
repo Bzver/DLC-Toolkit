@@ -102,8 +102,7 @@ class Frame_App(QMainWindow):
         self.kem.reset_kem()
         self.vid_play.set_total_frames(0)
         self.vid_play.nav.set_current_video_name("---")
-        if hasattr(self, 'at'):
-            self.at.reset_state()
+        self.at.reset_state()
 
         self.open_config = False
         self.plot_config_widget = None

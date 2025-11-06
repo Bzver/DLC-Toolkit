@@ -129,12 +129,13 @@ class Data_Manager:
             QMessageBox.critical(self.main, "Error Loading Prediction", f"Failed to load prediction: {e}")
             return
       
-        self._init_loaded_data()
+        self._init_loaded_data(loading_label=True)
         self.refresh_callback()
 
-    def _init_loaded_data(self):
+    def _init_loaded_data(self, loading_label:bool=False):
         self.prediction = self.dlc_data.prediction_filepath
-        self._process_labeled_frame()
+        if not loading_label:
+            self._process_labeled_frame()
         self._init_canon_pose()
 
     def auto_loader_workspace(self):
