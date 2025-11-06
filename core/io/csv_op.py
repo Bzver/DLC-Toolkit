@@ -7,24 +7,19 @@ import numpy as np
 from typing import List, Tuple
 
 from core.dataclass import Loaded_DLC_Data, Export_Settings
-from .io_helper import backup_existing_prediction
+from .io_helper import backup_existing_prediction, remove_confidence_score
 
 def prediction_to_csv(
         dlc_data:Loaded_DLC_Data,
         pred_data_array:np.ndarray, 
         export_settings:Export_Settings,
         frame_list: List[int]=None
-        ) -> bool:
+        ) -> str:
     
-    pred_data_flattened = pred_data_array.reshape(pred_data_array.shape[0], -1)
+    pred_data_flattened = pred_data_array.reshape(pred_data_array.shape[0], -1) # [F, I, K] to [F, I*K]
 
     if pred_data_flattened.shape[1] // dlc_data.num_keypoint == 3 * dlc_data.instance_count:
-        has_conf = True
-    elif pred_data_flattened.shape[1] // dlc_data.num_keypoint == 2 * dlc_data.instance_count:
-        has_conf = False
-    else:
-        print(f"Pred data has incomplatible shape: {pred_data_array.shape}")
-        return False
+        pred_data_flattened = remove_confidence_score(pred_data_flattened)
 
     if not frame_list:
         frame_list = list(range(pred_data_flattened.shape[0]))
@@ -32,7 +27,7 @@ def prediction_to_csv(
     frame_col = np.array(frame_list).reshape(-1, 1)
     pred_data_processed = np.concatenate((frame_col, pred_data_flattened), axis=1)
 
-    header_df, columns = construct_header_row(dlc_data, has_conf)
+    header_df, columns = construct_header_row(dlc_data)
 
     labels_df = pd.DataFrame(pred_data_processed, columns=columns)
 
@@ -49,7 +44,9 @@ def prediction_to_csv(
     final_df.columns = [None] * len(final_df.columns)
 
     if export_settings.export_mode == "Append":
-        csv_name = "MachineLabelsRefine"
+        csv_name = f"CollectedData_{dlc_data.scorer}"
+        if os.path.isfile(os.path.join(export_settings.save_path, f"{csv_name}.csv")):
+            csv_name = "MachineLabelsRefine"
     elif export_settings.export_mode == "Merge":
         csv_name = f"CollectedData_{dlc_data.scorer}"
     else:
@@ -61,7 +58,7 @@ def prediction_to_csv(
     backup_existing_prediction(save_filepath)
 
     final_df.to_csv(save_filepath, index=False, header=None)
-    return True
+    return csv_name
 
 def csv_to_h5(
         project_dir:str,
@@ -104,11 +101,10 @@ def csv_to_h5(
         data.to_csv(fn)
         return True
     except FileNotFoundError:
-        print(f"Expected file: {csv_name}.csv not found in f{project_dir}!")
+        print(f"Expected file: {csv_name}.csv not found in {project_dir}!")
 
 def construct_header_row(
-        dlc_data:Loaded_DLC_Data,
-        has_conf:bool=False
+        dlc_data:Loaded_DLC_Data
         ) -> Tuple[np.ndarray, List[str]]:
     keypoints = dlc_data.keypoints
     num_keypoint = dlc_data.num_keypoint
@@ -120,14 +116,9 @@ def construct_header_row(
     bodyparts_row = ["bodyparts"]
     coords_row = ["coords"]
 
-    if has_conf:
-        suffixes = ["_x", "_y", "_likelihood"]
-        coords = ["x", "y", "likelihood"]
-        count = 3
-    else:
-        suffixes = ["_x", "_y"]
-        coords = ["x", "y"]
-        count = 2
+    suffixes = ["_x", "_y"]
+    coords = ["x", "y"]
+    count = 2
 
     if dlc_data.multi_animal:
         if not individuals:

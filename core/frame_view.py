@@ -7,9 +7,7 @@ from PySide6.QtWidgets import QMessageBox
 
 import traceback
 
-from ui import (
-    Menu_Widget, Video_Player_Widget, Frame_List_Dialog, Shortcut_Manager, Status_Bar, Inference_interval_Dialog
-      )
+from ui import Menu_Widget, Video_Player_Widget, Frame_List_Dialog, Shortcut_Manager, Status_Bar, Inference_interval_Dialog
 from utils.helper import frame_to_pixmap
 from .data_man import Data_Manager
 from .video_man import  Video_Manager
@@ -458,14 +456,61 @@ class Frame_View:
         df = pd.DataFrame([self.dm.frame_list])
         df.to_clipboard(sep=',', index=False, header=False)
         self.status_bar.show_message("Marked frames exported to clipboard.")
-
+    
     def save_to_dlc(self):
+        if self.vm.image_files and not self.dm.frame_list:
+            self.dm.frame_list = list(range(self.vm.get_frame_counts()))
         if not self.pre_saving_sanity_check():
             return
-        self.dm.save_to_dlc()
+        reply = QMessageBox.question(
+            self.main, "Crop Frame For Export?",
+            "Crop the frames before exporting to DLC?")
+        if reply == QMessageBox.No:
+            self.dm.save_to_dlc() 
+            self.refresh_and_display()
+        else:
+            frame_list = self.dm.frame_list if not self.dm.refined_frame_list else self.dm.refined_frame_list
+            if self.dm.dlc_data is None or self.dm.dlc_data.pred_data_array is None: # No prediction, blob mode
+                self._get_crop_coords_from_blob(frame_list)
+            else:
+                self._get_crop_coords_from_prediction(frame_list)
+
+    def _get_crop_coords_from_blob(self, frame_list):
+        if self.dm.blob_config is None:
+            self.is_counting = True
+            self._init_blob_counter(True)
+            try:
+                self.blob_counter.config_ready.disconnect()
+            except:
+                pass
+            self.blob_counter.config_ready.connect(lambda:self._crop_coords_for_export(frame_list))
+            self.display_current_frame()
+            self.status_bar.show_message(
+                "Blob config not set. Adjust the blob parameters by interacting with the left panel, click 'Config Ready' Button to continue.", duration_ms=3000)
+        else:
+            self._crop_coords_for_export(frame_list)
+
+    def _crop_coords_for_export(self, frame_list):
+        self._init_blob_counter()
+        if self.dm.blob_array is None:
+            self.blob_counter._count_entire_video()
+            crop_coords = self.dm.blob_array[frame_list, 2:]
+            self._save_crop_to_dlc(crop_coords=crop_coords)
+            
+    def _get_crop_coords_from_prediction(self, frame_list):
+        max_y, max_x = self.vm.get_frame_dim()
+        crop_coords = self.dm.get_crop_coords_from_pred(frame_list, max_x, max_y)
+        self._save_crop_to_dlc(crop_coords=crop_coords)
+
+    def _save_crop_to_dlc(self, crop_coords):
+        self.dm.save_to_dlc(crop_coords)
         self.refresh_and_display()
 
     def merge_data(self):
+        if self.vm.image_files:
+            QMessageBox.information(self.main, 
+                "Not Complatible", "Loaded DLC Data can only be saved in labeling mode, or saved as a new one with 'Export to DeepLabCut'.")
+            return
         if not self.pre_saving_sanity_check():
             return
         self.dm.merge_data()

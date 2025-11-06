@@ -2,7 +2,7 @@ import os
 import cv2
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 
-from typing import Optional
+from typing import Optional, Tuple
 from numpy.typing import NDArray
 
 from .io import Frame_Extractor
@@ -49,6 +49,13 @@ class Video_Manager:
         if self.get_extractor_status():
             return self.get_frame_extractor(frame_idx)
 
+    def get_frame_dim(self) -> Tuple[int, int]:
+        if self.image_files:
+            frame = self.get_frame_img(0)
+            return frame.shape[0], frame.shape[1]
+        else:
+            return self.extractor.get_frame_dim()
+
     def get_frame_extractor(self, frame_idx:int) -> Optional[NDArray]:
         if not self.extractor:
             return None
@@ -71,4 +78,7 @@ class Video_Manager:
             return False
 
     def get_frame_counts(self) -> int:
-        return self.extractor.get_total_frames()
+        if self.image_files:
+            return len(self.image_files)
+        else:
+            return self.extractor.get_total_frames()

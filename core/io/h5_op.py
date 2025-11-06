@@ -37,17 +37,16 @@ def save_prediction_to_existing_h5(
 def save_predictions_to_new_h5(dlc_data:Loaded_DLC_Data, pred_data_array:np.ndarray, export_settings:Export_Settings):
     export_settings.export_mode = "CSV"
     try:
-        prediction_to_csv(
+        csv_name = prediction_to_csv(
             dlc_data=dlc_data,
             pred_data_array=pred_data_array,
             export_settings=export_settings
             )
-        prediction_filename = os.path.basename(dlc_data.prediction_filepath).split(".")[0]
         csv_to_h5(
             project_dir=export_settings.save_path,
             multi_animal=dlc_data.multi_animal,
             scorer=dlc_data.scorer,
-            csv_name=prediction_filename
+            csv_name=csv_name
             )
         return True, "Prediction successfully saved to new HDF5 file!"
     except Exception as e:

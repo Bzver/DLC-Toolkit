@@ -5,11 +5,11 @@ import numpy as np
 
 from PySide6.QtWidgets import QMessageBox, QFileDialog, QDialog
 
-from typing import Callable, Literal, List, Optional, Dict, Any
+from typing import Callable, Literal, List, Optional, Dict
 import traceback
 
 from utils.helper import infer_head_tail_indices, build_angle_map
-from utils.pose import calculate_canonical_pose
+from utils.pose import calculate_canonical_pose, calculate_pose_bbox
 from .palette import (
     NAV_COLOR_PALETTE as nvp, NAV_COLOR_PALETTE_COUNTING as nvpc,
     NAV_COLOR_PALETTE_FLAB as nvpl)
@@ -413,6 +413,17 @@ class Data_Manager:
         self.canon_pose, all_frame_pose = calculate_canonical_pose(self.dlc_data.pred_data_array, head_idx, tail_idx)
         self.angle_map_data = build_angle_map(self.canon_pose, all_frame_pose, head_idx, tail_idx)
 
+    def get_crop_coords_from_pred(self, frame_list:List[int], max_x:int, max_y:int) -> np.ndarray:
+        coords_x = self.dlc_data.pred_data_array[frame_list, :, 0::3]
+        coords_y = self.dlc_data.pred_data_array[frame_list, :, 1::3]
+        x1_array, y1_array, x2_array, y2_array = calculate_pose_bbox(coords_x, coords_y, 30)
+        crop_coords = np.column_stack(
+            (np.nanmin(x1_array, axis=1), np.nanmin(y1_array, axis=1), np.nanmax(x2_array, axis=1), np.nanmax(y2_array, axis=1))
+            )
+        crop_coords = np.clip(crop_coords, 0, [max_x, max_y, max_x, max_y]).astype(int)
+        print(crop_coords)
+        return crop_coords
+
     ###################################################################################################################################################
 
     def save_workspace(self):
@@ -583,7 +594,7 @@ class Data_Manager:
 
     ###################################################################################################################################################
 
-    def save_to_dlc(self):
+    def save_to_dlc(self, crop_coords=None):
         dlc_dir = os.path.dirname(self.dlc_data.dlc_config_filepath)
         exp_set = Export_Settings(video_filepath=self.video_file, video_name=self.video_name,
                                   save_path=self.project_dir, export_mode="Append")
@@ -593,11 +604,10 @@ class Data_Manager:
             os.makedirs(exp_set.save_path, exist_ok=True)
 
         if not self.refined_frame_list:
-            exporter = Exporter(self.dlc_data, exp_set, self.frame_list)
+            exporter = Exporter(self.dlc_data, exp_set, self.frame_list, crop_coords=crop_coords)
         else:
             exp_set.export_mode = "Merge"
-            pred_data_array_for_export = remove_confidence_score(self.dlc_data.pred_data_array)
-            exporter = Exporter(self.dlc_data, exp_set, self.refined_frame_list, pred_data_array_for_export)
+            exporter = Exporter(self.dlc_data, exp_set, self.refined_frame_list, crop_coords=crop_coords)
         
         if self.dlc_data:
             try:
