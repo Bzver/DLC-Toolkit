@@ -14,8 +14,7 @@ from .palette import (
     NAV_COLOR_PALETTE as nvp, NAV_COLOR_PALETTE_COUNTING as nvpc,
     NAV_COLOR_PALETTE_FLAB as nvpl)
 from .io import (
-    Prediction_Loader, Exporter,
-    remove_confidence_score, append_new_video_to_dlc_config, determine_save_path,
+    Prediction_Loader, Exporter, remove_confidence_score, determine_save_path,
     backup_existing_prediction, save_prediction_to_existing_h5, prediction_to_csv
 )
 from ui import Head_Tail_Dialog
@@ -614,7 +613,6 @@ class Data_Manager:
                 QMessageBox.information(self.main, "Success", "Successfully exported frames and prediction to DLC.")
             except Exception as e:
                 QMessageBox.critical(self.main, "Error Save Data", f"Error saving data to DLC: {e}")
-            append_new_video_to_dlc_config(self.dlc_data.dlc_config_filepath, self.video_name)
 
             if exp_set.export_mode == "Merge":
                 self._process_labeled_frame()

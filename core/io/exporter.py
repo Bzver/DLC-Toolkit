@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QProgressDialog
 import traceback
 
 from .csv_op import prediction_to_csv, csv_to_h5
+from .io_helper import append_new_video_to_dlc_config
 from utils.helper import crop_coords_to_array
 from core.dataclass import Loaded_DLC_Data, Export_Settings
 
@@ -41,6 +42,11 @@ class Exporter:
     def _extract_frame(self):
         try:
             if os.path.isdir(self.export_settings.video_filepath): # Loading DLC labels
+                if self.export_settings.save_path == self.export_settings.video_filepath:
+                    self.export_settings.video_filepath += "_cropped"
+                    video_name = self.export_settings.video_name + "_cropped"
+                else:
+                    video_name = self.export_settings.video_name
                 image_folder = self.export_settings.video_filepath
                 img_exts = ('.png', '.jpg')
                 image_files = sorted([
@@ -56,6 +62,7 @@ class Exporter:
                         frame = self._apply_crop(frame, frame_idx)
 
                     cv2.imwrite(image_output_path, frame)
+                append_new_video_to_dlc_config(self.dlc_data.dlc_config_filepath, video_name)
                 return
                 
             cap = cv2.VideoCapture(self.export_settings.video_filepath)
@@ -64,6 +71,7 @@ class Exporter:
 
             total_video_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             max_needed = max(self.frame_list) if self.frame_list else -1
+            append_new_video_to_dlc_config(self.dlc_data.dlc_config_filepath, self.export_settings.video_name)
 
             if self.progress_callback:
                 self.progress_callback.setMaximum(len(self.frame_list))
