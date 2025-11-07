@@ -146,7 +146,7 @@ class Exporter:
             pred_data_array = self.pred_data_array[self.frame_list, :, :] # (F, I, K*3)
 
         if self.crop_coords is not None:
-            coords_array = crop_coords_to_array(self.crop_coords, pred_data_array.shape)
+            coords_array = crop_coords_to_array(self.crop_coords, pred_data_array.shape, self.frame_list)
             pred_data_array = pred_data_array - coords_array
         try:
             csv_name = prediction_to_csv(self.dlc_data, pred_data_array, self.export_settings, self.frame_list)

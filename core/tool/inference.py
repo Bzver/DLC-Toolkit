@@ -662,8 +662,8 @@ class DLC_Inference(QtWidgets.QDialog):
             (self.dlc_data.pred_frame_count, self.dlc_data.instance_count, self.dlc_data.num_keypoint*3), np.nan)
         temp_data_array = loaded_data.pred_data_array
 
-        if self.crop_coords:
-            coords_array = crop_coords_to_array(self.crop_coords, temp_data_array.shape)
+        if self.crop_coords is not None:
+            coords_array = crop_coords_to_array(self.crop_coords, temp_data_array.shape, self.frame_list)
             temp_data_array = temp_data_array + coords_array
 
         temp_data_array = self._correct_new_pred(temp_data_array)

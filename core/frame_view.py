@@ -305,7 +305,7 @@ class Frame_View:
     def dlc_inference_marked(self):
         inference_list = self.dm.get_inference_list()
         if not inference_list:
-            self.status_bar.show_message("No unapproved / unrejected/ unrefined marked frames to inference.")
+            QMessageBox.warning(self.main, "No Inference List", "No unapproved / unrejected / unrefined marked frames to inference.")
             return
         
         self.call_inference(inference_list)
@@ -423,22 +423,22 @@ class Frame_View:
                 self.blob_counter.config_ready.disconnect()
             except:
                 pass
-            self.blob_counter.config_ready.connect(lambda:self._crop_coords_for_inference(frame_list))
+            self.blob_counter.config_ready.connect(self._crop_coords_for_inference)
             self.display_current_frame()
             self.inference_window.hide()
             self.status_bar.show_message(
                 "Blob config not set. Adjust the blob parameters by interacting with the left panel, click 'Config Ready' Button to continue.", duration_ms=3000)
         else:
-            self._crop_coords_for_inference(frame_list)
+            self._crop_coords_for_inference()
             
-    def _crop_coords_for_inference(self, frame_list):
+    def _crop_coords_for_inference(self):
         self.inference_window.show()
         self._init_blob_counter()
 
         if self.dm.blob_array is None:
             self.blob_counter._count_entire_video()
 
-        self.inference_window.crop_coords = self.dm.blob_array[frame_list, 2:]
+        self.inference_window.crop_coords = self.dm.blob_array[:, 2:]
         self.inference_window.inference_workflow()
 
     def _reload_prediction(self, prediction_path:str):
