@@ -336,6 +336,18 @@ def frame_to_pixmap(frame):
 def crop_coords_to_array(crop_coords:np.ndarray, arr_shape:Tuple[int, int, int], frame_list:List[int]):
     coords_array = np.zeros(arr_shape)
     
+    if arr_shape[0] != len(frame_list):
+        diff = abs(arr_shape[0]-len(frame_list))
+        if diff > 1:
+            raise ValueError(
+                f"Dimension mismatch: arr_shape[0] = {arr_shape[0]}, "
+                f"but len(frame_list) = {len(frame_list)} (difference = {diff} > 1). "
+                f"Expected near-equal lengths for alignment."
+            )
+        final_len = min(arr_shape[0], len(frame_list))
+        frame_list = frame_list[0:final_len]
+        crop_coords = crop_coords[0:final_len]
+    
     crop_coords = crop_coords[frame_list]
     x_per_frame = crop_coords[:, 0][:, np.newaxis, np.newaxis]
     y_per_frame = crop_coords[:, 1][:, np.newaxis, np.newaxis]
