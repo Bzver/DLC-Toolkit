@@ -154,7 +154,7 @@ class Keypoint_Edit_Manager:
         self.pred_data_array = interpolate_track(self.pred_data_array, frames_to_interpolate, selected_instance_idx)
         self.edit_callback()
 
-    def gen_inst(self, frame_idx:int, instance_count:int, angle_map_data):
+    def gen_inst(self, frame_idx:int, instance_count:int, angle_map_data, canon_pose):
         if not self.check_pred_data():
             return
         self._save_state_for_undo()
@@ -166,7 +166,7 @@ class Keypoint_Edit_Manager:
             return
 
         self.pred_data_array = generate_missing_inst(
-            self.pred_data_array, frame_idx, missing_instances, angle_map_data)
+            self.pred_data_array, frame_idx, missing_instances, angle_map_data=angle_map_data, canon_pose=canon_pose)
         self.edit_callback()
 
     def rot_inst_prep(self, frame_idx:int, selected_instance:Optional[Selectable_Instance], angle_map_data):
