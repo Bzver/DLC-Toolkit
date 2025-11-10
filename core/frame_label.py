@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QTransform
 from PySide6.QtWidgets import QMessageBox
 
-from ui import Menu_Widget, Video_Player_Widget, Pose_Rotation_Dialog, Shortcut_Manager, Status_Bar
+from ui import Menu_Widget, Video_Player_Widget, Pose_Rotation_Dialog, Status_Bar
 from utils.helper import frame_to_pixmap, calculate_snapping_zoom_level
 from .data_man import Data_Manager
 from .video_man import Video_Manager
@@ -34,13 +34,10 @@ class Frame_Label:
         self.main = parent
 
         self._init_gview()
-
-        self._setup_shortcut()
         self.reset_state()
 
     def activate(self, menu_widget:Menu_Widget):
         menu_widget.add_menu_from_config(self.labeler_menu_config)
-        self.shortcuts.set_enabled(True)
         if self.gview is None:
             self._init_gview()
         self.vid_play.nav.set_marked_list_name("ROI")
@@ -48,7 +45,6 @@ class Frame_Label:
 
     def deactivate(self, menu_widget:Menu_Widget):
         self._remove_menu(menu_widget)
-        self.shortcuts.set_enabled(False)
 
         if not np.array_equal(self.kem.pred_data_array, self.dm.dlc_data.pred_data_array, equal_nan=True):
             self.save_prediction()
@@ -56,23 +52,6 @@ class Frame_Label:
     def _remove_menu(self, menu_widget:Menu_Widget):
         for menu in self.labeler_menu_config.keys():
             menu_widget.remove_entire_menu(menu)
-
-    def _setup_shortcut(self):
-        self.shortcuts = Shortcut_Manager(self.main)
-        self.shortcuts.add_shortcut("swp_trk_sg", "W", self._swap_track_single)
-        self.shortcuts.add_shortcut("swp_trk_ct", "Shift+W", self._swap_track_continous)
-        self.shortcuts.add_shortcut("del_trk", "D", self._delete_track)
-        self.shortcuts.add_shortcut("intp_trk", "T", self._interpolate_track)
-        self.shortcuts.add_shortcut("intp_ms_kp", "Shift+T", self._interpolate_missing_kp)
-        self.shortcuts.add_shortcut("gen_inst", "G", self._generate_inst)
-        self.shortcuts.add_shortcut("rot_inst", "R", self._rotate_inst)
-        self.shortcuts.add_shortcut("kp_edit", "Q", self._direct_keypoint_edit)
-        self.shortcuts.add_shortcut("del_kp", "Backspace", self._on_keypoint_delete)
-        self.shortcuts.add_shortcut("undo", "Ctrl+Z", self._undo_changes)
-        self.shortcuts.add_shortcut("redo", "Ctrl+Y", self._redo_changes)
-        self.shortcuts.add_shortcut("zoom", "Z", self._toggle_zoom_mode)
-        self.shortcuts.add_shortcut("snap_to_inst", "E", self._toggle_snap_to_instances)
-        self.shortcuts.set_enabled(True)
 
     def reset_state(self):
         self.open_outlier = False
@@ -89,7 +68,7 @@ class Frame_Label:
         self.labeler_menu_config = {
             "View":{
                 "buttons": [
-                    ("Toggle Zoom Mode (Z)", self._toggle_zoom_mode, {"checkable": True, "checked": False}),
+                    ("Toggle Zoom Mode (Z)", self.toggle_zoom_mode, {"checkable": True, "checked": False}),
                     ("Reset Zoom", self.reset_zoom),
                 ]
             },
@@ -98,38 +77,38 @@ class Frame_Label:
                     {
                         "submenu": "Interpolate",
                         "items": [
-                            ("Interpolate Selected Instance on Current Frame (T)", self._interpolate_track),
-                            ("Interpolate Missing Keypoints for Selected Instance (Shift+T)", self._interpolate_missing_kp),
+                            ("Interpolate Selected Instance on Current Frame (T)", self.interpolate_track),
+                            ("Interpolate Missing Keypoints for Selected Instance (Shift+T)", self.interpolate_missing_kp),
                             ("Interpolate Selected Instance Across All Frames", self._interpolate_all),     
                         ]
                     },
                     {
                         "submenu": "Delete",
                         "items": [
-                            ("Delete Selected Instance On Current Frame (D)", self._delete_track),
+                            ("Delete Selected Instance On Current Frame (X)", self.delete_track),
                             ("Delete All Prediction Inside Selected Area", self._designate_no_mice_zone),
                         ]
                     },
                     {
                         "submenu": "Swap",
                         "items": [
-                            ("Swap Instances On Current Frame (W)", self._swap_track_single),
-                            ("Swap Until The End (Shift + W)", self._swap_track_continous)
+                            ("Swap Instances On Current Frame (W)", self.swap_track_single),
+                            ("Swap Until The End (Shift + W)", self.swap_track_continous)
                         ]
                     },
                     ("Correct Track Using Temporal Consistency", self._temporal_track_correct),
-                    ("Generate Instance (G)", self._generate_inst),
-                    ("Rotate Selected Instance (R)", self._rotate_inst),
+                    ("Generate Instance (G)", self.generate_inst),
+                    ("Rotate Selected Instance (R)", self.rotate_inst),
                 ]
             },
             "Edit": {
                 "buttons": [
-                    ("Direct Keypoint Edit (Q)", self._direct_keypoint_edit),
+                    ("Direct Keypoint Edit (Q)", self.direct_keypoint_edit),
                     ("Open Outlier Cleaning Menu", self._call_outlier_finder),
                     ("Remove Current Frame From Refine Task", self.toggle_frame_status),
                     ("Mark All As Refined", self._mark_all_as_refined),
-                    ("Undo Changes (Ctrl+Z)", self._undo_changes),
-                    ("Redo Changes (Ctrl+Y)", self._redo_changes),
+                    ("Undo Changes (Ctrl+Z)", self.undo_changes),
+                    ("Redo Changes (Ctrl+Y)", self.redo_changes),
                 ]
             },
             "Save":{
@@ -258,11 +237,11 @@ class Frame_Label:
         self.dm.mark_all_refined_flabel()
         self.refresh_ui()
 
-    def _toggle_zoom_mode(self):
+    def toggle_zoom_mode(self):
         self.gview.toggle_zoom_mode()
         self.navigation_title_controller()
 
-    def _toggle_snap_to_instances(self):
+    def toggle_snap_to_instances(self):
         self.dm.plot_config.auto_snapping = not self.dm.plot_config.auto_snapping
         self.plot_config_callback()
         self.display_current_frame()
@@ -311,7 +290,7 @@ class Frame_Label:
 
     ###################################################################################################################################################
 
-    def _direct_keypoint_edit(self):
+    def direct_keypoint_edit(self):
         if not self.kem.check_pred_data():
             return
 
@@ -342,14 +321,14 @@ class Frame_Label:
             return
         self.kem.correct_track_using_temporal(self.dm.canon_pose, self.dm.angle_map_data)
 
-    def _delete_track(self):
+    def delete_track(self):
         self.kem.del_trk(self.dm.current_frame_idx, self.gview.sbox)
 
-    def _swap_track_single(self):
+    def swap_track_single(self):
         if self._tri_swap_not_implemented:
             self.kem.swp_trk(self.dm.current_frame_idx)
 
-    def _swap_track_continous(self):
+    def swap_track_continous(self):
         if self._tri_swap_not_implemented:
             self.kem.swp_trk(self.dm.current_frame_idx, [-1])
 
@@ -360,7 +339,7 @@ class Frame_Label:
             return False
         return True
 
-    def _interpolate_track(self):
+    def interpolate_track(self):
         self.kem.intp_trk(self.dm.current_frame_idx, self.gview.sbox)
 
     def _interpolate_all(self):
@@ -369,14 +348,14 @@ class Frame_Label:
         if self.kem.interpolate_all_for_inst(self.gview.sbox):
             self.reset_zoom()
 
-    def _interpolate_missing_kp(self):
+    def interpolate_missing_kp(self):
         self.kem.intp_ms_kp(self.dm.current_frame_idx, self.gview.sbox,
                             self.dm.angle_map_data, self.dm.canon_pose)
         
-    def _generate_inst(self):
-        self.kem.gen_inst(self.dm.current_frame_idx, self.dm.dlc_data.instance_count, self.dm.angle_map_data)
+    def generate_inst(self):
+        self.kem.gen_inst(self.dm.current_frame_idx, self.dm.dlc_data.instance_count, self.dm.angle_map_data, self.dm.canon_pose)
 
-    def _rotate_inst(self):
+    def rotate_inst(self):
         if not self.kem.check_pred_data():
             return
         selected_instance_idx, current_rotation = self.kem.rot_inst_prep(
@@ -393,7 +372,7 @@ class Frame_Label:
         self.is_saved = False
         self.refresh_and_display()
 
-    def _on_keypoint_delete(self):
+    def on_keypoint_delete(self):
         if self.gview.is_kp_edit and self.gview.drag_kp:
             self._mark_refined()
             instance_id = self.gview.drag_kp.instance_id
@@ -455,12 +434,12 @@ class Frame_Label:
     def save_prediction_as_csv(self):
         self.dm.save_pred_to_csv()
 
-    def _undo_changes(self):
+    def undo_changes(self):
         self.kem.undo()
         self.refresh_and_display()
         self.is_saved = False
 
-    def _redo_changes(self):
+    def redo_changes(self):
         self.kem.redo()
         self.refresh_and_display()
         self.is_saved = False

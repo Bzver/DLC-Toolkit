@@ -126,7 +126,7 @@ class Shortcut_Manager:
         self.parent = parent
         self._shortcuts = {}
 
-    def add_shortcuts_from_config(self, shortcut_config, clear_first: bool = True):
+    def add_shortcuts_from_config(self, shortcut_config, clear_first:bool = True):
         """
         Adds shortcuts from a configuration dict.
         
@@ -165,10 +165,6 @@ class Shortcut_Manager:
         for shortcut in self._shortcuts.values():
             shortcut.deleteLater()
         self._shortcuts.clear()
-
-    def set_enabled(self, enabled: bool):
-        for sc in self._shortcuts.values():
-            sc.setEnabled(enabled)
 
     def remove_shortcut(self, name:str):
         """Remove a specific shortcut by name."""

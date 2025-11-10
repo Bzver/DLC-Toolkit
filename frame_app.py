@@ -8,6 +8,7 @@ from utils.helper import handle_unsaved_changes_on_close
 from core import Data_Manager, Video_Manager, Keypoint_Edit_Manager
 from core.frame_view import Frame_View
 from core.frame_label import Frame_Label
+from core.frame_annot import Frame_Annotator
 from core.tool import Canonical_Pose_Dialog, Plot_Config_Menu, navigate_to_marked_frame
 from core.dataclass import Nav_Callback, Plot_Config
 
@@ -49,7 +50,12 @@ class Frame_App(QMainWindow):
 
         self._setup_menu()
         self._setup_shortcut()
-        self._init_both_submod()
+
+        self.fview = Frame_View(self.dm, self.vm, self.vid_play, self.status_bar, self._handle_right_panel_menu_change, self)
+        self.flabel = Frame_Label(
+            self.dm, self.vm, self.kem, self.vid_play, self.status_bar, self._handle_right_panel_menu_change, self._plot_config_callback, self)
+        self.fannot = Frame_Annotator(self.dm, self.vm, self.vid_play, self.status_bar, self._handle_right_panel_menu_change, self)
+
         self._switch_to_fview()
 
     def _setup_menu(self):
@@ -84,7 +90,7 @@ class Frame_App(QMainWindow):
 
     def _setup_shortcut(self):
         self.shortcuts = Shortcut_Manager(self)
-        common_shortcut = {
+        self.common_shortcut = {
             "prev_frame":{"key": "Left", "callback": lambda: self._change_frame(-1)},
             "next_frame":{"key": "Right", "callback": lambda: self._change_frame(1)},
             "prev_fast":{"key": "Shift+Left", "callback": lambda: self._change_frame(-10)},
@@ -94,7 +100,6 @@ class Frame_App(QMainWindow):
             "playback":{"key": "Space", "callback": self._toggle_playback},
             "save":{"key": "Ctrl+S", "callback": self._save_workspace},
         }
-        self.shortcuts.add_shortcuts_from_config(common_shortcut)
 
     def _reset_state(self):
         self.dm.reset_dm()
@@ -111,14 +116,14 @@ class Frame_App(QMainWindow):
     def _refresh_ui(self):
         self.at.refresh_ui()
 
-    def _init_both_submod(self):
-        self.fview = Frame_View(self.dm, self.vm, self.vid_play, self.status_bar, self._handle_right_panel_menu_change, self)
-        self.flabel = Frame_Label(
-            self.dm, self.vm, self.kem, self.vid_play, self.status_bar, self._handle_right_panel_menu_change, self._plot_config_callback, self)
-
     def _switch_to_fview(self):
         if hasattr(self, 'at') and self.at == self.flabel:
             self.flabel.deactivate(self.menu_widget)
+        fview_shortcuts = {
+            **self.common_shortcut,
+            "mark": {"key": "X", "callback": self.fview.toggle_frame_status},
+        }
+        self.shortcuts.add_shortcuts_from_config(fview_shortcuts, clear_first=True)
         self.fview.activate(self.menu_widget)
         self.at = self.fview
         self.mode_toggle.set_checked(False)
@@ -126,6 +131,23 @@ class Frame_App(QMainWindow):
     def _switch_to_flabel(self):
         if hasattr(self, 'at') and self.at == self.fview:
             self.fview.deactivate(self.menu_widget)
+        flabel_shortcuts = {
+            **self.common_shortcut,
+            "swp_trk_sg": {"key": "W", "callback": self.flabel.swap_track_single},
+            "swp_trk_ct": {"key": "Shift+W", "callback": self.flabel.swap_track_continous},
+            "del_trk": {"key": "X", "callback": self.flabel.delete_track},
+            "intp_trk": {"key": "T", "callback": self.flabel.interpolate_track},
+            "intp_ms_kp": {"key": "Shift+T", "callback": self.flabel.interpolate_missing_kp},
+            "gen_inst": {"key": "G", "callback": self.flabel.generate_inst},
+            "rot_inst": {"key": "R", "callback": self.flabel.rotate_inst},
+            "kp_edit": {"key": "Q", "callback": self.flabel.direct_keypoint_edit},
+            "del_kp": {"key": "Backspace", "callback": self.flabel.on_keypoint_delete},
+            "undo": {"key": "Ctrl+Z", "callback": self.flabel.undo_changes},
+            "redo": {"key": "Ctrl+Y", "callback": self.flabel.redo_changes},
+            "zoom": {"key": "Z", "callback": self.flabel.toggle_zoom_mode},
+            "snap_to_inst": {"key": "E", "callback": self.flabel.toggle_snap_to_instances},
+        }
+        self.shortcuts.add_shortcuts_from_config(flabel_shortcuts, clear_first=True)
         self.flabel.activate(self.menu_widget)
         self.at = self.flabel
         if self.kem.pred_data_array is None and self.dm.dlc_data.pred_data_array is not None:

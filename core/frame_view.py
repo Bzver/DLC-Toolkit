@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QMessageBox
 
 import traceback
 
-from ui import Menu_Widget, Video_Player_Widget, Frame_List_Dialog, Shortcut_Manager, Status_Bar, Inference_interval_Dialog
+from ui import Menu_Widget, Video_Player_Widget, Frame_List_Dialog, Status_Bar, Inference_interval_Dialog
 from utils.helper import frame_to_pixmap
 from .data_man import Data_Manager
 from .video_man import  Video_Manager
@@ -29,27 +29,19 @@ class Frame_View:
         self.menu_slot_callback = menu_slot_callback
         self.main = parent
 
-        self._setup_shortcuts()
         self.reset_state()
 
     def activate(self, menu_widget:Menu_Widget):
         menu_widget.add_menu_from_config(self.viewer_menu_config)
-        self.shortcuts.set_enabled(True)
         self.vid_play.swap_display_for_label()
         self.vid_play.nav.set_marked_list_name("Labeled")
 
     def deactivate(self, menu_widget:Menu_Widget):
         self._remove_menu(menu_widget)
-        self.shortcuts.set_enabled(False)
 
     def _remove_menu(self, menu_widget: Menu_Widget):
         for menu in self.viewer_menu_config.keys():
             menu_widget.remove_entire_menu(menu)
-
-    def _setup_shortcuts(self):
-        self.shortcuts = Shortcut_Manager(self.main)
-        self.shortcuts.add_shortcut("mark", "X", self._toggle_frame_status)
-        self.shortcuts.set_enabled(True)
 
     def reset_state(self):
         self.vid_play.set_total_frames(0)
@@ -68,7 +60,7 @@ class Frame_View:
             },
             "Mark": {
                 "buttons": [
-                    ("Mark / Unmark Current Frame (X)", self._toggle_frame_status),
+                    ("Mark / Unmark Current Frame (X)", self.toggle_frame_status),
                     ("Clear Frame Marks of Category", self.show_clear_mark_dialog),
                     ("Automatic Mark Generation", self.toggle_mark_gen_menu),
                 ]
@@ -200,7 +192,7 @@ class Frame_View:
             return self.dm.labeled_frame_list
         return self.dm.frame_list
 
-    def _toggle_frame_status(self):
+    def toggle_frame_status(self):
         if self.vm.check_status_msg():
             self.dm.toggle_frame_status_fview()
 
