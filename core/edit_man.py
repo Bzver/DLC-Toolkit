@@ -219,12 +219,15 @@ class Keypoint_Edit_Manager:
 
     def _instance_multi_select(self, frame_idx:int, selected_instance:Optional[Selectable_Instance]) -> Optional[int]:
         current_frame_inst = get_instances_on_current_frame(self.pred_data_array, frame_idx)
-        if len(current_frame_inst) > 1 and not selected_instance:
+        if not current_frame_inst:
+            return
+        if len(current_frame_inst) == 1:
+            return current_frame_inst[0]
+        if not selected_instance:
             QMessageBox.information(self.main, "No Instance Seleted",
                 "When there are more than one instance present, "
                 "you need to click one of the instance bounding box to specify which to delete.")
             return
-        return selected_instance.instance_id if selected_instance else current_frame_inst[0]
 
     ###################################################################################################################################################  
 
