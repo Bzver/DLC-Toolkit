@@ -20,7 +20,10 @@ class Frame_App(QMainWindow):
         self.central_widget = QtWidgets.QWidget()
         self.setCentralWidget(self.central_widget)
         self.app_layout = QVBoxLayout(self.central_widget)
-        
+
+        self.open_config = False
+        self.plot_config_widget = None
+
         self.dm = Data_Manager(
             init_vid_callback = self._initialize_loaded_video,
             refresh_callback = self._refresh_ui, parent = self)
@@ -151,9 +154,8 @@ class Frame_App(QMainWindow):
         self.flabel.activate(self.menu_widget)
         self.at = self.flabel
         self.dm.handle_mode_switch_fview_to_flabel()
-        if self.kem.pred_data_array is None and self.dm.dlc_data.pred_data_array is not None:
+        if self.kem.pred_data_array is None and self.dm.dlc_data is not None:
             self.kem.pred_data_array = self.dm.dlc_data.pred_data_array
-
         self.mode_toggle.set_checked(True)
 
     def _on_mode_toggle(self, is_checked: bool):

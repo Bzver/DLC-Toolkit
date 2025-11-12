@@ -44,7 +44,8 @@ class Frame_Label:
 
     def deactivate(self, menu_widget:Menu_Widget):
         self._remove_menu(menu_widget)
-
+        if self.dm.dlc_data is None:
+            return
         if not np.array_equal(self.kem.pred_data_array, self.dm.dlc_data.pred_data_array, equal_nan=True):
             self.save_prediction()
         
