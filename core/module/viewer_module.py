@@ -9,9 +9,8 @@ import traceback
 
 from ui import Menu_Widget, Video_Player_Widget, Frame_List_Dialog, Status_Bar, Inference_interval_Dialog
 from utils.helper import frame_to_pixmap
-from .data_man import Data_Manager
-from .video_man import  Video_Manager
-from .tool import Mark_Generator, Blob_Counter, Prediction_Plotter
+from core import Data_Manager, Video_Manager
+from core.tool import Mark_Generator, Blob_Counter, Prediction_Plotter
 
 class Frame_View:
     def __init__(self,
@@ -27,28 +26,6 @@ class Frame_View:
         self.status_bar = status_bar
         self.menu_slot_callback = menu_slot_callback
         self.main = parent
-
-        self.reset_state()
-
-    def activate(self, menu_widget:Menu_Widget):
-        menu_widget.add_menu_from_config(self.viewer_menu_config)
-        self.vid_play.swap_display_for_label()
-        self.vid_play.nav.set_marked_list_name("Labeled")
-
-    def deactivate(self, menu_widget:Menu_Widget):
-        self._remove_menu(menu_widget)
-
-    def _remove_menu(self, menu_widget: Menu_Widget):
-        for menu in self.viewer_menu_config.keys():
-            menu_widget.remove_entire_menu(menu)
-
-    def reset_state(self):
-        self.vid_play.set_total_frames(0)
-
-        self.counter_list = []
-        self.open_mark_gen = False
-        self.is_counting = False
-        self.skip_counting = False
 
         self.viewer_menu_config = {
             "View":{
@@ -78,6 +55,28 @@ class Frame_View:
                 ]
             },
         }
+
+        self.reset_state()
+
+    def activate(self, menu_widget:Menu_Widget):
+        menu_widget.add_menu_from_config(self.viewer_menu_config)
+        self.vid_play.swap_display_for_label()
+        self.vid_play.nav.set_marked_list_name("Labeled")
+
+    def deactivate(self, menu_widget:Menu_Widget):
+        self._remove_menu(menu_widget)
+
+    def _remove_menu(self, menu_widget: Menu_Widget):
+        for menu in self.viewer_menu_config.keys():
+            menu_widget.remove_entire_menu(menu)
+
+    def reset_state(self):
+        self.vid_play.set_total_frames(0)
+
+        self.counter_list = []
+        self.open_mark_gen = False
+        self.is_counting = False
+        self.skip_counting = False
         
         self.refresh_ui()
 

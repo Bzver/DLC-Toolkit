@@ -7,11 +7,9 @@ from PySide6.QtWidgets import QMessageBox
 
 from ui import Menu_Widget, Video_Player_Widget, Pose_Rotation_Dialog, Status_Bar
 from utils.helper import frame_to_pixmap, calculate_snapping_zoom_level
-from .data_man import Data_Manager
-from .video_man import Video_Manager
-from .edit_man import Keypoint_Edit_Manager
-from .tool import Outlier_Finder, Canvas, Prediction_Plotter
-from .dataclass import Plot_Config, Plotter_Callbacks
+from core import Data_Manager, Video_Manager, Keypoint_Edit_Manager
+from core.tool import Outlier_Finder, Canvas, Prediction_Plotter
+from core.dataclass import Plot_Config, Plotter_Callbacks
 
 class Frame_Label:
     def __init__(self,
@@ -32,38 +30,6 @@ class Frame_Label:
         self.plot_config_callback = plot_config_callback
         self.main = parent
 
-        self._init_gview()
-        self.reset_state()
-
-    def activate(self, menu_widget:Menu_Widget):
-        menu_widget.add_menu_from_config(self.labeler_menu_config)
-        if self.gview is None:
-            self._init_gview()
-        self.vid_play.nav.set_marked_list_name("ROI")
-        self.vid_play.swap_display_for_graphics_view(self.gview)
-
-    def deactivate(self, menu_widget:Menu_Widget):
-        self._remove_menu(menu_widget)
-        if self.dm.dlc_data is None:
-            return
-        if not np.array_equal(self.kem.pred_data_array, self.dm.dlc_data.pred_data_array, equal_nan=True):
-            self.save_prediction()
-        
-    def _remove_menu(self, menu_widget:Menu_Widget):
-        for menu in self.labeler_menu_config.keys():
-            menu_widget.remove_entire_menu(menu)
-
-    def reset_state(self):
-        self.open_outlier = False
-        self.skip_outlier_clean= False
-        self.is_saved = True
-
-        self.plotter_callback = Plotter_Callbacks(
-            keypoint_coords_callback = self._update_keypoint_position,
-            keypoint_object_callback = self.gview.set_dragged_keypoint,
-            box_coords_callback = self._update_instance_position,
-            box_object_callback = self.gview._handle_box_selection
-        )
 
         self.labeler_menu_config = {
             "View":{
@@ -118,6 +84,39 @@ class Frame_Label:
                 ]
             },
         }
+
+        self._init_gview()
+        self.reset_state()
+
+    def activate(self, menu_widget:Menu_Widget):
+        menu_widget.add_menu_from_config(self.labeler_menu_config)
+        if self.gview is None:
+            self._init_gview()
+        self.vid_play.nav.set_marked_list_name("ROI")
+        self.vid_play.swap_display_for_graphics_view(self.gview)
+
+    def deactivate(self, menu_widget:Menu_Widget):
+        self._remove_menu(menu_widget)
+        if self.dm.dlc_data is None:
+            return
+        if not np.array_equal(self.kem.pred_data_array, self.dm.dlc_data.pred_data_array, equal_nan=True):
+            self.save_prediction()
+        
+    def _remove_menu(self, menu_widget:Menu_Widget):
+        for menu in self.labeler_menu_config.keys():
+            menu_widget.remove_entire_menu(menu)
+
+    def reset_state(self):
+        self.open_outlier = False
+        self.skip_outlier_clean= False
+        self.is_saved = True
+
+        self.plotter_callback = Plotter_Callbacks(
+            keypoint_coords_callback = self._update_keypoint_position,
+            keypoint_object_callback = self.gview.set_dragged_keypoint,
+            box_coords_callback = self._update_instance_position,
+            box_object_callback = self.gview._handle_box_selection
+        )
 
         self.reset_zoom()
         self.refresh_ui()
