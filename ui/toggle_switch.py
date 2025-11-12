@@ -11,6 +11,7 @@ class Toggle_Switch(QWidget):
         self._label_text = label_text
         self._vertical = vertical
         self._gbox_mode = gbox
+        self._locked = False
 
         self.track = Toggle_Track(self)
 
@@ -40,6 +41,8 @@ class Toggle_Switch(QWidget):
         self.set_checked(not self._is_checked)
 
     def set_checked(self, checked: bool):
+        if self._locked:
+            return
         if self._is_checked != checked:
             self._is_checked = checked
             self.track.set_checked(checked)
@@ -47,6 +50,16 @@ class Toggle_Switch(QWidget):
 
     def is_checked(self) -> bool:
         return self._is_checked
+
+    def set_locked(self, locked: bool):
+        if self._locked == locked:
+            return
+        self._locked = locked
+        self.track.set_locked(locked)
+        if hasattr(self, 'label'):
+            self.label.setEnabled(not locked)
+        if self._gbox_mode:
+            self._container.setEnabled(not locked)
 
     def set_label_text(self, text: str):
         self._label_text = text
@@ -65,6 +78,7 @@ class Toggle_Track(QFrame):
         self.setFixedSize(60, 26)
         self._checked = False
         self._handle_position = -8
+        self._locked = False
 
         self.setCursor(Qt.PointingHandCursor)
         self.mousePressEvent = lambda _: parent._on_clicked() if parent else None
@@ -84,19 +98,34 @@ class Toggle_Track(QFrame):
 
     def set_checked(self, checked: bool):
         self._checked = checked
-        end_pos = 38 if checked else 2  # Adjusted for new size
+        end_pos = 38 if checked else 2
         if self._animation.state() == QPropertyAnimation.Running:
             self._animation.stop()
         self._animation.setEndValue(end_pos)
         self._animation.start()
+
+    def set_locked(self, locked: bool):
+        if self._locked == locked:
+            return
+        self._locked = locked
+        self.setCursor(Qt.ArrowCursor if locked else Qt.PointingHandCursor)
+        self.update()
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setPen(Qt.NoPen)
 
+        if self._locked:
+            track_color = QColor(180, 180, 180)
+            handle_color = QColor(220, 220, 220)
+            text_alpha = 20
+        else:
+            track_color = QColor("#4CAF50") if self._checked else QColor("#f44336")
+            handle_color = QColor("#FFFFFF")
+            text_alpha = 255
+
         # Track background
-        track_color = QColor("#4CAF50") if self._checked else QColor("#f44336")
         painter.setBrush(QBrush(track_color))
         painter.drawRoundedRect(self.rect().adjusted(2, 4, -2, -4), 6, 6)
 
@@ -105,7 +134,7 @@ class Toggle_Track(QFrame):
             self._handle_position, 3,
             self._handle_position - 20, -3
         ).normalized()
-        painter.setBrush(QBrush(QColor("#FFFFFF")))
+        painter.setBrush(QBrush(handle_color))
         painter.setPen(QPen(QColor("#CCCCCC"), 1))
         painter.drawRoundedRect(handle_rect, 6, 6)
 
@@ -116,11 +145,19 @@ class Toggle_Track(QFrame):
         painter.setFont(font)
 
         # OFF (right)
-        off_color = QColor("#FFFFFF") if not self._checked else QColor(255, 255, 255, 120)
+        off_color = QColor(255, 255, 255, text_alpha) if not self._checked else QColor(255, 255, 255, max(80, text_alpha // 2))
+        if self._locked:
+            base_grey = 200
+            off_intensity = base_grey if self._checked else base_grey - 30
+            off_color = QColor(off_intensity, off_intensity, off_intensity)
         painter.setPen(off_color)
         painter.drawText(self.rect().adjusted(0, 0, -4, 0), Qt.AlignRight | Qt.AlignVCenter, "OFF")
 
         # ON (left)
-        on_color = QColor("#FFFFFF") if self._checked else QColor(255, 255, 255, 120)
+        on_color = QColor(255, 255, 255, text_alpha) if self._checked else QColor(255, 255, 255, max(80, text_alpha // 2))
+        if self._locked:
+            base_grey = 200
+            on_intensity = base_grey if not self._checked else base_grey - 30
+            on_color = QColor(on_intensity, on_intensity, on_intensity)
         painter.setPen(on_color)
         painter.drawText(self.rect().adjusted(4, 0, 0, 0), Qt.AlignLeft | Qt.AlignVCenter, "ON")
