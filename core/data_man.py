@@ -1,29 +1,26 @@
 import os
 import pickle
-import yaml
 import numpy as np
 
 from PySide6.QtWidgets import QMessageBox, QFileDialog, QDialog
 
-from typing import Callable, Literal, List, Optional, Dict
+from typing import Callable, Tuple, List, Optional, Dict
 import traceback
 
 from utils.helper import infer_head_tail_indices, build_angle_map
 from utils.pose import calculate_canonical_pose, calculate_pose_bbox
-from .palette import (
-    NAV_COLOR_PALETTE as nvp, NAV_COLOR_PALETTE_COUNTING as nvpc,
-    NAV_COLOR_PALETTE_FLAB as nvpl)
 from .io import (
     Prediction_Loader, Exporter, remove_confidence_score, determine_save_path,
     backup_existing_prediction, save_prediction_to_existing_h5, prediction_to_csv
 )
 from ui import Head_Tail_Dialog
+from .frame_man import Frame_Manager
 from .dataclass import Plot_Config, Export_Settings
 
 class Data_Manager:
     HexColor = str
 
-    def __init__(self, 
+    def __init__(self,
                 init_vid_callback:Callable[[str], None],
                 refresh_callback:Callable[[], None],
                 parent=None):
@@ -33,28 +30,23 @@ class Data_Manager:
         self.reset_dm()
 
     def reset_dm(self):
-        self.total_frames, self.current_frame_idx  = 0, 0
-
+        self.fm = Frame_Manager(refresh_callback=self.refresh_callback)
+        self.total_frames, self.current_frame_idx = 0, 0
         self.video_file, self.video_name, self.project_dir = None, None, None
         self.dlc_data, self.canon_pose = None, None
 
-        self.refined_frame_list, self.frame_list = [], []
         self.plot_config = Plot_Config(
             plot_opacity =1.0, point_size = 6.0, confidence_cutoff = 0.0, hide_text_labels = False, edit_mode = False,
             plot_labeled = True, plot_pred = True, navigate_labeled = False, auto_snapping = False, navigate_roi = False)
-        
+
         # fview only
         self.blob_config = None
-        self.labeled_frame_list, self.approved_frame_list, self.rejected_frame_list = [], [], []
-        self.animal_0_list, self.animal_1_list, self.animal_n_list, self.blob_merged_list = [], [], [], []
         self.label_data_array, self.blob_array = None, None
 
         # flabel only
         self.prediction = None  # To track modified prediction file
         self.angle_map_data = None
         self.inst_count_per_frame_pred = None
-
-        self.roi_frame_list, self.outlier_frame_list = [], []
 
     def update_video_path(self, video_path:str):
         self.video_file = video_path
@@ -142,7 +134,7 @@ class Data_Manager:
 
         if f"{self.video_name}_workspace.pkl" in os.listdir(video_folder):
             file_path = os.path.join(video_folder, f"{self.video_name}_workspace.pkl")
-            self._load_workspace_new(file_path)
+            self._load_workspace(file_path)
             return True
         
         return False
@@ -177,187 +169,154 @@ class Data_Manager:
     ###################################################################################################################################################
 
     def toggle_frame_status_fview(self):
-        if self.current_frame_idx in self.labeled_frame_list:
+        if self.has_current_frame_cat("labeled"):
             QMessageBox.information(self.main, "Already Labeled", "The frame is already in the labeled dataset, skipping...")
             return
 
-        if self.current_frame_idx in self.refined_frame_list:
+        if self.has_current_frame_cat("refined"):
             reply = QMessageBox.question(
                 self.main, "Confirm Unmarking",
                 "This frame is already refined, do you still want to remove it from the exported lists?",
                 QMessageBox.Yes | QMessageBox.No
             )
             if reply == QMessageBox.Yes:
-                self.refined_frame_list.remove(self.current_frame_idx)
-                self.frame_list.remove(self.current_frame_idx)
+                self.remove_current_frame_cat("refined")
             return
 
-        if not self.current_frame_idx in self.frame_list:
-            self.frame_list.append(self.current_frame_idx)
-        else: # Remove the mark status if already marked
-            self.frame_list.remove(self.current_frame_idx)
-            if self.current_frame_idx in self.approved_frame_list:
-                self.approved_frame_list.remove(self.current_frame_idx)
-            if self.current_frame_idx in self.rejected_frame_list:
-                self.rejected_frame_list.remove(self.current_frame_idx)
+        if self.current_frame_idx not in self.frames_in_any(self.fm.fview_cats):
+            self.add_current_frame_cat("marked")
+        else:
+            self.remove_current_frame_cat("marked")
+            self.remove_current_frame_cat("rejected")
+            self.remove_current_frame_cat("approved")
 
         self.refresh_callback()
 
     def toggle_frame_status_flabel(self):
-        if self.current_frame_idx in self.frame_list and self.current_frame_idx not in self.refined_frame_list:
-            self.refined_frame_list.append(self.current_frame_idx)
+        if self.has_current_frame_cat("marked") or self.has_current_frame_cat("refined"):
+            self.toggle_frame_status_fview()
+
+    def mark_refined_flabel(self):
+        self.fm.move_frame(new_category="refined", old_category="marked")
+
+    def handle_mode_switch_fview_to_flabel(self):
+        self.fm.clear_category("rejected")
+        self.fm.move_category("marked", "approved")
 
     def mark_all_refined_flabel(self):
-        self.refined_frame_list = self.frame_list.copy()
+        self.fm.move_category("refined", "marked")
 
-    def get_frame_categories(self) -> Dict[str, List[int]]:
-        frame_set = set(self.frame_list)
-        refined_set = set(self.refined_frame_list)
-        approved_set = set(self.approved_frame_list)
-        rejected_set = set(self.rejected_frame_list)
-        marked_set = refined_set | approved_set | rejected_set
+    def get_inference_list(self) -> List[int]:
+        return self.get_frames("marked")
 
-        frame_options = {
-            "All Marked Frames": self.frame_list,
-            "Refined Frames": self.refined_frame_list,
-            "Approved Frames": self.approved_frame_list,
-            "Rejected Frames": self.rejected_frame_list,
-        }
+    def get_frame_categories_fview(self) -> Dict[str, Tuple[str, List[int]]]:
+        frame_options = {}
+        all_marked = self.frames_in_any(["marked", "rejected", "approved"])
+        if all_marked:
+            frame_options["All Non-Refined Frames"] = ("non_refined", all_marked)
 
-        result = {label: lst for label, lst in frame_options.items() if lst}
+        pop_cats = self.fm.all_populated_categories()
+        for cat in pop_cats:
+            if cat in self.fm.flabel_cats and cat != "labeled":
+                frame_options[self.fm.get_display_name(cat)] = (cat, self.get_frames(cat))
 
-        if refined_set:
-            all_except_refined = frame_set - refined_set
-            if all_except_refined:
-                result["All Marked Frames (w/o Refined)"] = sorted(all_except_refined)
-
-        if marked_set:
-            remaining_frames = frame_set - marked_set
-            if remaining_frames:
-                result["Remaining Frames"] = sorted(remaining_frames)
-
-        return result
+        return frame_options
     
-    def get_frame_categories_counting(self):
-        frame_options = {
-            "0 Animal": self.animal_0_list,
-            "1 Animal": self.animal_1_list,
-            "2+ Animals": self.animal_n_list,
-            "Merged Blob": self.blob_merged_list,
-        }
-        result = {label: lst for label, lst in frame_options.items() if lst}
+    def get_frame_categories_counting(self) -> Dict[str, Tuple[str, List[int]]]:
+        frame_options = {}
+        pop_cats = self.fm.all_populated_categories()
+        for cat in pop_cats:
+            if cat in self.fm.count_cats:
+                frame_options[self.fm.get_display_name(cat)] = (cat, self.get_frames(cat))
 
-        return result
+        return frame_options
     
-    def get_frame_categories_flabel(self):
-        frame_options = {
-            "Frames with Instance Count Change": self.roi_frame_list,
-            "Outlier Frames": self.outlier_frame_list,
-        }
-        result = {label: lst for label, lst in frame_options.items() if lst}
+    def get_frame_categories_flabel(self) -> Dict[str, Tuple[str, List[int]]]:
+        frame_options = {}
+        pop_cats = self.fm.all_populated_categories()
+        for cat in pop_cats:
+            if cat in self.fm.flabel_cats:
+                frame_options[self.fm.get_display_name(cat)] = (cat, self.get_frames(cat))
 
-        return result
+        return frame_options
     
-    def clear_frame_cat(self, 
-            frame_category:Literal[
-                "All Marked Frames",
-                "Refined Frames",
-                "Approved Frames",
-                "Rejected Frames",
-                "Remaining Frames",
-                "All Marked Frames (Except for Refined)"
-            ]
-            ):
-        actions = {
-            "All Marked Frames": lambda: (
-                self.frame_list.clear(),
-                self.refined_frame_list.clear(),
-                self.approved_frame_list.clear(),
-                self.rejected_frame_list.clear()
-            ),
-            "Refined Frames": self.refined_frame_list.clear,
-            "Approved Frames": self.approved_frame_list.clear,
-            "Rejected Frames": self.rejected_frame_list.clear,
-        }
-
-        if frame_category in actions:
-            actions[frame_category]()
-        elif frame_category == "Remaining Frames":
-            kept_frames = set(self.refined_frame_list) | set(self.approved_frame_list) | set(self.rejected_frame_list)
-            self.frame_list[:] = list(kept_frames)
-        elif frame_category == "All Marked Frames (Except for Refined)":
-            self.frame_list[:] = self.refined_frame_list.copy()
-            self.approved_frame_list.clear()
-            self.rejected_frame_list.clear()
-
-        self.refresh_callback()
+    def clear_frame_cat(self, frame_category:str):
+        self.fm.clear_category(frame_category)
 
     def clear_old_cat(self, clear_old:bool):
         if not clear_old:
             return
-        if not self.refined_frame_list:
-            self.clear_frame_cat("All Marked Frames")
-        else:
-            self.clear_frame_cat("All Marked Frames (Except for Refined)")
+        self.fm.clear_category("non_refined")
 
-    def get_inference_list(self) -> List[int]:
-        return list(set(self.frame_list) - set(self.approved_frame_list) - set(self.rejected_frame_list) - set(self.refined_frame_list))
+    def get_frames(self, category:str) -> List[int]:
+        return self.fm.get_frames(category)
+
+    def frames_in_any(self, categories:List[str]) -> List[int]:
+        return self.fm.frames_in_any(categories)
+
+    def get_cat_in_group(self, group:str) -> List[str]:
+        return self.fm.get_group_categories(group)
+
+    def add_current_frame_cat(self, category:str):
+        self.fm.add_frame(category, self.current_frame_idx)
+
+    def remove_current_frame_cat(self, category:str):
+        self.fm.remove_frame(category, self.current_frame_idx)
+
+    def has_current_frame_cat(self, category:str) -> bool:
+        return self.fm.has_frame(category, self.current_frame_idx)
+
+    def get_cat_metadata(self, category:str) -> Tuple[str, List[int], HexColor]:
+        return self.fm.get_display_name(category), self.get_frames(category), self.fm.get_color(category)
 
     ###################################################################################################################################################
 
     def determine_nav_color_fview(self) -> HexColor:
-        frame_lists = [
-            self.frame_list,
-            self.rejected_frame_list,
-            self.approved_frame_list,
-            self.refined_frame_list,
-            self.labeled_frame_list
-        ]
-        return nvp[self._get_max_priority(frame_lists)]
+        for cat in self.fm.fview_cats:
+            if self.has_current_frame_cat(cat):
+                return self.fm.get_color(cat)
+        return "#000000"
 
     def determine_nav_color_counting(self) -> HexColor:
-        frame_lists = [
-            self.animal_0_list,
-            self.animal_1_list,
-            self.animal_n_list,
-            self.blob_merged_list,
-        ]
-        return nvpc[self._get_max_priority(frame_lists)]
-
-    def determine_nav_color_flabel(self) -> HexColor:
-        frame_lists = [
-            self.frame_list,
-            self.refined_frame_list
-        ]
-        return nvp[self._get_max_priority(frame_lists)]
+        if self.get_frames("blob_merged"):
+            return self.fm.get_color("blob_merged")
+        for cat in self.fm.count_cats:
+            if self.has_current_frame_cat(cat):
+                return self.fm.get_color(cat)
+        return "#000000"
     
-    def determine_nav_color_fro(self) -> HexColor:
-        frame_lists = [
-            self.roi_frame_list,
-            self.outlier_frame_list,
-        ]
-        return nvpl[self._get_max_priority(frame_lists)]
-
-    def _get_max_priority(self, frame_lists:List[List[int]], priorities:Optional[range]=None) -> int:
-        """Get the highest priority for current frame."""
-        pr = range(1, len(frame_lists) + 1) if priorities is None else priorities
-        color_code = 0
-        for frame_list, priority in zip(frame_lists, pr):
-            if self.current_frame_idx in frame_list:
-                color_code = max(color_code, priority)
-        return color_code
+    def determine_nav_color_flabel(self) -> HexColor:
+        for cat in self.fm.flabel_cats:
+            if self.has_current_frame_cat(cat):
+                return self.fm.get_color(cat)
+        return "#000000"
 
     def get_title_text(self, labeler:bool=False, kp_edit:bool=False):
         title_text = ""
+        refd_count = self.fm.get_len("refined")
+        pend_count = self.fm.get_len("marked")
+
         if labeler:
-            if self.refined_frame_list and self.frame_list:
-                title_text += f"    Manual Refining Progress: {len(self.refined_frame_list)} | {len(self.frame_list)} Frames Refined    "
+            if refd_count or pend_count:
+                title_text += f"    Manual Refining Progress: {refd_count} | {refd_count+pend_count} Frames Refined    "
             if kp_edit and self.current_frame_idx:
                 title_text += "    ----- KEYPOINTS EDITING MODE -----    "
-        elif self.frame_list:
-            title_text += f"    Marked Frame Count: {len(self.frame_list)}    "
-            
+        elif pend_count:
+            title_text += f"    Marked Frame Count: {pend_count}    "
         return title_text
+
+    def determine_list_to_nav_fview(self) -> List[int]:
+        lb_list = self.get_frames("labeled")
+        if self.plot_config.navigate_labeled and lb_list:
+            return lb_list
+        else:
+            return self.frames_in_any(["marked", "rejected", "approved"])
+        
+    def determine_list_to_nav_flabel(self) -> List[int]:
+        if self.plot_config.navigate_roi:
+            return self.get_frames("roi_change")
+        else:
+            return self.get_frames("marked")
 
     ###################################################################################################################################################
 
@@ -384,16 +343,13 @@ class Data_Manager:
         label_array = label_data.pred_data_array
         self.label_data_array[range(label_array.shape[0])] = label_array
 
-        self.labeled_frame_list = np.where(
-            np.any(~np.isnan(self.label_data_array), axis=(1, 2))
-            )[0].tolist()
-
-        self.frame_list = list(set(self.frame_list) - set(self.labeled_frame_list))
-        self.refined_frame_list = list(set(self.refined_frame_list) - set(self.labeled_frame_list))
-        self.approved_frame_list = list(set(self.approved_frame_list) - set(self.labeled_frame_list))
-        self.rejected_frame_list = list(set(self.rejected_frame_list) - set(self.labeled_frame_list))
-        self.frame_list.sort()
-        self.refresh_callback()
+        labeled_frame_list = np.where(np.any(~np.isnan(self.label_data_array), axis=(1, 2)))[0].tolist()
+        self.fm.add_frames("labeled", labeled_frame_list)
+        lfl = self.get_frames("labeled")
+        self.fm.remove_frames("marked", lfl)
+        self.fm.remove_frames("rejected", lfl)
+        self.fm.remove_frames("refined", lfl)
+        self.fm.remove_frames("approved", lfl)
 
     def _init_canon_pose(self):
         head_idx, tail_idx = infer_head_tail_indices(self.dlc_data.keypoints)
@@ -422,6 +378,37 @@ class Data_Manager:
         crop_coords = np.clip(crop_coords, 0, [max_x, max_y, max_x, max_y]).astype(int)
         return crop_coords
 
+    def handle_rurun_frame_tuple(self, frame_tuple:Tuple[List[int], List[int]]):
+        self.fm.add_frames("approved", frame_tuple[0])
+        self.fm.add_frames("rejected", frame_tuple[1])
+        self.fm.remove_frames("marked", frame_tuple[0])
+        self.fm.remove_frames("marked", frame_tuple[1])
+
+    def handle_mark_gen_list(self, frame_list:List[int]):
+        frame_set = set(frame_list) - set(self.get_frames("labeled")) - set(self.get_frames("rejected")) - set(self.get_frames("approved"))
+        self.fm.add_frames("marked", list(frame_set))
+
+    def handle_blob_counter_array(self, blob_array:np.ndarray) -> List[int]:
+        self.blob_array = blob_array
+        animal_0_list = list(np.where(blob_array[:, 0]==0)[0])
+        animal_1_list = list(np.where(blob_array[:, 0]==1)[0])
+        animal_n_list = list(np.where(blob_array[:, 0]>1)[0])
+        blob_merged_list = list(np.where(blob_array[:, 1]==1)[0])
+        self.fm.clear_group("counting")
+        self.fm.add_frames("animal_0", animal_0_list)
+        self.fm.add_frames("animal_1", animal_1_list)
+        self.fm.add_frames("animal_2", animal_n_list)
+        self.fm.add_frames("blob_merged", blob_merged_list)
+        self.save_workspace()
+
+        for frame_list in [blob_merged_list, animal_n_list, animal_1_list, animal_0_list]:
+            if frame_list:
+                return frame_list
+
+    def handle_cat_update(self, category:str, frame_list:List[int]):
+        self.fm.clear_category(category)
+        self.fm.add_frames(category, frame_list)
+
     ###################################################################################################################################################
 
     def save_workspace(self):
@@ -437,15 +424,7 @@ class Data_Manager:
             'project_dir': self.project_dir,
             'dlc_data': self.dlc_data,
             'canon_pose': self.canon_pose,
-            'labeled_frame_list': self.labeled_frame_list,
-            'frame_list': self.frame_list,
-            'refined_frame_list': self.refined_frame_list,
-            'approved_frame_list': self.approved_frame_list,
-            'rejected_frame_list': self.rejected_frame_list,
-            'animal_0_list': self.animal_0_list,
-            'animal_1_list': self.animal_1_list,
-            'animal_n_list': self.animal_n_list,
-            'blob_merged_list': self.blob_merged_list,
+            'frame_store': self.fm.to_dict(),
             'label_data_array': self.label_data_array,
             'plot_config': self.plot_config,
             'blob_config': self.blob_config,
@@ -453,8 +432,6 @@ class Data_Manager:
             'angle_map_data': self.angle_map_data,
             'inst_count_per_frame_pred': self.inst_count_per_frame_pred,
             'blob_array': self.blob_array,
-            'roi_frame_list': self.roi_frame_list,
-            'outlier_frame_list': self.outlier_frame_list,
         }
 
         try:
@@ -466,18 +443,13 @@ class Data_Manager:
     def load_workspace(self):
         """Load a previously saved workspace state."""
         file_path, _ = QFileDialog.getOpenFileName(
-            self.main, "Load Workspace", "", "Pickle Files (*.pkl);;YAML Files (*.yaml *.yml);;All Files (*)"
+            self.main, "Load Workspace", "", "Pickle Files (*.pkl);;All Files (*)"
         )
         if not file_path:
             return
-
-        if file_path.endswith(".yaml"):
-            self._load_workspace_legacy(file_path)
-            return
-
-        self._load_workspace_new(file_path)
-
-    def _load_workspace_new(self, file_path:str):
+        self._load_workspace(file_path)
+        
+    def _load_workspace(self, file_path:str):
         try:
             with open(file_path, 'rb') as f:
                 workspace_state = pickle.load(f)
@@ -490,15 +462,6 @@ class Data_Manager:
             self.project_dir = workspace_state.get('project_dir')
             self.dlc_data = workspace_state.get('dlc_data')
             self.canon_pose = workspace_state.get('canon_pose')
-            self.labeled_frame_list = workspace_state.get('labeled_frame_list', [])
-            self.frame_list = workspace_state.get('frame_list', [])
-            self.refined_frame_list = workspace_state.get('refined_frame_list', [])
-            self.approved_frame_list = workspace_state.get('approved_frame_list', [])
-            self.rejected_frame_list = workspace_state.get('rejected_frame_list', [])
-            self.animal_0_list = workspace_state.get('animal_0_list', [])
-            self.animal_1_list = workspace_state.get('animal_1_list', [])
-            self.animal_n_list = workspace_state.get('animal_n_list', [])
-            self.blob_merged_list = workspace_state.get('blob_merged_list', [])
             self.label_data_array = workspace_state.get('label_data_array')
             self.plot_config = workspace_state.get('plot_config')
             self.blob_config = workspace_state.get('blob_config')
@@ -506,9 +469,23 @@ class Data_Manager:
             self.angle_map_data = workspace_state.get('angle_map_data')
             self.inst_count_per_frame_pred = workspace_state.get('inst_count_per_frame_pred')
             self.blob_array = workspace_state.get('blob_array')
-            self.roi_frame_list = workspace_state.get('roi_frame_list', [])
-            self.outlier_frame_list = workspace_state.get('outlier_frame_list', [])
 
+            if 'frame_store' in workspace_state.keys():
+                self.fm = Frame_Manager.from_dict(workspace_state.get('frame_store'), self.refresh_callback)
+            else: # For backward compatibility 
+                self.fm = Frame_Manager(self.refresh_callback)
+                self.fm.add_frames("labeled", workspace_state.get('labeled_frame_list', []))
+                self.fm.add_frames("marked", workspace_state.get('frame_list', []))
+                self.fm.add_frames("refined", workspace_state.get('refined_frame_list', []))
+                self.fm.add_frames("approved", workspace_state.get('approved_frame_list', []))
+                self.fm.add_frames("rejected", workspace_state.get('rejected_frame_list', []))
+                self.fm.add_frames("animal_0", workspace_state.get('animal_0_list', []))
+                self.fm.add_frames("animal_1", workspace_state.get('animal_1_list', []))
+                self.fm.add_frames("animal_n", workspace_state.get('animal_n_list', []))
+                self.fm.add_frames("blob_merged", workspace_state.get('blob_merged_list', []))
+                self.fm.add_frames("roi_change", workspace_state.get('roi_frame_list', []))
+                self.fm.add_frames("outlier", workspace_state.get('outlier_frame_list', []))
+                
             self.init_vid_callback(self.video_file)
             if self.dlc_data is not None:
                 self._init_loaded_data()
@@ -516,40 +493,6 @@ class Data_Manager:
         except Exception as e:
             QMessageBox.critical(self.main, "Error Loading Workspace", f"Failed to load workspace:\n{e}")
             traceback.print_exc()
-
-    def _load_workspace_legacy(self, file_path:str):
-        with open(file_path, "r") as fmkf:
-            fmk = yaml.safe_load(fmkf)
-
-        if not "frame_list" in fmk.keys():
-            QMessageBox.warning(self.main, "File Error", "Not a extractor status file, make sure to load the correct file.")
-            return
-        
-        video_file = fmk["video_path"]
-
-        if not os.path.isfile(video_file):
-            QMessageBox.warning(self.main, "Warning", "Video path in file is not valid, has the video been moved?")
-            return
-        
-        self.update_video_path(video_file)
-        self.init_vid_callback(video_file)
-
-        dlc_config = fmk["dlc_config"]
-        prediction = fmk["prediction"]
-
-        if dlc_config and prediction:
-            self.load_pred_to_dm(dlc_config, prediction)
-
-        self.frame_list = fmk["frame_list"]
-        if "refined_frame_list" in fmk.keys():
-            self.refined_frame_list = fmk["refined_frame_list"]
-        if "approved_frame_list" in fmk.keys():
-            self.approved_frame_list = fmk["approved_frame_list"]
-        if "rejected_frame_list" in fmk.keys():
-            self.rejected_frame_list = fmk["rejected_frame_list"]
-            
-        self._init_loaded_data()
-        self.refresh_callback()
 
     ###################################################################################################################################################
 
@@ -586,8 +529,6 @@ class Data_Manager:
         data_loader = Prediction_Loader(self.dlc_data.dlc_config_filepath, prediction_path)
         self.prediction = prediction_path
         self.dlc_data = data_loader.load_data()
-        self.approved_frame_list[:] = list(set(self.approved_frame_list) - set(self.refined_frame_list))
-        self.rejected_frame_list[:] = list(set(self.rejected_frame_list) - set(self.refined_frame_list))
         self._init_canon_pose()
 
     ###################################################################################################################################################
@@ -601,11 +542,12 @@ class Data_Manager:
             exp_set.save_path = os.path.join(dlc_dir, "labeled-data", self.video_name)
             os.makedirs(exp_set.save_path, exist_ok=True)
 
-        if not self.refined_frame_list:
-            exporter = Exporter(self.dlc_data, exp_set, self.frame_list, crop_coords=crop_coords)
+        refd_list = self.get_frames("refined")
+        if not refd_list:
+            exporter = Exporter(self.dlc_data, exp_set, self.get_frames("marked"), crop_coords=crop_coords)
         else:
             exp_set.export_mode = "Merge"
-            exporter = Exporter(self.dlc_data, exp_set, self.refined_frame_list, crop_coords=crop_coords)
+            exporter = Exporter(self.dlc_data, exp_set, refd_list, crop_coords=crop_coords)
         
         if self.dlc_data:
             try:
@@ -629,10 +571,11 @@ class Data_Manager:
                 self.pred_file_dialog()
 
     def merge_data(self):
-        if not self.refined_frame_list:
+        refd_list = self.get_frames("refined")
+        if not refd_list:
             QMessageBox.warning(self.main, "No Refined Frame", "No frame has been refined, please refine some marked frames first.")
             return
-        if not self.labeled_frame_list:
+        if not self.get_frames("labeled"):
             self.save_to_dlc()
             return
 
@@ -644,11 +587,12 @@ class Data_Manager:
         )
 
         if reply == QMessageBox.Yes:
+            lb_list = self.get_frames("labeled")
             exp_set = Export_Settings(video_filepath=self.video_file, video_name=self.video_name,
                                       save_path=self.project_dir, export_mode="Merge")
 
-            self.label_data_array[self.refined_frame_list, :, :] = self.dlc_data.pred_data_array[self.refined_frame_list, :, :]
-            merge_frame_list = list(set(self.labeled_frame_list) | set(self.refined_frame_list))
+            self.label_data_array[refd_list, :, :] = self.dlc_data.pred_data_array[refd_list, :, :]
+            merge_frame_list = list(set(lb_list) | set(refd_list))
             label_data_array_export = remove_confidence_score(self.label_data_array)
 
             exporter = Exporter(dlc_data=self.dlc_data, export_settings=exp_set,

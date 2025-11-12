@@ -12,7 +12,6 @@ from utils.helper import frame_to_pixmap
 from .data_man import Data_Manager
 from .video_man import  Video_Manager
 from .tool import Mark_Generator, Blob_Counter, Prediction_Plotter
-from .palette import (NAV_COLOR_PALETTE as nvp, NAV_COLOR_PALETTE_COUNTING as nvpc, LABEL_INST_PALETTE as lip)
 
 class Frame_View:
     def __init__(self,
@@ -131,11 +130,11 @@ class Frame_View:
                 self.plotter.current_frame_data = self.dm.dlc_data.pred_data_array[self.dm.current_frame_idx,:,:]
                 frame = self.plotter.plot_predictions()
 
-            if self.dm.current_frame_idx in self.dm.labeled_frame_list and self.dm.plot_config.plot_labeled:
+            if self.dm.has_current_frame_cat("labeled") and self.dm.plot_config.plot_labeled:
                 self.plotter.frame_cv2 = frame
                 self.plotter.current_frame_data = self.dm.label_data_array[self.dm.current_frame_idx,:,:]
                 old_colors = self.plotter.color.copy()
-                self.plotter.color = lip
+                self.plotter.color = [(200, 130, 0), (40, 200, 40), (40, 120, 200), (200, 40, 40), (200, 200, 80)]
                 frame = self.plotter.plot_predictions()
                 self.plotter.color = old_colors
 
@@ -171,26 +170,19 @@ class Frame_View:
 
     def _refresh_slider(self):
         self.vid_play.sld.clear_frame_category()
-        if self.is_counting:
-            self.vid_play.sld.set_frame_category("zero_animal_frames", self.dm.animal_0_list, nvpc[1], priority=1)
-            self.vid_play.sld.set_frame_category("one_animal_frames", self.dm.animal_1_list, nvpc[2], priority=2)
-            self.vid_play.sld.set_frame_category("muliple_animal_frames", self.dm.animal_n_list, nvpc[3], priority=3)
-            self.vid_play.sld.set_frame_category("muliple_animal_frames (with merge)", self.dm.blob_merged_list, nvpc[4], priority=4)
-        else:
-            self.vid_play.sld.set_frame_category("marked_frames", self.dm.frame_list, nvp[1], 1)
-            self.vid_play.sld.set_frame_category("rejected_frames", self.dm.rejected_frame_list, nvp[2], 2)
-            self.vid_play.sld.set_frame_category("approved_frames", self.dm.approved_frame_list, nvp[3], 3)
-            self.vid_play.sld.set_frame_category("refined_frames", self.dm.refined_frame_list, nvp[4], 4)
-            self.vid_play.sld.set_frame_category("labeled_frames", self.dm.labeled_frame_list, nvp[5], 5)
+        group = "counting" if self.is_counting else "fview"
+        grouped_cat = self.dm.get_cat_in_group(group)
+        for cat in grouped_cat:
+            priority = 5 if cat == "blob_merged" else 0
+            self.vid_play.sld.set_frame_category(*self.dm.get_cat_metadata(cat), priority=priority)
 
     ###################################################################################################################################################
 
     def determine_list_to_nav(self) -> list:
         if self.is_counting and self.counter_list:
             return self.counter_list
-        if self.dm.plot_config.navigate_labeled and self.dm.labeled_frame_list:
-            return self.dm.labeled_frame_list
-        return self.dm.frame_list
+        else:
+            return self.dm.determine_list_to_nav_fview()
 
     def toggle_frame_status(self):
         if self.vm.check_status_msg():
@@ -207,7 +199,7 @@ class Frame_View:
         self.refresh_and_display()
 
     def _clear_category(self, frame_category):
-        self.dm.clear_frame_cat(frame_category)
+        self.dm.clear_category(frame_category)
 
     def _on_clear_old_command(self, clear_old:bool):
         self.dm.clear_old_cat(clear_old)
@@ -228,13 +220,13 @@ class Frame_View:
             self.menu_slot_callback()
             mark_gen = Mark_Generator(self.dm.total_frames, self.dm.dlc_data, self.dm.canon_pose, parent=self.main)
             mark_gen.clear_old.connect(self._on_clear_old_command)
-            mark_gen.frame_list_new.connect(self._handle_frame_list_from_comp)
+            mark_gen.frame_list_new.connect(self._handle_frame_list_from_mark_gen)
             self.vid_play.set_right_panel_widget(mark_gen)
         else:
             self.vid_play.set_right_panel_widget(None)
 
     def show_clear_mark_dialog(self):
-        frame_categories = self.dm.get_frame_categories()
+        frame_categories = self.dm.get_frame_categories_fview()
         if frame_categories:
             mark_clear_dialog = Frame_List_Dialog(frame_categories, parent=self.main)
             mark_clear_dialog.frame_list_selected.connect(self._clear_category)
@@ -250,29 +242,15 @@ class Frame_View:
     ###################################################################################################################################################
 
     def _handle_rerun_frames_exported(self, frame_tuple):
-        self.dm.approved_frame_list, self.dm.rejected_frame_list = frame_tuple
-        self.frame_list = list(set(self.dm.approved_frame_list) | set(self.dm.rejected_frame_list))
-        self.refresh_and_display()
+        self.dm.handle_rurun_frame_tuple(frame_tuple)
+        self.display_current_frame()
 
-    def _handle_frame_list_from_comp(self, frame_list):
-        frame_set = set(self.dm.frame_list) | set(frame_list) - set(self.dm.labeled_frame_list)
-        self.dm.frame_list[:] = list(frame_set)
-        self.refresh_and_display()
+    def _handle_frame_list_from_mark_gen(self, frame_list):
+        self.dm.handle_mark_gen_list(frame_list)
+        self.display_current_frame()
 
     def _handle_counter_from_counter(self, blob_array:np.ndarray):
-        self.dm.blob_array = blob_array
-        self.dm.animal_0_list = list(np.where(blob_array[:, 0]==0)[0])
-        self.dm.animal_1_list = list(np.where(blob_array[:, 0]==1)[0])
-        self.dm.animal_n_list = list(np.where(blob_array[:, 0]>1)[0])
-        self.dm.blob_merged_list = list(np.where(blob_array[:, 1]==1)[0])
-        self.dm.save_workspace()
-
-        for frame_list in [self.dm.blob_merged_list, self.dm.animal_n_list, self.dm.animal_1_list, self.dm.animal_0_list]:
-            if frame_list:
-                self.counter_list = frame_list.copy()
-                break
-
-        self.refresh_ui()
+        self.counter_list = self.dm.handle_blob_counter_array(blob_array)
 
     def _handle_counter_config_change(self):
         self.dm.blob_config = self.blob_counter.get_config()
@@ -288,8 +266,8 @@ class Frame_View:
     def pre_saving_sanity_check(self):
         if not self.vm.check_status_msg():
             return False
-        if not self.dm.frame_list:
-            QMessageBox.warning(self.main, "No Marked Frame", "No frame has been marked, please mark some frames first.")
+        if not self.dm.frames_in_any({"marked", "refined", "rejected", "approved"}):
+            QMessageBox.information(self.main, "No Marked Frames", "No frames have been marked for export.")
             return False
         self.dm.save_workspace()
         return True
@@ -312,7 +290,7 @@ class Frame_View:
                 dialog.exec()
             elif self.skip_counting:
                 inference_list = list(range(self.dm.total_frames))
-                self.call_inference(inference_list, True)
+                self.call_inference(inference_list)
         else:
             inference_list = list(range(self.dm.total_frames))
             self.call_inference(inference_list)
@@ -321,7 +299,8 @@ class Frame_View:
         if not self.dm.video_file:
             QMessageBox.warning(self.main, "Video Not Loaded", "No video is loaded, load a video first!")
             return
-        if not self.dm.frame_list and not inference_list:
+        fm_list = self.dm.get_frames("marked")
+        if not fm_list and not inference_list:
             QMessageBox.warning(self.main, "No Marked Frame", "No frame has been marked, please mark some frames first.")
             return
         if self.is_counting:
@@ -334,8 +313,8 @@ class Frame_View:
                 return
 
             self.dm.load_metadata_to_dm(dlc_config)
-            if not inference_list:
-                inference_list = self.dm.frame_list
+            if not inference_list: # Use marked frames if inference_list is not provided
+                inference_list = fm_list
 
         from core.tool import DLC_Inference
         try:
@@ -450,8 +429,9 @@ class Frame_View:
         self.status_bar.show_message("Marked frames exported to clipboard.")
     
     def save_to_dlc(self):
-        if self.vm.image_files and not self.dm.frame_list:
-            self.dm.frame_list = list(range(self.vm.get_frame_counts()))
+        fm_list = self.dm.get_frames("marked")
+        if self.vm.image_files and not fm_list:
+            fm_list = list(range(self.vm.get_frame_counts()))
         if not self.pre_saving_sanity_check():
             return
         reply = QMessageBox.question(
@@ -461,7 +441,8 @@ class Frame_View:
             self.dm.save_to_dlc() 
             self.refresh_and_display()
         else:
-            frame_list = self.dm.frame_list if not self.dm.refined_frame_list else self.dm.refined_frame_list
+            refd_list = self.dm.get_frames("refined")
+            frame_list = refd_list if refd_list else fm_list
             if self.dm.dlc_data is None or self.dm.dlc_data.pred_data_array is None: # No prediction, blob mode
                 self._get_crop_coords_from_blob(frame_list)
             else:

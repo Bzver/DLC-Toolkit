@@ -4,7 +4,7 @@ from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QPushButton, QHBoxLayout, QVBoxLayout, QDialog, QLabel, QMessageBox, QSpinBox
 
-from typing import List, Dict
+from typing import List, Dict, Tuple
 from time import time
 
 class Pose_Rotation_Dialog(QDialog):
@@ -57,7 +57,7 @@ class Frame_List_Dialog(QDialog):
     frame_list_selected = Signal(str)
     frame_indices_acquired = Signal(list)
 
-    def __init__(self, frame_categories:Dict[str, List[int]], indices_mode:bool=False, parent=None):
+    def __init__(self, frame_categories:Dict[str, Tuple[str, List[int]]], indices_mode:bool=False, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Select Frame List")
         self.frame_categories = frame_categories
@@ -65,17 +65,17 @@ class Frame_List_Dialog(QDialog):
 
         layout = QVBoxLayout(self)
         
-        for label, frames in self.frame_categories.items():
-            count = len(frames)
+        for label, frame_tuple in self.frame_categories.items():
+            count = len(frame_tuple[1])
             btn = QPushButton(f"{label} ({count})")
-            btn.clicked.connect(partial(self._on_button_clicked, label))
+            btn.clicked.connect(partial(self._on_button_clicked, frame_tuple))
             layout.addWidget(btn)
 
-    def _on_button_clicked(self, category_text:str):
-        if self.indices_mode: 
-            self.frame_indices_acquired.emit(self.frame_categories[category_text])
+    def _on_button_clicked(self, frame_tuple:Tuple[str, List[int]]):
+        if self.indices_mode:
+            self.frame_indices_acquired.emit(frame_tuple[1])
         else:
-            self.frame_list_selected.emit(category_text)
+            self.frame_list_selected.emit(frame_tuple[0])
         self.accept()
 
 ###################################################################################################################################################

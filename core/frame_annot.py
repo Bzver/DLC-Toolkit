@@ -12,10 +12,6 @@ from utils.helper import frame_to_pixmap
 from .data_man import Data_Manager
 from .video_man import  Video_Manager
 from .tool import Mark_Generator, Blob_Counter, Prediction_Plotter
-from .palette import (
-    NAV_COLOR_PALETTE as nvp,
-    NAV_COLOR_PALETTE_COUNTING as nvpc,
-    LABEL_INST_PALETTE as lip)
 
 class Frame_Annotator:
     def __init__(self,

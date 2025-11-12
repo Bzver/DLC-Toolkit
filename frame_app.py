@@ -150,6 +150,7 @@ class Frame_App(QMainWindow):
         self.shortcuts.add_shortcuts_from_config(flabel_shortcuts, clear_first=True)
         self.flabel.activate(self.menu_widget)
         self.at = self.flabel
+        self.dm.handle_mode_switch_fview_to_flabel()
         if self.kem.pred_data_array is None and self.dm.dlc_data.pred_data_array is not None:
             self.kem.pred_data_array = self.dm.dlc_data.pred_data_array
 

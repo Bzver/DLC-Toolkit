@@ -11,7 +11,6 @@ from .data_man import Data_Manager
 from .video_man import Video_Manager
 from .edit_man import Keypoint_Edit_Manager
 from .tool import Outlier_Finder, Canvas, Prediction_Plotter
-from .palette import NAV_COLOR_PALETTE as nvp, NAV_COLOR_PALETTE_FLAB as nvpl
 from .dataclass import Plot_Config, Plotter_Callbacks
 
 class Frame_Label:
@@ -197,9 +196,9 @@ class Frame_Label:
         self.status_bar.show_message(title_text, duration_ms=0)
 
         if self.open_outlier or self.dm.plot_config.navigate_roi:
-            color = self.dm.determine_nav_color_fro()
-        else:
             color = self.dm.determine_nav_color_flabel()
+        else:
+            color = self.dm.determine_nav_color_fview()
         if color:
             self.vid_play.nav.set_title_color(color)
         else:
@@ -208,30 +207,28 @@ class Frame_Label:
     def _refresh_slider(self):
         self.vid_play.sld.clear_frame_category()
         if self.open_outlier:
-            self.vid_play.sld.set_frame_category("Outlier frames", self.dm.outlier_frame_list, nvpl[2], 2)
+            self.vid_play.sld.set_frame_category(*self.dm.get_cat_metadata("outlier"))
         elif self.dm.plot_config.navigate_roi:
-            self.dm.roi_frame_list = self.kem.update_roi()
-            self.vid_play.sld.set_frame_category("ROI frames", self.dm.roi_frame_list, nvpl[1], 1)
+            self.vid_play.sld.set_frame_category(*self.dm.get_cat_metadata("roi_change"))
+            self.dm.handle_cat_update("roi_change", self.kem.update_roi())
         else:
-            self.vid_play.sld.set_frame_category("Marked frames", self.dm.frame_list, nvp[1], 1)
-            self.vid_play.sld.set_frame_category("Refined frames", self.dm.refined_frame_list, nvp[4], 4)
+            self.vid_play.sld.set_frame_category(*self.dm.get_cat_metadata("marked"))
+            self.vid_play.sld.set_frame_category(*self.dm.get_cat_metadata("refined"))
 
     ###################################################################################################################################################
 
     def determine_list_to_nav(self):
-        if self.dm.plot_config.navigate_roi:
-            return self.dm.roi_frame_list
         if self.open_outlier:
-            return self.dm.outlier_frame_list
-        return self.dm.frame_list
+            return self.dm.get_frames("outlier")
+        else:
+            return self.dm.determine_list_to_nav_flabel()
 
     def toggle_frame_status(self):
-        if self.dm.current_frame_idx in self.dm.frame_list:
-            self.dm.toggle_frame_status_fview()
+        self.dm.toggle_frame_status_flabel()
         self.refresh_ui()
 
     def _mark_refined(self):
-        self.dm.toggle_frame_status_flabel()
+        self.dm.mark_refined_flabel()
 
     def _mark_all_as_refined(self):
         self.dm.mark_all_refined_flabel()
@@ -387,15 +384,15 @@ class Frame_Label:
         angle_delta = np.radians(angle_delta)
         self.kem.rot_inst(self.dm.current_frame_idx, instance_idx, angle_delta)
 
-    def _handle_frame_list_from_comp(self, frame_list:list):
-        self.dm.outlier_frame_list = frame_list
+    def _handle_frame_list_from_comp(self, frame_list):
+        self.dm.handle_cat_update("outlier", frame_list)
         if frame_list:
             self.dm.current_frame_idx = frame_list[0]
         self.refresh_and_display()
 
     def _handle_outlier_mask_from_comp(self, outlier_mask:np.ndarray):
         self.kem.del_outlier(outlier_mask)
-        self.dm.outlier_frame_list.clear()
+        self.dm.handle_cat_update("outlier", [])
 
     def _handle_config_from_config(self, new_config:Plot_Config):
         self.dm.plot_config = new_config
