@@ -199,10 +199,6 @@ class Data_Manager:
     def mark_refined_flabel(self):
         self.fm.move_frame(new_category="refined", old_category="marked")
 
-    def handle_mode_switch_fview_to_flabel(self):
-        self.fm.clear_category("rejected")
-        self.fm.move_category("marked", "approved")
-
     def mark_all_refined_flabel(self):
         self.fm.move_category("refined", "marked")
 
@@ -278,7 +274,7 @@ class Data_Manager:
         return "#000000"
 
     def determine_nav_color_counting(self) -> HexColor:
-        if self.get_frames("blob_merged"):
+        if self.has_current_frame_cat("blob_merged"):
             return self.fm.get_color("blob_merged")
         for cat in self.fm.count_cats:
             if self.has_current_frame_cat(cat):
@@ -377,6 +373,10 @@ class Data_Manager:
             )
         crop_coords = np.clip(crop_coords, 0, [max_x, max_y, max_x, max_y]).astype(int)
         return crop_coords
+
+    def handle_mode_switch_fview_to_flabel(self):
+        self.fm.clear_category("rejected")
+        self.fm.move_category("marked", "approved")
 
     def handle_rurun_frame_tuple(self, frame_tuple:Tuple[List[int], List[int]]):
         self.fm.add_frames("approved", frame_tuple[0])

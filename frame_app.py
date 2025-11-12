@@ -44,11 +44,16 @@ class Frame_App(QMainWindow):
 
         status_layout = QHBoxLayout()
         self.status_bar = Status_Bar(self)
-        self.mode_toggle = Toggle_Switch("Labeling Mode", parent=self)
-        self.mode_toggle.toggled.connect(self._on_mode_toggle)
+
+        self.mode_toggle_flabel = Toggle_Switch("Labeling Mode")
+        self.mode_toggle_fannot = Toggle_Switch("Annotation Mode")
+        self.mode_toggle_flabel.toggled.connect(self._on_mode_toggle_flabel)
+        self.mode_toggle_fannot.toggled.connect(self._on_mode_toggle_fannot)
+
         status_layout.addWidget(self.status_bar)
         status_layout.addStretch()
-        status_layout.addWidget(self.mode_toggle)
+        status_layout.addWidget(self.mode_toggle_flabel)
+        status_layout.addWidget(self.mode_toggle_fannot)
         self.app_layout.addLayout(status_layout)
 
         self._setup_menu()
@@ -120,8 +125,8 @@ class Frame_App(QMainWindow):
         self.at.refresh_ui()
 
     def _switch_to_fview(self):
-        if hasattr(self, 'at') and self.at == self.flabel:
-            self.flabel.deactivate(self.menu_widget)
+        if hasattr(self, "at"):
+            self.at.deactivate(self.menu_widget)
         fview_shortcuts = {
             **self.common_shortcut,
             "mark": {"key": "X", "callback": self.fview.toggle_frame_status},
@@ -129,11 +134,11 @@ class Frame_App(QMainWindow):
         self.shortcuts.add_shortcuts_from_config(fview_shortcuts, clear_first=True)
         self.fview.activate(self.menu_widget)
         self.at = self.fview
-        self.mode_toggle.set_checked(False)
+        self.mode_toggle_flabel.set_checked(False)
+        self.mode_toggle_fannot.set_checked(False)
 
     def _switch_to_flabel(self):
-        if hasattr(self, 'at') and self.at == self.fview:
-            self.fview.deactivate(self.menu_widget)
+        self.fview.deactivate(self.menu_widget)
         flabel_shortcuts = {
             **self.common_shortcut,
             "swp_trk_sg": {"key": "W", "callback": self.flabel.swap_track_single},
@@ -156,13 +161,32 @@ class Frame_App(QMainWindow):
         self.dm.handle_mode_switch_fview_to_flabel()
         if self.kem.pred_data_array is None and self.dm.dlc_data is not None:
             self.kem.pred_data_array = self.dm.dlc_data.pred_data_array
-        self.mode_toggle.set_checked(True)
 
-    def _on_mode_toggle(self, is_checked: bool):
+        self.mode_toggle_flabel.set_checked(True)
+
+    def _switch_to_fannot(self):
+        self.fview.deactivate(self.menu_widget)
+        self.mode_toggle_fannot.set_checked(True)
+        self.fannot.activate(self.menu_widget)
+
+    def _on_mode_toggle_flabel(self, is_checked:bool):
         if is_checked:
             self._switch_to_flabel()
+            self.mode_toggle_fannot.set_locked(True)
         else:
             self._switch_to_fview()
+            self.mode_toggle_fannot.set_locked(False)
+        self._reset_ui_during_mode_switch()
+        if self.dm.video_file:
+            self.at.refresh_and_display()
+
+    def _on_mode_toggle_fannot(self, is_checked:bool):
+        if is_checked:
+            self._switch_to_fannot()
+            self.mode_toggle_flabel.set_locked(True)
+        else:
+            self._switch_to_fview()
+            self.mode_toggle_flabel.set_locked(False)
         self._reset_ui_during_mode_switch()
         if self.dm.video_file:
             self.at.refresh_and_display()
@@ -201,7 +225,7 @@ class Frame_App(QMainWindow):
         if self.dm.pred_file_dialog():
             self.kem.set_pred_data(self.dm.dlc_data.pred_data_array)
             self.at.display_current_frame()
-            self.at.reset_zoom()
+            self.flabel.reset_zoom()
 
     def _load_dlc_label_data(self):
         self._reset_state()
@@ -213,7 +237,7 @@ class Frame_App(QMainWindow):
             self.dm.total_frames = len(self.vm.image_files)
             self.vid_play.set_total_frames(self.dm.total_frames)
         self.at.display_current_frame()
-        self.at.reset_zoom()
+        self.flabel.reset_zoom()
 
     def _load_workspace(self):
         self._reset_state()
@@ -320,7 +344,7 @@ class Frame_App(QMainWindow):
     def _handle_config_from_config(self, new_config:Plot_Config):
         self.dm.plot_config = new_config
         if not self.dm.plot_config.auto_snapping:
-            self.at.reset_zoom()
+            self.flabel.reset_zoom()
         self.at.refresh_and_display()
 
     def _handle_right_panel_menu_change(self):
@@ -337,7 +361,7 @@ class Frame_App(QMainWindow):
 
     def changeEvent(self, event):
         if event.type() == QEvent.Type.WindowStateChange:
-            self.at.reset_zoom()
+            self.flabel.reset_zoom()
         super().changeEvent(event)
 
     def closeEvent(self, event: QCloseEvent):

@@ -152,9 +152,6 @@ class Frame_View:
         self.refresh_ui()
         self.display_current_frame()
 
-    def reset_zoom(self): # Kept for frame_app complatibility
-        pass
-
     def refresh_ui(self):
         self.navigation_title_controller()
         self._refresh_slider()

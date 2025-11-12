@@ -99,11 +99,12 @@ class Frame_Manager:
     def clear_group(self, group:str):
         for cat, meta in self.metadata.items():
             if meta.get("group") == group:
-                self.frames[cat].clear()
+                self.clear_category(cat)
     
     def clear_all(self):
         for cat in self.frames.keys():
             self.frames[cat].clear()
+        self.refresh_callback()
 
     def reset_fm(self):
         if any(self.frames.values()):
