@@ -18,6 +18,10 @@ class Frame_Manager:
         "outlier":     {"display_name": "Outlier Frames",       "color_hex": "#75541F", "group": "flabel"},
     }
 
+    COLOR_HEX_EXPANDED = ["#9C27B0", "#00BCD4", "#FF9800", "#4CAF50", "#F44336", "#3F51B5", "#E91E63",
+                          "#009688", "#607D8B", "#FF5722", "#795548", "#2196F3", "#CDDC39", "#FFC107",
+                          "#8BC34A", "#673AB7", "#03A9F4", "#FFEB3B", "#00E676", "#D50000", "#BD34A6"]
+
     def __init__(self, refresh_callback:Callable[[], None]):
         self.frames: Dict[str, Set[int]] = defaultdict(set)
         self.metadata: Dict[str, Dict[str, Any]] = {}
@@ -166,17 +170,22 @@ class Frame_Manager:
     ##########################################################################################################################################
 
     def to_dict(self) -> Dict[str, Any]:
+        all_cat = set(self.metadata.keys()) | set(self.frames.keys())
         return {
-            "frames": {k: sorted(v) for k, v in self.frames.items() if v},
+            "frames": {cat: sorted(self.frames[cat]) for cat in all_cat},
             "metadata": self.metadata.copy()
         }
 
     @classmethod
     def from_dict(cls, data:Dict[str, Any], refresh_callback:Callable[[], None] = None) -> "Frame_Manager":
-        store = cls(refresh_callback or (lambda: None))  # safe no-op if not provided
-        for cat, frames in data.get("frames", {}).items():
-            store.frames[cat] = set(frames)
-        store.metadata = data.get("metadata", {}).copy()
+        store = cls(refresh_callback or (lambda: None))
+        metadata = data.get("metadata", {})
+        frames_data = data.get("frames", {})
+
+        for cat in metadata:
+            store.metadata[cat] = metadata[cat].copy()
+            store.frames[cat] = set(frames_data.get(cat, []))
+            
         return store
     
     ##########################################################################################################################################
