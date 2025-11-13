@@ -190,8 +190,9 @@ class Frame_View:
             self.vid_play.set_left_panel_widget(None)
         self.refresh_and_display()
 
-    def _clear_category(self, frame_category):
-        self.dm.clear_category(frame_category)
+    def _clear_category(self, frame_categories):
+        for cat in frame_categories: 
+            self.dm.clear_frame_cat(cat)
 
     def _on_clear_old_command(self, clear_old:bool):
         self.dm.clear_old_cat(clear_old)
@@ -221,13 +222,13 @@ class Frame_View:
         frame_categories = self.dm.get_frame_categories_fview()
         if frame_categories:
             mark_clear_dialog = Frame_List_Dialog(frame_categories, parent=self.main)
-            mark_clear_dialog.frame_list_selected.connect(self._clear_category)
+            mark_clear_dialog.categories_selected.connect(self._clear_category)
             mark_clear_dialog.exec()
 
     def _select_counter_list(self):
         frame_categories = self.dm.get_frame_categories_counting()
         if frame_categories:
-            list_select_dialog = Frame_List_Dialog(frame_categories, True, parent=self.main)
+            list_select_dialog = Frame_List_Dialog(frame_categories, parent=self.main)
             list_select_dialog.frame_indices_acquired.connect(self._counter_list_selected)
             list_select_dialog.exec()
 

@@ -207,10 +207,6 @@ class Data_Manager:
 
     def get_frame_categories_fview(self) -> Dict[str, Tuple[str, List[int]]]:
         frame_options = {}
-        all_marked = self.frames_in_any(["marked", "rejected", "approved"])
-        if all_marked:
-            frame_options["All Non-Refined Frames"] = ("non_refined", all_marked)
-
         pop_cats = self.fm.all_populated_categories()
         for cat in pop_cats:
             if cat in self.fm.flabel_cats and cat != "labeled":

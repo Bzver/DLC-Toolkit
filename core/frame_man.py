@@ -84,11 +84,6 @@ class Frame_Manager:
             self.add_frame(category, frame_idx)
 
     def clear_category(self, category:str):
-        if category == "non_refined": # Used by external actor
-            for cat in ["marked", "rejected", "approved"]:
-                self.frames[cat].clear()
-            self.refresh_callback()
-            return
         if self.frames[category]:
             if category in ["rejected", "approved"]: # They get a second chance
                 self.move_category("marked", category)

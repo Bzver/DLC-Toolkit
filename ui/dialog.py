@@ -2,7 +2,7 @@ from functools import partial
 
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QPushButton, QHBoxLayout, QVBoxLayout, QDialog, QLabel, QMessageBox, QSpinBox
+from PySide6.QtWidgets import QPushButton, QHBoxLayout, QVBoxLayout, QDialog, QLabel, QMessageBox, QSpinBox, QCheckBox
 
 from typing import List, Dict, Tuple
 from time import time
@@ -54,28 +54,60 @@ class Pose_Rotation_Dialog(QDialog):
 ###################################################################################################################################################
 
 class Frame_List_Dialog(QDialog):
-    frame_list_selected = Signal(str)
     frame_indices_acquired = Signal(list)
+    categories_selected = Signal(list)
 
-    def __init__(self, frame_categories:Dict[str, Tuple[str, List[int]]], indices_mode:bool=False, parent=None):
+    def __init__(self, frame_categories: Dict[str, Tuple[str, List[int]]], parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Select Frame List")
+        self.setWindowTitle("Select Frame Categories")
         self.frame_categories = frame_categories
-        self.indices_mode = indices_mode
 
-        layout = QVBoxLayout(self)
-        
-        for label, frame_tuple in self.frame_categories.items():
-            count = len(frame_tuple[1])
-            btn = QPushButton(f"{label} ({count})")
-            btn.clicked.connect(partial(self._on_button_clicked, frame_tuple))
-            layout.addWidget(btn)
+        self.checkboxes: Dict[str, QCheckBox] = {}
+        main_layout = QVBoxLayout(self)
 
-    def _on_button_clicked(self, frame_tuple:Tuple[str, List[int]]):
-        if self.indices_mode:
-            self.frame_indices_acquired.emit(frame_tuple[1])
-        else:
-            self.frame_list_selected.emit(frame_tuple[0])
+        scroll_area = QtWidgets.QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_content = QtWidgets.QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setAlignment(Qt.AlignTop)
+
+        for label, (_, indices) in self.frame_categories.items():
+            count = len(indices)
+            checkbox = QCheckBox(f"{label} — ({count} frames)")
+            checkbox.setObjectName(label)
+            self.checkboxes[label] = checkbox
+            scroll_layout.addWidget(checkbox)
+
+        scroll_content.setLayout(scroll_layout)
+        scroll_area.setWidget(scroll_content)
+        main_layout.addWidget(scroll_area)
+
+        button_layout = QHBoxLayout()
+        self.ok_btn = QPushButton("OK")
+        self.cancel_btn = QPushButton("Cancel")
+
+        self.ok_btn.clicked.connect(self._on_ok)
+        self.cancel_btn.clicked.connect(self.reject)
+
+        button_layout.addStretch()
+        button_layout.addWidget(self.ok_btn)
+        button_layout.addWidget(self.cancel_btn)
+
+        main_layout.addLayout(button_layout)
+
+    def _on_ok(self):
+        selected_categories = []
+        combined_indices = []
+
+        for label, checkbox in self.checkboxes.items():
+            if checkbox.isChecked():
+                selected_categories.append(label)
+                _, indices = self.frame_categories[label]
+                combined_indices.extend(indices)
+
+        combined_indices = sorted(set(combined_indices))
+        self.frame_indices_acquired.emit(combined_indices)
+        self.categories_selected.emit(selected_categories)
         self.accept()
 
 ###################################################################################################################################################

@@ -261,7 +261,7 @@ class Frame_App(QMainWindow):
             frame_categories = self.dm.get_frame_categories()
 
         if frame_categories:
-            list_select_dialog = Frame_List_Dialog(frame_categories, True, parent=self)
+            list_select_dialog = Frame_List_Dialog(frame_categories, parent=self)
             list_select_dialog.frame_indices_acquired.connect(self._frame_list_selected)
             list_select_dialog.exec()
 

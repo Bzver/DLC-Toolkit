@@ -30,13 +30,6 @@ class Frame_Label:
         self.plot_config_callback = plot_config_callback
         self.main = parent
 
-        self.plotter_callback = Plotter_Callbacks(
-            keypoint_coords_callback = self._update_keypoint_position,
-            keypoint_object_callback = self.gview.set_dragged_keypoint,
-            box_coords_callback = self._update_instance_position,
-            box_object_callback = self.gview._handle_box_selection
-        )
-
         self.labeler_menu_config = {
             "View":{
                 "buttons": [
@@ -92,6 +85,13 @@ class Frame_Label:
         }
 
         self._init_gview()
+        self.plotter_callback = Plotter_Callbacks(
+            keypoint_coords_callback = self._update_keypoint_position,
+            keypoint_object_callback = self.gview.set_dragged_keypoint,
+            box_coords_callback = self._update_instance_position,
+            box_object_callback = self.gview._handle_box_selection
+        )
+
         self.reset_state()
 
     def activate(self, menu_widget:Menu_Widget):
