@@ -3,8 +3,8 @@ import numpy as np
 from PySide6 import QtWidgets, QtGui
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QSizePolicy, 
-    QSlider, QDialog, QSpinBox, QComboBox, QPushButton
+    QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
+    QSizePolicy, QSlider, QDialog, QComboBox, QPushButton
 )
 
 import matplotlib
@@ -342,15 +342,20 @@ class Blob_Counter(QGroupBox):
     def _plot_blob_histogram(self):
         if not self.frame_extractor:
             return
+        
+        self._reset_blob_array()
+        self.video_counted.emit(self.blob_array) # Invalidated previous counting and refresh the state
 
         total_frames = self.frame_extractor.get_total_frames()
         if total_frames == 0:
             return
-
-        sample_count = min(100, total_frames)
-        frame_indices = np.linspace(0, total_frames - 1, sample_count // 2, dtype=int)
-
-        interval = min(frame_indices[1] - frame_indices[0], 100)
+        
+        sample_segment_count = min(100, total_frames//500)
+        frame_indices = np.unique(np.linspace(0, total_frames - 1, sample_segment_count, dtype=int))
+        if len(frame_indices) == 1:
+            sample_segment_length = min(500, total_frames)
+        else:
+            sample_segment_length = min(frame_indices[1] - frame_indices[0], 500)
 
         areas = []
         progress_dialog = Progress_Indicator_Dialog(0, len(frame_indices), "Blob Analysis", "Analyzing blob sizes...", self)
@@ -362,18 +367,20 @@ class Blob_Counter(QGroupBox):
                 self.frame_extractor.finish_sequential_read()
                 break
 
-            for k in range(interval):
+            for k in range(sample_segment_length):
                 result = self.frame_extractor.read_next_frame()
                 if result is None:
                     break
+                if k % 5 != 0:
+                    continue
                 actual_idx, frame = result
-                assert actual_idx == idx+k, "Frame index mismatch!"
+                assert actual_idx == idx + k, f"Frame index mismatch! actual_idx: {actual_idx} | idx + k: {idx + k}"
 
                 contours = self._process_contour_from_frame(frame)
                 count_result = self._perform_blob_counting(contours)
                 frame_areas = [cv2.contourArea(c) for c in contours]
                 areas.extend(frame_areas)
-                self.blob_array[idx+k, 0], self.blob_array[idx+k, 1] = count_result
+                self.blob_array[idx + k, 0], self.blob_array[idx+k, 1] = count_result
             
             self.frame_extractor.finish_sequential_read()
 
