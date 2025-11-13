@@ -584,7 +584,7 @@ class Blob_Histogram(QVBoxLayout):
         self.ax.clear()
 
         upper_limit = float(np.percentile(self.blob_areas, 99))
-        xlim_max = upper_limit * 1.05
+        xlim_max = upper_limit * 1.2 + 500
         xlim_min = np.nanmin(self.blob_areas) * 0.95
 
         self.ax.hist(self.blob_areas, bins=100, range=(0, xlim_max), color='skyblue', edgecolor='black', alpha=0.7)

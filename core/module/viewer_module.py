@@ -71,14 +71,10 @@ class Frame_View:
             menu_widget.remove_entire_menu(menu)
 
     def reset_state(self):
-        self.vid_play.set_total_frames(0)
-
         self.counter_list = []
         self.open_mark_gen = False
         self.is_counting = False
         self.skip_counting = False
-        
-        self.refresh_ui()
 
     def init_loaded_vid(self):
         if self.dm.dlc_data is None or self.dm.dlc_data.pred_data_array is None:

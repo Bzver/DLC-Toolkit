@@ -30,6 +30,12 @@ class Frame_Label:
         self.plot_config_callback = plot_config_callback
         self.main = parent
 
+        self.plotter_callback = Plotter_Callbacks(
+            keypoint_coords_callback = self._update_keypoint_position,
+            keypoint_object_callback = self.gview.set_dragged_keypoint,
+            box_coords_callback = self._update_instance_position,
+            box_object_callback = self.gview._handle_box_selection
+        )
 
         self.labeler_menu_config = {
             "View":{
@@ -110,16 +116,7 @@ class Frame_Label:
         self.open_outlier = False
         self.skip_outlier_clean= False
         self.is_saved = True
-
-        self.plotter_callback = Plotter_Callbacks(
-            keypoint_coords_callback = self._update_keypoint_position,
-            keypoint_object_callback = self.gview.set_dragged_keypoint,
-            box_coords_callback = self._update_instance_position,
-            box_object_callback = self.gview._handle_box_selection
-        )
-
         self.reset_zoom()
-        self.refresh_ui()
             
     def init_loaded_vid(self):
         self.reset_zoom()

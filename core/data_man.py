@@ -397,7 +397,7 @@ class Data_Manager:
         self.fm.clear_group("counting")
         self.fm.add_frames("animal_0", animal_0_list)
         self.fm.add_frames("animal_1", animal_1_list)
-        self.fm.add_frames("animal_2", animal_n_list)
+        self.fm.add_frames("animal_n", animal_n_list)
         self.fm.add_frames("blob_merged", blob_merged_list)
         self.save_workspace()
 
@@ -472,6 +472,7 @@ class Data_Manager:
 
             if 'frame_store' in workspace_state.keys():
                 self.fm = Frame_Manager.from_dict(workspace_state.get('frame_store'), self.refresh_callback)
+                self.fm.move_category("animal_n", "animal_2")
             else: # For backward compatibility 
                 self.fm = Frame_Manager(self.refresh_callback)
                 self.fm.add_frames("labeled", workspace_state.get('labeled_frame_list', []))

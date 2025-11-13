@@ -47,8 +47,7 @@ class Frame_Annotator:
             menu_widget.remove_entire_menu(menu)
 
     def reset_state(self):
-        self.vid_play.set_total_frames(0)
-        self.refresh_ui()
+        pass
 
     def _unimplemented(self):
         pass

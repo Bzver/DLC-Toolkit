@@ -47,7 +47,6 @@ class Frame_App(QMainWindow):
         self.mode_toggle_fannot = Toggle_Switch("Annotation Mode")
         self.mode_toggle_flabel.toggled.connect(self._on_mode_toggle_flabel)
         self.mode_toggle_fannot.toggled.connect(self._on_mode_toggle_fannot)
-
         status_layout.addWidget(self.status_bar)
         status_layout.addStretch()
         status_layout.addWidget(self.mode_toggle_flabel)
@@ -114,6 +113,7 @@ class Frame_App(QMainWindow):
         self.vid_play.set_total_frames(0)
         self.vid_play.nav.set_current_video_name("---")
         self.at.reset_state()
+        self._refresh_ui()
 
         self.open_config = False
         self.plot_config_widget = None
@@ -165,6 +165,7 @@ class Frame_App(QMainWindow):
     def _switch_to_fannot(self):
         self.fview.deactivate(self.menu_widget)
         self.mode_toggle_fannot.set_checked(True)
+        self.at = self.fannot
         self.fannot.activate(self.menu_widget)
 
     def _on_mode_toggle_flabel(self, is_checked:bool):
