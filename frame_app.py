@@ -164,29 +164,30 @@ class Frame_App(QMainWindow):
 
     def _switch_to_fannot(self):
         self.fview.deactivate(self.menu_widget)
-        self.mode_toggle_fannot.set_checked(True)
+        self.shortcuts.add_shortcuts_from_config(self.common_shortcut)
         self.at = self.fannot
         self.fannot.activate(self.menu_widget)
+        self.mode_toggle_fannot.set_checked(True)
 
     def _on_mode_toggle_flabel(self, is_checked:bool):
+        self._reset_ui_during_mode_switch()
         if is_checked:
             self._switch_to_flabel()
             self.mode_toggle_fannot.set_locked(True)
         else:
             self._switch_to_fview()
             self.mode_toggle_fannot.set_locked(False)
-        self._reset_ui_during_mode_switch()
         if self.dm.video_file:
             self.at.refresh_and_display()
 
     def _on_mode_toggle_fannot(self, is_checked:bool):
+        self._reset_ui_during_mode_switch()
         if is_checked:
             self._switch_to_fannot()
             self.mode_toggle_flabel.set_locked(True)
         else:
             self._switch_to_fview()
             self.mode_toggle_flabel.set_locked(False)
-        self._reset_ui_during_mode_switch()
         if self.dm.video_file:
             self.at.refresh_and_display()
 

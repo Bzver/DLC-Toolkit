@@ -86,6 +86,7 @@ class Annotation_Config(QtWidgets.QWidget):
                 return
 
         self._behaviors_map[category] = new_key_lower
+        self.map_change.emit(self._behaviors_map)
         item.setText(new_key.upper())
 
     def _add_category(self):
