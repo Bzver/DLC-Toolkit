@@ -100,7 +100,19 @@ class Blob_Counter(QGroupBox):
         # BG removal
         self.bg_removal_label = QLabel("Background Removal:")
         self.bg_removal_combo = QComboBox()
-        self.bg_removal_combo.addItems(["None", "Min", "Max", "Median", "Mean"])
+        self.bg_removal_combo.addItems([
+            "None",
+            "Mean",
+            "Min",
+            "5th Percentile",
+            "10th Percentile",
+            "25th Percentile",
+            "Median",
+            "75th Percentile",
+            "90th Percentile",
+            "95th Percentile",
+            "Max"
+        ])
         self.bg_removal_combo.currentTextChanged.connect(self._on_bg_removal_changed)
         
         self.bg_regen_btn = QPushButton("Regenerate Background")
@@ -280,22 +292,26 @@ class Blob_Counter(QGroupBox):
         gray_frame = cv2.cvtColor(frame_to_process, cv2.COLOR_BGR2GRAY)
 
         processed_frame = gray_frame
+
         if self.bg_display.bg_removal_method != "None":
             background_frame = self.bg_display.get_background_frame()
-            if background_frame is not None:
-                if self.roi is not None:
-                    bg_roi = background_frame[y1:y2, x1:x2]
-                else:
-                    bg_roi = background_frame
-                bg_gray = cv2.cvtColor(bg_roi, cv2.COLOR_BGR2GRAY) if len(bg_roi.shape) == 3 else bg_roi
-                bg_gray = bg_gray.astype(gray_frame.dtype)
-                processed_frame = cv2.absdiff(gray_frame, bg_gray)
+            if self.roi is not None:
+                bg_roi = background_frame[y1:y2, x1:x2]
+            else:
+                bg_roi = background_frame
+            bg_gray = cv2.cvtColor(bg_roi, cv2.COLOR_BGR2GRAY) if len(bg_roi.shape) == 3 else bg_roi
+            bg_gray = bg_gray.astype(gray_frame.dtype)
+            diff = gray_frame.astype(np.int16) - bg_gray.astype(np.int16)
 
-        # Thresholding
-        if self.blob_type == "Dark Blobs" and self.bg_display.bg_removal_method == "None":
-            _, thresh = cv2.threshold(processed_frame, self.threshold, 255, cv2.THRESH_BINARY_INV)
-        else:  # Light Blobs (Max)
-            _, thresh = cv2.threshold(processed_frame, self.threshold, 255, cv2.THRESH_BINARY)
+            if self.blob_type == "Dark Blobs":
+                thresh = (diff < -self.threshold).astype(np.uint8) * 255
+            else:  # Light Blobs
+                thresh = (diff > self.threshold).astype(np.uint8) * 255
+        else:
+            if self.blob_type == "Dark Blobs":
+                _, thresh = cv2.threshold(processed_frame, self.threshold, 255, cv2.THRESH_BINARY_INV)
+            else:  # Light Blobs (Max)
+                _, thresh = cv2.threshold(processed_frame, self.threshold, 255, cv2.THRESH_BINARY)
 
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         filtered_contours = []
@@ -488,17 +504,36 @@ class Blob_Background(QtWidgets.QWidget):
         if not all_frames:
             return None
 
-        if method == "Mean":
-            background_frame = np.mean(np.array(all_frames), axis=0).astype(np.uint8)
-        elif method == "Median":
-            background_frame = np.median(np.array(all_frames), axis=0).astype(np.uint8)
-        elif method == "Min":
-            background_frame = np.percentile(np.array(all_frames), 5, axis=0).astype(np.uint8)
-        elif method == "Max":
-            background_frame = np.percentile(np.array(all_frames), 95, axis=0).astype(np.uint8)
+        if method == "None":
+            return None
 
-        self.background_frames[method] = background_frame
-        return background_frame
+        frame_array = np.array(all_frames)  # Shape: (N, H, W, C) or (N, H, W)
+        if method == "Mean":
+            bg = np.mean(np.array(all_frames), axis=0).astype(np.uint8)
+        elif method == "Min":
+            bg = np.min(frame_array, axis=0)
+        elif method == "Max":
+            bg = np.max(frame_array, axis=0)
+        elif method == "5th Percentile":
+            bg = np.percentile(frame_array, 5, axis=0)
+        elif method == "10th Percentile":
+            bg = np.percentile(frame_array, 10, axis=0)
+        elif method == "25th Percentile":
+            bg = np.percentile(frame_array, 25, axis=0)
+        elif method == "Median":
+            bg = np.median(frame_array, axis=0)
+        elif method == "75th Percentile":
+            bg = np.percentile(frame_array, 75, axis=0)
+        elif method == "90th Percentile":
+            bg = np.percentile(frame_array, 90, axis=0)
+        elif method == "95th Percentile":
+            bg = np.percentile(frame_array, 95, axis=0)
+        else:
+            raise ValueError(f"Unknown bg method: {method}")
+
+        bg = bg.astype(np.uint8)
+        self.background_frames[method] = bg
+        return bg
 
     def update_background_display(self, bg_frame_list:Optional[List[int]]=None):
         if self.bg_removal_method == "None":
