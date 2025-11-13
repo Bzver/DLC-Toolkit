@@ -318,7 +318,7 @@ class Frame_App(QMainWindow):
 
         if self.open_config:
             self.at.sync_menu_state()
-            label_mode = self.mode_toggle.is_checked()
+            label_mode = self.mode_toggle_flabel.is_checked()
             plot_config_widget = Plot_Config_Menu(plot_config=self.dm.plot_config, label_mode=label_mode)
             plot_config_widget.config_changed.connect(self._handle_config_from_config)
             self.vid_play.set_right_panel_widget(plot_config_widget)

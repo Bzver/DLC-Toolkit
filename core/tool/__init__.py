@@ -11,6 +11,7 @@ from .plot_config import (
     Adjust_Property_Box,
     Plot_Config_Menu,
 )
+from .annot_config import Annotation_Config
 
 __all__ = (
     Canonical_Pose_Dialog,
@@ -23,5 +24,6 @@ __all__ = (
     Adjust_Property_Dialog,
     Adjust_Property_Box,
     Plot_Config_Menu,
+    Annotation_Config,
     navigate_to_marked_frame,
 )

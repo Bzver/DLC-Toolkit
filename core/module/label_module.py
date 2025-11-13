@@ -245,7 +245,6 @@ class Frame_Label:
     def sync_menu_state(self, close_all:bool=False):
         self.open_outlier = False
         if close_all:
-            self.open_outlier = False
             self.reset_zoom()
 
     def _call_outlier_finder(self):
