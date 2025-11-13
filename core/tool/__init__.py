@@ -1,7 +1,7 @@
 from .draw_canon import Canonical_Pose_Dialog
 from .plot import Prediction_Plotter
 from .inference import DLC_Inference
-from .mark_nav import navigate_to_marked_frame
+from .mark_nav import navigate_to_marked_frame, get_next_frame_in_list
 from .mark_gen import Mark_Generator
 from .outlier_finder import Outlier_Finder
 from .graphic_view import Canvas
@@ -26,4 +26,5 @@ __all__ = (
     Plot_Config_Menu,
     Annotation_Config,
     navigate_to_marked_frame,
+    get_next_frame_in_list,
 )
