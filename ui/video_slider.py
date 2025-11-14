@@ -43,10 +43,9 @@ class Video_Slider_Widget(QtWidgets.QWidget):
 
     def set_total_frames(self, total_frames:int):
         self.total_frames = total_frames
-        self.category_array = np.full((self.total_frames,), 255, dtype=np.uint8)
-        self.priority_array = np.zeros_like(self.category_array, dtype=np.uint8)
         self.progress_slider.setRange(0, self.total_frames - 1)
         self.fin.set_total_frames(self.total_frames - 1)
+        self.clear_frame_category()
     
     def set_current_frame(self, frame_idx:int):
         self.current_frame_idx = frame_idx
@@ -54,9 +53,11 @@ class Video_Slider_Widget(QtWidgets.QWidget):
         self.fin.set_current_frame(self.current_frame_idx)
 
     def clear_frame_category(self):
-        self.progress_slider.reset_category()
+        self.category_array = np.full((self.total_frames,), 255, dtype=np.uint8)
+        self.priority_array = np.zeros_like(self.category_array, dtype=np.uint8)
         self.current_behav_idx = 0
         self.idx_to_color.clear()
+        self.progress_slider.reset_category()
 
     def set_frame_category(self, category_name:str, frame_list:List[int], color:HexColor="#183539", priority:int=0): # category_name kept for backward compat
         frame_array = np.array(frame_list)
