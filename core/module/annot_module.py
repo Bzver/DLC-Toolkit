@@ -4,7 +4,9 @@ from PySide6 import QtWidgets
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox
 
-from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Status_Bar
+from typing import List
+
+from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Status_Bar, Frame_List_Dialog
 from utils.helper import frame_to_pixmap
 from core import Data_Manager, Video_Manager
 from core.tool import Annotation_Config, get_next_frame_in_list
@@ -25,9 +27,11 @@ class Frame_Annotator:
         "roi": "i"
         }
 
-    COLOR_HEX_EXPANDED = ("#9C27B0", "#00BCD4", "#FF9800", "#4CAF50", "#F44336", "#3F51B5", "#E91E63",
-                          "#009688", "#607D8B", "#FF5722", "#795548", "#2196F3", "#CDDC39", "#FFC107",
-                          "#8BC34A", "#673AB7", "#03A9F4", "#FFEB3B", "#00E676", "#D50000", "#BD34A6")
+    COLOR_HEX_EXPANDED = (
+        "#9C27B0", "#00BCD4", "#FF9800", "#4CAF50", "#F44336", "#3F51B5", "#E91E63",
+        "#009688", "#607D8B", "#FF5722", "#795548", "#2196F3", "#CDDC39", "#FFC107",
+        "#8BC34A", "#673AB7", "#03A9F4", "#FFEB3B", "#00E676", "#D50000", "#BD34A6",
+    )
 
     def __init__(self,
                  data_manager: Data_Manager,
@@ -46,14 +50,14 @@ class Frame_Annotator:
         self.annot_menu_config = {
             "View":{
                 "buttons": [
-                    ("Toggle Annotation Key Display", self._toggle_annotation_config),
+                    ("Toggle Annotation Config", self._toggle_annotation_config),
+                    ("Choose Annotation Category to Navigate", self._choose_nav_cat,)
                 ]
             },
             "Import":{
                 "buttons": [
-                    ("Import Annotation From File", self._unimplemented),
-                    ("Import Frame List As Annotation Basis", self._unimplemented),
-                    ("Import List Group As Annotation Basis", self._unimplemented),
+                    ("Import Annotation From File", self._load_annotation),
+                    ("Import Frame List As Annotation", self._import_frame_list),
                 ]
             },
             "Save":{
@@ -72,21 +76,24 @@ class Frame_Annotator:
         self.open_annot = True
         self._init_annot_config()
         self._refresh_slider()
+        self._setup_shortcuts()
 
     def deactivate(self, menu_widget:Menu_Widget):
         for menu in self.annot_menu_config.keys():
             menu_widget.remove_entire_menu(menu)
         self.vid_play.set_right_panel_widget(None)
         self.open_annot = False
+        self.extra_shorts.clear()
 
     def reset_state(self):
         self.open_annot = False
         self.behav_map = self.BEHAVIORS_MAP
         self.annot_array = None
+        self.nav_list = []
         self._refresh_annot_numeric()
-        self._setup_shortcuts()
 
     def _setup_shortcuts(self):
+        self.extra_shorts.clear()
         for category, key in self.behav_map.items():
             if not key.strip():
                 continue
@@ -101,6 +108,31 @@ class Frame_Annotator:
         frame_count = self.vm.get_frame_counts()
         self.annot_array = np.full((frame_count,), 255, dtype=np.uint8)
         self.open_annot = True
+
+    def _load_annotation(self):
+        pass
+
+    def _import_frame_list(self):
+        frame_categories = {
+            cat: (self.dm.fm.get_display_name(cat), self.dm.fm.get_frames(cat))
+            for cat in self.dm.fm.all_populated_categories()
+        }
+        if not frame_categories:
+            QMessageBox.information(self.main, "No Frames", "No frame categories with frames found.")
+            return
+
+        dialog = Frame_List_Dialog(frame_categories, parent=self.main)
+        dialog.categories_selected.connect(self._frame_list_to_new_annot_cat)
+        dialog.exec()
+
+    def _frame_list_to_new_annot_cat(self, categories:List[str]):
+        if self.annot_array is None:
+            self.init_loaded_vid()
+        for cat in categories:
+            self.annot_conf.add_category_external(f"{cat}_imported")
+            frame_list = self.dm.get_frames(cat)
+            self.annot_array[frame_list] = self.annot_num[f"{cat}_imported"]
+        self.refresh_ui()
 
     def _init_annot_config(self):
         self.annot_conf = Annotation_Config(self.behav_map, parent=self.main)
@@ -169,6 +201,21 @@ class Frame_Annotator:
         else:
             return next_change
 
+    def determine_list_to_nav(self):
+        return self.nav_list
+
+    def _choose_nav_cat(self):
+        frame_categories = {key: (key, self._get_cat_list_from_array(key)) for key in self.annot_num.keys()}
+        if frame_categories:
+            list_select_dialog = Frame_List_Dialog(frame_categories, parent=self.main)
+            list_select_dialog.frame_indices_acquired.connect(self._nav_cat_selected)
+            list_select_dialog.exec()
+
+    def _nav_cat_selected(self, frame_list:List[int]):
+        self.nav_list = frame_list
+        if self.nav_list:
+            self.dm.current_frame_idx = self.nav_list[0]
+
     ###################################################################################################################################################
 
     def _toggle_annotation_config(self):
@@ -196,8 +243,11 @@ class Frame_Annotator:
     def navigation_title_controller(self):
         title_text = self.dm.get_title_text()
         self.status_bar.show_message(title_text, duration_ms=0)
-        current_behav_idx = self.annot_array[self.dm.current_frame_idx]
-        color = "black" if current_behav_idx == 255 else self.COLOR_HEX_EXPANDED[current_behav_idx]
+        if self.annot_array is None:
+            color = "black"
+        else:
+            current_behav_idx = self.annot_array[self.dm.current_frame_idx]
+            color = "black" if current_behav_idx == 255 else self.COLOR_HEX_EXPANDED[current_behav_idx % len(self.COLOR_HEX_EXPANDED)]
         self.vid_play.nav.set_title_color(color)
 
     def _refresh_slider(self):
@@ -208,6 +258,10 @@ class Frame_Annotator:
 
     def _refresh_annot_numeric(self):
         self.annot_num = {item:i for i, item in enumerate(self.behav_map.keys())}
+
+    def _get_cat_list_from_array(self, category:str) -> List[int]:
+        idx = self.annot_num[category]
+        return np.where(self.annot_array == idx)[0]
 
     ###################################################################################################################################################
 

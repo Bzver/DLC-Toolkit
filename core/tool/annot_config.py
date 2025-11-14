@@ -1,3 +1,4 @@
+import string
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -58,6 +59,16 @@ class Annotation_Config(QtWidgets.QWidget):
 
         self.table_widget.resizeColumnsToContents()
         self.table_widget.resizeRowsToContents()
+
+    def add_category_external(self, new_category:str):
+        existing_keys = set(self._behaviors_map.values())
+        pool = list(string.ascii_lowercase)
+        available_keys = [k for k in pool if k not in existing_keys]
+        if not available_keys:
+            raise RuntimeError("No valid keys left, remove some behaviors first!")
+        self._behaviors_map[new_category] = available_keys[0]
+        self.map_change.emit(self._behaviors_map)
+        self.populate_table()
 
     def _handle_item_changed(self, item: QTableWidgetItem):
         if item.column() != 1:
@@ -161,7 +172,7 @@ class Annotation_Config(QtWidgets.QWidget):
         QMessageBox.information(self, "Success",
                                 f"Category '{category_to_remove}' removed.\n"
                                 f"Frames reassigned to '{target_category}'.")
-    
+
 class Add_Category_Dialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
