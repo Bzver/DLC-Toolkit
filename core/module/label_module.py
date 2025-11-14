@@ -211,6 +211,7 @@ class Frame_Label:
         else:
             self.vid_play.sld.set_frame_category(*self.dm.get_cat_metadata("marked"))
             self.vid_play.sld.set_frame_category(*self.dm.get_cat_metadata("refined"))
+        self.vid_play.sld.commit_categories()
 
     ###################################################################################################################################################
 

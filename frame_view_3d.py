@@ -985,6 +985,7 @@ class Frame_View_3D(QtWidgets.QMainWindow):
         self.progress_widget.set_frame_category("ROI frames", self.roi_frame_list, "#F79F1C") # Update ROI frames
         self.progress_widget.set_frame_category("Failed frames", self.failed_frame_list, "#FF0000", priority=7)
         self.progress_widget.set_frame_category("Skippedframes", self.skipped_frame_list, "#3D3D3D", priority=6)
+        self.progress_widget.commit_categories()
 
     def _refresh_selected_cam(self):
         for i in range(4): # Will change to a flexible range later

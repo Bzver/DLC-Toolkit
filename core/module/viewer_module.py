@@ -167,6 +167,7 @@ class Frame_View:
         for cat in grouped_cat:
             priority = 5 if cat == "blob_merged" else 0
             self.vid_play.sld.set_frame_category(*self.dm.get_cat_metadata(cat), priority=priority)
+        self.vid_play.sld.commit_categories()
 
     ###################################################################################################################################################
 

@@ -529,6 +529,7 @@ class DLC_Inference(QtWidgets.QDialog):
         self.progress_widget.set_frame_category("Approved", self.approved_list, color="#0066cc", priority=6)
         self.progress_widget.set_frame_category("Rejected", self.rejected_list, color="#F749C6", priority=6)
         self.progress_widget.set_frame_category("Unprocessed", self.unprocessed_list)
+        self.progress_widget.commit_categories()
 
     #######################################################################################################################
 

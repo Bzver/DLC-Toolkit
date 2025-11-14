@@ -2,7 +2,7 @@ import numpy as np
 import cv2
 from PySide6 import QtGui
 from PySide6.QtWidgets import QMessageBox
-from typing import List, Tuple, Callable, Dict
+from typing import List, Tuple, Callable, Union
 
 def get_instances_on_current_frame(pred_data_array:np.ndarray, current_frame_idx:int) -> List[int]:
     """
@@ -355,3 +355,34 @@ def crop_coords_to_array(crop_coords:np.ndarray, arr_shape:Tuple[int, int, int],
     coords_array[:, :, 0::3] = x_per_frame
     coords_array[:, :, 1::3] = y_per_frame
     return coords_array
+
+#########################################################################################################################################################1
+
+def indices_to_spans(indices: Union[np.ndarray, List[int]]) -> List[Tuple[int, int]]:
+    """
+    Convert a list/array of frame indices into contiguous spans (start, end).
+    
+    Example:
+        >>> indices_to_spans([1,2,3,5,6,9])
+        [(1, 3), (5, 6), (9, 9)]
+    """
+    if len(indices) == 0:
+        return []
+    
+    if isinstance(indices, list):
+        indices = np.asarray(indices, dtype=np.int32)
+
+    indices = np.sort(indices)
+
+    n = indices.size
+    if n == 1:
+        i0 = int(indices[0])
+        return [(i0, i0)]
+
+    split_at = np.where(np.diff(indices) > 1)[0] + 1
+
+    if split_at.size == 0:
+        return [(int(indices[0]), int(indices[-1]))]
+
+    chunks = np.split(indices, split_at)
+    return [(int(chunk[0]), int(chunk[-1])) for chunk in chunks]
