@@ -1,3 +1,4 @@
+import numpy as np
 import string
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, Signal
@@ -6,6 +7,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QDialog, QLineEdit, QPushButton, QFormLayout, QLabel,
     QComboBox, QDialogButtonBox
 )
+from utils.helper import indices_to_spans
 
 class Annotation_Config(QtWidgets.QWidget):
     category_removed = Signal(str, str)
@@ -25,7 +27,7 @@ class Annotation_Config(QtWidgets.QWidget):
         self.table_widget.setColumnCount(2)
         self.table_widget.setHorizontalHeaderLabels(["Category", "Key"])
         self.table_widget.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.table_widget.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.table_widget.verticalHeader().setVisible(False)
         self.table_widget.setSizeAdjustPolicy(QtWidgets.QAbstractScrollArea.AdjustToContents)
         self.table_widget.setEditTriggers(QTableWidget.DoubleClicked)
         self.table_widget.setSelectionBehavior(QTableWidget.SelectRows)
@@ -206,3 +208,79 @@ class Add_Category_Dialog(QDialog):
         category = self.category_edit.text().strip()
         key = self.key_edit.text().strip().lower()
         return category, key
+
+class Annotation_Summary_Table(QtWidgets.QWidget):
+    row_clicked = Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.category_array = None
+        self.behaviors_map = {}
+        self.idx_to_cat = {}
+        self.layout = QVBoxLayout(self)
+        
+        self.table_widget = QTableWidget()
+        self.table_widget.setColumnCount(3)
+        self.table_widget.setHorizontalHeaderLabels(["Behavior", "Start", "End"])
+        self.table_widget.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table_widget.verticalHeader().setVisible(False)
+        self.table_widget.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table_widget.setSelectionBehavior(QTableWidget.SelectRows)
+
+        self.table_widget.cellClicked.connect(self._on_row_clicked)
+        self.layout.addWidget(self.table_widget)
+
+    def update_data(self, category_array: np.ndarray, behaviors_map: dict, idx_to_cat: dict):
+        self.category_array = category_array
+        self.behaviors_map = behaviors_map
+        self.idx_to_cat = idx_to_cat
+        self._populate_table()
+
+    def _populate_table(self):
+        if self.category_array is None or len(self.category_array) == 0:
+            self.table_widget.setRowCount(0)
+            return
+
+        segments = self._extract_segments()
+        self.table_widget.setRowCount(len(segments))
+        self._segments = segments
+        
+        for row, (category, start, end) in enumerate(segments):
+            self.table_widget.setItem(row, 0, self._centered_item(category))
+            self.table_widget.setItem(row, 1, self._centered_item(str(start)))
+            self.table_widget.setItem(row, 2, self._centered_item(str(end)))
+
+    def _centered_item(self, text: str) -> QTableWidgetItem:
+        item = QTableWidgetItem(text)
+        item.setTextAlignment(Qt.AlignCenter)
+        return item
+
+    def _extract_segments(self):
+        if self.category_array is None:
+            return []
+        
+        segments = []
+        NO_CATEGORY = 255
+        
+        unique_idxs = np.unique(self.category_array)
+        unique_idxs = unique_idxs[unique_idxs != NO_CATEGORY]
+        
+        for idx in unique_idxs:
+            frame_indices = np.where(self.category_array == idx)[0]
+            if frame_indices.size == 0:
+                continue
+                
+            spans = indices_to_spans(frame_indices)
+            
+            cat_name = self.idx_to_cat.get(int(idx), '?')
+            category = next((cat for cat in self.behaviors_map.keys() if cat == cat_name), f'Unknown({idx})')
+            
+            for start, end in spans:
+                segments.append((category, start, end))
+        
+        return sorted(segments, key=lambda x: x[1])
+    
+    def _on_row_clicked(self, row: int, column: int):
+        if 0 <= row < len(self._segments):
+            _, start, _ = self._segments[row]
+            self.row_clicked.emit(start)

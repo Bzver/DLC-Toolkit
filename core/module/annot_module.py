@@ -2,14 +2,14 @@ import numpy as np
 
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QMessageBox, QVBoxLayout
 
 from typing import List
 
 from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Status_Bar, Frame_List_Dialog
 from utils.helper import frame_to_pixmap
 from core import Data_Manager, Video_Manager
-from core.tool import Annotation_Config, get_next_frame_in_list
+from core.tool import Annotation_Config, Annotation_Summary_Table, get_next_frame_in_list
 
 class Frame_Annotator:
     # Use hardcoded behavior map for now
@@ -77,14 +77,14 @@ class Frame_Annotator:
         self._init_annot_config()
         self._refresh_slider()
         self._setup_shortcuts()
-        if not self.vid_play.sld.show_zoom_slider:
+        if not self.vid_play.sld.is_zoom_slider_shown:
             self.vid_play.sld.toggle_zoom_slider()
 
     def deactivate(self, menu_widget:Menu_Widget):
         for menu in self.annot_menu_config.keys():
             menu_widget.remove_entire_menu(menu)
         self.vid_play.set_right_panel_widget(None)
-        if self.vid_play.sld.show_zoom_slider:
+        if self.vid_play.sld.is_zoom_slider_shown:
             self.vid_play.sld.toggle_zoom_slider()
         self.open_annot = False
         self.extra_shorts.clear()
@@ -114,6 +114,7 @@ class Frame_Annotator:
         self.open_annot = True
 
     def _load_annotation(self):
+
         pass
 
     def _import_frame_list(self):
@@ -135,15 +136,25 @@ class Frame_Annotator:
         for cat in categories:
             self.annot_conf.add_category_external(f"{cat}_imported")
             frame_list = self.dm.get_frames(cat)
-            self.annot_array[frame_list] = self.annot_num[f"{cat}_imported"]
+            self.annot_array[frame_list] = self.cat_to_idx[f"{cat}_imported"]
         self.refresh_ui()
 
     def _init_annot_config(self):
         self.annot_conf = Annotation_Config(self.behav_map, parent=self.main)
         self.annot_conf.category_removed.connect(self._handle_annot_category_remove)
         self.annot_conf.map_change.connect(self._handle_annot_key_change)
+
+        self.annot_sum = Annotation_Summary_Table(self.main)
+        self.annot_sum.update_data(self.annot_array, self.behav_map, self.idx_to_cat)
+        self.annot_sum.row_clicked.connect(self._handle_frame_change_from_comp)
+
+        self.combined_annot = QtWidgets.QWidget()
+        combined_layout = QVBoxLayout(self.combined_annot)
+        combined_layout.addWidget(self.annot_conf)
+        combined_layout.addWidget(self.annot_sum)
+
         if self.open_annot:
-            self.vid_play.set_right_panel_widget(self.annot_conf)
+            self.vid_play.set_right_panel_widget(self.combined_annot)
 
     ###################################################################################################################################################
 
@@ -183,7 +194,7 @@ class Frame_Annotator:
 
         frame_idx = self.dm.current_frame_idx
         old_idx = self.annot_array[frame_idx]
-        new_idx = self.annot_num[category]
+        new_idx = self.cat_to_idx[category]
 
         if old_idx == new_idx:
             return
@@ -191,7 +202,7 @@ class Frame_Annotator:
         next_change = self._find_next_annot_change()
         self.annot_array[frame_idx:next_change] = new_idx
         self.status_bar.show_message(f"Current frame annotation: {category} ({self.behav_map[category]})", 0)
-        self.refresh_ui() 
+        self.refresh_ui()
 
     def _find_next_annot_change(self) -> int:
         diffs = np.diff(self.annot_array)
@@ -210,7 +221,7 @@ class Frame_Annotator:
         return self.nav_list
 
     def _choose_nav_cat(self):
-        frame_categories = {key: (key, self._get_cat_list_from_array(key)) for key in self.annot_num.keys()}
+        frame_categories = {key: (key, self._get_cat_list_from_array(key)) for key in self.cat_to_idx.keys()}
         if frame_categories:
             list_select_dialog = Frame_List_Dialog(frame_categories, parent=self.main)
             list_select_dialog.frame_indices_acquired.connect(self._nav_cat_selected)
@@ -256,25 +267,31 @@ class Frame_Annotator:
         self.vid_play.nav.set_title_color(color)
 
     def _refresh_slider(self):
+        self.annot_sum.update_data(self.annot_array, self.behav_map, self.idx_to_cat)
         self.vid_play.sld.clear_frame_category()
-        idx_to_color = {idx:self.COLOR_HEX_EXPANDED[idx] for idx in range(len(self.annot_num))}
+        idx_to_color = {idx:self.COLOR_HEX_EXPANDED[idx] for idx in range(len(self.cat_to_idx))}
         self.vid_play.sld.set_frame_category_array(self.annot_array, idx_to_color)
         self.vid_play.sld.commit_categories()
 
     def _refresh_annot_numeric(self):
-        self.annot_num = {item:i for i, item in enumerate(self.behav_map.keys())}
+        self.cat_to_idx = {item:i for i, item in enumerate(self.behav_map.keys())}
+        self.idx_to_cat = {idx:key for key, idx in self.cat_to_idx.items()}
 
     def _get_cat_list_from_array(self, category:str) -> List[int]:
-        idx = self.annot_num[category]
+        idx = self.cat_to_idx[category]
         return np.where(self.annot_array == idx)[0]
 
     ###################################################################################################################################################
 
+    def _handle_frame_change_from_comp(self, frame_idx):
+        self.dm.current_frame_idx = frame_idx
+        self.refresh_and_display()
+
     def _handle_annot_category_remove(self, dest_category, src_category):
         if dest_category == src_category:
             return
-        dest_idx = self.annot_num[dest_category]
-        src_idx = self.annot_num[src_category]
+        dest_idx = self.cat_to_idx[dest_category]
+        src_idx = self.cat_to_idx[src_category]
         self.annot_array[self.annot_array == src_idx] = dest_idx
         self.annot_array[self.annot_array > src_idx] -= 1
         self._refresh_slider()
@@ -282,4 +299,4 @@ class Frame_Annotator:
     def _handle_annot_key_change(self, new_map):
         self.behav_map = new_map
         self._setup_shortcuts()
-        self._refresh_annot_numeric()
+        self._refresh_cat_to_idxeric()
