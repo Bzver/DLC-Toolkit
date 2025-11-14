@@ -20,6 +20,17 @@ class Annotation_Config(QtWidgets.QWidget):
         self.setMaximumWidth(300)
         self._init_ui()
 
+        self.table_widget.setStyleSheet("""
+            QTableWidget {
+                selection-background-color: #4FC3F7;
+                selection-color: white;
+                alternate-background-color: #FAFAFA;
+            }
+            QTableWidget::item:selected {
+                font-weight: bold;
+            }
+        """)
+
     def _init_ui(self):
         self.layout = QVBoxLayout(self)
 
@@ -71,6 +82,23 @@ class Annotation_Config(QtWidgets.QWidget):
         self._behaviors_map[new_category] = available_keys[0]
         self.map_change.emit(self._behaviors_map)
         self.populate_table()
+
+    def highlight_current_category(self, category:str):
+        for row in range(self.table_widget.rowCount()):
+            cat_item = self.table_widget.item(row, 0)
+            if cat_item and cat_item.text() == category:
+                self.table_widget.clearSelection()
+                self.table_widget.selectRow(row)
+                self.table_widget.scrollToItem(
+                    self.table_widget.item(row, 0),
+                    QTableWidget.PositionAtCenter
+                )
+                return
+
+        self.table_widget.clearSelection()
+
+    def sync_behaviors_map(self, behaviors_map):
+        self._behaviors_map = behaviors_map
 
     def _handle_item_changed(self, item: QTableWidgetItem):
         if item.column() != 1:
@@ -225,16 +253,47 @@ class Annotation_Summary_Table(QtWidgets.QWidget):
         self.table_widget.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table_widget.verticalHeader().setVisible(False)
         self.table_widget.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table_widget.setSelectionMode(QTableWidget.SingleSelection)
         self.table_widget.setSelectionBehavior(QTableWidget.SelectRows)
 
         self.table_widget.cellClicked.connect(self._on_row_clicked)
         self.layout.addWidget(self.table_widget)
+
+        self.table_widget.setStyleSheet("""
+            QTableWidget {
+                selection-background-color: #4FC3F7;
+                selection-color: white;
+                alternate-background-color: #FAFAFA;
+            }
+            QTableWidget::item:selected {
+                font-weight: bold;
+            }
+        """)
 
     def update_data(self, category_array: np.ndarray, behaviors_map: dict, idx_to_cat: dict):
         self.category_array = category_array
         self.behaviors_map = behaviors_map
         self.idx_to_cat = idx_to_cat
         self._populate_table()
+
+    def highlight_current_frame(self, current_frame: int):
+        if not hasattr(self, '_segments') or not self._segments:
+            return
+        
+        matching_row = -1
+        for row, (_, start, end) in enumerate(self._segments):
+            if start <= current_frame <= end:
+                matching_row = row
+                break
+        
+        self.table_widget.clearSelection()
+        
+        if matching_row >= 0:
+            self.table_widget.selectRow(matching_row)
+            self.table_widget.scrollToItem(
+                self.table_widget.item(matching_row, 0),
+                QTableWidget.PositionAtCenter
+            )
 
     def _populate_table(self):
         if self.category_array is None or len(self.category_array) == 0:
@@ -279,7 +338,7 @@ class Annotation_Summary_Table(QtWidgets.QWidget):
                 segments.append((category, start, end))
         
         return sorted(segments, key=lambda x: x[1])
-    
+
     def _on_row_clicked(self, row: int, column: int):
         if 0 <= row < len(self._segments):
             _, start, _ = self._segments[row]

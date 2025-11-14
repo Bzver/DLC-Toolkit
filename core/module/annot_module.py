@@ -2,14 +2,15 @@ import numpy as np
 
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QMessageBox, QVBoxLayout
+from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QFileDialog
 
-from typing import List
+from typing import List, Dict, Optional
 
 from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Status_Bar, Frame_List_Dialog
 from utils.helper import frame_to_pixmap
 from core import Data_Manager, Video_Manager
 from core.tool import Annotation_Config, Annotation_Summary_Table, get_next_frame_in_list
+from core.io import load_annotation
 
 class Frame_Annotator:
     # Use hardcoded behavior map for now
@@ -89,9 +90,14 @@ class Frame_Annotator:
         self.open_annot = False
         self.extra_shorts.clear()
 
-    def reset_state(self):
+    def reset_state(self, hardcore=False):
         self.open_annot = False
-        self.behav_map = self.BEHAVIORS_MAP
+        if hardcore:
+            self.behav_map.clear()
+        else:
+            self.behav_map = self.BEHAVIORS_MAP
+        if hasattr(self, "annot_conf"):
+            self.annot_conf.sync_behaviors_map(self.behav_map)
         self.annot_array = None
         self.nav_list = []
         self._refresh_annot_numeric()
@@ -114,8 +120,12 @@ class Frame_Annotator:
         self.open_annot = True
 
     def _load_annotation(self):
-
-        pass
+        file_dialog = QFileDialog(self.main)
+        annot_path, _ = file_dialog.getOpenFileName(self.main, "Select Annotation File", "", "Text Files (*.txt);;All Files (*)")
+        if annot_path:
+            self.reset_state(True)
+            frame_dict = load_annotation(annot_path)
+            self._frame_list_to_new_annot_cat(frame_dict.keys(), frame_dict)
 
     def _import_frame_list(self):
         frame_categories = {
@@ -130,13 +140,16 @@ class Frame_Annotator:
         dialog.categories_selected.connect(self._frame_list_to_new_annot_cat)
         dialog.exec()
 
-    def _frame_list_to_new_annot_cat(self, categories:List[str]):
+    def _frame_list_to_new_annot_cat(self, categories:List[str], frame_dict:Optional[Dict[str, List[int]]]):
         if self.annot_array is None:
             self.init_loaded_vid()
         for cat in categories:
-            self.annot_conf.add_category_external(f"{cat}_imported")
-            frame_list = self.dm.get_frames(cat)
-            self.annot_array[frame_list] = self.cat_to_idx[f"{cat}_imported"]
+            if cat not in self.behav_map.keys():
+                self.annot_conf.add_category_external(cat)
+            frame_list = frame_dict[cat] if frame_dict else self.dm.get_frames(cat)
+            frame_arr = np.array(frame_list)
+            frame_list_final = frame_arr[frame_arr < self.dm.total_frames].tolist()
+            self.annot_array[frame_list_final] = self.cat_to_idx[cat]
         self.refresh_ui()
 
     def _init_annot_config(self):
@@ -175,12 +188,10 @@ class Frame_Annotator:
 
         if self.annot_array is not None:
             idx = int(self.annot_array[self.dm.current_frame_idx])
-            if idx < len(self.behav_map):
-                cat = list(self.behav_map.keys())[idx]
-                key = self.behav_map[cat]
-                self.status_bar.show_message(f"Current frame annotation: {cat} ({key})", 0)
-            else:
-                self.status_bar.show_message("", 0)
+            cat = self.idx_to_cat[idx]
+            if hasattr(self, "annot_sum") and hasattr(self, "annot_conf"):
+                self.annot_conf.highlight_current_category(cat)
+                self.annot_sum.highlight_current_frame(self.dm.current_frame_idx)
         else:
             self.status_bar.show_message("", 0)
             
@@ -201,7 +212,6 @@ class Frame_Annotator:
 
         next_change = self._find_next_annot_change()
         self.annot_array[frame_idx:next_change] = new_idx
-        self.status_bar.show_message(f"Current frame annotation: {category} ({self.behav_map[category]})", 0)
         self.refresh_ui()
 
     def _find_next_annot_change(self) -> int:
@@ -299,4 +309,4 @@ class Frame_Annotator:
     def _handle_annot_key_change(self, new_map):
         self.behav_map = new_map
         self._setup_shortcuts()
-        self._refresh_cat_to_idxeric()
+        self._refresh_annot_numeric()
