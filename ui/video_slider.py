@@ -1,9 +1,10 @@
 import numpy as np
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, QTimer, Signal, QRect
-from PySide6.QtWidgets import QPushButton, QHBoxLayout, QStyle, QStyleOptionSlider, QSlider, QLineEdit, QLabel, QApplication
+from PySide6.QtWidgets import (
+    QPushButton, QHBoxLayout, QVBoxLayout, QStyle, QStyleOptionSlider, QSlider, QLineEdit, QLabel, QApplication)
 from PySide6.QtGui import QPainter, QColor, QImage, QIntValidator, QFont, QPixmap
-from typing import List, Dict, Tuple
+from typing import List, Dict
 
 from utils.helper import indices_to_spans
 
@@ -17,29 +18,56 @@ class Video_Slider_Widget(QtWidgets.QWidget):
         self.category_array, self.priority_array = None, None
         self.idx_to_color = {}
         self.is_playing = False
+        self.show_zoom_slider = False
         
-        self.slider_layout = QHBoxLayout(self)
+        self.main_layout = QVBoxLayout(self)
 
         self.play_button = QPushButton("▶")
         self.play_button.setFixedWidth(20)
         self.play_button.clicked.connect(self.toggle_playback)
-
         self.fin = Frame_Input()
         self.fin.frame_changed_sig.connect(self._handle_frame_input)
-
         self.progress_slider = Slider_With_Marks(Qt.Orientation.Horizontal)
         self.progress_slider.setRange(0, 0)
         self.progress_slider.setTracking(True)
         self.progress_slider.sliderMoved.connect(self._handle_slider_move)
         self.progress_slider.frame_changed.connect(self._handle_slider_move)
-
-        self.slider_layout.addLayout(self.fin)
-        self.slider_layout.addWidget(self.play_button)
-        self.slider_layout.addWidget(self.progress_slider)
+        self.show_zoom_btn = QPushButton("▲")
+        self.show_zoom_btn.clicked.connect(self.toggle_zoom_slider)
+        self.show_zoom_btn.setFixedWidth(20)
+        self.show_zoom_btn.setVisible(not self.show_zoom_slider)
+        
+        slider_layout = QHBoxLayout()
+        slider_layout.addLayout(self.fin)
+        slider_layout.addWidget(self.play_button)
+        slider_layout.addWidget(self.progress_slider)
+        slider_layout.addWidget(self.show_zoom_btn)
+        self._setup_zoom_slider()
+        self.main_layout.addLayout(slider_layout)
+        self.zoom_slider_container.setVisible(self.show_zoom_slider)
 
         self.playback_timer = QTimer(self)
         self.playback_timer.setInterval(int(1000/50)) # ~50 FPS
         self.playback_timer.timeout.connect(self.advance_frame)
+
+    def _setup_zoom_slider(self):
+        self.zoom_slider_container = QtWidgets.QWidget()
+        zoom_slider_layout = QHBoxLayout(self.zoom_slider_container)
+
+        self.zoom_radius_combo = QtWidgets.QComboBox()
+        self.zoom_radius_combo.addItems(["50", "100", "250", "500", "1000"])
+        self.zoom_radius_combo.setCurrentText("250")
+        self.zoom_radius_combo.setFixedWidth(50)
+        self.zoom_radius_combo.currentTextChanged.connect(self._on_zoom_radius_changed)
+        self.zoom_slider = Zoomed_zoom_slider(Qt.Orientation.Horizontal)
+        self.hide_zoom_btn = QPushButton("▼")
+        self.hide_zoom_btn.setFixedWidth(20)
+        self.hide_zoom_btn.clicked.connect(self.toggle_zoom_slider)
+
+        zoom_slider_layout.addWidget(self.zoom_radius_combo)
+        zoom_slider_layout.addWidget(self.zoom_slider)
+        zoom_slider_layout.addWidget(self.hide_zoom_btn)
+        self.main_layout.addWidget(self.zoom_slider_container)
 
     def set_total_frames(self, total_frames:int):
         self.total_frames = total_frames
@@ -51,6 +79,8 @@ class Video_Slider_Widget(QtWidgets.QWidget):
         self.current_frame_idx = frame_idx
         self.progress_slider.setValue(self.current_frame_idx)
         self.fin.set_current_frame(self.current_frame_idx)
+        if self.show_zoom_slider:
+            self.zoom_slider.set_center_frame(self.current_frame_idx, self.total_frames)
 
     def clear_frame_category(self):
         self.category_array = np.full((self.total_frames,), 255, dtype=np.uint8)
@@ -77,6 +107,9 @@ class Video_Slider_Widget(QtWidgets.QWidget):
 
     def commit_categories(self):
         self.progress_slider.set_frame_category(self.category_array, self.idx_to_color)
+        self.zoom_slider.set_full_categories(self.category_array, self.idx_to_color)
+        if self.show_zoom_slider:
+            self.zoom_slider.set_center_frame(self.current_frame_idx, self.total_frames)
 
     def export_background(self):
         self.progress_slider.copy_background_to_clipboard()
@@ -90,6 +123,16 @@ class Video_Slider_Widget(QtWidgets.QWidget):
         self.current_frame_idx = value
         self.progress_slider.setValue(value)
         self.frame_changed.emit(self.current_frame_idx)
+        if self.show_zoom_slider:        
+            self.zoom_slider.set_center_frame(value, self.total_frames)
+
+    def _on_zoom_radius_changed(self, value:str):
+        self.zoom_slider.set_window_radius(int(value))
+
+    def toggle_zoom_slider(self):
+        self.show_zoom_slider = not self.show_zoom_slider
+        self.zoom_slider_container.setVisible(self.show_zoom_slider)
+        self.show_zoom_btn.setVisible(not self.show_zoom_slider)
 
     def toggle_playback(self):
         if not self.is_playing:
@@ -152,14 +195,14 @@ class Slider_With_Marks(QSlider):
         self._dirty_spans.clear()
         self.update()
 
-    def set_frame_category(self, category_array: np.ndarray, idx_to_color: Dict[int, str]):
+    def set_frame_category(self, category_array: np.ndarray, idx_to_color: Dict[int, str], force_full_update: bool = False):
         old_array = self._category_array
         if category_array is None:
             return
         self._category_array = category_array
         self._idx_to_color = idx_to_color
 
-        if old_array is None or old_array.shape != category_array.shape:
+        if force_full_update or old_array is None or old_array.shape != category_array.shape:
             self._bg_image = None
             self._dirty_spans = [(0, len(category_array) - 1)] if len(category_array) > 0 else []
         else:
@@ -181,8 +224,10 @@ class Slider_With_Marks(QSlider):
         if w <= 0 or h <= 0:
             return
 
+        w, h = int(round(w)), int(round(h))
         if self._bg_image is None or self._bg_image.size() != self.size():
             self._bg_image = QImage(w, h, QImage.Format_ARGB32_Premultiplied)
+            self._bg_image.fill(Qt.transparent)
             painter = QPainter(self._bg_image)
             painter.setPen(Qt.NoPen)
             groove_rect = self._get_groove_rect()
@@ -250,9 +295,13 @@ class Slider_With_Marks(QSlider):
                             painter.setBrush(color)
                             x1 = self._frame_to_x(frame_start, groove_rect, available_width, min_val, max_val)
                             x2 = self._frame_to_x(frame_end, groove_rect, available_width, min_val, max_val)
-                            rect_w = max(mark_width, int(x2 - x1 + mark_width))
+
+                            x1_i = int(round(x1))
+                            x2_i = int(round(x2))
+                            rect_w = max(mark_width, x2_i - x1_i + mark_width)
+
                             painter.drawRect(
-                                int(x1) - mark_width // 2,
+                                x1_i - mark_width // 2,
                                 groove_rect.top(),
                                 rect_w,
                                 groove_rect.height()
@@ -269,8 +318,7 @@ class Slider_With_Marks(QSlider):
         return self.style().subControlRect(QStyle.CC_Slider, opt, QStyle.SC_SliderGroove, self)
 
     def _frame_to_x(self, frame_idx: int, groove_rect: QRect, available_width: int, min_val: int, max_val: int) -> float:
-        logical_frame = min_val + frame_idx
-        return QStyle.sliderPositionFromValue(min_val, max_val, logical_frame, available_width, False) + groove_rect.left()
+        return QStyle.sliderPositionFromValue(min_val, max_val, frame_idx, available_width, False) + groove_rect.left()
 
     def paintEvent(self, event):
         self._ensure_bg_image()
@@ -361,3 +409,55 @@ class Frame_Input(QHBoxLayout):
             frame_idx = self.max_frame
 
         self.frame_changed_sig.emit(frame_idx)
+
+class Zoomed_zoom_slider(Slider_With_Marks):
+    def __init__(self, orientation):
+        super().__init__(orientation)
+        self._window_radius = 250
+        self._center_frame = 0
+        self._total_frames = 0
+        self._full_category_array = None
+        self._full_idx_to_color = {}
+
+        self.setEnabled(False)
+        self.setFocusPolicy(Qt.NoFocus)
+
+        self.setStyleSheet("""
+            QSlider::groove:horizontal {
+                border: 1px solid #999999;
+                height: 10px;
+                background: #E0E0E0;
+                margin: 2px 0;
+            }
+        """)
+
+    def set_full_categories(self, category_array: np.ndarray, idx_to_color: Dict[int, str]):
+        self._full_category_array = category_array
+        self._full_idx_to_color = idx_to_color
+        self._update_range_and_background()
+
+    def set_window_radius(self, radius: int):
+        self._window_radius = radius
+        self._update_range_and_background()
+
+    def set_center_frame(self, frame_idx: int, total_frames: int):
+        self._center_frame = np.clip(frame_idx, 0, total_frames - 1)
+        self._total_frames = total_frames
+        self._update_range_and_background()
+
+    def _update_range_and_background(self):
+        if self._total_frames <= 0:
+            self.setRange(0, 0)
+            self.reset_category()
+            return
+
+        start = max(0, self._center_frame - self._window_radius)
+        end = min(self._total_frames - 1, self._center_frame + self._window_radius)
+        logical_span = end - start
+        self.setRange(0, max(0, logical_span))
+
+        if self._full_category_array is not None:
+            sub_cat = self._full_category_array[start:end+1]
+            self.set_frame_category(sub_cat, self._full_idx_to_color, force_full_update=True)
+        else:
+            self.reset_category()

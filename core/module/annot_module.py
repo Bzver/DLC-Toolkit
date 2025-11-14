@@ -77,11 +77,15 @@ class Frame_Annotator:
         self._init_annot_config()
         self._refresh_slider()
         self._setup_shortcuts()
+        if not self.vid_play.sld.show_zoom_slider:
+            self.vid_play.sld.toggle_zoom_slider()
 
     def deactivate(self, menu_widget:Menu_Widget):
         for menu in self.annot_menu_config.keys():
             menu_widget.remove_entire_menu(menu)
         self.vid_play.set_right_panel_widget(None)
+        if self.vid_play.sld.show_zoom_slider:
+            self.vid_play.sld.toggle_zoom_slider()
         self.open_annot = False
         self.extra_shorts.clear()
 
@@ -186,6 +190,7 @@ class Frame_Annotator:
 
         next_change = self._find_next_annot_change()
         self.annot_array[frame_idx:next_change] = new_idx
+        self.status_bar.show_message(f"Current frame annotation: {category} ({self.behav_map[category]})", 0)
         self.refresh_ui() 
 
     def _find_next_annot_change(self) -> int:
