@@ -18,7 +18,7 @@ class Video_Slider_Widget(QtWidgets.QWidget):
         self.category_array, self.priority_array = None, None
         self.idx_to_color = {}
         self.is_playing = False
-        self.show_zoom_slider = False
+        self.is_zoom_slider_shown = False
         
         self.main_layout = QVBoxLayout(self)
 
@@ -35,7 +35,7 @@ class Video_Slider_Widget(QtWidgets.QWidget):
         self.show_zoom_btn = QPushButton("▲")
         self.show_zoom_btn.clicked.connect(self.toggle_zoom_slider)
         self.show_zoom_btn.setFixedWidth(20)
-        self.show_zoom_btn.setVisible(not self.show_zoom_slider)
+        self.show_zoom_btn.setVisible(not self.is_zoom_slider_shown)
         
         slider_layout = QHBoxLayout()
         slider_layout.addLayout(self.fin)
@@ -44,30 +44,32 @@ class Video_Slider_Widget(QtWidgets.QWidget):
         slider_layout.addWidget(self.show_zoom_btn)
         self._setup_zoom_slider()
         self.main_layout.addLayout(slider_layout)
-        self.zoom_slider_container.setVisible(self.show_zoom_slider)
 
         self.playback_timer = QTimer(self)
         self.playback_timer.setInterval(int(1000/50)) # ~50 FPS
         self.playback_timer.timeout.connect(self.advance_frame)
 
     def _setup_zoom_slider(self):
-        self.zoom_slider_container = QtWidgets.QWidget()
-        zoom_slider_layout = QHBoxLayout(self.zoom_slider_container)
-
+        zoom_slider_layout = QHBoxLayout()
         self.zoom_radius_combo = QtWidgets.QComboBox()
         self.zoom_radius_combo.addItems(["50", "100", "250", "500", "1000"])
         self.zoom_radius_combo.setCurrentText("250")
         self.zoom_radius_combo.setFixedWidth(50)
         self.zoom_radius_combo.currentTextChanged.connect(self._on_zoom_radius_changed)
+        self.zoom_radius_combo.setVisible(self.is_zoom_slider_shown)
+
         self.zoom_slider = Zoomed_zoom_slider(Qt.Orientation.Horizontal)
+        self.zoom_slider.setVisible(self.is_zoom_slider_shown)
+
         self.hide_zoom_btn = QPushButton("▼")
         self.hide_zoom_btn.setFixedWidth(20)
         self.hide_zoom_btn.clicked.connect(self.toggle_zoom_slider)
+        self.hide_zoom_btn.setVisible(self.is_zoom_slider_shown)
 
         zoom_slider_layout.addWidget(self.zoom_radius_combo)
         zoom_slider_layout.addWidget(self.zoom_slider)
         zoom_slider_layout.addWidget(self.hide_zoom_btn)
-        self.main_layout.addWidget(self.zoom_slider_container)
+        self.main_layout.addLayout(zoom_slider_layout)
 
     def set_total_frames(self, total_frames:int):
         self.total_frames = total_frames
@@ -79,7 +81,7 @@ class Video_Slider_Widget(QtWidgets.QWidget):
         self.current_frame_idx = frame_idx
         self.progress_slider.setValue(self.current_frame_idx)
         self.fin.set_current_frame(self.current_frame_idx)
-        if self.show_zoom_slider:
+        if self.is_zoom_slider_shown:
             self.zoom_slider.set_center_frame(self.current_frame_idx, self.total_frames)
 
     def clear_frame_category(self):
@@ -108,7 +110,7 @@ class Video_Slider_Widget(QtWidgets.QWidget):
     def commit_categories(self):
         self.progress_slider.set_frame_category(self.category_array, self.idx_to_color)
         self.zoom_slider.set_full_categories(self.category_array, self.idx_to_color)
-        if self.show_zoom_slider:
+        if self.is_zoom_slider_shown:
             self.zoom_slider.set_center_frame(self.current_frame_idx, self.total_frames)
 
     def export_background(self):
@@ -123,16 +125,18 @@ class Video_Slider_Widget(QtWidgets.QWidget):
         self.current_frame_idx = value
         self.progress_slider.setValue(value)
         self.frame_changed.emit(self.current_frame_idx)
-        if self.show_zoom_slider:        
+        if self.is_zoom_slider_shown:        
             self.zoom_slider.set_center_frame(value, self.total_frames)
 
     def _on_zoom_radius_changed(self, value:str):
         self.zoom_slider.set_window_radius(int(value))
 
     def toggle_zoom_slider(self):
-        self.show_zoom_slider = not self.show_zoom_slider
-        self.zoom_slider_container.setVisible(self.show_zoom_slider)
-        self.show_zoom_btn.setVisible(not self.show_zoom_slider)
+        self.is_zoom_slider_shown = not self.is_zoom_slider_shown
+        self.hide_zoom_btn.setVisible(self.is_zoom_slider_shown)
+        self.zoom_slider.setVisible(self.is_zoom_slider_shown)
+        self.zoom_radius_combo.setVisible(self.is_zoom_slider_shown)
+        self.show_zoom_btn.setVisible(not self.is_zoom_slider_shown)
 
     def toggle_playback(self):
         if not self.is_playing:
