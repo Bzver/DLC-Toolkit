@@ -1,7 +1,7 @@
 import numpy as np
 
 from PySide6 import QtWidgets
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox
 
 from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Status_Bar
@@ -24,6 +24,10 @@ class Frame_Annotator:
         "other": "o",
         "roi": "i"
         }
+
+    COLOR_HEX_EXPANDED = ("#9C27B0", "#00BCD4", "#FF9800", "#4CAF50", "#F44336", "#3F51B5", "#E91E63",
+                          "#009688", "#607D8B", "#FF5722", "#795548", "#2196F3", "#CDDC39", "#FFC107",
+                          "#8BC34A", "#673AB7", "#03A9F4", "#FFEB3B", "#00E676", "#D50000", "#BD34A6")
 
     def __init__(self,
                  data_manager: Data_Manager,
@@ -66,7 +70,8 @@ class Frame_Annotator:
     def activate(self, menu_widget:Menu_Widget):
         menu_widget.add_menu_from_config(self.annot_menu_config)
         self.open_annot = True
-        QTimer.singleShot(0, self._init_annot_config)
+        self._init_annot_config()
+        self._refresh_slider()
 
     def deactivate(self, menu_widget:Menu_Widget):
         for menu in self.annot_menu_config.keys():
@@ -94,16 +99,14 @@ class Frame_Annotator:
 
     def init_loaded_vid(self):
         frame_count = self.vm.get_frame_counts()
-        self.annot_array = np.zeros((frame_count,), dtype=np.int8)
+        self.annot_array = np.full((frame_count,), 255, dtype=np.uint8)
         self.open_annot = True
-        QTimer.singleShot(0, self._init_annot_config)
 
     def _init_annot_config(self):
         self.annot_conf = Annotation_Config(self.behav_map, parent=self.main)
         self.annot_conf.category_removed.connect(self._handle_annot_category_remove)
         self.annot_conf.map_change.connect(self._handle_annot_key_change)
         if self.open_annot:
-            print("twying to set panel uwu")
             self.vid_play.set_right_panel_widget(self.annot_conf)
 
     ###################################################################################################################################################
@@ -151,13 +154,13 @@ class Frame_Annotator:
 
         next_change = self._find_next_annot_change()
         self.annot_array[frame_idx:next_change] = new_idx
-        self._refresh_slider() 
+        self.refresh_ui() 
 
     def _find_next_annot_change(self) -> int:
         diffs = np.diff(self.annot_array)
         change_locs = np.where(diffs != 0)[0] + 1
         total_frames = self.vm.get_frame_counts()
-        if not change_locs:
+        if not np.any(change_locs):
             return total_frames # Intentional, total_frames = last_frame + 1, used for array slicing
         
         next_change = get_next_frame_in_list(change_locs.tolist(), self.dm.current_frame_idx)
@@ -193,10 +196,15 @@ class Frame_Annotator:
     def navigation_title_controller(self):
         title_text = self.dm.get_title_text()
         self.status_bar.show_message(title_text, duration_ms=0)
-        self.vid_play.nav.set_title_color("black")
+        current_behav_idx = self.annot_array[self.dm.current_frame_idx]
+        color = "black" if current_behav_idx == 255 else self.COLOR_HEX_EXPANDED[current_behav_idx]
+        self.vid_play.nav.set_title_color(color)
 
     def _refresh_slider(self):
         self.vid_play.sld.clear_frame_category()
+        idx_to_color = {idx:self.COLOR_HEX_EXPANDED[idx] for idx in range(len(self.annot_num))}
+        self.vid_play.sld.set_frame_category_array(self.annot_array, idx_to_color)
+        self.vid_play.sld.commit_categories()
 
     def _refresh_annot_numeric(self):
         self.annot_num = {item:i for i, item in enumerate(self.behav_map.keys())}

@@ -18,10 +18,6 @@ class Frame_Manager:
         "outlier":     {"display_name": "Outlier Frames",       "color_hex": "#75541F", "group": "flabel"},
     }
 
-    COLOR_HEX_EXPANDED = ["#9C27B0", "#00BCD4", "#FF9800", "#4CAF50", "#F44336", "#3F51B5", "#E91E63",
-                          "#009688", "#607D8B", "#FF5722", "#795548", "#2196F3", "#CDDC39", "#FFC107",
-                          "#8BC34A", "#673AB7", "#03A9F4", "#FFEB3B", "#00E676", "#D50000", "#BD34A6"]
-
     def __init__(self, refresh_callback:Callable[[], None]):
         self.frames: Dict[str, Set[int]] = defaultdict(set)
         self.metadata: Dict[str, Dict[str, Any]] = {}
