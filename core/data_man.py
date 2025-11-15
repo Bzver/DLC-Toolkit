@@ -227,7 +227,7 @@ class Data_Manager:
         frame_options = {}
         pop_cats = self.fm.all_populated_categories()
         for cat in pop_cats:
-            if cat in self.fm.flabel_cats:
+            if cat in self.fm.fview_cats:
                 frame_options[self.fm.get_display_name(cat)] = (cat, self.get_frames(cat))
 
         return frame_options

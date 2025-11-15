@@ -259,7 +259,7 @@ class Frame_App(QMainWindow):
         elif hasattr(self.at, "open_outlier") and any[self.at.open_outlier, self.dm.plot_config.navigate_roi]:
             frame_categories = self.dm.get_frame_categories_flabel()
         else:
-            frame_categories = self.dm.get_frame_categories()
+            frame_categories = self.dm.get_frame_categories_fview()
 
         if frame_categories:
             list_select_dialog = Frame_List_Dialog(frame_categories, parent=self)
