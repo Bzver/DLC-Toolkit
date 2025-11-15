@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QFileDialog
 from typing import List, Dict, Optional
 
 from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Status_Bar, Frame_List_Dialog
-from utils.helper import frame_to_pixmap
+from utils.helper import frame_to_pixmap, indices_to_spans
 from core import Data_Manager, Video_Manager
 from core.tool import Annotation_Config, Annotation_Summary_Table, get_next_frame_in_list
 from core.io import load_annotation
@@ -29,9 +29,9 @@ class Frame_Annotator:
         }
 
     COLOR_HEX_EXPANDED = (
-        "#9C27B0", "#00BCD4", "#FF9800", "#4CAF50", "#F44336", "#3F51B5", "#E91E63",
+        "#D50000", "#00BCD4", "#FF9800", "#4CAF50", "#FFB3AD", "#3F51B5", "#FFEB3B",
         "#009688", "#607D8B", "#FF5722", "#795548", "#2196F3", "#CDDC39", "#FFC107",
-        "#8BC34A", "#673AB7", "#03A9F4", "#FFEB3B", "#00E676", "#D50000", "#BD34A6",
+        "#8BC34A", "#673AB7", "#03A9F4", "#E91E63", "#00E676", "#BD34A6", "#9C27B0"
     )
 
     def __init__(self,
@@ -63,7 +63,7 @@ class Frame_Annotator:
             },
             "Save":{
                 "buttons": [
-                    ("Export in Text", self._unimplemented),
+                    ("Export in Text", self._export_annotation_to_text),
                     ("Export in Mat", self._unimplemented),
                 ]
             },
@@ -113,6 +113,38 @@ class Frame_Annotator:
 
     def _unimplemented(self):
         QMessageBox.information(self.main, "Unimplemented", "This feature is not yet implemented.")
+
+    def _export_annotation_to_text(self):
+        if self.annot_array is None:
+            QMessageBox.warning(self.main, "No Annotation", "No annotation data to export.")
+            return
+
+        file_dialog = QFileDialog(self.main)
+        file_path, _ = file_dialog.getSaveFileName(self.main, "Export Annotation to Text File", "", "Text Files (*.txt);;All Files (*)")
+
+        if not file_path:
+            return
+
+        try:
+            content = "Caltech Behavior Annotator - Annotation File\n\n"
+            content += "Configuration file:\n"
+            for category, key in self.behav_map.items():
+                content += f"{category}\t{key}\n"
+            content += "\n"
+            content += "S1:\tstart\tend\ttype\n"
+            content += "-----------------------------\n"
+            if not hasattr(self, "annot_sum"):
+                self._init_annot_config()
+            segments = self.annot_sum.extract_segments(include_other=True)
+            for category, start, end in segments:
+                content += f"\t{start}\t{end}\t{category}\n"
+
+            with open(file_path, 'w') as f:
+                f.write(content)
+            QMessageBox.information(self.main, "Export Successful", f"Annotation exported to {file_path}")
+
+        except Exception as e:
+            QMessageBox.critical(self.main, "Export Error", f"Failed to export annotation: {e}")
 
     def init_loaded_vid(self):
         frame_count = self.vm.get_frame_counts()

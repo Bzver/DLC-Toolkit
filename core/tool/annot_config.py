@@ -295,12 +295,47 @@ class Annotation_Summary_Table(QtWidgets.QWidget):
                 QTableWidget.PositionAtCenter
             )
 
+    def extract_segments(self, include_other: bool = False):
+        if self.category_array is None:
+            return []
+        
+        segments = []
+        NO_CATEGORY = 255
+        
+        unique_idxs = np.unique(self.category_array)
+    
+        if not include_other:
+            unique_idxs = unique_idxs[unique_idxs != NO_CATEGORY]
+        
+        for idx in unique_idxs:
+            frame_indices = np.where(self.category_array == idx)[0]
+            if frame_indices.size == 0:
+                continue
+                
+            spans = indices_to_spans(frame_indices)
+            
+            if idx == NO_CATEGORY:
+                category = "other"
+            else:
+                cat_name = self.idx_to_cat.get(int(idx), '?')
+                category = next((cat for cat in self.behaviors_map.keys() if cat == cat_name), f'Unknown({idx})')
+            
+            for start, end in spans:
+                segments.append((category, start, end))
+        
+        return sorted(segments, key=lambda x: x[1])
+
+    def _on_row_clicked(self, row: int, column: int):
+        if 0 <= row < len(self._segments):
+            _, start, _ = self._segments[row]
+            self.row_clicked.emit(start)
+
     def _populate_table(self):
         if self.category_array is None or len(self.category_array) == 0:
             self.table_widget.setRowCount(0)
             return
 
-        segments = self._extract_segments()
+        segments = self.extract_segments()
         self.table_widget.setRowCount(len(segments))
         self._segments = segments
         
@@ -313,33 +348,3 @@ class Annotation_Summary_Table(QtWidgets.QWidget):
         item = QTableWidgetItem(text)
         item.setTextAlignment(Qt.AlignCenter)
         return item
-
-    def _extract_segments(self):
-        if self.category_array is None:
-            return []
-        
-        segments = []
-        NO_CATEGORY = 255
-        
-        unique_idxs = np.unique(self.category_array)
-        unique_idxs = unique_idxs[unique_idxs != NO_CATEGORY]
-        
-        for idx in unique_idxs:
-            frame_indices = np.where(self.category_array == idx)[0]
-            if frame_indices.size == 0:
-                continue
-                
-            spans = indices_to_spans(frame_indices)
-            
-            cat_name = self.idx_to_cat.get(int(idx), '?')
-            category = next((cat for cat in self.behaviors_map.keys() if cat == cat_name), f'Unknown({idx})')
-            
-            for start, end in spans:
-                segments.append((category, start, end))
-        
-        return sorted(segments, key=lambda x: x[1])
-
-    def _on_row_clicked(self, row: int, column: int):
-        if 0 <= row < len(self._segments):
-            _, start, _ = self._segments[row]
-            self.row_clicked.emit(start)
