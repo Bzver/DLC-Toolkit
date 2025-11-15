@@ -22,7 +22,7 @@ class Annotation_Config(QtWidgets.QWidget):
 
         self.table_widget.setStyleSheet("""
             QTableWidget {
-                selection-background-color: #4FC3F7;
+                selection-background-color: #1E03B6;
                 selection-color: white;
                 alternate-background-color: #FAFAFA;
             }
@@ -57,21 +57,7 @@ class Annotation_Config(QtWidgets.QWidget):
         button_layout.addWidget(self.add_button)
         button_layout.addWidget(self.remove_button)
         self.layout.addLayout(button_layout)
-
-        self.populate_table()
-
-    def populate_table(self):
-        self.table_widget.setRowCount(len(self._behaviors_map))
-        for row, (category, key) in enumerate(self._behaviors_map.items()):
-            category_item = QTableWidgetItem(category)
-            category_item.setFlags(category_item.flags() & ~Qt.ItemIsEditable)
-            self.table_widget.setItem(row, 0, category_item)
-
-            key_item = QTableWidgetItem(key.upper()) 
-            self.table_widget.setItem(row, 1, key_item)
-
-        self.table_widget.resizeColumnsToContents()
-        self.table_widget.resizeRowsToContents()
+        self._populate_table()
 
     def add_category_external(self, new_category:str):
         existing_keys = set(self._behaviors_map.values())
@@ -81,7 +67,7 @@ class Annotation_Config(QtWidgets.QWidget):
             raise RuntimeError("No valid keys left, remove some behaviors first!")
         self._behaviors_map[new_category] = available_keys[0]
         self.map_change.emit(self._behaviors_map)
-        self.populate_table()
+        self._populate_table()
 
     def highlight_current_category(self, category:str):
         for row in range(self.table_widget.rowCount()):
@@ -99,6 +85,20 @@ class Annotation_Config(QtWidgets.QWidget):
 
     def sync_behaviors_map(self, behaviors_map):
         self._behaviors_map = behaviors_map
+        self._populate_table()
+
+    def _populate_table(self):
+        self.table_widget.setRowCount(len(self._behaviors_map))
+        for row, (category, key) in enumerate(self._behaviors_map.items()):
+            category_item = QTableWidgetItem(category)
+            category_item.setFlags(category_item.flags() & ~Qt.ItemIsEditable)
+            self.table_widget.setItem(row, 0, category_item)
+
+            key_item = QTableWidgetItem(key.upper()) 
+            self.table_widget.setItem(row, 1, key_item)
+
+        self.table_widget.resizeColumnsToContents()
+        self.table_widget.resizeRowsToContents()
 
     def _handle_item_changed(self, item: QTableWidgetItem):
         if item.column() != 1:
@@ -152,7 +152,7 @@ class Annotation_Config(QtWidgets.QWidget):
 
             self._behaviors_map[category] = key
             self.map_change.emit(self._behaviors_map)
-            self.populate_table()
+            self._populate_table()
 
     def _remove_category(self):
         selected = self.table_widget.selectedItems()
@@ -197,7 +197,7 @@ class Annotation_Config(QtWidgets.QWidget):
         self.category_removed.emit(target_category, category_to_remove)
         del self._behaviors_map[category_to_remove]
         self.map_change.emit(self._behaviors_map)
-        self.populate_table()
+        self._populate_table()
         
         QMessageBox.information(self, "Success",
                                 f"Category '{category_to_remove}' removed.\n"
@@ -261,7 +261,7 @@ class Annotation_Summary_Table(QtWidgets.QWidget):
 
         self.table_widget.setStyleSheet("""
             QTableWidget {
-                selection-background-color: #4FC3F7;
+                selection-background-color: #1E03B6;
                 selection-color: white;
                 alternate-background-color: #FAFAFA;
             }

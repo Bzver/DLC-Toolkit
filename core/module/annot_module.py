@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QFileDialog
 from typing import List, Dict, Optional
 
 from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Status_Bar, Frame_List_Dialog
-from utils.helper import frame_to_pixmap, indices_to_spans
+from utils.helper import frame_to_pixmap
 from core import Data_Manager, Video_Manager
 from core.tool import Annotation_Config, Annotation_Summary_Table, get_next_frame_in_list
 from core.io import load_annotation
@@ -156,8 +156,8 @@ class Frame_Annotator:
         annot_path, _ = file_dialog.getOpenFileName(self.main, "Select Annotation File", "", "Text Files (*.txt);;All Files (*)")
         if annot_path:
             self.reset_state(True)
-            frame_dict = load_annotation(annot_path)
-            self._frame_list_to_new_annot_cat(frame_dict.keys(), frame_dict)
+            behav_map, frame_dict = load_annotation(annot_path)
+            self._frame_list_to_new_annot_cat(frame_dict.keys(), behav_map=behav_map, frame_dict=frame_dict)
 
     def _import_frame_list(self):
         frame_categories = {
@@ -172,9 +172,13 @@ class Frame_Annotator:
         dialog.categories_selected.connect(self._frame_list_to_new_annot_cat)
         dialog.exec()
 
-    def _frame_list_to_new_annot_cat(self, categories:List[str], frame_dict:Optional[Dict[str, List[int]]]):
+    def _frame_list_to_new_annot_cat(
+            self, categories:List[str], behav_map:Optional[Dict[str, str]]=None, frame_dict:Optional[Dict[str, List[int]]]=None):
         if self.annot_array is None:
             self.init_loaded_vid()
+        if behav_map:
+            self._handle_annot_key_change(behav_map)
+            self.annot_conf.sync_behaviors_map(behav_map)
         for cat in categories:
             if cat not in self.behav_map.keys():
                 self.annot_conf.add_category_external(cat)
@@ -220,7 +224,7 @@ class Frame_Annotator:
 
         if self.annot_array is not None:
             idx = int(self.annot_array[self.dm.current_frame_idx])
-            cat = self.idx_to_cat[idx]
+            cat = "other" if idx == 255 else self.idx_to_cat[idx] 
             if hasattr(self, "annot_sum") and hasattr(self, "annot_conf"):
                 self.annot_conf.highlight_current_category(cat)
                 self.annot_sum.highlight_current_frame(self.dm.current_frame_idx)
