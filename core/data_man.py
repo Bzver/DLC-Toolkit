@@ -238,7 +238,7 @@ class Data_Manager:
     def clear_old_cat(self, clear_old:bool):
         if not clear_old:
             return
-        self.fm.clear_category("non_refined")
+        self.fm.clear_category("marked")
 
     def get_frames(self, category:str) -> List[int]:
         return self.fm.get_frames(category)
