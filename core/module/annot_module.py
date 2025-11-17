@@ -17,11 +17,10 @@ from core.io import load_annotation
 class Frame_Annotator:
     BEHAVIORS_MAP = {
         "other": "o",
-        "allogrooming": "a",
+        "allogrooming": "g",
         "sniffing": "s",
-        "anogenital": "g",
-        "co-sleeping": "e",
-        "cuddling": "c",
+        "anogenital": "a",
+        "huddling": "h",
         "mounting": "m",
         "copulation": "p",
         "proximal": "l",
@@ -29,7 +28,7 @@ class Frame_Annotator:
         }
 
     COLOR_HEX_EXPANDED = (
-        "#607D8B", "#D50000", "#00BCD4", "#FF9800", "#4CAF50", "#FFB3AD", "#3F51B5",
+        "#9BB0BBFF", "#D50000", "#00BCD4", "#FF9800", "#4CAF50", "#FFB3AD", "#3F51B5",
         "#009688", "#FFEB3B", "#FF5722", "#795548", "#2196F3", "#CDDC39", "#FFC107",
         "#8BC34A", "#673AB7", "#03A9F4", "#E91E63", "#00E676", "#BD34A6", "#9C27B0"
     )
@@ -115,7 +114,7 @@ class Frame_Annotator:
 
     def init_loaded_vid(self):
         frame_count = self.vm.get_frame_counts()
-        self.annot_array = np.full((frame_count,), 255, dtype=np.uint8)
+        self.annot_array = np.zeros((frame_count,), dtype=np.uint8)
         self.open_annot = True
 
     def _load_annotation(self):
@@ -191,7 +190,7 @@ class Frame_Annotator:
 
         if self.annot_array is not None:
             idx = int(self.annot_array[self.dm.current_frame_idx])
-            cat = "other" if idx == 255 else self.idx_to_cat[idx] 
+            cat = self.idx_to_cat[idx] 
             if hasattr(self, "annot_sum") and hasattr(self, "annot_conf"):
                 self.annot_conf.highlight_current_category(cat)
                 self.annot_sum.highlight_current_frame(self.dm.current_frame_idx)
@@ -278,7 +277,7 @@ class Frame_Annotator:
             color = "black"
         else:
             current_behav_idx = self.annot_array[self.dm.current_frame_idx]
-            color = "black" if current_behav_idx == 255 else self.COLOR_HEX_EXPANDED[current_behav_idx % len(self.COLOR_HEX_EXPANDED)]
+            color = self.COLOR_HEX_EXPANDED[current_behav_idx % len(self.COLOR_HEX_EXPANDED)]
         self.vid_play.nav.set_title_color(color)
 
     def _refresh_slider(self):
@@ -370,7 +369,7 @@ class Frame_Annotator:
                 pct_b = 100 * b / self.dm.total_frames
                 pct_a = 100 * a / self.dm.total_frames
                 delta = pct_a - pct_b
-                lbl_text = "other" if lbl == 255 else self.idx_to_cat[lbl]
+                lbl_text = self.idx_to_cat[lbl]
 
                 table.setItem(row_idx, 0, QtWidgets.QTableWidgetItem(str(lbl_text)))
                 table.setItem(row_idx, 1, QtWidgets.QTableWidgetItem(f"{pct_b:.2f}"))
@@ -458,7 +457,6 @@ class Frame_Annotator:
         
         try:
             behavior_struct = self.annot_array.copy()
-            behavior_struct[behavior_struct==255] = self.cat_to_idx["other"]
             annotation_struct = {
                 "streamID": 1,
                 "annotation": behavior_struct.reshape(-1, 1),

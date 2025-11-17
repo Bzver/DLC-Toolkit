@@ -9,6 +9,17 @@ from PySide6.QtWidgets import (
 )
 from utils.helper import indices_to_spans
 
+TABLE_STYLESHEET = """
+        QTableWidget {
+            selection-background-color: #1E03B6;
+            selection-color: white;
+            alternate-background-color: #FAFAFA;
+        }
+        QTableWidget::item:selected {
+            font-weight: bold;
+        }
+    """
+
 class Annotation_Config(QtWidgets.QWidget):
     category_removed = Signal(str, str)
     map_change = Signal(dict)
@@ -16,35 +27,19 @@ class Annotation_Config(QtWidgets.QWidget):
     def __init__(self, behaviors_map: dict, parent: QtWidgets.QWidget = None):
         super().__init__(parent)
         self._behaviors_map = behaviors_map.copy()
-        self.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Preferred)
-        self.setMaximumWidth(300)
-        self._init_ui()
-
-        self.table_widget.setStyleSheet("""
-            QTableWidget {
-                selection-background-color: #1E03B6;
-                selection-color: white;
-                alternate-background-color: #FAFAFA;
-            }
-            QTableWidget::item:selected {
-                font-weight: bold;
-            }
-        """)
-
-    def _init_ui(self):
         self.layout = QVBoxLayout(self)
 
-        self.table_widget = QTableWidget(self)
+        self.table_widget = QTableWidget()
         self.table_widget.setColumnCount(2)
         self.table_widget.setHorizontalHeaderLabels(["Category", "Key"])
-        self.table_widget.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.table_widget.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table_widget.verticalHeader().setVisible(False)
-        self.table_widget.setSizeAdjustPolicy(QtWidgets.QAbstractScrollArea.AdjustToContents)
         self.table_widget.setEditTriggers(QTableWidget.DoubleClicked)
         self.table_widget.setSelectionBehavior(QTableWidget.SelectRows)
         self.table_widget.setSelectionMode(QTableWidget.SingleSelection)
         self.table_widget.itemChanged.connect(self._handle_item_changed)
 
+        self.table_widget.setStyleSheet(TABLE_STYLESHEET)
         self.layout.addWidget(self.table_widget)
 
         button_layout = QVBoxLayout()
@@ -96,9 +91,6 @@ class Annotation_Config(QtWidgets.QWidget):
 
             key_item = QTableWidgetItem(key.upper()) 
             self.table_widget.setItem(row, 1, key_item)
-
-        self.table_widget.resizeColumnsToContents()
-        self.table_widget.resizeRowsToContents()
 
     def _handle_item_changed(self, item: QTableWidgetItem):
         if item.column() != 1:
@@ -246,7 +238,7 @@ class Annotation_Summary_Table(QtWidgets.QWidget):
         self.behaviors_map = {}
         self.idx_to_cat = {}
         self.layout = QVBoxLayout(self)
-        
+
         self.table_widget = QTableWidget()
         self.table_widget.setColumnCount(3)
         self.table_widget.setHorizontalHeaderLabels(["Behavior", "Start", "End"])
@@ -255,20 +247,10 @@ class Annotation_Summary_Table(QtWidgets.QWidget):
         self.table_widget.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table_widget.setSelectionMode(QTableWidget.SingleSelection)
         self.table_widget.setSelectionBehavior(QTableWidget.SelectRows)
-
         self.table_widget.cellClicked.connect(self._on_row_clicked)
-        self.layout.addWidget(self.table_widget)
 
-        self.table_widget.setStyleSheet("""
-            QTableWidget {
-                selection-background-color: #1E03B6;
-                selection-color: white;
-                alternate-background-color: #FAFAFA;
-            }
-            QTableWidget::item:selected {
-                font-weight: bold;
-            }
-        """)
+        self.table_widget.setStyleSheet(TABLE_STYLESHEET)
+        self.layout.addWidget(self.table_widget)
 
     def update_data(self, category_array: np.ndarray, behaviors_map: dict, idx_to_cat: dict):
         self.category_array = category_array
