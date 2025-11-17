@@ -13,24 +13,22 @@ from core.tool import Annotation_Config, Annotation_Summary_Table, get_next_fram
 from core.io import load_annotation
 
 class Frame_Annotator:
-    # Use hardcoded behavior map for now
     BEHAVIORS_MAP = {
+        "other": "o",
         "allogrooming": "a",
-        "anogenital": "s",
+        "sniffing": "s",
+        "anogenital": "g",
         "co-sleeping": "e",
         "cuddling": "c",
-        "receptive": "r", 
         "mounting": "m",
         "copulation": "p",
         "proximal": "l",
         "in-cage": "q",
-        "other": "o",
-        "roi": "i"
         }
 
     COLOR_HEX_EXPANDED = (
-        "#D50000", "#00BCD4", "#FF9800", "#4CAF50", "#FFB3AD", "#3F51B5", "#FFEB3B",
-        "#009688", "#607D8B", "#FF5722", "#795548", "#2196F3", "#CDDC39", "#FFC107",
+        "#607D8B", "#D50000", "#00BCD4", "#FF9800", "#4CAF50", "#FFB3AD", "#3F51B5",
+        "#009688", "#FFEB3B", "#FF5722", "#795548", "#2196F3", "#CDDC39", "#FFC107",
         "#8BC34A", "#673AB7", "#03A9F4", "#E91E63", "#00E676", "#BD34A6", "#9C27B0"
     )
 
@@ -49,16 +47,17 @@ class Frame_Annotator:
         self.main = parent
 
         self.annot_menu_config = {
-            "View":{
-                "buttons": [
-                    ("Toggle Annotation Config", self._toggle_annotation_config),
-                    ("Choose Annotation Category to Navigate", self._choose_nav_cat,)
-                ]
-            },
             "Import":{
                 "buttons": [
                     ("Import Annotation From File", self._load_annotation),
                     ("Import Frame List As Annotation", self._import_frame_list),
+                    ("Filter Out Short Bout", self._filter_short_bout),
+                ]
+            },
+            "View":{
+                "buttons": [
+                    ("Toggle Annotation Config", self._toggle_annotation_config),
+                    ("Choose Annotation Category to Navigate", self._choose_nav_cat),
                 ]
             },
             "Save":{
@@ -113,38 +112,6 @@ class Frame_Annotator:
 
     def _unimplemented(self):
         QMessageBox.information(self.main, "Unimplemented", "This feature is not yet implemented.")
-
-    def _export_annotation_to_text(self):
-        if self.annot_array is None:
-            QMessageBox.warning(self.main, "No Annotation", "No annotation data to export.")
-            return
-
-        file_dialog = QFileDialog(self.main)
-        file_path, _ = file_dialog.getSaveFileName(self.main, "Export Annotation to Text File", "", "Text Files (*.txt);;All Files (*)")
-
-        if not file_path:
-            return
-
-        try:
-            content = "Caltech Behavior Annotator - Annotation File\n\n"
-            content += "Configuration file:\n"
-            for category, key in self.behav_map.items():
-                content += f"{category}\t{key}\n"
-            content += "\n"
-            content += "S1:\tstart\tend\ttype\n"
-            content += "-----------------------------\n"
-            if not hasattr(self, "annot_sum"):
-                self._init_annot_config()
-            segments = self.annot_sum.extract_segments(include_other=True)
-            for category, start, end in segments:
-                content += f"\t{start}\t{end}\t{category}\n"
-
-            with open(file_path, 'w') as f:
-                f.write(content)
-            QMessageBox.information(self.main, "Export Successful", f"Annotation exported to {file_path}")
-
-        except Exception as e:
-            QMessageBox.critical(self.main, "Export Error", f"Failed to export annotation: {e}")
 
     def init_loaded_vid(self):
         frame_count = self.vm.get_frame_counts()
@@ -346,3 +313,100 @@ class Frame_Annotator:
         self.behav_map = new_map
         self._setup_shortcuts()
         self._refresh_annot_numeric()
+
+    ###################################################################################################################################################
+
+    def _filter_short_bout(self):
+        value, ok = QtWidgets.QInputDialog.getText(self.main, 
+            "Behavior Bout Filtering", "Bouts with shorter duration (frames) will be subsumed into neighboring behaviors:")
+        if value.strip() and ok:
+            try:
+                min_duration = max(2, int(value))
+            except ValueError:
+                QMessageBox.warning(self.main, "Error", "Please input numbers of minimum frames.")
+            bout_start = np.insert(np.where(np.diff(self.annot_array)!=0)[0]+1, 0, 0)
+            bout_end = np.append(bout_start[1:], len(self.annot_array))
+            bout_len = bout_end - bout_start
+
+            short_mask = bout_len < min_duration
+            short_mask[0] = False
+            short_mask[-1] = False
+
+            before_counts = np.bincount(self.annot_array)
+
+            for i in np.where(short_mask)[0]:
+                start, end = bout_start[i], bout_end[i]
+                if bout_len[i-1] >= bout_len[i+1]:
+                    self.annot_array[start:end] = self.annot_array[start-1]
+                else:
+                    self.annot_array[start:end] = self.annot_array[end]
+
+            after_counts = np.bincount(self.annot_array)
+
+            dialog = QtWidgets.QDialog(self.main)
+            dialog.setWindowTitle("Composition Change")
+            layout = QtWidgets.QVBoxLayout()
+
+            table = QtWidgets.QTableWidget()
+            table.setColumnCount(4)
+            table.setHorizontalHeaderLabels(["Behavior", "Before (%)", "After (%)", "Δ (%)"])
+            table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+
+            labels = np.union1d(np.where(before_counts)[0], np.where(after_counts)[0])
+            table.setRowCount(len(labels))
+
+            for row_idx, lbl in enumerate(np.sort(labels)):
+                b = before_counts[lbl] if lbl < len(before_counts) else 0
+                a = after_counts[lbl] if lbl < len(after_counts) else 0
+                pct_b = 100 * b / self.dm.total_frames
+                pct_a = 100 * a / self.dm.total_frames
+                delta = pct_a - pct_b
+                lbl_text = "other" if lbl == 255 else self.idx_to_cat[lbl]
+
+                table.setItem(row_idx, 0, QtWidgets.QTableWidgetItem(str(lbl_text)))
+                table.setItem(row_idx, 1, QtWidgets.QTableWidgetItem(f"{pct_b:.2f}"))
+                table.setItem(row_idx, 2, QtWidgets.QTableWidgetItem(f"{pct_a:.2f}"))
+                item = QtWidgets.QTableWidgetItem(f"{delta:+.2f}")
+                item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                table.setItem(row_idx, 3, item)
+
+            table.resizeColumnsToContents()
+            layout.addWidget(table)
+            layout.addWidget(QtWidgets.QPushButton("OK", clicked=dialog.accept))
+            dialog.setLayout(layout)
+            dialog.adjustSize()
+            dialog.exec()
+
+            self.refresh_ui()
+
+    def _export_annotation_to_text(self):
+        if self.annot_array is None:
+            QMessageBox.warning(self.main, "No Annotation", "No annotation data to export.")
+            return
+
+        file_dialog = QFileDialog(self.main)
+        file_path, _ = file_dialog.getSaveFileName(self.main, "Export Annotation to Text File", "", "Text Files (*.txt);;All Files (*)")
+
+        if not file_path:
+            return
+
+        try:
+            content = "Caltech Behavior Annotator - Annotation File\n\n"
+            content += "Configuration file:\n"
+            for category, key in self.behav_map.items():
+                content += f"{category}\t{key}\n"
+            content += "\n"
+            content += "S1:\tstart\tend\ttype\n"
+            content += "-----------------------------\n"
+            if not hasattr(self, "annot_sum"):
+                self._init_annot_config()
+            segments = self.annot_sum.extract_segments(include_other=True)
+            for category, start, end in segments:
+                content += f"\t{start}\t{end}\t{category}\n"
+
+            with open(file_path, 'w') as f:
+                f.write(content)
+            QMessageBox.information(self.main, "Export Successful", f"Annotation exported to {file_path}")
+
+        except Exception as e:
+            QMessageBox.critical(self.main, "Export Error", f"Failed to export annotation: {e}")
