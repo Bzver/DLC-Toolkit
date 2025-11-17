@@ -421,7 +421,6 @@ class Data_Manager:
             'dlc_data': self.dlc_data,
             'canon_pose': self.canon_pose,
             'frame_store': self.fm.to_dict(),
-            'label_data_array': self.label_data_array,
             'plot_config': self.plot_config,
             'blob_config': self.blob_config,
             'prediction': self.prediction,
@@ -458,7 +457,6 @@ class Data_Manager:
             self.project_dir = workspace_state.get('project_dir')
             self.dlc_data = workspace_state.get('dlc_data')
             self.canon_pose = workspace_state.get('canon_pose')
-            self.label_data_array = workspace_state.get('label_data_array')
             self.plot_config = workspace_state.get('plot_config')
             self.blob_config = workspace_state.get('blob_config')
             self.prediction = workspace_state.get('prediction')
