@@ -1,3 +1,5 @@
+import os
+import scipy.io as sio
 import numpy as np
 
 from PySide6 import QtWidgets
@@ -63,7 +65,7 @@ class Frame_Annotator:
             "Save":{
                 "buttons": [
                     ("Export in Text", self._export_annotation_to_text),
-                    ("Export in Mat", self._unimplemented),
+                    ("Export in Mat", self._export_annotation_to_mat),
                 ]
             },
         }
@@ -77,6 +79,7 @@ class Frame_Annotator:
         self._init_annot_config()
         self._refresh_slider()
         self._setup_shortcuts()
+        self._auto_load()
         if not self.vid_play.sld.is_zoom_slider_shown:
             self.vid_play.sld.toggle_zoom_slider()
 
@@ -109,9 +112,6 @@ class Frame_Annotator:
             self.extra_shorts.add_shortcut(
                 name=category, key=key.lower(), callback=lambda cat=category: self._annotate(cat)
             )
-
-    def _unimplemented(self):
-        QMessageBox.information(self.main, "Unimplemented", "This feature is not yet implemented.")
 
     def init_loaded_vid(self):
         frame_count = self.vm.get_frame_counts()
@@ -216,6 +216,7 @@ class Frame_Annotator:
         next_change = self._find_next_annot_change()
         self.annot_array[frame_idx:next_change] = new_idx
         self.refresh_ui()
+        self._auto_save()
 
     def _find_next_annot_change(self) -> int:
         diffs = np.diff(self.annot_array)
@@ -244,6 +245,7 @@ class Frame_Annotator:
         self.nav_list = frame_list
         if self.nav_list:
             self.dm.current_frame_idx = self.nav_list[0]
+            self.display_current_frame()
 
     ###################################################################################################################################################
 
@@ -308,11 +310,14 @@ class Frame_Annotator:
         self.annot_array[self.annot_array == src_idx] = dest_idx
         self.annot_array[self.annot_array > src_idx] -= 1
         self._refresh_slider()
+        self._auto_save()
 
     def _handle_annot_key_change(self, new_map):
         self.behav_map = new_map
         self._setup_shortcuts()
         self._refresh_annot_numeric()
+        self.annot_sum.update_data(self.annot_array, self.behav_map, self.idx_to_cat)
+        self._auto_save()
 
     ###################################################################################################################################################
 
@@ -379,6 +384,28 @@ class Frame_Annotator:
 
             self.refresh_ui()
 
+    def _auto_load(self):
+        if self.annot_array is not None: # No load when already loaded
+            return
+        
+        vid_path, _ = os.path.splitext(self.dm.video_file)
+        annot_path = f"{vid_path}_annot_backup.txt"
+        if os.path.isfile(annot_path):
+            self.reset_state(True)
+            behav_map, frame_dict = load_annotation(annot_path)
+            self._frame_list_to_new_annot_cat(frame_dict.keys(), behav_map=behav_map, frame_dict=frame_dict)
+
+    def _auto_save(self):
+        if self.annot_array is None:
+            return
+        
+        vid_path, _ = os.path.splitext(self.dm.video_file)
+        save_path = f"{vid_path}_annot_backup.txt"
+        try:
+            self._export_txt_worker(save_path)
+        except Exception as e:
+            self.status_bar.show_message(f"Failed to auto save annotation: {e}")
+
     def _export_annotation_to_text(self):
         if self.annot_array is None:
             QMessageBox.warning(self.main, "No Annotation", "No annotation data to export.")
@@ -391,22 +418,50 @@ class Frame_Annotator:
             return
 
         try:
-            content = "Caltech Behavior Annotator - Annotation File\n\n"
-            content += "Configuration file:\n"
-            for category, key in self.behav_map.items():
-                content += f"{category}\t{key}\n"
-            content += "\n"
-            content += "S1:\tstart\tend\ttype\n"
-            content += "-----------------------------\n"
-            if not hasattr(self, "annot_sum"):
-                self._init_annot_config()
-            segments = self.annot_sum.extract_segments(include_other=True)
-            for category, start, end in segments:
-                content += f"\t{start}\t{end}\t{category}\n"
-
-            with open(file_path, 'w') as f:
-                f.write(content)
+            self._export_txt_worker(file_path)
             QMessageBox.information(self.main, "Export Successful", f"Annotation exported to {file_path}")
 
         except Exception as e:
             QMessageBox.critical(self.main, "Export Error", f"Failed to export annotation: {e}")
+
+    def _export_txt_worker(self, file_path):
+        content = "Caltech Behavior Annotator - Annotation File\n\n"
+        content += "Configuration file:\n"
+        for category, key in self.behav_map.items():
+            content += f"{category}\t{key}\n"
+        content += "\n"
+        content += "S1:\tstart\tend\ttype\n"
+        content += "-----------------------------\n"
+        if not hasattr(self, "annot_sum"):
+            self._init_annot_config()
+        segments = self.annot_sum.extract_segments(include_other=True)
+        for category, start, end in segments:
+            content += f"\t{start}\t{end}\t{category}\n"
+
+        with open(file_path, 'w') as f:
+            f.write(content)
+
+    def _export_annotation_to_mat(self):
+        if self.annot_array is None:
+            QMessageBox.warning(self.main, "No Annotation", "No annotation data to export.")
+            return
+
+        file_dialog = QFileDialog(self.main)
+        file_path, _ = file_dialog.getSaveFileName(self.main, "Export Annotation to Mat File", "", "Matlab Files (*.mat);;All Files (*)")
+
+        if not file_path:
+            return
+        
+        try:
+            behavior_struct = self.annot_array.copy()
+            behavior_struct[behavior_struct==255] = self.cat_to_idx["other"]
+            annotation_struct = {
+                "streamID": 1,
+                "annotation": behavior_struct.reshape(-1, 1),
+                "behaviors": self.cat_to_idx
+            }
+            mat_to_save = {"annotation": annotation_struct}
+            sio.savemat(file_path, mat_to_save)
+            print(f"Successfully saved to {file_path}")
+        except Exception as e:
+            print(f"Failed to save {file_path}, Exception: {e}")
