@@ -107,6 +107,7 @@ class Frame_App(QMainWindow):
         }
 
     def _reset_state(self):
+        self._switch_to_fview()
         self.dm.reset_dm()
         self.vm.reset_vm()
         self.kem.reset_kem()

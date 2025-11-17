@@ -329,22 +329,26 @@ class Frame_Annotator:
                 min_duration = max(2, int(value))
             except ValueError:
                 QMessageBox.warning(self.main, "Error", "Please input numbers of minimum frames.")
-            bout_start = np.insert(np.where(np.diff(self.annot_array)!=0)[0]+1, 0, 0)
-            bout_end = np.append(bout_start[1:], len(self.annot_array))
-            bout_len = bout_end - bout_start
-
-            short_mask = bout_len < min_duration
-            short_mask[0] = False
-            short_mask[-1] = False
-
+                return
+            
             before_counts = np.bincount(self.annot_array)
 
-            for i in np.where(short_mask)[0]:
-                start, end = bout_start[i], bout_end[i]
-                if bout_len[i-1] >= bout_len[i+1]:
-                    self.annot_array[start:end] = self.annot_array[start-1]
-                else:
-                    self.annot_array[start:end] = self.annot_array[end]
+            short_mask = np.array([True])
+            while np.any(short_mask):
+                bout_start = np.insert(np.where(np.diff(self.annot_array)!=0)[0]+1, 0, 0)
+                bout_end = np.append(bout_start[1:], len(self.annot_array))
+                bout_len = bout_end - bout_start
+
+                short_mask = bout_len < min_duration
+                short_mask[0] = False
+                short_mask[-1] = False
+
+                for i in np.where(short_mask)[0]:
+                    start, end = bout_start[i], bout_end[i]
+                    if bout_len[i-1] >= bout_len[i+1]:
+                        self.annot_array[start:end] = self.annot_array[start-1]
+                    else:
+                        self.annot_array[start:end] = self.annot_array[end]
 
             after_counts = np.bincount(self.annot_array)
 
