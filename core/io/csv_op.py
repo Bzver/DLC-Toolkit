@@ -13,12 +13,13 @@ def prediction_to_csv(
         dlc_data:Loaded_DLC_Data,
         pred_data_array:np.ndarray, 
         export_settings:Export_Settings,
-        frame_list: List[int]=None
+        frame_list: List[int]=None,
+        keep_conf:bool=False,
         ) -> str:
     
     pred_data_flattened = pred_data_array.reshape(pred_data_array.shape[0], -1) # [F, I, K] to [F, I*K]
 
-    if pred_data_flattened.shape[1] // dlc_data.num_keypoint == 3 * dlc_data.instance_count:
+    if pred_data_flattened.shape[1] // dlc_data.num_keypoint == 3 * dlc_data.instance_count and not keep_conf:
         pred_data_flattened = remove_confidence_score(pred_data_flattened)
 
     if not frame_list:
@@ -27,7 +28,7 @@ def prediction_to_csv(
     frame_col = np.array(frame_list).reshape(-1, 1)
     pred_data_processed = np.concatenate((frame_col, pred_data_flattened), axis=1)
 
-    header_df, columns = construct_header_row(dlc_data)
+    header_df, columns = construct_header_row(dlc_data, keep_conf)
 
     labels_df = pd.DataFrame(pred_data_processed, columns=columns)
 
@@ -104,7 +105,8 @@ def csv_to_h5(
         print(f"Expected file: {csv_name}.csv not found in {project_dir}!")
 
 def construct_header_row(
-        dlc_data:Loaded_DLC_Data
+        dlc_data:Loaded_DLC_Data,
+        has_conf:bool=False
         ) -> Tuple[np.ndarray, List[str]]:
     keypoints = dlc_data.keypoints
     num_keypoint = dlc_data.num_keypoint
@@ -116,9 +118,14 @@ def construct_header_row(
     bodyparts_row = ["bodyparts"]
     coords_row = ["coords"]
 
-    suffixes = ["_x", "_y"]
-    coords = ["x", "y"]
-    count = 2
+    if has_conf:
+        suffixes = ["_x", "_y", "_likelihood"]
+        coords = ["x", "y", "likelihood"]
+        count = 3
+    else:
+        suffixes = ["_x", "_y"]
+        coords = ["x", "y"]
+        count = 2
 
     if dlc_data.multi_animal:
         if not individuals:

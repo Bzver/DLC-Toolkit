@@ -40,7 +40,8 @@ def save_predictions_to_new_h5(dlc_data:Loaded_DLC_Data, pred_data_array:np.ndar
         csv_name = prediction_to_csv(
             dlc_data=dlc_data,
             pred_data_array=pred_data_array,
-            export_settings=export_settings
+            export_settings=export_settings,
+            keep_conf=True,
             )
         csv_to_h5(
             project_dir=export_settings.save_path,
@@ -116,10 +117,6 @@ def fix_h5_kp_order(pred_file: dict, key: str, config_data:dict) -> np.ndarray:
 
     return data_reordered
 
-def fix_h5_frame_order(pred_file):
-    # 2 B Implemented
-    pass
-
 def fix_h5_key_order_on_save(pred_file, key: str, multi_animal: bool, keypoints: list) -> dict:
     target_key_axis = "axis0_label2" if multi_animal else "axis0_label1"
     target_key_block = "block0_items_label2" if multi_animal else "block0_items_label1"
@@ -138,13 +135,11 @@ def fix_h5_key_order_on_save(pred_file, key: str, multi_animal: bool, keypoints:
     else:
         n_animals = 1
 
-    # Build mapping: desired keypoint -> original index in ref_list
     try:
         remap = [ref_list.index(kp) for kp in keypoints]  # new order → old index
     except ValueError as e:
         raise ValueError(f"Keypoint not found in reference list: {e}")
 
-    # Update label_array in place
     for animal_idx in range(n_animals):
         start_col = animal_idx * n_kp * 2
         for new_kp_idx, orig_kp_idx in enumerate(remap):
@@ -153,7 +148,6 @@ def fix_h5_key_order_on_save(pred_file, key: str, multi_animal: bool, keypoints:
 
     label_array_block = label_array_axis.copy()
 
-    # Write back to file
     pred_file[key][target_key_axis][...] = label_array_axis
     pred_file[key][target_key_block][...] = label_array_block
     return pred_file
