@@ -226,7 +226,7 @@ class Frame_Label:
         self.refresh_ui()
 
     def _mark_refined(self):
-        self.dm.mark_refined_flabel()
+        self.dm.mark_refined_flabel(self.dm.current_frame_idx)
 
     def _mark_all_as_refined(self):
         self.dm.mark_all_refined_flabel()

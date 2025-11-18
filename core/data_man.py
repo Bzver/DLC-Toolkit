@@ -196,8 +196,8 @@ class Data_Manager:
         if self.has_current_frame_cat("marked") or self.has_current_frame_cat("refined"):
             self.toggle_frame_status_fview()
 
-    def mark_refined_flabel(self):
-        self.fm.move_frame(new_category="refined", old_category="marked")
+    def mark_refined_flabel(self, frame_idx):
+        self.fm.move_frame(new_category="refined", old_category="marked", frame_idx=frame_idx)
 
     def mark_all_refined_flabel(self):
         self.fm.move_category("refined", "marked")
