@@ -27,6 +27,7 @@ class Keypoint_Edit_Manager:
     def reset_kem(self):
         self.total_frames = 0
         self.pred_data_array = None
+        self.last_selected_idx = None
         self.current_prediction_file = None
         self.undo_stack, self.redo_stack = [], []
         self.max_undo_stack_size = 100
@@ -193,7 +194,7 @@ class Keypoint_Edit_Manager:
             return
         self._save_state_for_undo()
         self.pred_data_array = generate_missing_kp_for_inst(
-            self.pred_data_array, 
+            self.pred_data_array,
             frame_idx,
             selected_instance_idx,
             angle_map_data,
@@ -224,10 +225,13 @@ class Keypoint_Edit_Manager:
         if len(current_frame_inst) == 1:
             return current_frame_inst[0]
         if selected_instance is None:
-            QMessageBox.information(self.main, "No Instance Seleted",
-                "When there are more than one instance present, "
-                "you need to click one of the instance bounding box to specify which to delete.")
-            return
+            if self.last_selected_idx is None:
+                QMessageBox.information(self.main, "No Instance Seleted",
+                    "When there are more than one instance present, "
+                    "you need to click one of the instance bounding box to specify which to delete.")
+                return
+            else:
+                return self.last_selected_idx
         return selected_instance.instance_id
 
     ###################################################################################################################################################  

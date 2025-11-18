@@ -55,9 +55,9 @@ def generate_missing_kp_for_inst(
     num_keypoint = pred_data_array.shape[2] // 3
     missing_keypoints = []
     for keypoint_idx in range(num_keypoint):
-        confidence_idx = keypoint_idx * 3 + 2
-        confidence = pred_data_array[current_frame_idx, selected_instance_idx, confidence_idx]
-        if np.isnan(confidence):
+        x_idx = keypoint_idx * 3
+        x_val = pred_data_array[current_frame_idx, selected_instance_idx, x_idx]
+        if np.isnan(x_val):
             missing_keypoints.append(keypoint_idx)
 
     if not missing_keypoints:

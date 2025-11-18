@@ -105,10 +105,7 @@ class Frame_Label:
 
     def deactivate(self, menu_widget:Menu_Widget):
         self._remove_menu(menu_widget)
-        if self.dm.dlc_data is None:
-            return
-        if not np.array_equal(self.kem.pred_data_array, self.dm.dlc_data.pred_data_array, equal_nan=True):
-            self.save_prediction()
+        self.dm.dlc_data.pred_data_array = self.kem.pred_data_array.copy()
         
     def _remove_menu(self, menu_widget:Menu_Widget):
         for menu in self.labeler_menu_config.keys():
@@ -125,13 +122,14 @@ class Frame_Label:
 
     def _init_gview(self):
         self.gview = Canvas(track_edit_callback=self.on_track_data_changed, parent=self.main)
+        self.gview.instance_selected.connect(self._update_last_selected_inst)
         self.vid_play.nav.set_marked_list_name("ROI")
         self.vid_play.swap_display_for_graphics_view(self.gview)
 
     ###################################################################################################################################################
 
     def display_current_frame(self):
-        self.gview.sbox = None # Ensure the selected instance is unselected
+        self.gview.sbox = None
 
         frame = self.vm.get_frame(self.dm.current_frame_idx)
         if frame is None:
@@ -398,6 +396,9 @@ class Frame_Label:
     def _handle_config_from_config(self, new_config:Plot_Config):
         self.dm.plot_config = new_config
         self.display_current_frame()
+
+    def _update_last_selected_inst(self, instance_id):
+        self.kem.last_selected_idx = instance_id
 
     def _update_keypoint_position(self, instance_id, keypoint_id, new_x, new_y):
         self._mark_refined()

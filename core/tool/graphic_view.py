@@ -1,7 +1,7 @@
 import numpy as np
 
 from PySide6 import QtWidgets, QtCore
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QGraphicsRectItem, QGraphicsView, QGraphicsScene, QFrame
 from PySide6.QtGui import QPainter, QColor, QPen, QTransform
 
@@ -11,6 +11,8 @@ from ui import Draggable_Keypoint, Selectable_Instance
 import utils.helper as duh
 
 class Canvas(QGraphicsView):
+    instance_selected = Signal(int)
+
     def __init__(self, track_edit_callback:Callable[[object], None], parent=None):
         self.gscene = QGraphicsScene(parent)
         super().__init__(self.gscene)
@@ -45,6 +47,7 @@ class Canvas(QGraphicsView):
 
         if clicked_box.is_selected:
             self.sbox = clicked_box
+            self.instance_selected.emit(self.sbox.instance_id)
         else:
             self.sbox = None
 
@@ -115,10 +118,8 @@ class Canvas(QGraphicsView):
 
     def _mouse_release_event(self, event):
         if self.is_drawing_zone:
-            if not self.start_point or not self.current_rect_item:
-                self.is_drawing_zone = False
-            else:
-                self.is_drawing_zone = False
+            self.is_drawing_zone = False
+            if self.start_point and self.current_rect_item:
                 self.setCursor(Qt.ArrowCursor)
                 
                 rect = self.current_rect_item.rect()
