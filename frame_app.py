@@ -246,6 +246,8 @@ class Frame_App(QMainWindow):
             self.at.display_current_frame()
 
     def _save_workspace(self):
+        if self.at == self.flabel:
+            self.flabel.save_prediction()
         if self.dm.video_file:
             self.status_bar.show_message(f"Workspace Saved to {self.dm.video_file}")
             self.dm.save_workspace()
