@@ -155,12 +155,11 @@ class Frame_App(QMainWindow):
             "snap_to_inst": {"key": "E", "callback": self.flabel.toggle_snap_to_instances},
         }
         self.shortcuts.add_shortcuts_from_config(flabel_shortcuts, clear_first=True)
+        if self.kem.pred_data_array is None and self.dm.dlc_data is not None:
+            self.kem.pred_data_array = self.dm.dlc_data.pred_data_array
         self.flabel.activate(self.menu_widget)
         self.at = self.flabel
         self.dm.handle_mode_switch_fview_to_flabel()
-        if self.kem.pred_data_array is None and self.dm.dlc_data is not None:
-            self.kem.pred_data_array = self.dm.dlc_data.pred_data_array
-
         self.mode_toggle_flabel.set_checked(True)
 
     def _switch_to_fannot(self):

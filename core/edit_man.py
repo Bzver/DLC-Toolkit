@@ -134,7 +134,7 @@ class Keypoint_Edit_Manager:
         if not self.check_pred_data():
             return
         selected_instance_idx = self._instance_multi_select(frame_idx, selected_instance)
-        if not selected_instance_idx:
+        if selected_instance_idx is None:
             return
         self._save_state_for_undo()
         iter_frame_idx = frame_idx + 1
@@ -171,7 +171,7 @@ class Keypoint_Edit_Manager:
 
     def rot_inst_prep(self, frame_idx:int, selected_instance:Optional[Selectable_Instance], angle_map_data):
         selected_instance_idx = self._instance_multi_select(frame_idx, selected_instance)
-        if not selected_instance_idx:
+        if selected_instance_idx is None:
             return None, None
         _, local_coords = calculate_pose_centroids(self.pred_data_array, frame_idx)
         local_x = local_coords[selected_instance_idx, 0::2]
@@ -189,7 +189,7 @@ class Keypoint_Edit_Manager:
         if not self.check_pred_data():
             return
         selected_instance_idx = self._instance_multi_select(frame_idx, selected_instance)
-        if not selected_instance_idx:
+        if selected_instance_idx is None:
             return
         self._save_state_for_undo()
         self.pred_data_array = generate_missing_kp_for_inst(
@@ -201,7 +201,7 @@ class Keypoint_Edit_Manager:
         self.edit_callback()
 
     def interpolate_all_for_inst(self, selected_instance:Optional[Selectable_Instance]):
-        if not selected_instance:
+        if selected_instance is None:
             QMessageBox.information(self.main, "No Instance Selected", "Please select a track to interpolate all frames for one instance.")
             return False
         max_gap_allowed, ok = QtWidgets.QInputDialog.getInt(
@@ -219,15 +219,16 @@ class Keypoint_Edit_Manager:
 
     def _instance_multi_select(self, frame_idx:int, selected_instance:Optional[Selectable_Instance]) -> Optional[int]:
         current_frame_inst = get_instances_on_current_frame(self.pred_data_array, frame_idx)
-        if not current_frame_inst:
+        if current_frame_inst is None:
             return
         if len(current_frame_inst) == 1:
             return current_frame_inst[0]
-        if not selected_instance:
+        if selected_instance is None:
             QMessageBox.information(self.main, "No Instance Seleted",
                 "When there are more than one instance present, "
                 "you need to click one of the instance bounding box to specify which to delete.")
             return
+        return selected_instance.instance_id
 
     ###################################################################################################################################################  
 

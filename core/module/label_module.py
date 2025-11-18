@@ -100,6 +100,8 @@ class Frame_Label:
             self._init_gview()
         self.vid_play.nav.set_marked_list_name("ROI")
         self.vid_play.swap_display_for_graphics_view(self.gview)
+        if not self.gview.is_kp_edit:
+            self.direct_keypoint_edit()
 
     def deactivate(self, menu_widget:Menu_Widget):
         self._remove_menu(menu_widget)
@@ -260,8 +262,10 @@ class Frame_Label:
         if self.open_outlier:
             self.menu_slot_callback()
             self.outlier_finder = Outlier_Finder(
-                self.kem.pred_data_array, angle_map_data=self.dm.angle_map_data,
-                canon_pose=self.dm.canon_pose, parent=self.main)
+                self.kem.pred_data_array,
+                canon_pose=self.dm.canon_pose, 
+                angle_map_data=self.dm.angle_map_data,
+                parent=self.main)
             self.outlier_finder.mask_changed.connect(self._handle_outlier_mask_from_comp)
             self.outlier_finder.list_changed.connect(self._handle_frame_list_from_comp)
             self.vid_play.set_right_panel_widget(self.outlier_finder)
@@ -354,7 +358,7 @@ class Frame_Label:
             return
         selected_instance_idx, current_rotation = self.kem.rot_inst_prep(
             self.dm.current_frame_idx, self.gview.sbox, self.dm.angle_map_data)
-        if selected_instance_idx:
+        if selected_instance_idx is not None:
             self.rotation_dialog = Pose_Rotation_Dialog(selected_instance_idx, current_rotation, parent=self.main)
             self.rotation_dialog.rotation_changed.connect(self._on_rotation_changed)
             self.rotation_dialog.show()

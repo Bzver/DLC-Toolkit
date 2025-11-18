@@ -212,7 +212,8 @@ class Frame_View:
         self.open_mark_gen = not self.open_mark_gen
         if self.open_mark_gen:
             self.menu_slot_callback()
-            mark_gen = Mark_Generator(self.dm.total_frames, self.dm.dlc_data, self.dm.canon_pose, parent=self.main)
+            mark_gen = Mark_Generator(
+                self.dm.total_frames, self.dm.dlc_data, self.dm.canon_pose, self.dm.angle_map_data, parent=self.main)
             mark_gen.clear_old.connect(self._on_clear_old_command)
             mark_gen.frame_list_new.connect(self._handle_frame_list_from_mark_gen)
             self.vid_play.set_right_panel_widget(mark_gen)

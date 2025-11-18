@@ -6,7 +6,7 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QPushButton, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox
 from PySide6.QtGui import QIntValidator
 
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from core.dataclass import Loaded_DLC_Data
 from .outlier_finder import Outlier_Container
@@ -19,18 +19,9 @@ class Mark_Generator(QtWidgets.QGroupBox):
             total_frames:int,
             dlc_data:Optional[Loaded_DLC_Data]=None,
             canon_pose:Optional[np.ndarray]=None,
+            angle_map_data:Optional[Dict[str, Any]]=None,
             parent=None
             ):
-        """
-        Initializes the dialog for generating frame marks using various strategies: random, 
-        strided, or outlier-based selection.
-
-        Args:
-            total_frames (int): Total number of frames in the video, used to constrain input ranges.
-            dlc_data (Optional[Loaded_DLC_Data]): DLC prediction data; required for "Outlier" mode.
-            canon_pose (Optional[np.ndarray]): Canonical pose for size-based outlier detection.
-            parent: Parent widget for modal behavior.
-        """ 
         super().__init__(parent)
         self.setTitle("Automatic Mark Generation")
         self.total_frames = total_frames
@@ -81,7 +72,7 @@ class Mark_Generator(QtWidgets.QGroupBox):
 
         if self.dlc_data:
             self.outlier_container = Outlier_Container(
-                self.dlc_data.pred_data_array, canon_pose=canon_pose)
+                self.dlc_data.pred_data_array, canon_pose=canon_pose, angle_map_data=angle_map_data)
         else:
             self.outlier_container = QtWidgets.QWidget() # Dummy container
         
