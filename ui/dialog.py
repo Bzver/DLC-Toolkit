@@ -99,8 +99,8 @@ class Frame_List_Dialog(QDialog):
 
         for label, checkbox in self.checkboxes.items():
             if checkbox.isChecked():
-                selected_categories.append(label)
-                _, indices = self.frame_categories[label]
+                cat, indices = self.frame_categories[label]
+                selected_categories.append(cat)
                 combined_indices.extend(indices)
 
         combined_indices = sorted(set(combined_indices))
