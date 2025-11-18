@@ -308,7 +308,7 @@ class Data_Manager:
         if self.plot_config.navigate_roi:
             return self.get_frames("roi_change")
         else:
-            return self.get_frames("marked")
+            return self.frames_in_any(["marked", "refined"])
 
     ###################################################################################################################################################
 
