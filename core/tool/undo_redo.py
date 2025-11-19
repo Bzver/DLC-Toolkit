@@ -16,10 +16,8 @@ class Uno_Stack:
 
     def undo(self) -> Optional[np.ndarray]:
         if not self.undo_stack:
-            print("DEBUG: Undo failed — undo stack is empty.")
             return None
         if self._data_array is None:
-            print("DEBUG: Undo failed — no current state.")
             return None
         
         self.redo_stack.append(self._data_array.copy())
@@ -29,10 +27,8 @@ class Uno_Stack:
 
     def redo(self) -> Optional[np.ndarray]:
         if not self.redo_stack:
-            print("DEBUG: Redo failed — redo stack is empty.")
             return None
         if self._data_array is None:
-            print("DEBUG: Redo failed — no current state.")
             return None
         
         self.undo_stack.append(self._data_array.copy())

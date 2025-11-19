@@ -8,12 +8,13 @@ import cv2
 
 from PySide6 import QtWidgets, QtGui
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QShortcut, QKeySequence, QGuiApplication
-from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QHBoxLayout
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QHBoxLayout, QPushButton
 
 from typing import List, Literal, Tuple
 
-from ui import Clickable_Video_Label, Video_Slider_Widget, Progress_Indicator_Dialog
+from .undo_redo import Uno_Stack
+from ui import Clickable_Video_Label, Video_Slider_Widget, Progress_Indicator_Dialog, Shortcut_Manager
 from core.dataclass import Loaded_DLC_Data, Export_Settings
 from core.io import (
     Exporter, Prediction_Loader, Frame_Extractor,
@@ -55,7 +56,6 @@ class DLC_Inference(QtWidgets.QDialog):
         self.dlc_data = dlc_data
         self.frame_list = frame_list
         self.video_filepath = video_filepath
-        self.idx_to_color = {0:"#183539", 1:"#68b3ff", 2:"#F749C6"}
         self.setFixedWidth(600)
 
         self.frame_list.sort()
@@ -151,9 +151,9 @@ class DLC_Inference(QtWidgets.QDialog):
         self.auto_cropping_checkbox.toggled.connect(self._auto_cropping_changed)
 
         button_frame = QHBoxLayout()
-        self.start_button = QtWidgets.QPushButton("Extract Frames and Rerun Predictions in DLC")
+        self.start_button = QPushButton("Extract Frames and Rerun Predictions in DLC")
         self.start_button.clicked.connect(self.inference_workflow)
-        config_button = QtWidgets.QPushButton("Edit Pytorch Config")
+        config_button = QPushButton("Edit Pytorch Config")
         config_button.clicked.connect(self.show_pytorch_config_menu)
         button_frame.addWidget(self.auto_cropping_checkbox)
         button_frame.addWidget(config_button)
@@ -270,8 +270,9 @@ class DLC_Inference(QtWidgets.QDialog):
 
         self.backup_data_array = self.dlc_data.pred_data_array.copy()
         self.frame_status_array = np.zeros((self.total_marked_frames,))
-        self.unprocessed_list = list(range(self.total_marked_frames))
         self.current_frame_idx = 0
+        self.uno = Uno_Stack()
+        self.uno.save_state_for_undo(self.frame_status_array)
 
         video_container = QtWidgets.QWidget()
         container_layout = QVBoxLayout(video_container)
@@ -331,7 +332,7 @@ class DLC_Inference(QtWidgets.QDialog):
         self.progress_widget= Video_Slider_Widget()
         self.progress_widget.set_total_frames(self.total_marked_frames)
         self.progress_widget.set_current_frame(0)
-        self.progress_widget.set_frame_category("Unprocessed", self.unprocessed_list)
+        self._refresh_slider()
         self.progress_widget.frame_changed.connect(self._handle_frame_change_from_comp)
         container_layout.addWidget(self.progress_widget)
 
@@ -339,21 +340,24 @@ class DLC_Inference(QtWidgets.QDialog):
         approval_box = QtWidgets.QGroupBox("Frame Approval")
         approval_layout = QHBoxLayout()
 
-        self.reject_button = QtWidgets.QPushButton("Reject (R)")
-        self.approve_button = QtWidgets.QPushButton("Approve (A)")
-        self.approve_all_button = QtWidgets.QPushButton("Approve All (Ctrl + A)")
-        self.apply_button = QtWidgets.QPushButton("Apply Changes (Ctrl + S)")
+        self.reject_button = QPushButton("Reject (R)")
+        self.approve_button = QPushButton("Approve (A)")
+        self.approve_all_button = QPushButton("Approve All")
+        self.reject_all_button = QPushButton("Reject All")
+        self.apply_button = QPushButton("Apply Changes (Ctrl + S)")
         self.approve_all_button.setToolTip("Mark all remaining unprocessed frames as Approved")
         self.apply_button.setEnabled(False)
 
         self.reject_button.clicked.connect(lambda: self.mark_frame_status("Rejected"))
         self.approve_button.clicked.connect(lambda: self.mark_frame_status("Approved"))
         self.approve_all_button.clicked.connect(self.approve_all_remaining_frames)
+        self.reject_all_button.clicked.connect(self.reject_all_remaining_frames)
         self.apply_button.clicked.connect(self.save_prediction)
 
         approval_layout.addWidget(self.reject_button)
         approval_layout.addWidget(self.approve_button)
         approval_layout.addWidget(self.approve_all_button)
+        approval_layout.addWidget(self.reject_all_button)
         approval_layout.addWidget(self.apply_button)
         approval_box.setLayout(approval_layout)
         container_layout.addWidget(approval_box)
@@ -363,13 +367,20 @@ class DLC_Inference(QtWidgets.QDialog):
         return video_container
 
     def _build_shortcut(self):
-        QShortcut(QKeySequence(Qt.Key_Left), self).activated.connect(lambda: self.change_frame(-1))
-        QShortcut(QKeySequence(Qt.Key_Right), self).activated.connect(lambda: self.change_frame(1))
-        QShortcut(QKeySequence(Qt.Key_Space), self).activated.connect(self.progress_widget.toggle_playback)
-        QShortcut(QKeySequence(Qt.Key_A), self).activated.connect(lambda: self.mark_frame_status("Approved"))
-        QShortcut(QKeySequence(Qt.Key_R), self).activated.connect(lambda: self.mark_frame_status("Rejected"))
-        QShortcut(QKeySequence(Qt.CTRL | Qt.Key_A), self).activated.connect(self.approve_all_remaining_frames)
-        QShortcut(QKeySequence(Qt.CTRL | Qt.Key_S), self).activated.connect(self.save_prediction)
+        self.shortcut_man = Shortcut_Manager(self)
+        shortcut_setting = {
+            "prev_frame":{"key": "Left", "callback": lambda: self._change_frame(-1)},
+            "next_frame":{"key": "Right", "callback": lambda: self._change_frame(1)},
+            "prev_fast":{"key": "Shift+Left", "callback": lambda: self._change_frame(-10)},
+            "next_fast":{"key": "Shift+Right", "callback": lambda: self._change_frame(10)},
+            "playback":{"key": "Space", "callback": self._toggle_playback},
+            "approve":{"key": "A", "callback": lambda: self.mark_frame_status("Approved")},
+            "reject":{"key": "R", "callback": lambda: self.mark_frame_status("Rejected")},
+            "undo": {"key": "Ctrl+Z", "callback": self._undo_changes},
+            "redo": {"key": "Ctrl+Y", "callback": self._redo_changes},
+            "save":{"key": "Ctrl+S", "callback": self.save_prediction},
+        }
+        self.shortcut_man.add_shortcuts_from_config(shortcut_config=shortcut_setting)
     
     def _display_current_frame(self):
         global_frame_idx = self.frame_list[self.current_frame_idx]
@@ -422,7 +433,7 @@ class DLC_Inference(QtWidgets.QDialog):
         self.progress_widget.set_current_frame(self.current_frame_idx) # Update slider handle's position
         self._update_button_states()
     
-    def change_frame(self, delta):
+    def _change_frame(self, delta):
         self.selected_cam = None # Clear the selected cam upon frame switch
         new_frame_idx = self.current_frame_idx + delta
         if 0 <= new_frame_idx < self.total_marked_frames:
@@ -431,8 +442,12 @@ class DLC_Inference(QtWidgets.QDialog):
             self._navigation_title_controller()
             self._update_button_states()
 
+    def _toggle_playback(self):
+        self.progress_widget.toggle_playback()
+
     def mark_frame_status(self, status:Literal["Rejected","Approved"]):
-        self.frame_status_array[self.current_frame_idx] = 1
+        self._save_state_for_undo()
+        self.frame_status_array[self.current_frame_idx] = 1 if status == "Approved" else 2
         self.apply_button.setEnabled(np.any(self.frame_status_array==1))
         global_frame_idx = self.frame_list[self.current_frame_idx]
         pred_data_to_use = self.new_data_array if status == "Approved" else self.backup_data_array
@@ -440,6 +455,7 @@ class DLC_Inference(QtWidgets.QDialog):
         self._refresh_ui()
 
     def approve_all_remaining_frames(self):
+        self._save_state_for_undo()
         unproc_mask, global_mask = self._acquire_unproc_mask()
         self.dlc_data.pred_data_array[global_mask] = self.new_data_array[global_mask]
         self.frame_status_array[unproc_mask] = 1
@@ -447,20 +463,21 @@ class DLC_Inference(QtWidgets.QDialog):
         self._refresh_ui()
 
     def reject_all_remaining_frames(self):
+        self._save_state_for_undo()
         unproc_mask, global_mask = self._acquire_unproc_mask()
         self.dlc_data.pred_data_array[global_mask] = self.new_data_array[global_mask]
         self.frame_status_array[unproc_mask] = 2
         self._refresh_ui()
 
     def save_prediction(self):
-        self._refresh_lists()
+        self._refresh_slider()
 
-        if self.unprocessed_list:
+        if np.any(self.frame_status_array==0):
             msg_box = QMessageBox(self)
             msg_box.setIcon(QMessageBox.Warning)
             msg_box.setWindowTitle("Unprocessed Frames - Save and Exit?")
             msg_box.setText(
-                f"You have {len(self.unprocessed_list)} unprocessed frame(s).\n\n"
+                f"You have {np.sum(self.frame_status_array==0)} unprocessed frame(s).\n\n"
                 "This action will save your progress and close the window.\n"
                 "All unprocessed frames will remain as original and will not be marked as approved.\n\n"
                 "Are you sure you want to continue?"
@@ -508,9 +525,10 @@ class DLC_Inference(QtWidgets.QDialog):
         self._navigation_title_controller()
         self._update_button_states()
 
-    def _refresh_lists(self):
+    def _refresh_slider(self):
         self.is_saved = False
-        self.progress_widget.set_frame_category_array(self.frame_status_array, self.idx_to_color)
+        self.progress_widget.clear_frame_category()
+        self.progress_widget.set_frame_category_array(self.frame_status_array, {0:"#383838", 1:"#68b3ff", 2:"#F749C6"})
         self.progress_widget.commit_categories()
 
     def _acquire_unproc_mask(self) -> Tuple[np.ndarray, np.ndarray]:
@@ -522,7 +540,7 @@ class DLC_Inference(QtWidgets.QDialog):
     def _refresh_ui(self):
         self._display_current_frame()
         self._update_button_states()
-        self._refresh_lists()
+        self._refresh_slider()
 
     #######################################################################################################################
 
@@ -562,10 +580,11 @@ class DLC_Inference(QtWidgets.QDialog):
         return wait_container
 
     def _update_button_states(self):
-        current_status = self.frame_status[self.current_frame_idx]
-        self.approve_button.setEnabled(current_status != "Approved")
-        self.reject_button.setEnabled(current_status != "Rejected")
-        self.approve_all_button.setEnabled(any(s == "Unprocessed" for s in self.frame_status))
+        current_status = self.frame_status_array[self.current_frame_idx]
+        self.approve_button.setEnabled(current_status != 1)
+        self.reject_button.setEnabled(current_status != 2)
+        self.approve_all_button.setEnabled(np.any(self.frame_status_array==0))
+        self.reject_all_button.setEnabled(np.any(self.frame_status_array==0))
 
     #######################################################################################################################
 
@@ -697,6 +716,29 @@ class DLC_Inference(QtWidgets.QDialog):
             
             if corrected_order:
                 self.new_data_array[frame_idx, :, :] = self.new_data_array[frame_idx, corrected_order, :]
+
+    def _save_state_for_undo(self):
+        self.uno.save_state_for_undo(self.frame_status_array)
+
+    def _undo_changes(self):
+        data_array = self.uno.undo()
+        self._undo_redo_worker(data_array)
+
+    def _redo_changes(self):
+        data_array = self.uno.redo()
+        self._undo_redo_worker(data_array)
+
+    def _undo_redo_worker(self, data_array):
+        if data_array is not None and np.any(self.frame_status_array - data_array != 0):
+            for frame_idx in np.where(self.frame_status_array - data_array)[0]:
+                global_idx = self.frame_list[frame_idx]
+                if self.frame_status_array[frame_idx] == 1:
+                    self.dlc_data.pred_data_array[global_idx] = self.backup_data_array[global_idx]
+                if data_array[frame_idx] == 1:
+                    self.dlc_data.pred_data_array[global_idx] = self.new_data_array[global_idx]
+
+            self.frame_status_array = data_array
+            self._refresh_ui()
 
     #######################################################################################################################
 

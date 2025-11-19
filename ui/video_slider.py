@@ -437,6 +437,8 @@ class Zoomed_zoom_slider(Slider_With_Marks):
         """)
 
     def set_full_categories(self, category_array: np.ndarray, idx_to_color: Dict[int, str]):
+        if category_array is None:
+            return
         self._full_category_array = category_array
         self._full_idx_to_color = idx_to_color
         self._update_range_and_background()
