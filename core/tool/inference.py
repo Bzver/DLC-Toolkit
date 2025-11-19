@@ -11,7 +11,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QShortcut, QKeySequence, QGuiApplication
 from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QHBoxLayout
 
-from typing import List, Literal
+from typing import List, Literal, Tuple
 
 from ui import Clickable_Video_Label, Video_Slider_Widget, Progress_Indicator_Dialog
 from core.dataclass import Loaded_DLC_Data, Export_Settings
@@ -55,6 +55,7 @@ class DLC_Inference(QtWidgets.QDialog):
         self.dlc_data = dlc_data
         self.frame_list = frame_list
         self.video_filepath = video_filepath
+        self.idx_to_color = {0:"#183539", 1:"#68b3ff", 2:"#F749C6"}
         self.setFixedWidth(600)
 
         self.frame_list.sort()
@@ -264,20 +265,17 @@ class DLC_Inference(QtWidgets.QDialog):
     #######################################################################################################################
 
     def _build_video_container(self):
-        """Container to display prediction plots, left pane -> old, right pane -> new"""
-        self.total_marked_frames = len(self.frame_list)
         self.total_frames = self.dlc_data.pred_data_array.shape[0]
+        self.total_marked_frames = len(self.frame_list)
 
         self.backup_data_array = self.dlc_data.pred_data_array.copy()
-        self.frame_status = ["Unprocessed"] * self.total_marked_frames
+        self.frame_status_array = np.zeros((self.total_marked_frames,))
         self.unprocessed_list = list(range(self.total_marked_frames))
-        self.approved_list, self.rejected_list = [], []
         self.current_frame_idx = 0
 
         video_container = QtWidgets.QWidget()
         container_layout = QVBoxLayout(video_container)
 
-        # Frame info display
         frame_info_layout = QHBoxLayout()
         self.global_frame_label = QtWidgets.QLabel(f"Global: {self.frame_list[0]} / {self.total_frames-1}")
         self.selected_frame_label = QtWidgets.QLabel(f"Selected: 0 / {self.total_marked_frames-1}")
@@ -434,30 +432,25 @@ class DLC_Inference(QtWidgets.QDialog):
             self._update_button_states()
 
     def mark_frame_status(self, status:Literal["Rejected","Approved"]):
-        if self.current_frame_idx < 0 or self.current_frame_idx >= len(self.frame_status):
-            return
-
-        self.frame_status[self.current_frame_idx] = status
-        self.apply_button.setEnabled("Approved" in self.frame_status)
+        self.frame_status_array[self.current_frame_idx] = 1
+        self.apply_button.setEnabled(np.any(self.frame_status_array==1))
         global_frame_idx = self.frame_list[self.current_frame_idx]
-        
         pred_data_to_use = self.new_data_array if status == "Approved" else self.backup_data_array
         self.dlc_data.pred_data_array[global_frame_idx, :, :] = pred_data_to_use[global_frame_idx, :, :]
-
-        self._display_current_frame()
-        self._update_button_states()
-        self._refresh_lists()
+        self._refresh_ui()
 
     def approve_all_remaining_frames(self):
-        for i in range(len(self.frame_status)):
-            if self.frame_status[i] == "Unprocessed":
-                self.frame_status[i] = "Approved"
-                self.dlc_data.pred_data_array[self.frame_list[i], :, :] = self.new_data_array[self.frame_list[i], :, :]
-
+        unproc_mask, global_mask = self._acquire_unproc_mask()
+        self.dlc_data.pred_data_array[global_mask] = self.new_data_array[global_mask]
+        self.frame_status_array[unproc_mask] = 1
         self.apply_button.setEnabled(True)
-        self._display_current_frame()
-        self._update_button_states()
-        self._refresh_lists()
+        self._refresh_ui()
+
+    def reject_all_remaining_frames(self):
+        unproc_mask, global_mask = self._acquire_unproc_mask()
+        self.dlc_data.pred_data_array[global_mask] = self.new_data_array[global_mask]
+        self.frame_status_array[unproc_mask] = 2
+        self._refresh_ui()
 
     def save_prediction(self):
         self._refresh_lists()
@@ -488,8 +481,8 @@ class DLC_Inference(QtWidgets.QDialog):
             return False
 
         self.is_saved = True
-        approve_list_global = [self.frame_list[idx] for idx in self.approved_list]
-        rejected_list_global = [self.frame_list[idx] for idx in self.rejected_list]
+        approve_list_global = np.array(self.frame_list)[self.frame_status_array==1].tolist()
+        rejected_list_global = np.array(self.frame_list)[self.frame_status_array==2].tolist()
         list_tuple = (approve_list_global, rejected_list_global)
         self.prediction_saved.emit(pred_file_to_save_path)
         self.frames_exported.emit(list_tuple)
@@ -517,19 +510,19 @@ class DLC_Inference(QtWidgets.QDialog):
 
     def _refresh_lists(self):
         self.is_saved = False
-        self.approved_list, self.rejected_list, self.unprocessed_list = [], [], []
-        for frame_idx in range(len(self.frame_list)):
-            if self.frame_status[frame_idx] == "Approved":
-                self.approved_list.append(frame_idx)
-            elif self.frame_status[frame_idx] == "Rejected":
-                self.rejected_list.append(frame_idx)
-            else:
-                self.unprocessed_list.append(frame_idx)
-
-        self.progress_widget.set_frame_category("Approved", self.approved_list, color="#0066cc", priority=6)
-        self.progress_widget.set_frame_category("Rejected", self.rejected_list, color="#F749C6", priority=6)
-        self.progress_widget.set_frame_category("Unprocessed", self.unprocessed_list)
+        self.progress_widget.set_frame_category_array(self.frame_status_array, self.idx_to_color)
         self.progress_widget.commit_categories()
+
+    def _acquire_unproc_mask(self) -> Tuple[np.ndarray, np.ndarray]:
+        unproc_mask = self.frame_status_array == 0
+        global_mask = np.zeros((self.total_frames), dtype=bool)
+        global_mask[self.frame_list][unproc_mask] = True
+        return unproc_mask, global_mask
+
+    def _refresh_ui(self):
+        self._display_current_frame()
+        self._update_button_states()
+        self._refresh_lists()
 
     #######################################################################################################################
 
@@ -667,7 +660,8 @@ class DLC_Inference(QtWidgets.QDialog):
             coords_array = crop_coords_to_array(self.crop_coords, temp_data_array.shape, self.frame_list)
             temp_data_array = temp_data_array + coords_array
 
-        temp_data_array = self._correct_new_pred(temp_data_array)
+        if self.dlc_data.pred_data_array is not None or not np.any(self.dlc_data.pred_data_array): # Only do correction on new data
+            temp_data_array = self._correct_new_pred(temp_data_array)
 
         new_data_array[self.frame_list, :, :] = temp_data_array
         self.new_data_array = new_data_array
