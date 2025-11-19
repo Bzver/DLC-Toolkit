@@ -113,8 +113,8 @@ class Track_Fixer:
         if self.canon_pose is None or self.angle_map is None:
             size_mask = pose_mask = no_mask
         else:
-            size_mask = outlier_size(self.pred_data_array, self.canon_pose, 0.5, 2.5)
-            pose_mask = outlier_pose(self.pred_data_array, self.angle_map, 1.0, 2)
+            size_mask = outlier_size(self.pred_data_array, self.canon_pose, 0.3, 2.5)
+            pose_mask = outlier_pose(self.pred_data_array, self.angle_map, 2.0, 2)
         combined_mask = conf_mask | bp_mask | dp_mask | size_mask | pose_mask | env_mask
 
         corrected_data_array, _, _ = outlier_removal(self.pred_data_array, combined_mask)

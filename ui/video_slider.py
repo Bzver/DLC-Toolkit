@@ -382,6 +382,7 @@ class Frame_Input(QHBoxLayout):
         separator = QLabel("|")
         self.total_line = QLineEdit("0")
         self.total_line.setReadOnly(True)
+        self.total_line.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
 
         self.frame_input.setFixedWidth(50)
         separator.setFixedWidth(10)
