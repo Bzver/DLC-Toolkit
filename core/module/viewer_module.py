@@ -50,7 +50,6 @@ class Frame_View:
             "Save":{
                 "buttons": [
                     ("Export to DeepLabCut", self.save_to_dlc),
-                    ("Export Marked Frame Indices to Clipboard", self.export_marked_to_clipboard),
                     ("Merge with Existing Label in DeepLabCut", self.merge_data),
                 ]
             },
@@ -417,11 +416,6 @@ class Frame_View:
             self.inference_window = None
         if hasattr(self, 'plotter'):
             delattr(self, 'plotter')
-
-    def export_marked_to_clipboard(self):
-        df = pd.DataFrame([self.dm.frame_list])
-        df.to_clipboard(sep=',', index=False, header=False)
-        self.status_bar.show_message("Marked frames exported to clipboard.")
     
     def save_to_dlc(self):
         fm_list = self.dm.get_frames("marked")
