@@ -12,6 +12,7 @@ from .plot_config import (
     Plot_Config_Menu,
 )
 from .annot_config import Annotation_Config, Annotation_Summary_Table
+from .undo_redo import Uno_Stack
 
 __all__ = (
     Canonical_Pose_Dialog,
@@ -26,6 +27,7 @@ __all__ = (
     Plot_Config_Menu,
     Annotation_Config,
     Annotation_Summary_Table,
+    Uno_Stack,
     navigate_to_marked_frame,
     get_next_frame_in_list,
 )
