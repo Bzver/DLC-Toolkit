@@ -9,7 +9,7 @@ import traceback
 
 from ui import Menu_Widget, Video_Player_Widget, Frame_List_Dialog, Status_Bar, Inference_interval_Dialog
 from utils.helper import frame_to_pixmap
-from core import Data_Manager, Video_Manager
+from core.runtime import Data_Manager, Video_Manager
 from core.tool import Mark_Generator, Blob_Counter, Prediction_Plotter
 
 class Frame_View:

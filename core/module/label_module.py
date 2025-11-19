@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QMessageBox
 
 from ui import Menu_Widget, Video_Player_Widget, Pose_Rotation_Dialog, Status_Bar
 from utils.helper import frame_to_pixmap, calculate_snapping_zoom_level
-from core import Data_Manager, Video_Manager, Keypoint_Edit_Manager
+from core.runtime import Data_Manager, Video_Manager, Keypoint_Edit_Manager
 from core.tool import Outlier_Finder, Canvas, Prediction_Plotter
 from core.dataclass import Plot_Config, Plotter_Callbacks
 

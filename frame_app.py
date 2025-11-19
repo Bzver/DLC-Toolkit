@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QMainWindow, QVBoxLayout, QMessageBox, QHBoxLayout
 
 from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Toggle_Switch, Status_Bar, Frame_List_Dialog
 from utils.helper import handle_unsaved_changes_on_close
-from core import Data_Manager, Video_Manager, Keypoint_Edit_Manager
+from core.runtime import Data_Manager, Video_Manager, Keypoint_Edit_Manager
 from core.module import Frame_View, Frame_Label, Frame_Annotator
 from core.tool import Canonical_Pose_Dialog, Plot_Config_Menu, navigate_to_marked_frame
 from core.dataclass import Nav_Callback, Plot_Config

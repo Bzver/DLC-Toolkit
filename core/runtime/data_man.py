@@ -7,15 +7,15 @@ from PySide6.QtWidgets import QMessageBox, QFileDialog, QDialog
 from typing import Callable, Tuple, List, Optional, Dict
 import traceback
 
+from .frame_man import Frame_Manager
+from ui import Head_Tail_Dialog
 from utils.helper import infer_head_tail_indices, build_angle_map
 from utils.pose import calculate_canonical_pose, calculate_pose_bbox
-from .io import (
+from core.io import (
     Prediction_Loader, Exporter, remove_confidence_score, determine_save_path,
     backup_existing_prediction, save_prediction_to_existing_h5, prediction_to_csv
 )
-from ui import Head_Tail_Dialog
-from .frame_man import Frame_Manager
-from .dataclass import Plot_Config, Export_Settings
+from core.dataclass import Plot_Config, Export_Settings
 
 class Data_Manager:
     HexColor = str

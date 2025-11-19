@@ -15,6 +15,7 @@ from utils.pose import (
     calculate_pose_centroids, calculate_pose_rotations
 )
 from ui import Progress_Indicator_Dialog, Selectable_Instance
+from core.tool import Uno_Stack
 
 DEBUG = False
 
@@ -29,12 +30,12 @@ class Keypoint_Edit_Manager:
         self.pred_data_array = None
         self.last_selected_idx = None
         self.current_prediction_file = None
-        self.undo_stack, self.redo_stack = [], []
-        self.max_undo_stack_size = 100
+        self.uno = Uno_Stack()
 
     def set_pred_data(self, pred_data_array:np.ndarray):
         self.pred_data_array = pred_data_array
         self.total_frames = self.pred_data_array.shape[0]
+        self.uno.save_state_for_undo(self.pred_data_array)
 
     def get_current_frame_data(self, frame_idx):
         return self.pred_data_array[frame_idx, :, :].copy()
@@ -146,7 +147,7 @@ class Keypoint_Edit_Manager:
             if iter_frame_idx >= self.total_frames:
                 QMessageBox.information(self.main, "Interpolation Failed", "No valid subsequent keypoint data found for this instance to interpolate to.")
                 return
-       
+
         if not frames_to_interpolate:
             QMessageBox.information(self.main, "Interpolation Info", "No gaps found to interpolate for the selected instance.")
             return
@@ -237,24 +238,14 @@ class Keypoint_Edit_Manager:
     ###################################################################################################################################################  
 
     def undo(self):
-        if self.undo_stack:
-            self.redo_stack.append(self.pred_data_array.copy())
-            self.pred_data_array = self.undo_stack.pop()
-            print("Undo performed.")
-        else:
-            QMessageBox.information(self.main, "Undo", "Nothing to undo.")
+        data_array = self.uno.undo()
+        if data_array is not None:
+            self.pred_data_array = data_array
 
     def redo(self):
-        if self.redo_stack:
-            self.undo_stack.append(self.pred_data_array.copy())
-            self.pred_data_array = self.redo_stack.pop()
-            print("Redo performed.")
-        else:
-            QMessageBox.information(self.main, "Redo", "Nothing to redo.")
-
+        data_array = self.uno.redo()
+        if data_array is not None:
+            self.pred_data_array = data_array
+    
     def _save_state_for_undo(self):
-        if self.pred_data_array is not None:
-            self.redo_stack = [] # Clear redo stack when a new action is performed
-            self.undo_stack.append(self.pred_data_array.copy())
-            if len(self.undo_stack) > self.max_undo_stack_size:
-                self.undo_stack.pop(0) # Remove the oldest state
+        self.uno.save_state_for_undo(self.pred_data_array)

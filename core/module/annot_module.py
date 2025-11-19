@@ -10,7 +10,7 @@ from typing import List, Dict, Optional
 
 from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Status_Bar, Frame_List_Dialog
 from utils.helper import frame_to_pixmap
-from core import Data_Manager, Video_Manager
+from core.runtime import Data_Manager, Video_Manager
 from core.tool import Annotation_Config, Annotation_Summary_Table, get_next_frame_in_list
 from core.io import load_annotation
 

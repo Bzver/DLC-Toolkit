@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QFileDialog, QMessageBox
 from typing import Optional, Tuple
 from numpy.typing import NDArray
 
-from .io import Frame_Extractor
+from core.io import Frame_Extractor
 
 class Video_Manager:
     def __init__(self, parent=None):
