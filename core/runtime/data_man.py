@@ -63,12 +63,15 @@ class Data_Manager:
             if self.dlc_data:
                 self._process_labeled_frame()
             else:
-                self.load_dlc_label()   
+                self.load_dlc_label()
         else:
-            QMessageBox.information(self.main, "Prediction Selected", "Prediction selected, now loading DLC config.")
-            dlc_config = self.config_file_dialog()
-            if dlc_config:
-                self.load_pred_to_dm(dlc_config, prediction_path)
+            if self.dlc_data is None:
+                QMessageBox.information(self.main, "Prediction Selected", "Prediction selected, now loading DLC config.")
+                dlc_config = self.config_file_dialog()
+                if dlc_config:
+                    self.load_pred_to_dm(dlc_config, prediction_path)
+            else:
+                self.load_pred_to_dm(self.dlc_data.dlc_config_filepath, prediction_path)
         return True
 
     def config_file_dialog(self) -> Optional[str]:
@@ -418,11 +421,11 @@ class Data_Manager:
             'video_file': self.video_file,
             'video_name': self.video_name,
             'project_dir': self.project_dir,
-            'dlc_data': self.dlc_data.to_dict(),
+            'dlc_data': self.dlc_data.to_dict()if self.dlc_data is not None else None,
             'canon_pose': self.canon_pose,
             'frame_store': self.fm.to_dict(),
             'plot_config': self.plot_config.to_dict(),
-            'blob_config': self.blob_config.to_dict(),
+            'blob_config': self.blob_config.to_dict() if self.blob_config is not None else None,
             'prediction': self.prediction,
             'angle_map_data': self.angle_map_data,
             'inst_count_per_frame_pred': self.inst_count_per_frame_pred,
@@ -492,10 +495,9 @@ class Data_Manager:
             blob_config = workspace_state.get('blob_config')
             self.blob_config = Blob_Config.from_dict(blob_config) if isinstance(blob_config, dict) else blob_config
 
-            self.init_vid_callback(self.video_file)
             if self.dlc_data is not None:
                 self._init_loaded_data()
-
+            self.init_vid_callback(self.video_file)
             self.refresh_callback()
 
             if update_needed:

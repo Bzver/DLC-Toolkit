@@ -91,6 +91,7 @@ class Frame_View:
         self.blob_counter.frame_processed.connect(self._plot_current_frame)
         self.blob_counter.parameters_changed.connect(self._handle_counter_config_change)
         self.blob_counter.video_counted.connect(self._handle_counter_from_counter)
+        self.dm.blob_config = self.blob_counter.get_config() # Get the config on every init
         if self.is_counting:
             self.vid_play.set_left_panel_widget(self.blob_counter)
             if self.dm.blob_array is not None and np.any(self.dm.blob_array):

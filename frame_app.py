@@ -53,6 +53,8 @@ class Frame_App(QMainWindow):
         status_layout.addWidget(self.mode_toggle_fannot)
         self.app_layout.addLayout(status_layout)
 
+        self.sc_comm = Shortcut_Manager(self)
+
         self._setup_menu()
         self._setup_shortcut()
 
@@ -74,6 +76,7 @@ class Frame_App(QMainWindow):
                         "items": [
                             ("Load Video", self._load_video),
                             ("Load Prediction", self._load_prediction),
+                            ("Load DLC Config", self._load_dlc_config),
                             ("Load Workspace", self._load_workspace),
                             ("Load DLC Label Data", self._load_dlc_label_data),
                         ]
@@ -94,8 +97,7 @@ class Frame_App(QMainWindow):
         self.menu_widget.add_menu_from_config(menu_config)
 
     def _setup_shortcut(self):
-        self.shortcuts = Shortcut_Manager(self)
-        self.common_shortcut = {
+        self.sc_comm.add_shortcuts_from_config({
             "prev_frame":{"key": "Left", "callback": lambda: self._change_frame(-1)},
             "next_frame":{"key": "Right", "callback": lambda: self._change_frame(1)},
             "prev_fast":{"key": "Shift+Left", "callback": lambda: self._change_frame(-10)},
@@ -104,7 +106,7 @@ class Frame_App(QMainWindow):
             "next_mark":{"key": "Down", "callback": self._navigate_next},
             "playback":{"key": "Space", "callback": self._toggle_playback},
             "save":{"key": "Ctrl+S", "callback": self._save_workspace},
-        }
+        })
 
     def _reset_state(self):
         self._switch_to_fview()
@@ -126,35 +128,17 @@ class Frame_App(QMainWindow):
     def _switch_to_fview(self):
         if hasattr(self, "at"):
             self.at.deactivate(self.menu_widget)
-        fview_shortcuts = {
-            **self.common_shortcut,
-            "mark": {"key": "X", "callback": self.fview.toggle_frame_status},
-        }
-        self.shortcuts.add_shortcuts_from_config(fview_shortcuts, clear_first=True)
         self.fview.activate(self.menu_widget)
         self.at = self.fview
         self.mode_toggle_flabel.set_checked(False)
         self.mode_toggle_fannot.set_checked(False)
 
     def _switch_to_flabel(self):
+        if self.dm.dlc_data is None:
+            QMessageBox.information(self, )
+            self._switch_to_fview()
+            raise Exception("DLC data not loaded, you need to load it before labeling.")
         self.fview.deactivate(self.menu_widget)
-        flabel_shortcuts = {
-            **self.common_shortcut,
-            "swp_trk_sg": {"key": "W", "callback": self.flabel.swap_track_single},
-            "swp_trk_ct": {"key": "Shift+W", "callback": self.flabel.swap_track_continous},
-            "del_trk": {"key": "X", "callback": self.flabel.delete_track},
-            "intp_trk": {"key": "T", "callback": self.flabel.interpolate_track},
-            "intp_ms_kp": {"key": "Shift+T", "callback": self.flabel.interpolate_missing_kp},
-            "gen_inst": {"key": "G", "callback": self.flabel.generate_inst},
-            "rot_inst": {"key": "R", "callback": self.flabel.rotate_inst},
-            "kp_edit": {"key": "Q", "callback": self.flabel.direct_keypoint_edit},
-            "del_kp": {"key": "Backspace", "callback": self.flabel.on_keypoint_delete},
-            "undo": {"key": "Ctrl+Z", "callback": self.flabel.undo_changes},
-            "redo": {"key": "Ctrl+Y", "callback": self.flabel.redo_changes},
-            "zoom": {"key": "Z", "callback": self.flabel.toggle_zoom_mode},
-            "snap_to_inst": {"key": "E", "callback": self.flabel.toggle_snap_to_instances},
-        }
-        self.shortcuts.add_shortcuts_from_config(flabel_shortcuts, clear_first=True)
         if self.kem.pred_data_array is None and self.dm.dlc_data is not None:
             self.kem.pred_data_array = self.dm.dlc_data.pred_data_array
         self.flabel.activate(self.menu_widget)
@@ -164,7 +148,6 @@ class Frame_App(QMainWindow):
 
     def _switch_to_fannot(self):
         self.fview.deactivate(self.menu_widget)
-        self.shortcuts.add_shortcuts_from_config(self.common_shortcut)
         self.at = self.fannot
         self.fannot.activate(self.menu_widget)
         self.mode_toggle_fannot.set_checked(True)
@@ -172,7 +155,10 @@ class Frame_App(QMainWindow):
     def _on_mode_toggle_flabel(self, is_checked:bool):
         self._reset_ui_during_mode_switch()
         if is_checked:
-            self._switch_to_flabel()
+            try:
+                self._switch_to_flabel()
+            except:
+                return
             self.mode_toggle_fannot.set_locked(True)
         else:
             self._switch_to_fview()
@@ -238,6 +224,13 @@ class Frame_App(QMainWindow):
             self.vid_play.set_total_frames(self.dm.total_frames)
         self.at.display_current_frame()
         self.flabel.reset_zoom()
+
+    def _load_dlc_config(self):
+        if not self.vm.check_status_msg():
+            return
+        dlc_config_file = self.dm.config_file_dialog()
+        if dlc_config_file:
+            self.dm.load_metadata_to_dm(dlc_config_file)
 
     def _load_workspace(self):
         self._reset_state()
