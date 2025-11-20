@@ -325,7 +325,6 @@ class Frame_View:
             self.inference_window.show()
             self.inference_window.frames_exported.connect(self._handle_rerun_frames_exported)
             self.inference_window.prediction_saved.connect(self._reload_prediction)
-            self.inference_window.crop_coords_requested.connect(self._update_inference_crop_coords)
         except Exception as e:
             error_message = f"Inference Process failed to initialize. Exception: {e}"
             detailed_message = f"{error_message}\n\nTraceback:\n{traceback.format_exc()}"
@@ -351,6 +350,7 @@ class Frame_View:
 
         for frame_idx in range(self.dm.total_frames):
             animal_count = self.dm.blob_array[frame_idx, 0]
+            merge_status = self.dm.blob_array[frame_idx, 1]
             
             current_interval = 1
 
@@ -358,7 +358,9 @@ class Frame_View:
                 current_interval = intervals["interval_0_animals"]
             elif animal_count == 1:
                 current_interval = intervals["interval_1_animal"]
-            else: # animal_count >= 2
+            elif merge_status == 1:
+                current_interval = intervals["interval_merged"]
+            else: # animal_count >= 2 and not merged
                 current_interval = intervals["interval_n_animals"]
             
             if frame_idx - last_inferenced_frame < current_interval:
@@ -382,34 +384,6 @@ class Frame_View:
         )
         if reply == QMessageBox.Yes:
             self.call_inference(inference_list)
-
-    def _update_inference_crop_coords(self, frame_list:list):
-        if not frame_list:
-             return
-        if self.dm.blob_config is None:
-            self.is_counting = True
-            self._init_blob_counter(True)
-            try:
-                self.blob_counter.config_ready.disconnect()
-            except:
-                pass
-            self.blob_counter.config_ready.connect(self._crop_coords_for_inference)
-            self.display_current_frame()
-            self.inference_window.hide()
-            self.status_bar.show_message(
-                "Blob config not set. Adjust the blob parameters by interacting with the left panel, click 'Config Ready' Button to continue.", duration_ms=3000)
-        else:
-            self._crop_coords_for_inference()
-            
-    def _crop_coords_for_inference(self):
-        self.inference_window.show()
-        self._init_blob_counter()
-
-        if self.dm.blob_array is None:
-            self.blob_counter._count_entire_video()
-
-        self.inference_window.crop_coords = self.dm.blob_array[:, 2:]
-        self.inference_window.inference_workflow()
 
     def _reload_prediction(self, prediction_path:str):
         """Reload prediction data from file and update visualization"""
