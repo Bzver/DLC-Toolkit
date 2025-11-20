@@ -546,7 +546,7 @@ class Data_Manager:
 
     ###################################################################################################################################################
 
-    def save_to_dlc(self, crop_coords=None):
+    def save_to_dlc(self, crop_coord=None):
         dlc_dir = os.path.dirname(self.dlc_data.dlc_config_filepath)
         exp_set = Export_Settings(video_filepath=self.video_file, video_name=self.video_name,
                                   save_path=self.project_dir, export_mode="Append")
@@ -557,10 +557,10 @@ class Data_Manager:
 
         refd_list = self.get_frames("refined")
         if not refd_list:
-            exporter = Exporter(self.dlc_data, exp_set, self.get_frames("marked"), crop_coords=crop_coords)
+            exporter = Exporter(self.dlc_data, exp_set, self.get_frames("marked"), crop_coord=crop_coord)
         else:
             exp_set.export_mode = "Merge"
-            exporter = Exporter(self.dlc_data, exp_set, refd_list, crop_coords=crop_coords)
+            exporter = Exporter(self.dlc_data, exp_set, refd_list, crop_coord=crop_coord)
         
         if self.dlc_data:
             try:

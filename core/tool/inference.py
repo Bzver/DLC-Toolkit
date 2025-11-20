@@ -11,6 +11,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QHBoxLayout, QPushButton
 
+import traceback
 from typing import List, Literal, Tuple
 
 from .undo_redo import Uno_Stack
@@ -22,7 +23,7 @@ from core.io import (
 )
 from core.tool import Prediction_Plotter
 from utils.helper import (
-    log_print, handle_unsaved_changes_on_close, crop_coords_to_array, infer_head_tail_indices, build_angle_map)
+    log_print, handle_unsaved_changes_on_close, crop_coord_to_array, infer_head_tail_indices, build_angle_map, get_roi_cv2)
 from utils.pose import calculate_pose_centroids, calculate_canonical_pose
 from utils.track import Hungarian, Track_Fixer
 
@@ -31,7 +32,6 @@ DEBUG = False
 class DLC_Inference(QtWidgets.QDialog):
     prediction_saved = Signal(str)
     frames_exported = Signal(tuple)
-    crop_coords_requested = Signal(list)
 
     def __init__(
         self,
@@ -61,7 +61,7 @@ class DLC_Inference(QtWidgets.QDialog):
         self.frame_list.sort()
         self.is_saved = True
         self.auto_cropping = False
-        self.crop_coords = None
+        self.crop_coord = None
 
         video_name = os.path.basename(self.video_filepath).split(".")[0]
         self.temp_directory = tempfile.TemporaryDirectory()
@@ -69,7 +69,7 @@ class DLC_Inference(QtWidgets.QDialog):
         self.export_set = Export_Settings(
             video_filepath=self.video_filepath, video_name=video_name, save_path=self.temp_dir, export_mode="Append")
         self.extractor = Frame_Extractor(self.export_set.video_filepath)
-        
+
         if self.dlc_data.pred_data_array is None:
             self.fresh_pred = True
         else:
@@ -146,15 +146,15 @@ class DLC_Inference(QtWidgets.QDialog):
         individual_frame.addWidget(self.max_individual_spinbox)
         container_layout.addLayout(individual_frame)
 
-        self.auto_cropping_checkbox = QtWidgets.QCheckBox("Auto Crop")
+        self.auto_cropping_checkbox = QtWidgets.QCheckBox("Crop")
         self.auto_cropping_checkbox.setChecked(self.auto_cropping)
         self.auto_cropping_checkbox.toggled.connect(self._auto_cropping_changed)
 
         button_frame = QHBoxLayout()
         self.start_button = QPushButton("Extract Frames and Rerun Predictions in DLC")
         self.start_button.clicked.connect(self.inference_workflow)
-        config_button = QPushButton("Edit Pytorch Config")
-        config_button.clicked.connect(self.show_pytorch_config_menu)
+        config_button = QPushButton("Edit Batch Size in DLC Config")
+        config_button.clicked.connect(self.show_dlc_config_menu)
         button_frame.addWidget(self.auto_cropping_checkbox)
         button_frame.addWidget(config_button)
         button_frame.addWidget(self.start_button)
@@ -162,17 +162,15 @@ class DLC_Inference(QtWidgets.QDialog):
 
         return setup_container
 
-    def show_pytorch_config_menu(self):
-        shuffle_folder = self._get_shuffle_folder()
-        pytorch_yaml_path = os.path.join(shuffle_folder, "train", "pytorch_config.yaml")
+    def show_dlc_config_menu(self):
+        dlc_config_file = self.dlc_data.dlc_config_filepath
         
-        if os.path.exists(pytorch_yaml_path):
-            if os.name == 'nt':
-                subprocess.run(['explorer', '/select,', pytorch_yaml_path.replace('/', '\\')])
-            elif sys.platform == 'darwin':
-                subprocess.run(['open', '-R', pytorch_yaml_path])
-            else:
-                subprocess.run(['xdg-open', os.path.dirname(pytorch_yaml_path)])
+        if os.name == 'nt':
+            subprocess.run(['explorer', '/select,', dlc_config_file.replace('/', '\\')])
+        elif sys.platform == 'darwin':
+            subprocess.run(['open', '-R', dlc_config_file])
+        else:
+            subprocess.run(['xdg-open', os.path.dirname(dlc_config_file)])
 
     def _check_iteration_integrity(self):
         dlc_config_filepath = self.dlc_data.dlc_config_filepath
@@ -386,7 +384,7 @@ class DLC_Inference(QtWidgets.QDialog):
         global_frame_idx = self.frame_list[self.current_frame_idx]
         image_filename = f"img{global_frame_idx:08d}.png"
         image_path = os.path.join(self.temp_dir, image_filename)
-        if self.crop_coords is None:
+        if self.crop_coord is None:
             frame = cv2.imread(image_path)
         else:
             frame = self.extractor.get_frame(global_frame_idx)
@@ -589,22 +587,49 @@ class DLC_Inference(QtWidgets.QDialog):
     #######################################################################################################################
 
     def inference_workflow(self):
-        if self.auto_cropping and self.crop_coords is None:
-            self.crop_coords_requested.emit(self.frame_list)
-            return
+        cap = cv2.VideoCapture(self.video_filepath)
+        self.total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-        extract_success = self._extract_marked_frame_images(self.crop_coords)
+        if self.auto_cropping and self.crop_coord is None:
+            ret, frame = cap.read()
+            if not ret:
+                QMessageBox.critical(self, "Error", "Fail to read video frame for a ROI crop.")
+            roi = get_roi_cv2(frame)
+            if roi:
+                self.crop_coord = np.array(roi)
+            else:
+                QMessageBox.information(self, "Crop Region Not Set", "User cancel the ROI selection.")
+
+        cap.release()
+
+        inference_video_path = None
+        try:
+            if len(self.frame_list)  > 0.9 * self.total_frames and self.crop_coord is None:
+                inference_video_path = self.export_set.video_filepath
+            elif len(self.frame_list) > 1000:
+                inference_video_path = os.path.join(self.temp_dir, "temp_extract.mp4")
+                self._extract_marked_frame_as_video(self.crop_coord)
+            else:
+                self._extract_marked_frame_images(self.crop_coord)
+        except Exception as e:
+            QMessageBox(self, "Error", f"Error during frame image extraction. Error:{e}")
+            self.emergency_exit()
+            return
 
         self.setup_container.setVisible(False)
         self.wait_container.setVisible(True)
         self.center()
         QtWidgets.QApplication.processEvents()
 
-        analyze_success = self._analyze_frame_images()
-        if not extract_success or not analyze_success:
-            QMessageBox(self, "Error", 
-                "Error during frame image extraction and analysis, check terminal for detail.")
+        try:
+            if inference_video_path:
+                self._analyze_frame_videos(inference_video_path)
+            else:
+                self._analyze_frame_images()
+        except Exception as e:
+            QMessageBox(self, "Error", f"Error during frame analysis. Error:{e}")
             self.emergency_exit()
+            return
         
         if self.fresh_pred:
             temp_pred_filename = self._load_and_remap_new_prediction()
@@ -641,29 +666,33 @@ class DLC_Inference(QtWidgets.QDialog):
         self._crossref_existing_pred()
         self._display_current_frame()
 
-    def _extract_marked_frame_images(self, crop_coords=None) -> bool:
-        try:
-            progress = Progress_Indicator_Dialog(0, 100, "Frame Extraction", "Extracting frames from video", parent=self)
-            exporter = Exporter(
-                dlc_data=self.dlc_data, export_settings=self.export_set, frame_list=self.frame_list, progress_callback=progress, crop_coords=crop_coords)
-            exporter.export_data_to_DLC(frame_only=True)
-            return True
-        except Exception as e:
-            print(f"Failed to extracted frame images. Exception: {e}.")
-            return False
+    def _extract_marked_frame_images(self, crop_coord=None):
+        progress = Progress_Indicator_Dialog(0, 100, "Frame Extraction", "Extracting frames from video", parent=self)
+        exporter = Exporter(
+            dlc_data=self.dlc_data, export_settings=self.export_set, frame_list=self.frame_list, progress_callback=progress, crop_coord=crop_coord)
+        exporter.export_data_to_DLC(frame_only=True)
 
-    def _analyze_frame_images(self) -> bool:
-        try:
-            import deeplabcut
-            deeplabcut.analyze_images(
-                config=self.dlc_data.dlc_config_filepath,
-                images=self.temp_dir,
-                shuffle=self.shuffle_idx,
-                max_individuals=self.max_individual_val)
-            return True
-        except Exception as e:
-            print(f"Failed to analyze extracted frame images using deeplabcut. Exception: {e}.")
-            return False
+    def _extract_marked_frame_as_video(self, crop_coord=None):
+        progress = Progress_Indicator_Dialog(0, 100, "Frame Extraction", "Extracting frames from video", parent=self)
+        exporter = Exporter(
+            dlc_data=self.dlc_data, export_settings=self.export_set, frame_list=self.frame_list, progress_callback=progress, crop_coord=crop_coord)
+        exporter.export_frame_to_video()
+
+    def _analyze_frame_images(self):
+        import deeplabcut
+        deeplabcut.analyze_images(
+            config=self.dlc_data.dlc_config_filepath,
+            images=self.temp_dir,
+            shuffle=self.shuffle_idx,
+            max_individuals=self.max_individual_val)
+        
+    def _analyze_frame_videos(self, inference_video_path):
+        import deeplabcut
+        deeplabcut.analyze_videos(
+            config=self.dlc_data.dlc_config_filepath,
+            videos=[inference_video_path],
+            shuffle=self.shuffle_idx
+        )
 
     def _load_and_remap_new_prediction(self) -> str:
         h5_files = [f for f in os.listdir(self.temp_dir) if f.endswith(".h5")]
@@ -675,8 +704,8 @@ class DLC_Inference(QtWidgets.QDialog):
             (self.dlc_data.pred_frame_count, self.dlc_data.instance_count, self.dlc_data.num_keypoint*3), np.nan)
         temp_data_array = loaded_data.pred_data_array
 
-        if self.crop_coords is not None:
-            coords_array = crop_coords_to_array(self.crop_coords, temp_data_array.shape, self.frame_list)
+        if self.crop_coord is not None:
+            coords_array = crop_coord_to_array(self.crop_coord, temp_data_array.shape, self.frame_list)
             temp_data_array = temp_data_array + coords_array
 
         if self.dlc_data.pred_data_array is not None or not np.any(self.dlc_data.pred_data_array): # Only do correction on new data
@@ -748,6 +777,7 @@ class DLC_Inference(QtWidgets.QDialog):
         self.move((screen.width() - size.width()) // 2, (screen.height() - size.height()) // 2)
 
     def emergency_exit(self, reason:str="Check terminal for reason."):
+        traceback.print_exc()
         QMessageBox.warning(self, "Rerun Failed", reason)
         self.reject()
 
