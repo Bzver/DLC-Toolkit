@@ -223,17 +223,14 @@ class Inference_interval_Dialog(QDialog):
         self.setWindowTitle("Set Inference Intervals")
         self.setMinimumWidth(300)
 
-        self._init_ui()
-
-    def _init_ui(self):
         main_layout = QVBoxLayout(self)
 
-        # Labels and SpinBoxes for intervals
         self.interval_widgets = {}
         categories = {
             "No Animals (0)": "interval_0_animals",
             "One Animal (1)": "interval_1_animal",
-            "Multiple Animals (2+)": "interval_n_animals"
+            "Multiple Animals (2+)": "interval_n_animals",
+            "Animal Close Together": "interval_merged"
         }
 
         for label_text, key in categories.items():
@@ -241,8 +238,8 @@ class Inference_interval_Dialog(QDialog):
             label = QLabel(label_text)
             spin_box = QSpinBox()
             spin_box.setMinimum(1)
-            spin_box.setMaximum(1000) # Arbitrary max, can be adjusted
-            spin_box.setValue(1) # Default to 1 (every frame)
+            spin_box.setMaximum(1000)
+            spin_box.setValue(1)
             h_layout.addWidget(label)
             h_layout.addStretch()
             h_layout.addWidget(spin_box)
