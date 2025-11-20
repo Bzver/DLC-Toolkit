@@ -247,6 +247,7 @@ class Frame_App(QMainWindow):
 
     def _export_dm_lists(self):
         if not self.dm.video_file:
+            self.status_bar.show_message("No frame list to export.")
             return
         
         if hasattr(self.at, "is_counting") and self.at.is_counting:
