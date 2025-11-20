@@ -333,8 +333,19 @@ def frame_to_pixmap(frame):
 
 ###########################################################################################
 
-def crop_coords_to_array(crop_coords:np.ndarray, arr_shape:Tuple[int, int, int], frame_list:List[int]):
-    coords_array = np.zeros(arr_shape)
+def get_roi_cv2(frame) -> Tuple[int, int, int, int] | None:
+    cv2.namedWindow("Select ROI ('space' to accept, 'c' to cancel)", cv2.WINDOW_NORMAL)
+    roi = cv2.selectROI("Select ROI ('space' to accept, 'c' to cancel)", frame, fromCenter=False)
+    cv2.destroyWindow("Select ROI ('space' to accept, 'c' to cancel)")
+    
+    if roi[2] > 0 and roi[3] > 0:
+        x, y, w, h = roi
+        return (x, y, x + w, y + h)
+    else:
+        return None
+
+def crop_coord_to_array(crop_coord:np.ndarray, arr_shape:Tuple[int, int, int], frame_list:List[int]):
+    coord_array = np.zeros(arr_shape)
     
     if arr_shape[0] != len(frame_list):
         diff = abs(arr_shape[0]-len(frame_list))
@@ -346,15 +357,12 @@ def crop_coords_to_array(crop_coords:np.ndarray, arr_shape:Tuple[int, int, int],
             )
         final_len = min(arr_shape[0], len(frame_list))
         frame_list = frame_list[0:final_len]
-        crop_coords = crop_coords[0:final_len]
+
+    x, y = crop_coord[0], crop_coord[1]
     
-    crop_coords = crop_coords[frame_list]
-    x_per_frame = crop_coords[:, 0][:, np.newaxis, np.newaxis]
-    y_per_frame = crop_coords[:, 1][:, np.newaxis, np.newaxis]
-    
-    coords_array[:, :, 0::3] = x_per_frame
-    coords_array[:, :, 1::3] = y_per_frame
-    return coords_array
+    coord_array[:, :, 0::3] = x
+    coord_array[:, :, 1::3] = y
+    return coord_array
 
 #########################################################################################################################################################1
 

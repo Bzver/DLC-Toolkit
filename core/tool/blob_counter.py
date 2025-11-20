@@ -15,6 +15,7 @@ from matplotlib.figure import Figure
 from typing import Optional, Tuple, List
 
 from ui import Progress_Indicator_Dialog
+from utils.helper import get_roi_cv2
 from core.io import Frame_Extractor
 from core.dataclass import Blob_Config
 
@@ -341,16 +342,11 @@ class Blob_Counter(QGroupBox):
         if frame is None:
             return
         
-        cv2.namedWindow("Select ROI ('space' to accept, 'c' to cancel)", cv2.WINDOW_NORMAL)
-        roi = cv2.selectROI("Select ROI ('space' to accept, 'c' to cancel)", frame, fromCenter=False)
-        cv2.destroyWindow("Select ROI ('space' to accept, 'c' to cancel)")
-        
-        if roi[2] > 0 and roi[3] > 0:
-            x, y, w, h = roi
-            self.roi = (x, y, x + w, y + h)
+        roi = get_roi_cv2(frame)
+        if roi:
+            self.roi = roi
             print(f"ROI set to {self.roi}")
         else:
-            self.roi = None
             print("ROI selection canceled.")
         
         self.parameters_changed.emit()
