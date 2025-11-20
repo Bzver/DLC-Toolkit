@@ -15,7 +15,7 @@ from core.io import (
     Prediction_Loader, Exporter, remove_confidence_score, determine_save_path,
     backup_existing_prediction, save_prediction_to_existing_h5, prediction_to_csv
 )
-from core.dataclass import Plot_Config, Export_Settings
+from core.dataclass import Plot_Config, Export_Settings, Blob_Config, Loaded_DLC_Data
 
 class Data_Manager:
     HexColor = str
@@ -40,7 +40,7 @@ class Data_Manager:
             plot_labeled = True, plot_pred = True, navigate_labeled = False, auto_snapping = False, navigate_roi = False)
 
         # fview only
-        self.blob_config = None
+        self.blob_config:Blob_Config = None
         self.label_data_array, self.blob_array = None, None
 
         # flabel only
@@ -418,11 +418,11 @@ class Data_Manager:
             'video_file': self.video_file,
             'video_name': self.video_name,
             'project_dir': self.project_dir,
-            'dlc_data': self.dlc_data,
+            'dlc_data': self.dlc_data.to_dict(),
             'canon_pose': self.canon_pose,
             'frame_store': self.fm.to_dict(),
-            'plot_config': self.plot_config,
-            'blob_config': self.blob_config,
+            'plot_config': self.plot_config.to_dict(),
+            'blob_config': self.blob_config.to_dict(),
             'prediction': self.prediction,
             'angle_map_data': self.angle_map_data,
             'inst_count_per_frame_pred': self.inst_count_per_frame_pred,
@@ -455,10 +455,7 @@ class Data_Manager:
             self.video_file = workspace_state.get('video_file')
             self.video_name = workspace_state.get('video_name')
             self.project_dir = workspace_state.get('project_dir')
-            self.dlc_data = workspace_state.get('dlc_data')
             self.canon_pose = workspace_state.get('canon_pose')
-            self.plot_config = workspace_state.get('plot_config')
-            self.blob_config = workspace_state.get('blob_config')
             self.prediction = workspace_state.get('prediction')
             self.angle_map_data = workspace_state.get('angle_map_data')
             self.inst_count_per_frame_pred = workspace_state.get('inst_count_per_frame_pred')
@@ -480,11 +477,30 @@ class Data_Manager:
                 self.fm.add_frames("blob_merged", workspace_state.get('blob_merged_list', []))
                 self.fm.add_frames("roi_change", workspace_state.get('roi_frame_list', []))
                 self.fm.add_frames("outlier", workspace_state.get('outlier_frame_list', []))
-                
+
+            dlc_data = workspace_state.get('dlc_data')
+            self.dlc_data = Loaded_DLC_Data.from_dict(dlc_data) if isinstance(dlc_data, dict) else dlc_data
+
+            update_needed = False
+            plot_config = workspace_state.get('plot_config')
+            if isinstance(plot_config, dict):
+                self.plot_config = Plot_Config.from_dict(plot_config) 
+            else:
+                self.plot_config = plot_config
+                update_needed = True
+
+            blob_config = workspace_state.get('blob_config')
+            self.blob_config = Blob_Config.from_dict(blob_config) if isinstance(blob_config, dict) else blob_config
+
             self.init_vid_callback(self.video_file)
             if self.dlc_data is not None:
                 self._init_loaded_data()
+
             self.refresh_callback()
+
+            if update_needed:
+                self.save_workspace()
+
         except Exception as e:
             QMessageBox.critical(self.main, "Error Loading Workspace", f"Failed to load workspace:\n{e}")
             traceback.print_exc()

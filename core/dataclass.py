@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 
 from typing import List, Optional, Literal, Dict, Callable, Tuple
 from numpy.typing import NDArray
@@ -18,6 +18,19 @@ class Loaded_DLC_Data:
     prediction_filepath: Optional[str]
     pred_data_array: Optional[NDArray]
     pred_frame_count: Optional[int]
+
+    def to_dict(self) -> dict:
+        d = asdict(self)
+        if self.pred_data_array is not None:
+            d["pred_data_array"] = self.pred_data_array
+        return d
+
+    @classmethod
+    def from_dict(cls, data) -> "Loaded_DLC_Data":
+        pred_data_array = data.get("pred_data_array")
+        if pred_data_array is not None:
+            data["pred_data_array"] = pred_data_array.copy()
+        return cls(**data)
 
 @dataclass
 class Export_Settings:
@@ -48,6 +61,14 @@ class Plot_Config:
     confidence_cutoff: float
     auto_snapping: bool
     navigate_roi: bool
+    
+    def to_dict(self) -> dict:
+        d = asdict(self)
+        return d
+
+    @classmethod
+    def from_dict(cls, data) -> "Plot_Config":
+        return cls(**data)
 
 @dataclass
 class Plotter_Callbacks:
@@ -72,3 +93,11 @@ class Blob_Config:
     blob_type: str
     background_frames: Dict[str, NDArray]
     roi: Optional[Tuple[int, int, int, int]] = None
+
+    def to_dict(self) -> dict:
+        d = asdict(self)
+        return d
+
+    @classmethod
+    def from_dict(cls, data) -> "Blob_Config":
+        return cls(**data)
