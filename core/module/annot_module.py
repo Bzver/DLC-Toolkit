@@ -69,7 +69,7 @@ class Frame_Annotator:
             },
         }
 
-        self.extra_shorts = Shortcut_Manager(parent=self.main)
+        self.sc_annot = Shortcut_Manager(parent=self.main)
         self.reset_state()
 
     def activate(self, menu_widget:Menu_Widget):
@@ -89,7 +89,7 @@ class Frame_Annotator:
         if self.vid_play.sld.is_zoom_slider_shown:
             self.vid_play.sld.toggle_zoom_slider()
         self.open_annot = False
-        self.extra_shorts.clear()
+        self.sc_annot.clear()
 
     def reset_state(self, hardcore=False):
         self.open_annot = False
@@ -104,11 +104,11 @@ class Frame_Annotator:
         self._refresh_annot_numeric()
 
     def _setup_shortcuts(self):
-        self.extra_shorts.clear()
+        self.sc_annot.clear()
         for category, key in self.behav_map.items():
             if not key.strip():
                 continue
-            self.extra_shorts.add_shortcut(
+            self.sc_annot.add_shortcut(
                 name=category, key=key.lower(), callback=lambda cat=category: self._annotate(cat)
             )
 
@@ -281,7 +281,8 @@ class Frame_Annotator:
         self.vid_play.nav.set_title_color(color)
 
     def _refresh_slider(self):
-        self.annot_sum.update_data(self.annot_array, self.behav_map, self.idx_to_cat)
+        if hasattr(self, "annot_sum"):
+            self.annot_sum.update_data(self.annot_array, self.behav_map, self.idx_to_cat)
         self.vid_play.sld.clear_frame_category()
         idx_to_color = {idx:self.COLOR_HEX_EXPANDED[idx] for idx in range(len(self.cat_to_idx))}
         self.vid_play.sld.set_frame_category_array(self.annot_array, idx_to_color)
