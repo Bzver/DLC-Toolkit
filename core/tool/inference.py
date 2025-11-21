@@ -12,7 +12,7 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QHBoxLayout, QPushButton
 
 import traceback
-from typing import List, Literal, Tuple
+from typing import List, Literal, Tuple, Optional
 
 from .undo_redo import Uno_Stack
 from ui import Clickable_Video_Label, Video_Slider_Widget, Progress_Indicator_Dialog, Shortcut_Manager
@@ -32,12 +32,14 @@ DEBUG = False
 class DLC_Inference(QtWidgets.QDialog):
     prediction_saved = Signal(str)
     frames_exported = Signal(tuple)
+    roi_set = Signal(object)
 
     def __init__(
         self,
         dlc_data:Loaded_DLC_Data,
         frame_list:List[int],
         video_filepath:str,
+        roi:Optional[np.ndarray]=None,
         parent=None
         ):
         """
@@ -61,7 +63,7 @@ class DLC_Inference(QtWidgets.QDialog):
         self.frame_list.sort()
         self.is_saved = True
         self.auto_cropping = False
-        self.crop_coord = None
+        self.crop_coord = roi
 
         video_name = os.path.basename(self.video_filepath).split(".")[0]
         self.temp_directory = tempfile.TemporaryDirectory()
@@ -595,8 +597,9 @@ class DLC_Inference(QtWidgets.QDialog):
             if not ret:
                 QMessageBox.critical(self, "Error", "Fail to read video frame for a ROI crop.")
             roi = get_roi_cv2(frame)
-            if roi:
+            if roi is not None:
                 self.crop_coord = np.array(roi)
+                self.roi_set.emit(self.crop_coord)
             else:
                 QMessageBox.information(self, "Crop Region Not Set", "User cancel the ROI selection.")
 

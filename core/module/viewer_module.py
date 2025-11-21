@@ -4,8 +4,9 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox
 import traceback
 
-from ui import Menu_Widget, Video_Player_Widget, Frame_List_Dialog, Status_Bar, Inference_interval_Dialog, Shortcut_Manager
-from utils.helper import frame_to_pixmap
+from ui import (
+    Menu_Widget, Video_Player_Widget, Frame_List_Dialog, Status_Bar, Inference_interval_Dialog, Shortcut_Manager, Frame_Display_Dialog)
+from utils.helper import frame_to_pixmap, frame_to_qimage, get_roi_cv2, plot_roi
 from core.runtime import Data_Manager, Video_Manager
 from core.tool import Mark_Generator, Blob_Counter, Prediction_Plotter
 
@@ -29,6 +30,7 @@ class Frame_View:
                 "buttons": [
                     ("Toggle Animal Counting", self._toggle_animal_counting),
                     ("Select Counter List to Navigate", self._select_counter_list),
+                    ("Check Current ROI Region", self._check_roi)
                 ]
             },
             "Mark": {
@@ -84,13 +86,17 @@ class Frame_View:
             self.is_counting = True
         self._init_blob_counter()
 
-    def _init_blob_counter(self, request:bool=False):
+    def _init_blob_counter(self):
         self.blob_counter = Blob_Counter(
-            frame_extractor=self.vm.extractor, config=self.dm.blob_config, 
-            blob_array=self.dm.blob_array, request=request, parent=self.main)
+            frame_extractor=self.vm.extractor,
+            config=self.dm.blob_config,
+            blob_array=self.dm.blob_array,
+            roi=self.dm.roi,
+            parent=self.main)
         self.blob_counter.frame_processed.connect(self._plot_current_frame)
         self.blob_counter.parameters_changed.connect(self._handle_counter_config_change)
         self.blob_counter.video_counted.connect(self._handle_counter_from_counter)
+        self.blob_counter.roi_set.connect(self._handle_roi_from_comp)
         self.dm.blob_config = self.blob_counter.get_config() # Get the config on every init
         if self.is_counting:
             self.vid_play.set_left_panel_widget(self.blob_counter)
@@ -238,6 +244,21 @@ class Frame_View:
             list_select_dialog.frame_indices_acquired.connect(self._counter_list_selected)
             list_select_dialog.exec()
 
+    def _check_roi(self):
+        if not self.vm.check_status_msg():
+            return
+        frame = self.vm.get_frame(self.dm.current_frame_idx)
+        if self.dm.roi is None:
+            roi = get_roi_cv2(frame)
+            if roi is None:
+                return
+            self.dm.roi = roi
+        
+        frame = plot_roi(frame, self.dm.roi)
+        qimage, _, _ = frame_to_qimage(frame)
+        dialog = Frame_Display_Dialog(title=f"Crop Region", image=qimage)
+        dialog.exec()
+
     ###################################################################################################################################################
 
     def _handle_rerun_frames_exported(self, frame_tuple):
@@ -253,6 +274,9 @@ class Frame_View:
 
     def _handle_counter_config_change(self):
         self.dm.blob_config = self.blob_counter.get_config()
+
+    def _handle_roi_from_comp(self, roi:np.ndarray):
+        self.dm.roi = roi
 
     def _counter_list_selected(self, counter_list):
         self.counter_list = counter_list
@@ -395,64 +419,48 @@ class Frame_View:
             self.inference_window = None
         if hasattr(self, 'plotter'):
             delattr(self, 'plotter')
-    
+
     def save_to_dlc(self):
-        fm_list = self.dm.get_frames("marked")
+        fm_list = self.dm.frames_in_any(["refined", "marked", "approved", "rejected"])
         if self.vm.image_files and not fm_list:
             fm_list = list(range(self.vm.get_frame_counts()))
         if not self.pre_saving_sanity_check():
             return
-        reply = QMessageBox.question(
-            self.main, "Crop Frame For Export?",
-            "Crop the frames before exporting to DLC?")
-        if reply == QMessageBox.No:
-            self.dm.save_to_dlc() 
+        try:
+            crop_status = self.ask_crop_before_export()
+            self.dm.save_to_dlc(crop_status)
             self.refresh_and_display()
-        else:
-            refd_list = self.dm.get_frames("refined")
-            frame_list = refd_list if refd_list else fm_list
-            if self.dm.dlc_data is None or self.dm.dlc_data.pred_data_array is None: # No prediction, blob mode
-                self._get_crop_coords_from_blob(frame_list)
-            else:
-                self._get_crop_coords_from_prediction(frame_list)
-
-    def _get_crop_coords_from_blob(self, frame_list):
-        if self.dm.blob_config is None:
-            self.is_counting = True
-            self._init_blob_counter(True)
-            try:
-                self.blob_counter.config_ready.disconnect()
-            except:
-                pass
-            self.blob_counter.config_ready.connect(lambda:self._crop_coords_for_export(frame_list))
-            self.display_current_frame()
-            self.status_bar.show_message(
-                "Blob config not set. Adjust the blob parameters by interacting with the left panel, click 'Config Ready' Button to continue.", duration_ms=3000)
-        else:
-            self._crop_coords_for_export(frame_list)
-
-    def _crop_coords_for_export(self, frame_list):
-        self._init_blob_counter()
-        if self.dm.blob_array is None:
-            self.blob_counter._count_entire_video()
-            crop_coords = self.dm.blob_array[frame_list, 2:]
-            self._save_crop_to_dlc(crop_coords=crop_coords)
-            
-    def _get_crop_coords_from_prediction(self, frame_list):
-        max_y, max_x = self.vm.get_frame_dim()
-        crop_coords = self.dm.get_crop_coords_from_pred(frame_list, max_x, max_y)
-        self._save_crop_to_dlc(crop_coords=crop_coords)
-
-    def _save_crop_to_dlc(self, crop_coords):
-        self.dm.save_to_dlc(crop_coords)
-        self.refresh_and_display()
+        except Exception as e:
+            QMessageBox.critical(self, "Crop Region Not Set", e)
 
     def merge_data(self):
         if self.vm.image_files:
             QMessageBox.information(self.main, 
-                "Not Complatible", "Loaded DLC Data can only be saved in labeling mode, or saved as a new one with 'Export to DeepLabCut'.")
+                "Not Complatible", "Loaded DLC Data can only be saved in labeling mode (in place update), or saved as a new one with 'Export to DeepLabCut'.")
             return
         if not self.pre_saving_sanity_check():
             return
-        self.dm.merge_data()
-        self.refresh_ui()
+        try:
+            crop_status = self.ask_crop_before_export()
+            self.dm.merge_data(crop_status)
+            self.refresh_and_display()
+        except Exception as e:
+            QMessageBox.critical(self, "Crop Region Not Set", e)
+
+    def ask_crop_before_export(self) -> bool:
+        reply = QMessageBox.question(
+            self.main, "Crop Frame For Export?",
+            "Crop the frames before exporting to DLC?")
+        if reply == QMessageBox.Yes:
+            if self.dm.roi is None:
+                frame = self.vm.get_frame(self.dm.current_frame_idx)
+                roi = get_roi_cv2(frame)
+                if roi is not None:
+                    self.dm.roi = roi
+                    return True
+                else:
+                    raise RuntimeError("User cancel the ROI selection.")
+            else:
+                return True
+        else:
+            return False

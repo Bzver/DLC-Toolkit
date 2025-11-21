@@ -79,13 +79,14 @@ class Frame_Manager:
         else:
             self.add_frame(category, frame_idx)
 
-    def clear_category(self, category:str):
+    def clear_category(self, category:str, no_refresh:bool=False):
         if self.frames[category]:
             if category in ["rejected", "approved"]: # They get a second chance
                 self.move_category("marked", category)
             else:
                 self.frames[category].clear()
-            self.refresh_callback()
+            if not no_refresh:
+                self.refresh_callback()
 
     def clear_group(self, group:str):
         for cat, meta in self.metadata.items():

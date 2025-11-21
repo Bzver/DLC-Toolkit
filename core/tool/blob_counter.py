@@ -4,7 +4,7 @@ from PySide6 import QtWidgets, QtGui
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
-    QSizePolicy, QSlider, QDialog, QComboBox, QPushButton
+    QSizePolicy, QSlider, QComboBox, QPushButton
 )
 
 import matplotlib
@@ -14,8 +14,8 @@ from matplotlib.figure import Figure
 
 from typing import Optional, Tuple, List
 
-from ui import Progress_Indicator_Dialog
-from utils.helper import get_roi_cv2
+from ui import Progress_Indicator_Dialog, Frame_Display_Dialog
+from utils.helper import get_roi_cv2, plot_roi, frame_to_qimage
 from core.io import Frame_Extractor
 from core.dataclass import Blob_Config
 
@@ -24,13 +24,13 @@ class Blob_Counter(QGroupBox):
     parameters_changed = Signal()
     frame_processed = Signal(object, int)
     video_counted = Signal(object)
-    config_ready = Signal()
+    roi_set = Signal(object)
 
     def __init__(self,
                  frame_extractor:Frame_Extractor,
                  config: Optional[Blob_Config]=None,
-                 request:bool=False,
-                 blob_array=False,
+                 roi:Optional[np.ndarray] = None,
+                 blob_array:bool=False,
                  parent=None):
         super().__init__(parent)
         self.setTitle("Blob Counting Controls")
@@ -40,7 +40,7 @@ class Blob_Counter(QGroupBox):
         self.total_frames, self.frame_idx = 0, 0
         self.sample_frame_count = 100
         self.vid_h, self.vid_w = self.frame_extractor.get_frame_dim()
-        self.roi = None
+        self.roi = roi
 
         self.kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
         self.kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
@@ -55,6 +55,7 @@ class Blob_Counter(QGroupBox):
 
         # Image Display
         self.bg_display = Blob_Background(self.frame_extractor)
+        self.bg_display.roi_requested.connect(self._roi_to_bg_display)
         self.blb_layout.addWidget(self.bg_display)
 
         # Histogram for blob sizes
@@ -135,12 +136,6 @@ class Blob_Counter(QGroupBox):
         self.count_all_btn = QPushButton("Count Animals in Entire Video")
         self.count_all_btn.clicked.connect(self._count_entire_video)
         self.blb_layout.addWidget(self.count_all_btn)
-        self.count_all_btn.setVisible(not request)
-
-        self.request_btn = QPushButton("Blob Config Ready")
-        self.request_btn.clicked.connect(self._config_ready)
-        self.blb_layout.addWidget(self.request_btn)
-        self.request_btn.setVisible(request)
 
         self.count_label = QLabel("Animal Count: 0")
         self.count_label.setAlignment(Qt.AlignCenter)
@@ -175,9 +170,6 @@ class Blob_Counter(QGroupBox):
             roi = self.roi
         )
         return config
-
-    def _config_ready(self):
-        self.config_ready.emit()
 
     def _apply_config(self, config: Blob_Config):
         self.sample_frame_count = config.sample_frame_count
@@ -343,13 +335,14 @@ class Blob_Counter(QGroupBox):
             return
         
         roi = get_roi_cv2(frame)
-        if roi:
+        if roi is not None:
             self.roi = roi
             print(f"ROI set to {self.roi}")
         else:
             print("ROI selection canceled.")
         
         self.parameters_changed.emit()
+        self.roi_set.emit(np.array(self.roi))
 
     def _plot_blob_histogram(self):
         if not self.frame_extractor:
@@ -408,6 +401,9 @@ class Blob_Counter(QGroupBox):
         self.blob_array[frame_idx, 4] = x2
         self.blob_array[frame_idx, 5] = y2
 
+    def _roi_to_bg_display(self):
+        self.bg_display.display_background_roi_dialog(self.roi)
+
     def _on_threshold_changed(self, value:int):
         self.threshold = value
         self.threshold_value_label.setText(str(value))
@@ -439,6 +435,8 @@ class Blob_Counter(QGroupBox):
         self.blob_array = np.zeros((self.total_frames, 6), dtype=np.uint16) # count, is_merged, x1, y1, x2, y2
 
 class Blob_Background(QtWidgets.QWidget):
+    roi_requested = Signal()
+
     def __init__(self, extractor:Frame_Extractor, parent=None):
         super().__init__(parent)
         self.bg_removal_method = "None"
@@ -559,34 +557,13 @@ class Blob_Background(QtWidgets.QWidget):
     def _show_background_in_dialog(self, event=None):
         if self.bg_removal_method == "None":
             return
+        self.roi_requested.emit()
 
+    def display_background_roi_dialog(self, roi:np.ndarray):
         frame = self.background_frames.get(self.bg_removal_method)
-        if frame is None:
-            return
-
-        # Convert to QImage
-        rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        h, w, ch = rgb_image.shape
-        bytes_per_line = ch * w
-        qt_image = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
-
-        # Create dialog
-        dialog = QDialog(self)
-        dialog.setWindowTitle(f"Background Image — {self.bg_removal_method}")
-        dialog_layout = QVBoxLayout(dialog)
-
-        label = QLabel()
-        label.setPixmap(QtGui.QPixmap.fromImage(qt_image))
-        label.setAlignment(Qt.AlignCenter)
-        label.setScaledContents(False)  # Keep aspect ratio
-        label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
-        scroll_area = QtWidgets.QScrollArea()
-        scroll_area.setWidget(label)
-        scroll_area.setWidgetResizable(True)
-
-        dialog_layout.addWidget(scroll_area)
-        dialog.showMaximized()
+        frame = plot_roi(frame, roi)
+        qimage, _, _ = frame_to_qimage(frame)
+        dialog = Frame_Display_Dialog(title=f"Background Image — {self.bg_removal_method}", image=qimage)
         dialog.exec()
 
 class Blob_Histogram(QVBoxLayout):

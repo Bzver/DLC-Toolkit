@@ -42,6 +42,7 @@ class Data_Manager:
         # fview only
         self.blob_config:Blob_Config = None
         self.label_data_array, self.blob_array = None, None
+        self.roi = None
 
         # flabel only
         self.prediction = None  # To track modified prediction file
@@ -322,11 +323,15 @@ class Data_Manager:
             self.project_dir = os.path.join(dlc_dir, "labeled-data", self.video_name)
 
             if not os.path.isdir(self.project_dir):
+                self.fm.clear_category("labeled", no_refresh=True)
                 return
         
             scorer = self.dlc_data.scorer
             label_data_filename = f"CollectedData_{scorer}.h5"
             label_data_filepath = os.path.join(self.project_dir, label_data_filename)
+            if not os.path.isfile(label_data_filepath):
+                self.fm.clear_category("labeled", no_refresh=True)
+                return
         else:
             label_data_filepath = label_file
             self.project_dir = os.path.dirname(label_file)
@@ -339,6 +344,7 @@ class Data_Manager:
         self.label_data_array[range(label_array.shape[0])] = label_array
 
         labeled_frame_list = np.where(np.any(~np.isnan(self.label_data_array), axis=(1, 2)))[0].tolist()
+        self.fm.clear_category("labeled")
         self.fm.add_frames("labeled", labeled_frame_list)
         lfl = self.get_frames("labeled")
         self.fm.remove_frames("marked", lfl)
@@ -463,13 +469,13 @@ class Data_Manager:
             self.angle_map_data = workspace_state.get('angle_map_data')
             self.inst_count_per_frame_pred = workspace_state.get('inst_count_per_frame_pred')
             self.blob_array = workspace_state.get('blob_array')
+            self.roi = workspace_state.get('roi')
 
             if 'frame_store' in workspace_state.keys():
                 self.fm = Frame_Manager.from_dict(workspace_state.get('frame_store'), self.refresh_callback)
                 self.fm.move_category("animal_n", "animal_2")
             else: # For backward compatibility 
                 self.fm = Frame_Manager(self.refresh_callback)
-                self.fm.add_frames("labeled", workspace_state.get('labeled_frame_list', []))
                 self.fm.add_frames("marked", workspace_state.get('frame_list', []))
                 self.fm.add_frames("refined", workspace_state.get('refined_frame_list', []))
                 self.fm.add_frames("approved", workspace_state.get('approved_frame_list', []))
@@ -494,6 +500,8 @@ class Data_Manager:
 
             blob_config = workspace_state.get('blob_config')
             self.blob_config = Blob_Config.from_dict(blob_config) if isinstance(blob_config, dict) else blob_config
+            if self.blob_config and self.roi is None:
+                self.roi = np.array(self.blob_config.roi)
 
             if self.dlc_data is not None:
                 self._init_loaded_data()
@@ -546,7 +554,7 @@ class Data_Manager:
 
     ###################################################################################################################################################
 
-    def save_to_dlc(self, crop_coord=None):
+    def save_to_dlc(self, crop_mode:bool=False):
         dlc_dir = os.path.dirname(self.dlc_data.dlc_config_filepath)
         exp_set = Export_Settings(video_filepath=self.video_file, video_name=self.video_name,
                                   save_path=self.project_dir, export_mode="Append")
@@ -555,9 +563,10 @@ class Data_Manager:
             exp_set.save_path = os.path.join(dlc_dir, "labeled-data", self.video_name)
             os.makedirs(exp_set.save_path, exist_ok=True)
 
+        crop_coord = self.roi if crop_mode else None
         refd_list = self.get_frames("refined")
         if not refd_list:
-            exporter = Exporter(self.dlc_data, exp_set, self.get_frames("marked"), crop_coord=crop_coord)
+            exporter = Exporter(self.dlc_data, exp_set, self.frames_in_any("marked", "approved"), crop_coord=crop_coord)
         else:
             exp_set.export_mode = "Merge"
             exporter = Exporter(self.dlc_data, exp_set, refd_list, crop_coord=crop_coord)
@@ -583,13 +592,13 @@ class Data_Manager:
             else:
                 self.pred_file_dialog()
 
-    def merge_data(self):
+    def merge_data(self, crop_mode:bool=False):
         refd_list = self.get_frames("refined")
         if not refd_list:
             QMessageBox.warning(self.main, "No Refined Frame", "No frame has been refined, please refine some marked frames first.")
             return
         if not self.get_frames("labeled"):
-            self.save_to_dlc()
+            self.save_to_dlc(crop_mode)
             return
 
         reply = QMessageBox.question(
@@ -608,9 +617,9 @@ class Data_Manager:
             merge_frame_list = list(set(lb_list) | set(refd_list))
             label_data_array_export = remove_confidence_score(self.label_data_array)
 
-            exporter = Exporter(dlc_data=self.dlc_data, export_settings=exp_set,
-                                frame_list=merge_frame_list, pred_data_array=label_data_array_export)
-            
+            crop_coord = self.roi if crop_coord else None
+            exporter = Exporter(dlc_data=self.dlc_data, export_settings=exp_set, frame_list=merge_frame_list,
+                                 pred_data_array=label_data_array_export, crop_coord=crop_coord)
             try:
                 exporter.export_data_to_DLC()
                 QMessageBox.information(self.main, "Success", "Successfully exported frames and prediction to DLC.")
