@@ -253,7 +253,7 @@ class Frame_Label:
         self.refresh_ui()
 
     def _toggle_zoom_mode(self):
-        self.gview._toggle_zoom_mode()
+        self.gview.toggle_zoom_mode()
         self.navigation_title_controller()
 
     def _toggle_snap_to_instances(self):
