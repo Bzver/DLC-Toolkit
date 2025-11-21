@@ -1,6 +1,6 @@
-from PySide6 import QtWidgets
+from PySide6 import QtWidgets, QtGui
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QPushButton, QHBoxLayout, QVBoxLayout, QDialog, QLabel, QMessageBox, QSpinBox, QCheckBox
+from PySide6.QtWidgets import QPushButton, QHBoxLayout, QVBoxLayout, QDialog, QLabel, QMessageBox, QSpinBox, QCheckBox, QSizePolicy
 
 from typing import List, Dict, Tuple
 from time import time
@@ -49,7 +49,6 @@ class Pose_Rotation_Dialog(QDialog):
         self.angle = clamped_angle
         self.angle_label.setText(f"Angle: {self.angle:.1f}°")
 
-###################################################################################################################################################
 
 class Frame_List_Dialog(QDialog):
     frame_indices_acquired = Signal(list)
@@ -108,7 +107,6 @@ class Frame_List_Dialog(QDialog):
         self.categories_selected.emit(selected_categories)
         self.accept()
 
-###################################################################################################################################################
 
 class Head_Tail_Dialog(QtWidgets.QDialog):
     def __init__(self, keypoints, parent=None):
@@ -150,7 +148,6 @@ class Head_Tail_Dialog(QtWidgets.QDialog):
     def get_selected_indices(self):
         return self.head_idx, self.tail_idx
     
-###################################################################################################################################################
 
 class Progress_Indicator_Dialog(QtWidgets.QProgressDialog):
     def __init__(self, min_val, max_val, title, text, parent=None):
@@ -213,7 +210,6 @@ class Progress_Indicator_Dialog(QtWidgets.QProgressDialog):
 
         return f"{h:02d}:{m:02d}:{s:02d}"
     
-###################################################################################################################################################
 
 class Inference_interval_Dialog(QDialog):
     intervals_selected = Signal(dict)
@@ -263,3 +259,24 @@ class Inference_interval_Dialog(QDialog):
         intervals = {key: widget.value() for key, widget in self.interval_widgets.items()}
         self.intervals_selected.emit(intervals)
         self.accept()
+
+
+class Frame_Display_Dialog(QDialog):
+    def __init__(self, title:str, image:QtGui.QImage, parent=None):
+        super().__init__(parent)
+
+        self.setWindowTitle(title)
+        dialog_layout = QVBoxLayout(self)
+
+        label = QLabel()
+        label.setPixmap(QtGui.QPixmap.fromImage(image))
+        label.setAlignment(Qt.AlignCenter)
+        label.setScaledContents(False)
+        label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        scroll_area = QtWidgets.QScrollArea()
+        scroll_area.setWidget(label)
+        scroll_area.setWidgetResizable(True)
+
+        dialog_layout.addWidget(scroll_area)
+        self.showMaximized()

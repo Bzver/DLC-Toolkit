@@ -10,6 +10,7 @@ from .dialog import (
     Head_Tail_Dialog,
     Progress_Indicator_Dialog,
     Inference_interval_Dialog,
+    Frame_Display_Dialog,
 )
 
 from .video_slider import Slider_With_Marks, Video_Slider_Widget
@@ -28,6 +29,7 @@ __all__ = (
     Head_Tail_Dialog,
     Progress_Indicator_Dialog,
     Inference_interval_Dialog,
+    Frame_Display_Dialog,
     Menu_Widget,
     Shortcut_Manager,
     Video_Slider_Widget,
