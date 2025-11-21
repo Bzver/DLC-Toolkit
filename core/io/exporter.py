@@ -61,7 +61,7 @@ class Exporter:
             if len(self.frame_list) < total_video_frames // 10: # sparse extraction
                 self._sparse_frame_extraction()
             else:
-                self._continous_frame_extraction()
+                self._continuous_frame_extraction()
 
         except Exception as e:
             if self.progress_callback:
