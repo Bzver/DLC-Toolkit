@@ -323,11 +323,15 @@ def calculate_snapping_zoom_level(
 
 ###########################################################################################
 
-def frame_to_pixmap(frame):
+def frame_to_qimage(frame):
     rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     h, w, ch = rgb_image.shape
     bytes_per_line = ch * w
     qt_image = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
+    return qt_image, w, h
+
+def frame_to_pixmap(frame):
+    qt_image, w, h = frame_to_qimage(frame)
     pixmap = QtGui.QPixmap.fromImage(qt_image)
     return pixmap, w, h
 
@@ -343,6 +347,14 @@ def get_roi_cv2(frame) -> Tuple[int, int, int, int] | None:
         return (x, y, x + w, y + h)
     else:
         return None
+
+def plot_roi(frame, roi) -> np.ndarray:
+    if roi is None:
+        return frame
+    frame = frame.copy()
+    x1, y1, x2, y2 = roi
+    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+    return frame
 
 def crop_coord_to_array(crop_coord:np.ndarray, arr_shape:Tuple[int, int, int], frame_list:List[int]):
     coord_array = np.zeros(arr_shape)
