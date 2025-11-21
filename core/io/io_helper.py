@@ -57,13 +57,13 @@ def append_new_video_to_dlc_config(config_path:str, video_name:str):
         except yaml.YAMLError as e:
             raise ValueError(f"Error parsing YAML file: {e}")
 
-    if video_filepath in config_org["video_sets"]:
-        print(f"Video {video_filepath} already exists in video_sets. Skipping update.")
-        return
+        if video_filepath in config_org["video_sets"]:
+            print(f"Video {video_filepath} already exists in video_sets. Skipping update.")
+            return
 
-    with open(config_path, 'r') as f:
         config_org["video_sets"][video_filepath] = {"crop": "0, 0, 0, 0"}
         print("Appended new video_sets to the originals.")
+
     with open(config_path, 'w') as file:
         yaml.dump(config_org, file, default_flow_style=False, sort_keys=False)
         print(f"DeepLabCut config in {config_path} has been updated.")

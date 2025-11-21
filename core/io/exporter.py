@@ -8,6 +8,7 @@ import traceback
 
 from .csv_op import prediction_to_csv, csv_to_h5
 from .io_helper import append_new_video_to_dlc_config
+from .frame_loader import Frame_Extractor
 from utils.helper import crop_coord_to_array
 from core.dataclass import Loaded_DLC_Data, Export_Settings
 
@@ -26,6 +27,7 @@ class Exporter:
         self.pred_data_array = pred_data_array
         self.progress_callback = progress_callback
         self.crop_coord = crop_coord
+        self.extractor = Frame_Extractor(self.export_settings.video_filepath)
 
         if self.progress_callback:
             self.progress_callback.setMaximum(len(self.frame_list))
@@ -39,11 +41,8 @@ class Exporter:
 
     def export_frame_to_video(self):
         try:
-            cap = cv2.VideoCapture(self.export_settings.video_filepath)
-            self._continuous_frame_extraction(cap, to_video=True)
+            self._continuous_frame_extraction(to_video=True)
         except Exception as e:
-            if 'cap' in locals():
-                cap.release()
             if self.progress_callback:
                 self.progress_callback.close()
             traceback.print_exc()
@@ -54,23 +53,17 @@ class Exporter:
             if os.path.isdir(self.export_settings.video_filepath): # Loading DLC labels
                 self._extract_dlc_label()
                 return
-                
-            cap = cv2.VideoCapture(self.export_settings.video_filepath)
-            if not cap.isOpened():
-                raise FileNotFoundError(f"Could not open video {self.export_settings.video_filepath}")
 
-            total_video_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            total_video_frames = self.extractor.get_total_frames()
             if os.path.dirname(self.dlc_data.dlc_config_filepath) in self.export_settings.save_path:
                 append_new_video_to_dlc_config(self.dlc_data.dlc_config_filepath, self.export_settings.video_name)
 
-            if len(self.frame_list) < 0.1 * total_video_frames: # sparse extraction
-                self._sparse_frame_extraction(cap)
+            if len(self.frame_list) < total_video_frames // 10: # sparse extraction
+                self._sparse_frame_extraction()
             else:
-                self._continous_frame_extraction(cap)
+                self._continous_frame_extraction()
 
         except Exception as e:
-            if 'cap' in locals():
-                cap.release()
             if self.progress_callback:
                 self.progress_callback.close()
             traceback.print_exc()
@@ -122,37 +115,42 @@ class Exporter:
             cv2.imwrite(image_output_path, frame)
         append_new_video_to_dlc_config(self.dlc_data.dlc_config_filepath, video_name)
 
-    def _sparse_frame_extraction(self, cap):
+    def _sparse_frame_extraction(self):
         for i, frame_idx in enumerate(self.frame_list):
             if self.progress_callback:
                 self.progress_callback.setValue(i)
                 if self.progress_callback.wasCanceled():
-                    cap.release()
                     self.progress_callback.close()
                     raise Exception("Frame extraction canceled by user.")
 
             image_output_path = os.path.join(self.export_settings.save_path, f"img{str(int(frame_idx)).zfill(8)}.png")
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-            ret, frame = cap.read()
-            frame = self._apply_crop(frame)
+            frame = self.extractor.get_frame(frame_idx)
+            if frame is None:
+                continue
 
-            if ret:
-                cv2.imwrite(image_output_path, frame)
+            frame = self._apply_crop(frame)
+            cv2.imwrite(image_output_path, frame)
         
         if self.progress_callback:
             self.progress_callback.close()
     
-    def _continuous_frame_extraction(self, cap, to_video:bool=False):
+    def _continuous_frame_extraction(self, to_video:bool=False):
         extracted_count = 0
         current_frame_idx = 0
         writer = None
         frame_set = set(self.frame_list)
 
+        self.extractor.start_sequential_read(0)
         while current_frame_idx <= max(self.frame_list) if self.frame_list else -1:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            if current_frame_idx in frame_set:    
+            idx, frame = self.extractor.read_next_frame() 
+            if idx != current_frame_idx:
+                self.extractor.finish_sequential_read()
+                raise RuntimeError(f"Mismatch between frame indices: {idx} != {current_frame_idx}")
+            
+            if frame is None:
+                frame = np.zeros((*self.extractor.get_frame_dim(), 3), dtype=np.uint8)
+
+            if current_frame_idx in frame_set:
                 frame = self._apply_crop(frame)
                 
                 if to_video and not writer:
@@ -160,6 +158,7 @@ class Exporter:
                     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
                     writer = cv2.VideoWriter(filename=video_output_path, fourcc=fourcc, fps=10.0, frameSize=frame.shape[1::-1])
                     if not writer.isOpened():
+                        self.extractor.finish_sequential_read()
                         raise RuntimeError(f"Failed to open VideoWriter for {video_output_path}")
     
                 if not to_video:
@@ -176,7 +175,7 @@ class Exporter:
                     if self.progress_callback.wasCanceled():
                         if writer:
                             writer.release()
-                        cap.release()
+                        self.extractor.finish_sequential_read()
                         self.progress_callback.close()
                         raise Exception("Frame extraction canceled by user.")
 
@@ -184,7 +183,7 @@ class Exporter:
 
         if writer:
             writer.release()
-        cap.release()
+        self.extractor.finish_sequential_read()
         if self.progress_callback:
             self.progress_callback.close()
 
