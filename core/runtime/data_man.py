@@ -436,6 +436,7 @@ class Data_Manager:
             'angle_map_data': self.angle_map_data,
             'inst_count_per_frame_pred': self.inst_count_per_frame_pred,
             'blob_array': self.blob_array,
+            'roi': self.roi,
         }
 
         try:
