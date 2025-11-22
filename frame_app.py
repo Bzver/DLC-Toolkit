@@ -115,7 +115,9 @@ class Frame_App(QMainWindow):
         self.kem.reset_kem()
         self.vid_play.set_total_frames(0)
         self.vid_play.nav.set_current_video_name("---")
-        self.at.reset_state()
+        self.fview.reset_state()
+        self.flabel.reset_state()
+        self.fannot.reset_state()
         self._refresh_ui()
 
         self.open_config = False
