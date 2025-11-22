@@ -1,8 +1,7 @@
 import os
+import shutil
 import tempfile
 import yaml
-import subprocess
-
 import numpy as np
 import cv2
 
@@ -136,43 +135,44 @@ class DLC_Inference(QtWidgets.QDialog):
         shuffle_frame.addWidget(self.shuffle_config_label)
         container_layout.addLayout(shuffle_frame)
 
-        individual_frame = QHBoxLayout()
-        max_individual_label = QtWidgets.QLabel(f"Number of animals in marked frames: ")
         self.max_individual_val = len(self.dlc_data.individuals)
-        self.max_individual_spinbox = QtWidgets.QSpinBox()
-        self.max_individual_spinbox.setRange(1, 20)
-        self.max_individual_spinbox.setValue(self.max_individual_val)
-        self.max_individual_spinbox.valueChanged.connect(self._individual_spinbox_changed)
+        self.max_individual_spinbox = Spinbox_With_Label(
+            label_text = "Number of animals in marked frames: ",
+            spinbox_range = (1,20),
+            initial_val = self.max_individual_val,
+            parent = self
+        )
+        self.max_individual_spinbox.value_changed.connect(self._individual_spinbox_changed)
 
-        individual_frame.addWidget(max_individual_label)
-        individual_frame.addWidget(self.max_individual_spinbox)
-        container_layout.addLayout(individual_frame)
+        container_layout.addWidget(self.max_individual_spinbox)
 
         self.auto_cropping_checkbox = QtWidgets.QCheckBox("Crop")
         self.auto_cropping_checkbox.setChecked(self.auto_cropping)
         self.auto_cropping_checkbox.toggled.connect(self._auto_cropping_changed)
 
         button_frame = QHBoxLayout()
-        self.start_button = QPushButton("Extract Frames and Rerun Predictions in DLC")
+
+        self.batch_size_changed = False
+        self.batchsize_label_spinbox = Spinbox_With_Label(
+            label_text = "Batch Size: ", spinbox_range = (1,10000), initial_val = self.batch_size, parent = self
+        )
+        self.batchsize_label_spinbox.value_changed.connect(self._batch_size_spinbox_changed)
+
+        self.detector_batchsize_label_spinbox = Spinbox_With_Label(
+            label_text = "Detector Batch Size: ", spinbox_range = (1,10000), initial_val = self.detector_batch_size, parent = self
+        )
+        self.detector_batchsize_label_spinbox.value_changed.connect(self._det_batch_size_spinbox_changed)
+        self._determine_det_spinbox_vis(shuffle_metadata_text)
+
+        self.start_button = QPushButton("Run Inference")
         self.start_button.clicked.connect(self.inference_workflow)
-        config_button = QPushButton("Edit Batch Size in DLC Config")
-        config_button.clicked.connect(self.show_dlc_config_menu)
         button_frame.addWidget(self.auto_cropping_checkbox)
-        button_frame.addWidget(config_button)
+        button_frame.addWidget(self.batchsize_label_spinbox)
+        button_frame.addWidget(self.detector_batchsize_label_spinbox)
         button_frame.addWidget(self.start_button)
         container_layout.addLayout(button_frame)
-
+ 
         return setup_container
-
-    def show_dlc_config_menu(self):
-        dlc_config_file = self.dlc_data.dlc_config_filepath
-        
-        if os.name == 'nt':
-            subprocess.run(['explorer', '/select,', dlc_config_file.replace('/', '\\')])
-        elif sys.platform == 'darwin':
-            subprocess.run(['open', '-R', dlc_config_file])
-        else:
-            subprocess.run(['xdg-open', os.path.dirname(dlc_config_file)])
 
     def _check_iteration_integrity(self):
         dlc_config_filepath = self.dlc_data.dlc_config_filepath
@@ -180,6 +180,8 @@ class DLC_Inference(QtWidgets.QDialog):
         with open(dlc_config_filepath, 'r') as dcf:
             dlc_config = yaml.load(dcf, Loader=yaml.SafeLoader)
         iteration_idx = dlc_config["iteration"]
+        self.batch_size = dlc_config["batch_size"]
+        self.detector_batch_size = dlc_config.get("detector_batch_size", 1)
         iteration_folder = os.path.join(dlc_folder, "dlc-models-pytorch", f"iteration-{iteration_idx}")
         if not os.path.isdir(iteration_folder):
             return iteration_idx, None
@@ -255,12 +257,24 @@ class DLC_Inference(QtWidgets.QDialog):
         else:
             self.shuffle_config_label.setStyleSheet("color: black;")
             self.start_button.setEnabled(True)
+            self._determine_det_spinbox_vis(text)
 
     def _individual_spinbox_changed(self, value):
         self.max_individual_val = value
 
+    def _batch_size_spinbox_changed(self, value):
+        self.batch_size = value
+        self.batch_size_changed = True
+
+    def _det_batch_size_spinbox_changed(self, value):
+        self.detector_batch_size = value
+        self.batch_size_changed = True
+
     def _auto_cropping_changed(self, checked:bool):
         self.auto_cropping = checked
+
+    def _determine_det_spinbox_vis(self, text:str):
+        self.detector_batchsize_label_spinbox.setVisible("Detector" in text)
 
     #######################################################################################################################
 
@@ -589,21 +603,36 @@ class DLC_Inference(QtWidgets.QDialog):
     #######################################################################################################################
 
     def inference_workflow(self):
-        cap = cv2.VideoCapture(self.video_filepath)
-        self.total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if self.batch_size_changed:
+            config_path = self.dlc_data.dlc_config_filepath
+            dlc_dir = os.path.dirname(self.dlc_data.dlc_config_filepath)
+            config_backup = os.path.join(dlc_dir, "config_bak.yaml")
+            print("Backup up the original config.yaml as config_bak.yaml")
+            shutil.copy(config_path ,config_backup)
+
+            with open(config_path, 'r') as f:
+                try:
+                    config_org = yaml.load(f, Loader=yaml.SafeLoader)
+                except yaml.YAMLError as e:
+                    raise ValueError(f"Error parsing YAML file: {e}")
+
+                config_org["batch_size"] = self.batch_size
+                config_org["detector_batch_size"] = self.detector_batch_size
+
+            with open(config_path, 'w') as file:
+                yaml.dump(config_org, file, default_flow_style=False, sort_keys=False)
+                print(f"DeepLabCut config in {config_path} has been updated.")
+
+        self.total_frames = self.extractor.get_total_frames()
 
         if self.auto_cropping and self.crop_coord is None:
-            ret, frame = cap.read()
-            if not ret:
-                QMessageBox.critical(self, "Error", "Fail to read video frame for a ROI crop.")
+            frame = self.extractor.get_frame(0)
             roi = get_roi_cv2(frame)
             if roi is not None:
                 self.crop_coord = np.array(roi)
                 self.roi_set.emit(self.crop_coord)
             else:
                 QMessageBox.information(self, "Crop Region Not Set", "User cancel the ROI selection.")
-
-        cap.release()
 
         inference_video_path = None
         try:
@@ -637,7 +666,10 @@ class DLC_Inference(QtWidgets.QDialog):
         if self.fresh_pred:
             temp_pred_filename = self._load_and_remap_new_prediction()
             video_path = os.path.dirname(self.video_filepath)
-            pred_filename = temp_pred_filename.replace("image_predictions_", self.export_set.video_name)
+            if "image_predictions_" in temp_pred_filename:
+                pred_filename = temp_pred_filename.replace("image_predictions_", self.export_set.video_name)
+            else:
+                pred_filename = temp_pred_filename.replace("temp_extract_", self.export_set.video_name)
             pred_filepath = os.path.join(video_path, pred_filename)
             self.dlc_data.prediction_filepath = pred_filepath # So that it will be picked up by prediction_to_csv later
             self.export_set.save_path = video_path
@@ -699,6 +731,8 @@ class DLC_Inference(QtWidgets.QDialog):
 
     def _load_and_remap_new_prediction(self) -> str:
         h5_files = [f for f in os.listdir(self.temp_dir) if f.endswith(".h5")]
+        if not h5_files:
+            raise RuntimeError("Failed to find new prediction.")
         pred_filepath = os.path.join(self.temp_dir, h5_files[-1])
         dlc_config_filepath = self.dlc_data.dlc_config_filepath
         loader = Prediction_Loader(dlc_config_filepath, pred_filepath)
@@ -788,3 +822,21 @@ class DLC_Inference(QtWidgets.QDialog):
         handle_unsaved_changes_on_close(self, event, self.is_saved, self.save_prediction)
         if self.temp_directory is not None:
             self.temp_directory.cleanup()
+
+class Spinbox_With_Label(QtWidgets.QWidget):
+    value_changed = Signal(int)
+
+    def __init__(self, label_text:str, spinbox_range:Tuple[int, int], initial_val:int, parent=None):
+        super().__init__(parent)
+        widget_layout = QHBoxLayout(self)
+        spinbox_label = QtWidgets.QLabel(label_text)
+        self.spinbox = QtWidgets.QSpinBox()
+        self.spinbox.setRange(*spinbox_range)
+        self.spinbox.setValue(initial_val)
+        self.spinbox.valueChanged.connect(self._spinbox_changed)
+
+        widget_layout.addWidget(spinbox_label)
+        widget_layout.addWidget(self.spinbox)
+
+    def _spinbox_changed(self, val):
+        self.value_changed.emit(val)
