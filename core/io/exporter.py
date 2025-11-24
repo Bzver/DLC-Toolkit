@@ -29,8 +29,6 @@ class Exporter:
         self.crop_coord = crop_coord
         self.extractor = Frame_Extractor(self.export_settings.video_filepath)
 
-        if self.progress_callback:
-            self.progress_callback.setMaximum(len(self.frame_list))
         os.makedirs(self.export_settings.save_path, exist_ok=True)
 
     def export_data_to_DLC(self, frame_only:bool=False):
@@ -116,6 +114,8 @@ class Exporter:
         append_new_video_to_dlc_config(self.dlc_data.dlc_config_filepath, video_name)
 
     def _sparse_frame_extraction(self):
+        if self.progress_callback:
+            self.progress_callback.setMaximum(len(self.frame_list))
         for i, frame_idx in enumerate(self.frame_list):
             if self.progress_callback:
                 self.progress_callback.setValue(i)
@@ -135,6 +135,9 @@ class Exporter:
             self.progress_callback.close()
     
     def _continuous_frame_extraction(self, to_video:bool=False):
+        if self.progress_callback:
+            self.progress_callback.setMaximum(max(self.frame_list))
+
         extracted_count = 0
         current_frame_idx = 0
         writer = None
@@ -168,17 +171,16 @@ class Exporter:
                 else:
                     writer.write(frame)
 
-                extracted_count += 1
-
                 if self.progress_callback:
-                    self.progress_callback.setValue(extracted_count)
+                    self.progress_callback.setValue(current_frame_idx)
                     if self.progress_callback.wasCanceled():
                         if writer:
                             writer.release()
                         self.extractor.finish_sequential_read()
                         self.progress_callback.close()
                         raise Exception("Frame extraction canceled by user.")
-
+                    
+            extracted_count += 1
             current_frame_idx += 1
 
         if writer:
