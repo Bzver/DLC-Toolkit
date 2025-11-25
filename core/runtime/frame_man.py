@@ -37,23 +37,26 @@ class Frame_Manager:
             self.frames[category].add(frame_idx)
             self.refresh_callback()
 
-    def add_frames(self, category:str, frame_indices:List[int]):
+    def add_frames(self, category:str, frame_indices:List[int], no_refresh:bool=False):
         new_frames = set(frame_indices) - self.frames[category]
         if new_frames:
             self.frames[category] |= new_frames
-            self.refresh_callback()
+            if not no_refresh:
+                self.refresh_callback()
 
-    def remove_frame(self, category:str, frame_idx:int):
+    def remove_frame(self, category:str, frame_idx:int, no_refresh:bool=False):
         if frame_idx in self.frames[category]:
             self.frames[category].discard(frame_idx)
-            self.refresh_callback()
+            if not no_refresh:
+                self.refresh_callback()
 
-    def remove_frames(self, category:str, frame_indices:List[int]):
+    def remove_frames(self, category:str, frame_indices:List[int], no_refresh:bool=False):
         current_frames = self.frames[category]
         to_remove = set(frame_indices) & current_frames
         if to_remove:
             current_frames -= to_remove
-            self.refresh_callback()
+            if not no_refresh:
+                self.refresh_callback()
 
     def move_frame(self, new_category:str, old_category:str, frame_idx:int):
         if old_category == new_category:

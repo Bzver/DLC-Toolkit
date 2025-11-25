@@ -344,13 +344,12 @@ class Data_Manager:
         self.label_data_array[range(label_array.shape[0])] = label_array
 
         labeled_frame_list = np.where(np.any(~np.isnan(self.label_data_array), axis=(1, 2)))[0].tolist()
-        self.fm.clear_category("labeled")
-        self.fm.add_frames("labeled", labeled_frame_list)
-        lfl = self.get_frames("labeled")
-        self.fm.remove_frames("marked", lfl)
-        self.fm.remove_frames("rejected", lfl)
-        self.fm.remove_frames("refined", lfl)
-        self.fm.remove_frames("approved", lfl)
+        self.fm.clear_category("labeled", no_refresh=True)
+        self.fm.add_frames("labeled", labeled_frame_list, no_refresh=True)
+        self.fm.remove_frames("marked", labeled_frame_list, no_refresh=True)
+        self.fm.remove_frames("rejected", labeled_frame_list, no_refresh=True)
+        self.fm.remove_frames("refined", labeled_frame_list, no_refresh=True)
+        self.fm.remove_frames("approved", labeled_frame_list, no_refresh=True)
 
     def _init_canon_pose(self):
         head_idx, tail_idx = infer_head_tail_indices(self.dlc_data.keypoints)
@@ -506,6 +505,13 @@ class Data_Manager:
 
             if self.dlc_data is not None:
                 self._init_loaded_data()
+        
+            if not os.path.isfile(self.video_file):
+                QMessageBox.critical(self.main, "Video File Missing", f"Cannot find video at {self.video_file}")
+                self._select_missing_video()
+                if not self.video_file:
+                    return
+
             self.init_vid_callback(self.video_file)
             self.refresh_callback()
 
@@ -515,6 +521,11 @@ class Data_Manager:
         except Exception as e:
             QMessageBox.critical(self.main, "Error Loading Workspace", f"Failed to load workspace:\n{e}")
             traceback.print_exc()
+
+    def _select_missing_video(self):
+        file_dialog = QFileDialog(self.main)
+        video_path, _ = file_dialog.getOpenFileName(self.main, "Load Video", "", "Video Files (*.mp4 *.avi *.mov *.mkv);;All Files (*)")
+        self.video_file = video_path
 
     ###################################################################################################################################################
 
@@ -618,7 +629,7 @@ class Data_Manager:
             merge_frame_list = list(set(lb_list) | set(refd_list))
             label_data_array_export = remove_confidence_score(self.label_data_array)
 
-            crop_coord = self.roi if crop_coord else None
+            crop_coord = self.roi if crop_mode else None
             exporter = Exporter(dlc_data=self.dlc_data, export_settings=exp_set, frame_list=merge_frame_list,
                                  pred_data_array=label_data_array_export, crop_coord=crop_coord)
             try:
