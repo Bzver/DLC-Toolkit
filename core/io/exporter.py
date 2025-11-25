@@ -188,7 +188,8 @@ class Exporter:
                         self.progress_callback.close()
                         raise Exception("Frame extraction canceled by user.")
                     
-            extracted_count += 1
+                extracted_count += 1
+
             current_frame_idx += 1
 
         if writer:

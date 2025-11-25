@@ -633,6 +633,7 @@ class DLC_Inference(QtWidgets.QDialog):
                 self.roi_set.emit(self.crop_coord)
             else:
                 QMessageBox.information(self, "Crop Region Not Set", "User cancel the ROI selection.")
+                return
 
         inference_video_path = None
         try:
@@ -670,6 +671,7 @@ class DLC_Inference(QtWidgets.QDialog):
                 pred_filename = temp_pred_filename.replace("image_predictions_", self.export_set.video_name)
             else:
                 pred_filename = temp_pred_filename.replace("temp_extract", self.export_set.video_name)
+
             pred_filepath = os.path.join(video_path, pred_filename)
             self.dlc_data.prediction_filepath = pred_filepath # So that it will be picked up by prediction_to_csv later
             self.export_set.save_path = video_path

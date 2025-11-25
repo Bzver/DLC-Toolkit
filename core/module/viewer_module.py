@@ -345,6 +345,7 @@ class Frame_View:
                 dlc_data=self.dm.dlc_data,
                 frame_list=inference_list,
                 video_filepath=self.dm.video_file,
+                roi=self.dm.roi,
                 parent=self.main)
             self.inference_window.show()
             self.inference_window.frames_exported.connect(self._handle_rerun_frames_exported)

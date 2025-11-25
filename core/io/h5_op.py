@@ -4,7 +4,7 @@ import h5py
 from typing import Tuple
 import traceback
 
-from .io_helper import convert_prediction_array_to_save_format
+from .io_helper import convert_prediction_array_to_save_format, remove_confidence_score
 from .csv_op import prediction_to_csv, csv_to_h5
 from core.dataclass import Loaded_DLC_Data, Export_Settings
 
@@ -23,7 +23,12 @@ def save_prediction_to_existing_h5(
                 pred_file[key][subkey][...] = convert_prediction_array_to_save_format(pred_data_array)
             else:
                 F = pred_data_array.shape[0]
-                pred_file[key][subkey][...] = pred_data_array.reshape(F, -1)
+
+                try:
+                    pred_file[key][subkey][...] = pred_data_array.reshape(F, -1)
+                except TypeError:
+                    pred_data_array = remove_confidence_score(pred_data_array)
+                    pred_file[key][subkey][...] = pred_data_array.reshape(F, -1)
                 if keypoints:
                     pred_file = fix_h5_key_order_on_save(pred_file, key, multi_animal, keypoints)
 
