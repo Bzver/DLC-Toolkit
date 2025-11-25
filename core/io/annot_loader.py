@@ -2,7 +2,7 @@ import os
 from collections import defaultdict
 from typing import Dict, Tuple, List
 
-def  load_annotation(file_path: str) -> Tuple[Dict[str, str], Dict[str, List[Tuple[int, int]]]]:
+def load_annotation(file_path: str) -> Tuple[Dict[str, str], Dict[str, List[Tuple[int, int]]]]:
     annot_raw = defaultdict(list)
     annot_processed = {}
     behav_map = {}

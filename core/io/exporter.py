@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QProgressDialog
 import traceback
 
 from .csv_op import prediction_to_csv, csv_to_h5
-from .io_helper import append_new_video_to_dlc_config
+from .io_helper import append_new_video_to_dlc_config, generate_crop_coord_notations, remove_confidence_score
 from .frame_loader import Frame_Extractor
 from utils.helper import crop_coord_to_array
 from core.dataclass import Loaded_DLC_Data, Export_Settings
@@ -20,6 +20,7 @@ class Exporter:
             frame_list: List[int], pred_data_array:Optional[np.ndarray]=None,
             progress_callback:Optional[QProgressDialog]=None,
             crop_coord:Optional[np.ndarray]=None,
+            with_conf:bool=True,
             ):
         self.dlc_data = dlc_data
         self.export_settings = export_settings
@@ -27,6 +28,8 @@ class Exporter:
         self.pred_data_array = pred_data_array
         self.progress_callback = progress_callback
         self.crop_coord = crop_coord
+        self.with_conf = with_conf
+
         self.extractor = Frame_Extractor(self.export_settings.video_filepath)
 
         os.makedirs(self.export_settings.save_path, exist_ok=True)
@@ -76,6 +79,11 @@ class Exporter:
         if self.crop_coord is not None:
             coords_array = crop_coord_to_array(self.crop_coord, pred_data_array.shape, self.frame_list)
             pred_data_array = pred_data_array - coords_array
+            generate_crop_coord_notations(self.crop_coord, self.export_settings.save_path, self.frame_list)
+
+        if not self.with_conf:
+            pred_data_array = remove_confidence_score(pred_data_array)
+
         try:
             csv_name = prediction_to_csv(self.dlc_data, pred_data_array, self.export_settings, self.frame_list)
             if not csv_name:

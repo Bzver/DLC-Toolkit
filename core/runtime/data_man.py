@@ -174,17 +174,11 @@ class Data_Manager:
 
     def toggle_frame_status_fview(self):
         if self.has_current_frame_cat("labeled"):
-            QMessageBox.information(self.main, "Already Labeled", "The frame is already in the labeled dataset, skipping...")
+            self.fm.move_frame("refined", "labeled", self.current_frame_idx)
             return
 
         if self.has_current_frame_cat("refined"):
-            reply = QMessageBox.question(
-                self.main, "Confirm Unmarking",
-                "This frame is already refined, do you still want to remove it from the exported lists?",
-                QMessageBox.Yes | QMessageBox.No
-            )
-            if reply == QMessageBox.Yes:
-                self.remove_current_frame_cat("refined")
+            self.fm.move_frame("marked", "refined", self.current_frame_idx)
             return
 
         if self.current_frame_idx not in self.frames_in_any(self.fm.fview_cats):
@@ -627,11 +621,10 @@ class Data_Manager:
 
             self.label_data_array[refd_list, :, :] = self.dlc_data.pred_data_array[refd_list, :, :]
             merge_frame_list = list(set(lb_list) | set(refd_list))
-            label_data_array_export = remove_confidence_score(self.label_data_array)
 
             crop_coord = self.roi if crop_mode else None
             exporter = Exporter(dlc_data=self.dlc_data, export_settings=exp_set, frame_list=merge_frame_list,
-                                 pred_data_array=label_data_array_export, crop_coord=crop_coord)
+                                 pred_data_array=self.label_data_array, crop_coord=crop_coord, with_conf=True)
             try:
                 exporter.export_data_to_DLC()
                 QMessageBox.information(self.main, "Success", "Successfully exported frames and prediction to DLC.")

@@ -4,7 +4,7 @@ from itertools import islice
 import pandas as pd
 import numpy as np
 
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 from core.dataclass import Loaded_DLC_Data, Export_Settings
 from .io_helper import backup_existing_prediction, remove_confidence_score
@@ -13,7 +13,7 @@ def prediction_to_csv(
         dlc_data:Loaded_DLC_Data,
         pred_data_array:np.ndarray, 
         export_settings:Export_Settings,
-        frame_list: List[int]=None,
+        frame_list: Optional[List[int]]=None,
         keep_conf:bool=False,
         ) -> str:
     

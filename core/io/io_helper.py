@@ -2,7 +2,7 @@ import os
 import shutil
 import yaml
 import numpy as np
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 
 def backup_existing_prediction(save_filepath:str):
     if not os.path.isfile(save_filepath):
@@ -135,3 +135,29 @@ def convert_prediction_array_to_save_format(pred_data_array: np.ndarray) -> List
         new_data.append((frame_idx, frame_data))
 
     return new_data
+
+def generate_crop_coord_notations(
+        crop_coord:np.ndarray | Tuple[int, int, int, int],
+        project_dir:str,
+        frame_list:List[int]):
+    x, y, _, _ = crop_coord
+    data = {
+        "crop_regions": [
+            {
+                "x": int(x),
+                "y": int(y),
+                "frames": sorted(frame_list)
+            }
+        ]
+    }
+    save_path = os.path.join(project_dir, "crop.yaml")
+    with open(save_path, 'w', encoding='utf-8') as f:
+        yaml.dump(data, f, indent=2, sort_keys=False)
+
+def load_crop_notations(crop_notation_filepath:str) -> Dict[Tuple[int, int], List[int]]:
+    with open(crop_notation_filepath, 'r', encoding='utf-8') as f:
+        data = yaml.safe_load(f)
+
+    regions = data["crop_regions"]
+    notadict = {(region["x"], region["y"]): region["frames"] for region in regions}
+    return notadict

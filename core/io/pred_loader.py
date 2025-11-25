@@ -7,14 +7,24 @@ import yaml
 from typing import Any, Dict, Optional
 
 from .h5_op import validate_h5_keys, fix_h5_kp_order
-from .io_helper import unflatten_data_array, add_mock_confidence_score, nuke_negative_val_in_loaded_pred
+from .io_helper import (
+    unflatten_data_array, add_mock_confidence_score, nuke_negative_val_in_loaded_pred, load_crop_notations)
 from core.dataclass import Loaded_DLC_Data
 
 class Prediction_Loader:
-    """A class to load DeepLabCut configuration and prediction data."""
-    def __init__(self, dlc_config_filepath: str, prediction_filepath:Optional[str]=None):
+    def __init__(
+            self,
+            dlc_config_filepath: str,
+            prediction_filepath:Optional[str]=None):
+        
         self.dlc_config_filepath = dlc_config_filepath
         self.prediction_filepath = prediction_filepath
+        self.crop_dict = None
+
+        project_dir = os.path.dirname(self.prediction_filepath)
+        crop_notation_filepath = os.path.join(project_dir, "crop.yaml")
+        if os.path.isfile(crop_notation_filepath):
+            self.crop_dict = load_crop_notations(crop_notation_filepath)
 
     def load_data(self, metadata_only: bool = False, force_load_pred:bool = False) -> Loaded_DLC_Data:
         config_data = self._load_config_data()
@@ -158,14 +168,16 @@ class Prediction_Loader:
                     labeled_frame_list.sort()
                     pred_frame_count = max(labeled_frame_list) + 1
                 
-                    pred_data_array = np.full(
-                        (pred_frame_count, instance_count, num_keypoint*3),
-                        np.nan
-                        )
-                    pred_data_array[labeled_frame_list] = pred_data_unflattened
+                    pred_data_array = np.full((pred_frame_count, instance_count, num_keypoint*3),np.nan)
+                    pred_data_array[labeled_frame_list, ...] = pred_data_unflattened
                     pred_data_array = nuke_negative_val_in_loaded_pred(pred_data_array)
                 else:
                     raise ValueError("'axis1_level2' not found in labeled HDF5.")
+
+            if self.crop_dict:
+                for crop_coord, frame_list in self.crop_dict.items():
+                    pred_data_array[frame_list, :, 0::3] += crop_coord[0]
+                    pred_data_array[frame_list, :, 1::3] += crop_coord[1]
 
             pred_data_dict = {
                 "prediction_filepath": self.prediction_filepath,
