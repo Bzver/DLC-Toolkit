@@ -178,17 +178,17 @@ class Exporter:
                     cv2.imwrite(image_output_path, frame)
                 else:
                     writer.write(frame)
-
-                if self.progress_callback:
-                    self.progress_callback.setValue(current_frame_idx)
-                    if self.progress_callback.wasCanceled():
-                        if writer:
-                            writer.release()
-                        self.extractor.finish_sequential_read()
-                        self.progress_callback.close()
-                        raise Exception("Frame extraction canceled by user.")
                     
                 extracted_count += 1
+
+            if self.progress_callback:
+                self.progress_callback.setValue(current_frame_idx)
+                if self.progress_callback.wasCanceled():
+                    if writer:
+                        writer.release()
+                    self.extractor.finish_sequential_read()
+                    self.progress_callback.close()
+                    raise Exception("Frame extraction canceled by user.")
 
             current_frame_idx += 1
 
