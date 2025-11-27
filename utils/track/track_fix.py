@@ -5,12 +5,13 @@ from typing import List, Dict, Any, Tuple, Optional
 
 from .hungarian import Hungarian
 from utils.pose import (
-    calculate_pose_centroids, outlier_removal, outlier_confidence, outlier_pose, 
+    calculate_pose_centroids, calculate_pose_rotations,
+    outlier_removal, outlier_confidence, outlier_pose, 
     outlier_bodypart, outlier_duplicate, outlier_size, outlier_enveloped,
     )
 from utils.helper import log_print, clean_log
 
-DEBUG = False
+DEBUG = True
 
 class Track_Fixer:
     def __init__(self,
@@ -19,78 +20,96 @@ class Track_Fixer:
                 angle_map:Optional[Dict[str, Any]]=None,
                 progress:Optional[QProgressDialog]=None,
                 ):
-        self.pred_data_array = pred_data_array
         self.canon_pose = canon_pose
         self.angle_map = angle_map
         self.progress = progress
 
+        self.pred_data_array = self._pose_clean(pred_data_array, duplicate_only=True)
+        self.corrected_pred_data = self._pose_clean(pred_data_array)
+
         self.total_frames, self.instance_count = self.pred_data_array.shape[:2]
         self.inst_list = list(range(self.instance_count))
-        self.changes_applied = 0
-        self.corrected_pred_data = self._pose_cleaning()
+
+        self.new_order_array = -np.ones((self.total_frames, self.instance_count), dtype=np.int8)
+
         self.current_frame_data = np.full_like(self.pred_data_array[0], np.nan)
 
         if DEBUG:
             clean_log()
 
     def track_correction(self, max_dist:float=10.0, lookback_window=10) -> Tuple[np.ndarray, int]:
-        last_order = self.inst_list
-        debug_print = DEBUG
+        self._centroids_tf_pass(max_dist, lookback_window)
+        if np.any(self.new_order_array == -1):
+            self._rotation_tf_pass()
+        if np.any(self.new_order_array == -1):
+            self._human_intervention()
 
+        self.new_order_array[np.where(self.new_order_array[:,0]==-1)[0]] = np.array(self.inst_list)
+
+        diff = self.new_order_array - np.tile(self.inst_list, self.total_frames)
+        changes_applied = np.sum(np.any(diff != 0, axis=1))
+        return self.pred_data_array[np.arange(self.total_frames)[:, None], self.new_order_array], changes_applied
+
+    def _centroids_tf_pass(self, max_dist:float, lookback_window):
+        last_order = self.inst_list
         ref_centroids = np.full((self.instance_count, 2), np.nan)
-        ref_last_updated = np.full(self.instance_count, -2 * lookback_window)
+        ref_last_updated = np.full((self.instance_count,), -2 * lookback_window)
 
         for frame_idx in range(self.total_frames):
             if self.progress:
                 self.progress.setValue(frame_idx)
                 if self.progress.wasCanceled():
                     self.progress.close()
-                    return self.pred_data_array, 0
+                    return
             
-            log_print(f"---------- frame: {frame_idx} ---------- ", enabled=debug_print)
+            log_print(f"---------- frame: {frame_idx} [CENTROID MODE] ---------- ", enabled=DEBUG)
 
             pred_centroids, _ = calculate_pose_centroids(self.corrected_pred_data, frame_idx)
             valid_pred_mask = np.all(~np.isnan(pred_centroids), axis=1)
             self.current_frame_data = self.corrected_pred_data[frame_idx]
 
-            for i in range(self.instance_count):
-                log_print(f"x,y in pred: inst {i}: ({pred_centroids[i,0]:.1f}, {pred_centroids[i,1]:.1f})", enabled=debug_print)
-                    
             valid_ref_mask = ref_last_updated > frame_idx - lookback_window
 
             for i in range(self.instance_count):
-                    log_print(f"x,y in ref: inst {i}: ({ref_centroids[i,0]:.1f}, {ref_centroids[i,1]:.1f}) | "
-                              f"last updated: {ref_last_updated[i]} | valid: {valid_ref_mask[i]}", enabled=debug_print)
+                log_print(f"x,y in pred: inst {i}: ({pred_centroids[i,0]:.1f}, {pred_centroids[i,1]:.1f})", enabled=DEBUG)
+                log_print(f"x,y in ref: inst {i}: ({ref_centroids[i,0]:.1f}, {ref_centroids[i,1]:.1f}) | "
+                            f"last updated: {ref_last_updated[i]} | valid: {valid_ref_mask[i]}", enabled=DEBUG)
 
             if not np.any(valid_ref_mask):
                 ref_centroids[valid_pred_mask] = pred_centroids[valid_pred_mask]
                 ref_last_updated[valid_pred_mask] = frame_idx
+                last_order = self.inst_list
+                if np.all(np.isnan(ref_centroids)): # No ref at all, i.e. beginning of the vid
+                    self.new_order_array[frame_idx] = np.array(last_order)
+                else:
+                    self.new_order_array[frame_idx] = -1 # Mark as ambiguious
                 continue
 
-            hun = Hungarian(pred_centroids, ref_centroids, valid_pred_mask, valid_ref_mask, max_dist, debug_print)
+            hun = Hungarian(pred_centroids, ref_centroids, valid_pred_mask, valid_ref_mask, max_dist=max_dist, debug_print=DEBUG)
 
             skip_matching = False
             if last_order != self.inst_list and hun.full_set: # Try last order first if possible
                 if hun.compare_distance_improvement(last_order):
                     new_order = last_order
+                    self.new_order_array[frame_idx] = np.array(last_order)
                     self._applying_last_order(last_order)
                     skip_matching = True
-                    log_print(f"[TMOD] SWAP, reusing the last order.", enabled=debug_print)
+                    log_print(f"[TMOD] SWAP, reusing the last order.", enabled=DEBUG)
 
             if not skip_matching:
                 new_order = hun.hungarian_matching()
 
                 if new_order is None:
-                    log_print(f"[TMOD] Failed to build new order with Hungarian.", enabled=debug_print)
-                    self._applying_last_order(last_order)
+                    log_print(f"[TMOD] Failed to build new order with Hungarian.", enabled=DEBUG)
+                    self.new_order_array[frame_idx] = -1 # Ambiguious
                 elif new_order == self.inst_list:
                     last_order = new_order
-                    log_print(f"[TMOD] NO SWAP, already the best solution.", enabled=debug_print)
+                    log_print(f"[TMOD] NO SWAP, already the best solution.", enabled=DEBUG)
                 else:
                     self.current_frame_data[:, :] = self.current_frame_data[new_order, :]
                     last_order = new_order
-                    self.changes_applied += 1
-                    log_print(f"[TMOD] SWAP, new_order: {new_order}.", enabled=debug_print)
+                    self.new_order_array[frame_idx] = np.array(last_order)
+                    log_print(f"[TMOD] SWAP, new_order: {new_order}.", enabled=DEBUG)
 
             self.corrected_pred_data[frame_idx] = self.current_frame_data
             fixed_pred_centroids = pred_centroids[new_order] if new_order else pred_centroids
@@ -102,23 +121,59 @@ class Track_Fixer:
         if self.progress:
             self.progress.close()
 
-        return self.corrected_pred_data, self.changes_applied
+    def _rotation_tf_pass(self, lookback_window): # Combine centroids and rotation
+        if self.angle_map is None:
+            log_print("[ROT] Skipping — no angle_map provided.", enabled=DEBUG)
+            return
+        
+        amogus = np.where(self.new_order_array[:, 0] == -1)[0]
+        log_print(f"[ROT] Resolving {len(amogus)} ambiguous frames with rotation...", enabled=DEBUG)
 
-    def _pose_cleaning(self) -> np.ndarray:
-        no_mask = np.zeros((self.total_frames, self.instance_count), dtype=bool)
-        conf_mask = outlier_confidence(self.pred_data_array, 0.4)
-        bp_mask = outlier_bodypart(self.pred_data_array, 2)
-        dp_mask = outlier_duplicate(self.pred_data_array)
-        env_mask = outlier_enveloped(self.pred_data_array)
-        if self.canon_pose is None or self.angle_map is None:
-            size_mask = pose_mask = no_mask
-        else:
-            size_mask = outlier_size(self.pred_data_array, self.canon_pose, 0.3, 2.5)
-            pose_mask = outlier_pose(self.pred_data_array, self.angle_map, 1.5, 2)
-        combined_mask = conf_mask | bp_mask | dp_mask | size_mask | pose_mask | env_mask
+        pose_centroids, local_coords = calculate_pose_centroids(self.corrected_pred_data)
 
-        corrected_data_array, _, _ = outlier_removal(self.pred_data_array, combined_mask)
-        return corrected_data_array
+        for frame_idx in amogus:
+            log_print(f"---------- frame: {frame_idx} [ROTATION MODE] ---------- ", enabled=DEBUG)
+            cur_centroids = pose_centroids[frame_idx]
+            if np.all(np.isnan(cur_centroids)):
+                continue
+            cur_locc = local_coords[frame_idx]
+            cur_rota = calculate_pose_rotations(cur_locc[..., 0::2], cur_locc[..., 1::2], self.angle_map)
+
+            ref_frame = None
+            for offset in range(1, lookback_window + 1):
+                candidate = frame_idx - offset
+                if candidate < 0:
+                    break
+                if (self.new_order_array[candidate, 0] != -1 and not np.all(np.isnan(pose_centroids[candidate]))):
+                    ref_frame = candidate
+                    break
+
+            if ref_frame is None:
+                log_print(f"[ROT] No resolved reference for frame {frame_idx}. Fallback.", enabled=DEBUG)
+                continue
+
+            ref_centroids = pose_centroids[ref_frame]
+            ref_locc = local_coords[ref_frame]
+            ref_rota = calculate_pose_rotations(ref_locc[..., 0::2], ref_locc[..., 1::2], self.angle_map)
+
+            valid_pred = np.all(~np.isnan(cur_centroids), axis=1) & ~np.isnan(cur_rota)
+            valid_ref  = np.all(~np.isnan(ref_centroids), axis=1) & ~np.isnan(ref_rota)
+            pred_c = cur_centroids[valid_pred]
+            ref_c  = ref_centroids[valid_ref]
+            pred_r = cur_rota[valid_pred]
+            ref_r  = ref_rota[valid_ref]
+
+            hun = Hungarian(pred_c, ref_c, valid_pred, valid_ref, debug_print=DEBUG)
+
+            new_order = hun.hungarian_matching_with_rotation(pred_r, ref_r)
+            if new_order is None:
+                continue
+
+            self.current_frame_data[:, :] = self.current_frame_data[new_order, :]
+            self.new_order_array = np.array(new_order)
+
+    def _human_intervention(self):
+        pass
 
     def _applying_last_order(self, last_order:List[int]):
         if last_order is None or last_order == self.inst_list:
@@ -126,5 +181,23 @@ class Track_Fixer:
             return
 
         self.current_frame_data[:, :] = self.current_frame_data[last_order, :]
-        self.changes_applied += 1
         log_print(f"[TMOD] SWAP, Applying the last order: {last_order}", enabled=DEBUG)
+
+    def _pose_clean(self, pred_data_array:np.ndarray, duplicate_only:bool=False) -> np.ndarray:
+        dp_mask = outlier_duplicate(pred_data_array)
+        if duplicate_only:
+            corrected_data_array, _, _ = outlier_removal(pred_data_array, dp_mask)
+            return corrected_data_array
+
+        no_mask = np.zeros((self.total_frames, self.instance_count), dtype=bool)
+        conf_mask = outlier_confidence(pred_data_array, 0.4)
+        bp_mask = outlier_bodypart(pred_data_array, 2)
+        env_mask = outlier_enveloped(pred_data_array)
+        if self.canon_pose is None or self.angle_map is None:
+            size_mask = pose_mask = no_mask
+        else:
+            size_mask = outlier_size(pred_data_array, self.canon_pose, 0.3, 2.5)
+            pose_mask = outlier_pose(pred_data_array, self.angle_map, 1.25, 2)
+        combined_mask = conf_mask | bp_mask | dp_mask | size_mask | pose_mask | env_mask
+        corrected_data_array, _, _ = outlier_removal(pred_data_array, combined_mask)
+        return corrected_data_array

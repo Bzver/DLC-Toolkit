@@ -37,10 +37,34 @@ class Hungarian:
                 new_order[target_identity] = source_instance_index_in_current_frame
                 i.e., "Identity j comes from current instance new_order[j]"
         """
-        new_order = self._skip_cost_matrix_check()
-        if new_order:
-            return new_order
-            
+
+        K, M = len(self.pred_centroids), len(self.ref_centroids)
+        if K == 0 or M == 0:
+            log_print(f"[HUN] No valid data for Hungarian matching (K={K}, M={M}). Returning default order.", enabled=self.debug_print)
+            if K == 0: # Nothing to swap, nothing to be considered ambiguious
+                return self.inst_list
+            if M == 0: # Sus
+                return None
+
+        if K == 1 and M == 1:
+            dist = np.linalg.norm(self.pred_centroids[0] - self.ref_centroids[0])
+            log_print(f"[HUN] Single pair matching. Distance: {dist:.2f}, Max_dist: {self.max_dist}", enabled=self.debug_print)
+            if dist < self.max_dist:
+                new_order = self.inst_list.copy()
+                new_order[self.ref_indices[0]] = self.pred_indices[0]
+                log_print(f"[HUN] Single pair matched. New order: {new_order}", enabled=self.debug_print)
+                return new_order
+            else: # Sus
+                log_print(f"[HUN] Single pair not matched (Dist: {dist:.2f} > {self.max_dist}).", enabled=self.debug_print)
+                return None
+
+        if self.full_set:
+            distances = np.linalg.norm(self.pred_centroids - self.ref_centroids, axis=1)
+            log_print(f"[HUN] All instances present and masks match. Distances: {distances}, Max_dist: {self.max_dist}", enabled=self.debug_print)
+            if np.all(distances < self.max_dist):
+                log_print("[HUN] All identities stable. Returning default order.", enabled=self.debug_print)
+                return self.inst_list
+
         cost_matrix = np.linalg.norm(self.pred_centroids[:, np.newaxis] - self.ref_centroids[np.newaxis, :], axis=2)
 
         try:
@@ -48,12 +72,65 @@ class Hungarian:
             log_print(f"[HUN] Hungarian assignment: row_ind={row_ind}, col_ind={col_ind}", enabled=self.debug_print)
         except Exception as e:
             log_print(f"[HUN] Hungarian failed: {e}. Returning None.", enabled=self.debug_print)
-            return None  # Hungarian failed
+            return None  # Hungarian failed, sus
         else:
             if self.full_set:
                 if not self._dist_improv_comp(row_ind, col_ind):
                     log_print(f"[HUN] Hungarian assignment does not improve geometric distances sufficiently.", enabled=self.debug_print)
-                    return self.inst_list
+                    return None # Sus
+
+        return self._build_new_order(row_ind, col_ind)
+
+    def hungarian_matching_with_rotation(self, pred_rotation: np.ndarray, ref_rotation: np.ndarray) -> Optional[list]:
+        """
+        Match using centroid + rotation, where rotation acts as a tie-breaker.
+        
+        Args:
+            pred_rotation: (K,) — rotations for valid predicted instances
+            ref_rotation:  (M,) — rotations for valid reference instances
+        Returns:
+            new_order: list of length N, or None if failed
+        """
+        K, M = len(self.pred_centroids), len(self.ref_centroids)
+        if K == 0 or M == 0:
+            return self.inst_list if K == 0 else None
+
+        cent_cost = np.linalg.norm(self.pred_centroids[:, None] - self.ref_centroids[None, :], axis=2)
+        rot_cost = np.zeros_like(cent_cost)
+        reliability = np.ones_like(cent_cost)
+        pred_valid_rot = ~np.isnan(pred_rotation)
+        ref_valid_rot  = ~np.isnan(ref_rotation)
+        for i in range(K):
+            for j in range(M):
+                if not (pred_valid_rot[i] and ref_valid_rot[j]):
+                    reliability[i, j] = 0.0 
+
+        dtheta = pred_rotation[:, None] - ref_rotation[None, :]
+        angular_sim = np.abs(np.cos(dtheta))
+        rot_cost = 1.0 - angular_sim 
+
+        min_cent_costs = np.min(cent_cost, axis=1)
+        cent_std = np.std(min_cent_costs) if K > 1 else 0.0
+        cent_mean = np.mean(min_cent_costs) if K > 0 else 0.0
+
+        if cent_std < 0.3 * cent_mean and cent_mean > 0:  # ambiguous case
+            rot_weight = 2.0
+        else:
+            rot_weight = 0.2
+
+        combined_cost = cent_cost + rot_weight * rot_cost * reliability
+
+        try:
+            row_ind, col_ind = linear_sum_assignment(combined_cost)
+            log_print(f"[HUN+ROT] Assignment: {list(zip(row_ind, col_ind))}", enabled=self.debug_print)
+        except Exception as e:
+            log_print(f"[HUN+ROT] Failed: {e}", enabled=self.debug_print)
+            return None
+
+        assigned_costs = combined_cost[row_ind, col_ind]
+        if np.any(assigned_costs > self.max_dist * 1.5):
+            log_print(f"[HUN+ROT] High cost ({assigned_costs}), rejecting.", enabled=self.debug_print)
+            return None
 
         return self._build_new_order(row_ind, col_ind)
 
@@ -68,33 +145,8 @@ class Hungarian:
 
         row_ind = np.array(row_ind, dtype=int)
         col_ind = np.array(col_ind, dtype=int)
-            
+
         return self._dist_improv_comp(row_ind, col_ind)
-
-    def _skip_cost_matrix_check(self) -> Optional[list]:
-        K, M = len(self.pred_centroids), len(self.ref_centroids)
-        if K == 0 or M == 0:
-            log_print(f"[HUN] No valid data for Hungarian matching (K={K}, M={M}). Returning default order.", enabled=self.debug_print)
-            return self.inst_list
-
-        if K == 1 and M == 1:
-            dist = np.linalg.norm(self.pred_centroids[0] - self.ref_centroids[0])
-            log_print(f"[HUN] Single pair matching. Distance: {dist:.2f}, Max_dist: {self.max_dist}", enabled=self.debug_print)
-            if dist < self.max_dist:
-                new_order = self.inst_list.copy()
-                new_order[self.ref_indices[0]] = self.pred_indices[0]
-                log_print(f"[HUN] Single pair matched. New order: {new_order}", enabled=self.debug_print)
-                return new_order
-            else:
-                log_print(f"[HUN] Single pair not matched (Dist: {dist:.2f} > {self.max_dist}).", enabled=self.debug_print)
-                return None
-
-        if self.full_set:
-            distances = np.linalg.norm(self.pred_centroids - self.ref_centroids, axis=1)
-            log_print(f"[HUN] All instances present and masks match. Distances: {distances}, Max_dist: {self.max_dist}", enabled=self.debug_print)
-            if np.all(distances < self.max_dist):
-                log_print("[HUN] All identities stable. Returning default order.", enabled=self.debug_print)
-                return self.inst_list
 
     def _build_new_order(self, row_ind:np.ndarray, col_ind:np.ndarray) -> list:
         all_inst = range(self.instance_count)
