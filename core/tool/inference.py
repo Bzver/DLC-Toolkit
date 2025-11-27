@@ -548,7 +548,7 @@ class DLC_Inference(QtWidgets.QDialog):
     def _acquire_unproc_mask(self) -> Tuple[np.ndarray, np.ndarray]:
         unproc_mask = self.frame_status_array == 0
         global_mask = np.zeros((self.total_frames), dtype=bool)
-        global_mask[self.frame_list][unproc_mask] = True
+        global_mask[self.frame_list] = unproc_mask
         return unproc_mask, global_mask
 
     def _refresh_ui(self):
@@ -639,7 +639,7 @@ class DLC_Inference(QtWidgets.QDialog):
         try:
             if len(self.frame_list)  > 0.9 * self.total_frames and self.crop_coord is None:
                 inference_video_path = self.export_set.video_filepath
-            elif len(self.frame_list) > 1000:
+            elif len(self.frame_list) > 5000:
                 inference_video_path = os.path.join(self.temp_dir, "temp_extract.mp4")
                 self._extract_marked_frame_as_video(self.crop_coord)
             else:
