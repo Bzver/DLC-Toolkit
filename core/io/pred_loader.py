@@ -21,10 +21,11 @@ class Prediction_Loader:
         self.prediction_filepath = prediction_filepath
         self.crop_dict = None
 
-        project_dir = os.path.dirname(self.prediction_filepath)
-        crop_notation_filepath = os.path.join(project_dir, "crop.yaml")
-        if os.path.isfile(crop_notation_filepath):
-            self.crop_dict = load_crop_notations(crop_notation_filepath)
+        if self.prediction_filepath:
+            project_dir = os.path.dirname(self.prediction_filepath)
+            crop_notation_filepath = os.path.join(project_dir, "crop.yaml")
+            if os.path.isfile(crop_notation_filepath):
+                self.crop_dict = load_crop_notations(crop_notation_filepath)
 
     def load_data(self, metadata_only: bool = False, force_load_pred:bool = False) -> Loaded_DLC_Data:
         config_data = self._load_config_data()

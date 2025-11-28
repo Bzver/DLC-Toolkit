@@ -203,7 +203,7 @@ class Track_Fixer:
             corrected_data_array, _, _ = outlier_removal(pred_data_array, dp_mask)
             return corrected_data_array
 
-        no_mask = np.zeros((self.pred_data_array.shape[0], self.pred_data_array.shape[1]), dtype=bool)
+        no_mask = np.zeros((pred_data_array.shape[0], pred_data_array.shape[1]), dtype=bool)
         conf_mask = outlier_confidence(pred_data_array, 0.4)
         bp_mask = outlier_bodypart(pred_data_array, 2)
         env_mask = outlier_enveloped(pred_data_array)

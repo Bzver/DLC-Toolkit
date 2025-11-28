@@ -62,7 +62,12 @@ class DLC_Inference(QtWidgets.QDialog):
         self.frame_list.sort()
         self.is_saved = True
         self.auto_cropping = False
-        self.crop_coord = roi
+
+        try:
+            x1, y1, x2, y2 = roi
+            self.crop_coord = x1, y1, x2, y2
+        except:
+            self.crop_coord = None
 
         video_name = os.path.basename(self.video_filepath).split(".")[0]
         self.temp_directory = tempfile.TemporaryDirectory()

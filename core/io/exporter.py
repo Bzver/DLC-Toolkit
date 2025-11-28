@@ -27,7 +27,13 @@ class Exporter:
         self.frame_list = frame_list
         self.pred_data_array = pred_data_array
         self.progress_callback = progress_callback
-        self.crop_coord = crop_coord
+
+        try:
+            x1, y1, x2, y2 = crop_coord
+            self.crop_coord = x1, y1, x2, y2
+        except:
+            self.crop_coord = None
+
         self.with_conf = with_conf
 
         self.extractor = Frame_Extractor(self.export_settings.video_filepath)
@@ -97,8 +103,11 @@ class Exporter:
     def _apply_crop(self, frame:Frame_CV2):
         if self.crop_coord is None:
             return frame
-        x1, y1, x2, y2 = self.crop_coord
-        return frame[y1:y2, x1:x2]
+        try:
+            x1, y1, x2, y2 = self.crop_coord
+            return frame[y1:y2, x1:x2]
+        except:
+            return frame
     
     def _extract_dlc_label(self):
         if self.export_settings.save_path == self.export_settings.video_filepath:
