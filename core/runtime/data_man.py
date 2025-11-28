@@ -197,6 +197,9 @@ class Data_Manager:
     def mark_refined_flabel(self, frame_idx):
         self.fm.move_frame(new_category="refined", old_category="marked", frame_idx=frame_idx)
 
+    def clear_ambiguous_frames(self):
+        self.fm.clear_category("ambiguous")
+
     def mark_all_refined_flabel(self):
         self.fm.move_category("refined", "marked")
 
@@ -255,6 +258,9 @@ class Data_Manager:
 
     def has_current_frame_cat(self, category:str) -> bool:
         return self.fm.has_frame(category, self.current_frame_idx)
+
+    def add_frames(self, category:str, frame_list:List[int]):
+        self.fm.add_frames(category, frame_list)
 
     def get_cat_metadata(self, category:str) -> Tuple[str, List[int], HexColor]:
         return self.fm.get_display_name(category), self.get_frames(category), self.fm.get_color(category)

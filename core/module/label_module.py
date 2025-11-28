@@ -70,6 +70,7 @@ class Frame_Label:
                     ("Direct Keypoint Edit (Q)", self._direct_keypoint_edit),
                     ("Open Outlier Cleaning Menu", self._call_outlier_finder),
                     ("Remove Current Frame From Refine Task", self.toggle_frame_status),
+                    ("Clear All Ambiguous Display", self._clear_amb),
                     ("Mark All As Refined", self._mark_all_as_refined),
                     ("Undo Changes (Ctrl+Z)", self._undo_changes),
                     ("Redo Changes (Ctrl+Y)", self._redo_changes),
@@ -228,6 +229,8 @@ class Frame_Label:
         elif self.dm.plot_config.navigate_roi:
             self.vid_play.sld.set_frame_category(*self.dm.get_cat_metadata("roi_change"))
             self.dm.handle_cat_update("roi_change", self.kem.update_roi())
+        elif self.dm.frames_in_any(["ambiguous"]):
+            self.vid_play.sld.set_frame_category(*self.dm.get_cat_metadata("ambiguous"))
         else:
             self.vid_play.sld.set_frame_category(*self.dm.get_cat_metadata("marked"))
             self.vid_play.sld.set_frame_category(*self.dm.get_cat_metadata("refined"))
@@ -248,9 +251,11 @@ class Frame_Label:
     def _mark_refined(self):
         self.dm.mark_refined_flabel(self.dm.current_frame_idx)
 
+    def _clear_amb(self):
+        self.dm.clear_ambiguous_frames()
+
     def _mark_all_as_refined(self):
         self.dm.mark_all_refined_flabel()
-        self.refresh_ui()
 
     def _toggle_zoom_mode(self):
         self.gview.toggle_zoom_mode()
@@ -293,15 +298,11 @@ class Frame_Label:
     def _track_edit_blocker(self):
         if not self.kem.check_pred_data():
             return
-        if self.gview.is_kp_edit:
-            QMessageBox.warning(self.main, "Not Allowed", "Please finish editing keypoints before using this function.")
-            return False
         if self.open_outlier:
-            QMessageBox.warning(self.main, "Outlier Cleaning Pending",
-            "An outlier cleaning operation is pending.\n"
-            "Please dismiss the outlier widget first."
-        )
+            QMessageBox.warning(self.main, "Outlier Cleaning Pending", "An outlier cleaning operation is pending. Please dismiss the outlier widget first.")
             return False
+        if self.gview.is_kp_edit:
+            self._direct_keypoint_edit()
         return True
 
     ###################################################################################################################################################

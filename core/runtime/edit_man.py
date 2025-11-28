@@ -4,10 +4,10 @@ import pandas as pd
 from PySide6 import QtWidgets
 from PySide6.QtWidgets import QMessageBox
 
-from typing import Callable, Optional
+from typing import Callable, Optional, List
 
 from utils.track import (
-    interpolate_track_all, delete_track, swap_track, interpolate_track, Track_Fixer,
+    Track_Fixer, interpolate_track_all, delete_track, swap_track, interpolate_track,
     )
 from utils.helper import get_instances_on_current_frame, get_instance_count_per_frame
 from utils.pose import (
@@ -20,9 +20,10 @@ from core.tool import Uno_Stack
 DEBUG = False
 
 class Keypoint_Edit_Manager:
-    def __init__(self, edit_callback:Callable[[], None], parent=None):
+    def __init__(self, track_edited_callback:Callable[[], None], ambiguous_frame_callback:Callable[[List[int]], None], parent=None):
         self.main = parent
-        self.edit_callback = edit_callback
+        self.ambiguous_frame_callback = ambiguous_frame_callback
+        self.track_edited_callback = track_edited_callback
         self.reset_kem()
 
     def reset_kem(self):
@@ -56,14 +57,20 @@ class Keypoint_Edit_Manager:
         progress = Progress_Indicator_Dialog(0, self.total_frames, title, dialog, self.main)
 
         tf = Track_Fixer(self.pred_data_array, canon_pose, angle_map_data, progress)
-        self.pred_data_array, changes_applied = tf.track_correction()
+        self.pred_data_array, changes_applied, amongus_frames = tf.track_correction()
 
         if not changes_applied:
             QMessageBox.information(self.main, "No Changes Applied", "No changes were applied.")
             return
-        QMessageBox.information(self.main, "Track Correction Finished", f"Applied {changes_applied} changes to the current track.")
+        
+        msg = f"Applied {changes_applied} changes to the current track."
+        if amongus_frames is not None:
+            msg += f" {len(amongus_frames)} frames are ambiguous."
+            self.ambiguous_frame_callback(amongus_frames)
 
-        self.edit_callback()
+        QMessageBox.information(self.main, "Track Correction Finished", msg)
+
+        self.track_edited_callback()
 
     ###################################################################################################################################################  
 
@@ -94,12 +101,12 @@ class Keypoint_Edit_Manager:
 
     def rot_inst(self, frame_idx, instance_idx, angle_delta):
         self.pred_data_array = rotate_selected_inst(self.pred_data_array, frame_idx, instance_idx, angle_delta)
-        self.edit_callback()
+        self.track_edited_callback()
 
     def del_outlier(self, outlier_mask:np.ndarray):
         self._save_state_for_undo()
         self.pred_data_array[outlier_mask] = np.nan
-        self.edit_callback()
+        self.track_edited_callback()
 
     def update_roi(self) -> list:
         self.inst_count_per_frame_pred = get_instance_count_per_frame(self.pred_data_array)
@@ -119,7 +126,7 @@ class Keypoint_Edit_Manager:
         except ValueError as e:
             QMessageBox.warning(self.main, "Deletion Error", str(e))
             return
-        self.edit_callback()
+        self.track_edited_callback()
         
     def swp_trk(self, frame_idx, swap_range=None):
         if not self.check_pred_data():
@@ -130,7 +137,7 @@ class Keypoint_Edit_Manager:
         except ValueError as e:
             QMessageBox.warning(self.main, "Swap Error", str(e))
             return
-        self.edit_callback()
+        self.track_edited_callback()
 
     def intp_trk(self, frame_idx:int, selected_instance:Optional[Selectable_Instance]):
         if not self.check_pred_data():
@@ -154,7 +161,7 @@ class Keypoint_Edit_Manager:
         
         frames_to_interpolate.sort()
         self.pred_data_array = interpolate_track(self.pred_data_array, frames_to_interpolate, selected_instance_idx)
-        self.edit_callback()
+        self.track_edited_callback()
 
     def gen_inst(self, frame_idx:int, instance_count:int, angle_map_data, canon_pose):
         if not self.check_pred_data():
@@ -169,7 +176,7 @@ class Keypoint_Edit_Manager:
 
         self.pred_data_array = generate_missing_inst(
             self.pred_data_array, frame_idx, missing_instances, angle_map_data=angle_map_data, canon_pose=canon_pose)
-        self.edit_callback()
+        self.track_edited_callback()
 
     def rot_inst_prep(self, frame_idx:int, selected_instance:Optional[Selectable_Instance], angle_map_data):
         selected_instance_idx = self._instance_multi_select(frame_idx, selected_instance)
@@ -200,7 +207,7 @@ class Keypoint_Edit_Manager:
             selected_instance_idx,
             angle_map_data,
             canon_pose)
-        self.edit_callback()
+        self.track_edited_callback()
 
     def interpolate_all_for_inst(self, selected_instance:Optional[Selectable_Instance]):
         if selected_instance is None:
@@ -216,7 +223,7 @@ class Keypoint_Edit_Manager:
 
         self._save_state_for_undo()
         self.pred_data_array = interpolate_track_all(self.pred_data_array, selected_instance.instance_id, max_gap_allowed)
-        self.edit_callback()
+        self.track_edited_callback()
         return True
 
     def _instance_multi_select(self, frame_idx:int, selected_instance:Optional[Selectable_Instance]) -> Optional[int]:

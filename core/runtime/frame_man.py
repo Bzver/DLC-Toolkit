@@ -14,8 +14,9 @@ class Frame_Manager:
         "animal_n":    {"display_name": "2+ Animals Frames",    "color_hex": "#d3c54a", "group": "counting"},
         "blob_merged": {"display_name": "Merged Blob Frames",   "color_hex": "#ff00bf", "group": "counting"},
 
-        "roi_change":  {"display_name": "ROI Change Frames",    "color_hex": "#FF1100", "group": "flabel"},
-        "outlier":     {"display_name": "Outlier Frames",       "color_hex": "#75541F", "group": "flabel"},
+        "roi_change":  {"display_name": "Instance Change Frames",   "color_hex": "#FF1100", "group": "flabel"},
+        "outlier":     {"display_name": "Outlier Frames",           "color_hex": "#75541F", "group": "flabel"},
+        "ambiguous":  {"display_name": "Ambiguous Frames",          "color_hex": "#A200FF", "group": "flabel"},
     }
 
     def __init__(self, refresh_callback:Callable[[], None]):

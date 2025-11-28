@@ -766,7 +766,7 @@ class DLC_Inference(QtWidgets.QDialog):
         title = f"Fix Track Using Temporal"
         progress = Progress_Indicator_Dialog(0, temp_data_array.shape[0], title, dialog, self)
         tf = Track_Fixer(temp_data_array, canon_pose, angle_map_data, progress)
-        temp_data_array, _ = tf.track_correction()
+        temp_data_array, _, _ = tf.track_correction()
         return temp_data_array
 
     def _crossref_existing_pred(self):

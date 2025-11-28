@@ -41,7 +41,7 @@ class Hungarian:
         K, M = len(self.pred_centroids), len(self.ref_centroids)
         if K == 0 or M == 0:
             log_print(f"[HUN] No valid data for Hungarian matching (K={K}, M={M}). Returning default order.", enabled=self.debug_print)
-            if K == 0: # Nothing to swap, nothing to be considered ambiguious
+            if K == 0: # Nothing to swap, nothing to be considered ambiguous
                 return self.inst_list
             if M == 0: # Sus
                 return None

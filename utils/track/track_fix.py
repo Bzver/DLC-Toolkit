@@ -10,6 +10,7 @@ from utils.pose import (
     outlier_bodypart, outlier_duplicate, outlier_size, outlier_enveloped,
     )
 from utils.helper import log_print, clean_log
+from utils.track import interpolate_track
 
 DEBUG = True
 
@@ -28,6 +29,9 @@ class Track_Fixer:
         self.corrected_pred_data = self._pose_clean(pred_data_array)
 
         self.total_frames, self.instance_count = self.pred_data_array.shape[:2]
+        if self.progress:
+            self.progress.setRange(0, self.total_frames)
+
         self.inst_list = list(range(self.instance_count))
 
         self.new_order_array = -np.ones((self.total_frames, self.instance_count), dtype=np.int8)
@@ -37,18 +41,28 @@ class Track_Fixer:
         if DEBUG:
             clean_log()
 
-    def track_correction(self, max_dist:float=10.0, lookback_window=10) -> Tuple[np.ndarray, int]:
-        self._centroids_tf_pass(max_dist, lookback_window)
-        if np.any(self.new_order_array == -1):
-            self._rotation_tf_pass()
-        if np.any(self.new_order_array == -1):
-            self._human_intervention()
+    def track_correction(self, max_dist:float=10.0, lookback_window=10) -> Tuple[np.ndarray, int, List[int]]:
+        try:
+            self._centroids_tf_pass(max_dist, lookback_window)
+            if np.any(self.new_order_array == -1):
+                self._rotation_tf_pass(lookback_window)
+            if np.any(self.new_order_array == -1):
+                amogus_frames = np.where(self.new_order_array[:,0]==-1)[0]
+                self.new_order_array[amogus_frames] = np.array(self.inst_list)
+                amogus_frames = amogus_frames.tolist()
+            else:
+                amogus_frames = []
+        except Exception as e:
+            print(f"Error: {e}")
+            return self.pred_data_array, 0, []
 
-        self.new_order_array[np.where(self.new_order_array[:,0]==-1)[0]] = np.array(self.inst_list)
+        if self.progress:
+            self.progress.close()
 
-        diff = self.new_order_array - np.tile(self.inst_list, self.total_frames)
+        diff = self.new_order_array - np.arange(self.instance_count)
         changes_applied = np.sum(np.any(diff != 0, axis=1))
-        return self.pred_data_array[np.arange(self.total_frames)[:, None], self.new_order_array], changes_applied
+        fixed_data_array = self.pred_data_array[np.arange(self.total_frames)[:, None], self.new_order_array]
+        return fixed_data_array, changes_applied, amogus_frames
 
     def _centroids_tf_pass(self, max_dist:float, lookback_window):
         last_order = self.inst_list
@@ -60,7 +74,7 @@ class Track_Fixer:
                 self.progress.setValue(frame_idx)
                 if self.progress.wasCanceled():
                     self.progress.close()
-                    return
+                    raise("User cancelled track fixing operation.")
             
             log_print(f"---------- frame: {frame_idx} [CENTROID MODE] ---------- ", enabled=DEBUG)
 
@@ -82,7 +96,7 @@ class Track_Fixer:
                 if np.all(np.isnan(ref_centroids)): # No ref at all, i.e. beginning of the vid
                     self.new_order_array[frame_idx] = np.array(last_order)
                 else:
-                    self.new_order_array[frame_idx] = -1 # Mark as ambiguious
+                    self.new_order_array[frame_idx] = -1 # Mark as ambiguous
                 continue
 
             hun = Hungarian(pred_centroids, ref_centroids, valid_pred_mask, valid_ref_mask, max_dist=max_dist, debug_print=DEBUG)
@@ -101,7 +115,7 @@ class Track_Fixer:
 
                 if new_order is None:
                     log_print(f"[TMOD] Failed to build new order with Hungarian.", enabled=DEBUG)
-                    self.new_order_array[frame_idx] = -1 # Ambiguious
+                    self.new_order_array[frame_idx] = -1 # Ambiguous
                 elif new_order == self.inst_list:
                     last_order = new_order
                     log_print(f"[TMOD] NO SWAP, already the best solution.", enabled=DEBUG)
@@ -118,8 +132,6 @@ class Track_Fixer:
             ref_centroids[fixed_pred_mask] = fixed_pred_centroids[fixed_pred_mask]
             ref_last_updated[fixed_pred_mask] = frame_idx
                     
-        if self.progress:
-            self.progress.close()
 
     def _rotation_tf_pass(self, lookback_window): # Combine centroids and rotation
         if self.angle_map is None:
@@ -130,12 +142,19 @@ class Track_Fixer:
         log_print(f"[ROT] Resolving {len(amogus)} ambiguous frames with rotation...", enabled=DEBUG)
 
         pose_centroids, local_coords = calculate_pose_centroids(self.corrected_pred_data)
+        self.progress.setRange(0, len(amogus))
 
-        for frame_idx in amogus:
-            log_print(f"---------- frame: {frame_idx} [ROTATION MODE] ---------- ", enabled=DEBUG)
+        for i, frame_idx in enumerate(amogus):
+            if self.progress:
+                self.progress.setValue(i)
+                if self.progress.wasCanceled():
+                    self.progress.close()
+                    raise("User cancelled track fixing operation.")
             cur_centroids = pose_centroids[frame_idx]
             if np.all(np.isnan(cur_centroids)):
+                self.new_order_array[frame_idx] = np.array(self.inst_list)
                 continue
+            log_print(f"---------- frame: {frame_idx} [ROTATION MODE] ---------- ", enabled=DEBUG)
             cur_locc = local_coords[frame_idx]
             cur_rota = calculate_pose_rotations(cur_locc[..., 0::2], cur_locc[..., 1::2], self.angle_map)
 
@@ -158,22 +177,17 @@ class Track_Fixer:
 
             valid_pred = np.all(~np.isnan(cur_centroids), axis=1) & ~np.isnan(cur_rota)
             valid_ref  = np.all(~np.isnan(ref_centroids), axis=1) & ~np.isnan(ref_rota)
-            pred_c = cur_centroids[valid_pred]
-            ref_c  = ref_centroids[valid_ref]
             pred_r = cur_rota[valid_pred]
             ref_r  = ref_rota[valid_ref]
 
-            hun = Hungarian(pred_c, ref_c, valid_pred, valid_ref, debug_print=DEBUG)
+            hun = Hungarian(cur_centroids, ref_centroids, valid_pred, valid_ref, debug_print=DEBUG)
 
             new_order = hun.hungarian_matching_with_rotation(pred_r, ref_r)
             if new_order is None:
                 continue
 
             self.current_frame_data[:, :] = self.current_frame_data[new_order, :]
-            self.new_order_array = np.array(new_order)
-
-    def _human_intervention(self):
-        pass
+            self.new_order_array[frame_idx] = np.array(new_order)
 
     def _applying_last_order(self, last_order:List[int]):
         if last_order is None or last_order == self.inst_list:
@@ -189,7 +203,7 @@ class Track_Fixer:
             corrected_data_array, _, _ = outlier_removal(pred_data_array, dp_mask)
             return corrected_data_array
 
-        no_mask = np.zeros((self.total_frames, self.instance_count), dtype=bool)
+        no_mask = np.zeros((self.pred_data_array.shape[0], self.pred_data_array.shape[1]), dtype=bool)
         conf_mask = outlier_confidence(pred_data_array, 0.4)
         bp_mask = outlier_bodypart(pred_data_array, 2)
         env_mask = outlier_enveloped(pred_data_array)
