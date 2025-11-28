@@ -1,7 +1,13 @@
+import numpy as np
+
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+
 from PySide6 import QtWidgets, QtGui
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QPushButton, QHBoxLayout, QVBoxLayout, QDialog, QLabel, QMessageBox, QSpinBox, QCheckBox, QSizePolicy
-
+from PySide6.QtWidgets import (
+    QPushButton, QHBoxLayout, QVBoxLayout, QDialog, QLabel, QDialogButtonBox,
+    QMessageBox, QSpinBox, QDoubleSpinBox, QCheckBox, QSizePolicy)
 from typing import List, Dict, Tuple
 from time import time
 
@@ -259,6 +265,100 @@ class Inference_interval_Dialog(QDialog):
         intervals = {key: widget.value() for key, widget in self.interval_widgets.items()}
         self.intervals_selected.emit(intervals)
         self.accept()
+
+
+class Track_Fix_Dialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Input Parameters For Track Fixing")
+        self.setMinimumSize(500, 400)
+        self.speeds_flat = None
+        
+        main_layout = QVBoxLayout()
+        
+        self.figure = Figure(figsize=(5, 3), dpi=100)
+        self.canvas = FigureCanvas(self.figure)
+        self.ax = self.figure.add_subplot(111)
+        self.ax.set_title("Speed Distribution (px/frame)", fontsize=10)
+        self.ax.set_xlabel("Speed (px/frame)")
+        self.ax.set_ylabel("Density")
+        self.ax.grid(True, alpha=0.3)
+        self.canvas.setStyleSheet("background-color:white; border:1px solid #ccc;")
+        main_layout.addWidget(self.canvas)
+        
+        max_dist_layout = QHBoxLayout()
+        max_dist_label = QLabel("Max Distance:")
+        self.max_dist_spinbox = QDoubleSpinBox()
+        self.max_dist_spinbox.setRange(1.0, 100.0)
+        self.max_dist_spinbox.setSingleStep(0.1)
+        self.max_dist_spinbox.setValue(10.0)
+        self.max_dist_spinbox.valueChanged.connect(self._max_dist_changed)
+        max_dist_layout.addWidget(max_dist_label)
+        max_dist_layout.addWidget(self.max_dist_spinbox)
+        
+        lookback_layout = QHBoxLayout()
+        lookback_label = QLabel("Lookback Window:")
+        self.lookback_spinbox = QSpinBox()
+        self.lookback_spinbox.setRange(2, 1000)
+        self.lookback_spinbox.setValue(100)
+        lookback_layout.addWidget(lookback_label)
+        lookback_layout.addWidget(self.lookback_spinbox)
+        
+        main_layout.addLayout(max_dist_layout)
+        main_layout.addLayout(lookback_layout)
+        
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
+        )
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        main_layout.addWidget(button_box)
+        
+        self.setLayout(main_layout)
+    
+    def set_histogram(self, speeds_flat:np.ndarray, max_dist_px_frame: float = None):
+        self.speeds_flat = speeds_flat
+        self._plot_histogram(max_dist_px_frame)
+    
+    def _max_dist_changed(self, max_dist_px_frame:float):
+        self._plot_histogram(max_dist_px_frame)
+
+    def _plot_histogram(self, max_dist_px_frame):
+        self.ax.clear()
+        self.ax.set_title("Speed Distribution (px/frame)", fontsize=10)
+        self.ax.set_xlabel("Speed (px/frame)")
+        self.ax.set_ylabel("Density")
+        self.ax.grid(True, alpha=0.3)
+        
+        if self.speeds_flat is None or len(self.speeds_flat) == 0:
+            self.ax.text(0.5, 0.5, 'No speed data available', 
+                        transform=self.ax.transAxes, ha='center', va='center',
+                        fontsize=12, color='gray')
+            self.canvas.draw()
+            return
+        
+        if len(self.speeds_flat) > 0:
+            self.ax.hist(self.speeds_flat, bins=50, density=True, 
+                        alpha=0.7, color='steelblue', edgecolor='white')
+            
+            p95 = np.percentile(self.speeds_flat, 95)
+            p99 = np.percentile(self.speeds_flat, 99)
+            median = np.median(self.speeds_flat)
+            
+            self.ax.axvline(median, color='blue', linestyle='--', label=f'Median: {median:.1f}')
+            self.ax.axvline(p95, color='green', linestyle='--', label=f'95th %: {p95:.1f}')
+            self.ax.axvline(p99, color='orange', linestyle='--', label=f'99th %: {p99:.1f}')
+
+            if max_dist_px_frame is not None:
+                self.ax.axvline(max_dist_px_frame, color='red', linewidth=2,
+                               label=f'Current max_dist: {max_dist_px_frame:.1f}')
+            
+            self.ax.legend(fontsize=8)
+        
+        self.canvas.draw()
+
+    def get_values(self):
+        return (self.max_dist_spinbox.value(), self.lookback_spinbox.value())
 
 
 class Frame_Display_Dialog(QDialog):

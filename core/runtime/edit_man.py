@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 from PySide6 import QtWidgets
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QMessageBox, QDialog
 
 from typing import Callable, Optional, List
 
@@ -14,7 +14,7 @@ from utils.pose import (
     rotate_selected_inst, generate_missing_inst, generate_missing_kp_for_inst,
     calculate_pose_centroids, calculate_pose_rotations
 )
-from ui import Progress_Indicator_Dialog, Selectable_Instance
+from ui import Progress_Indicator_Dialog, Selectable_Instance, Track_Fix_Dialog
 from core.tool import Uno_Stack
 
 DEBUG = False
@@ -51,13 +51,24 @@ class Keypoint_Edit_Manager:
     ##############################################################################################
 
     def correct_track_using_temporal(self, canon_pose, angle_map_data):
+        centroids = np.stack([calculate_pose_centroids(self.pred_data_array, idx)[0] for idx in range(self.total_frames)])
+        speeds_px_frame = np.linalg.norm(np.diff(centroids, axis=0), axis=2).flatten()
+        speeds_px_frame = speeds_px_frame[~np.isnan(speeds_px_frame)]
+
+        dialog = Track_Fix_Dialog(self.main)
+        dialog.set_histogram(speeds_px_frame, max_dist_px_frame=10.0)
+        if dialog.exec() == QDialog.Accepted:
+            max_dist, lookback = dialog.get_values()
+        else:
+            return
+
         self._save_state_for_undo()
-        dialog = "Fixing track using temporal consistency..."
-        title = f"Fix Track Using Temporal"
-        progress = Progress_Indicator_Dialog(0, self.total_frames, title, dialog, self.main)
+
+        progress = Progress_Indicator_Dialog(
+            0, self.total_frames, "Temporal Track Fixing", "Fixing track using temporal consistency...", self.main)
 
         tf = Track_Fixer(self.pred_data_array, canon_pose, angle_map_data, progress)
-        self.pred_data_array, changes_applied, amongus_frames = tf.track_correction()
+        self.pred_data_array, changes_applied, amongus_frames = tf.track_correction(max_dist, lookback)
 
         if not changes_applied:
             QMessageBox.information(self.main, "No Changes Applied", "No changes were applied.")

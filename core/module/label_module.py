@@ -213,7 +213,7 @@ class Frame_Label:
         title_text = self.dm.get_title_text(labeler=True, kp_edit=self.gview.is_kp_edit)
         self.status_bar.show_message(title_text, duration_ms=0)
 
-        if self.open_outlier or self.dm.plot_config.navigate_roi:
+        if self.open_outlier or self.dm.plot_config.navigate_roi or self.dm.frames_in_any(["ambiguous"]):
             color = self.dm.determine_nav_color_flabel()
         else:
             color = self.dm.determine_nav_color_fview()
@@ -229,7 +229,7 @@ class Frame_Label:
         elif self.dm.plot_config.navigate_roi:
             self.vid_play.sld.set_frame_category(*self.dm.get_cat_metadata("roi_change"))
             self.dm.handle_cat_update("roi_change", self.kem.update_roi())
-        elif self.dm.frames_in_any(["ambiguous"]):
+        elif self.dm.get_frames("ambiguous"):
             self.vid_play.sld.set_frame_category(*self.dm.get_cat_metadata("ambiguous"))
         else:
             self.vid_play.sld.set_frame_category(*self.dm.get_cat_metadata("marked"))
@@ -334,6 +334,7 @@ class Frame_Label:
         QMessageBox.information(self.main, "Designate No Mice Zone", "Click and drag on the video to select a zone. Release to apply.")
 
     def _temporal_track_correct(self):
+        self._clear_amb()
         if not self._track_edit_blocker():
             return
         self.kem.correct_track_using_temporal(self.dm.canon_pose, self.dm.angle_map_data)

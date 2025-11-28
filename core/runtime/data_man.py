@@ -309,7 +309,9 @@ class Data_Manager:
             return self.frames_in_any(["marked", "rejected", "approved"])
         
     def determine_list_to_nav_flabel(self) -> List[int]:
-        if self.plot_config.navigate_roi:
+        if self.get_frames("ambiguous"):
+            return self.get_frames("ambiguous")
+        elif self.plot_config.navigate_roi:
             return self.get_frames("roi_change")
         else:
             return self.frames_in_any(["marked", "refined"])

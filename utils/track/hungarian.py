@@ -1,4 +1,5 @@
 import numpy as np
+from itertools import combinations
 from scipy.optimize import linear_sum_assignment
 from typing import Optional
 
@@ -43,7 +44,7 @@ class Hungarian:
             log_print(f"[HUN] No valid data for Hungarian matching (K={K}, M={M}). Returning default order.", enabled=self.debug_print)
             if K == 0: # Nothing to swap, nothing to be considered ambiguous
                 return self.inst_list
-            if M == 0: # Sus
+            if M == 0:
                 return None
 
         if K == 1 and M == 1:
@@ -54,9 +55,25 @@ class Hungarian:
                 new_order[self.ref_indices[0]] = self.pred_indices[0]
                 log_print(f"[HUN] Single pair matched. New order: {new_order}", enabled=self.debug_print)
                 return new_order
-            else: # Sus
+            else:
                 log_print(f"[HUN] Single pair not matched (Dist: {dist:.2f} > {self.max_dist}).", enabled=self.debug_print)
                 return None
+
+        if K >= 2:
+            for i, j in combinations(range(len(self.pred_centroids)), 2):
+                d = np.linalg.norm(self.pred_centroids[i] - self.pred_centroids[j])
+                if d < self.max_dist:
+                    log_print(f"[HUN] Ambiguous pred layout (pred {i}–{j}: {d:.1f} < {self.max_dist}). Deferring to rotation.", 
+                            enabled=self.debug_print)
+                    return None
+
+        if M >= 2:
+            for i, j in combinations(range(len(self.ref_centroids)), 2):
+                d = np.linalg.norm(self.ref_centroids[i] - self.ref_centroids[j])
+                if d < self.max_dist:
+                    log_print(f"[HUN] Ambiguous ref layout (ref {i}–{j}: {d:.1f} < {self.max_dist}). Deferring to rotation.", 
+                              enabled=self.debug_print)
+                    return None
 
         if self.full_set:
             distances = np.linalg.norm(self.pred_centroids - self.ref_centroids, axis=1)
@@ -72,66 +89,68 @@ class Hungarian:
             log_print(f"[HUN] Hungarian assignment: row_ind={row_ind}, col_ind={col_ind}", enabled=self.debug_print)
         except Exception as e:
             log_print(f"[HUN] Hungarian failed: {e}. Returning None.", enabled=self.debug_print)
-            return None  # Hungarian failed, sus
+            return None  # Hungarian failed
         else:
             if self.full_set:
                 if not self._dist_improv_comp(row_ind, col_ind):
                     log_print(f"[HUN] Hungarian assignment does not improve geometric distances sufficiently.", enabled=self.debug_print)
-                    return None # Sus
+                    return None
 
         return self._build_new_order(row_ind, col_ind)
 
     def hungarian_matching_with_rotation(self, pred_rotation: np.ndarray, ref_rotation: np.ndarray) -> Optional[list]:
-        """
-        Match using centroid + rotation, where rotation acts as a tie-breaker.
-        
-        Args:
-            pred_rotation: (K,) — rotations for valid predicted instances
-            ref_rotation:  (M,) — rotations for valid reference instances
-        Returns:
-            new_order: list of length N, or None if failed
-        """
         K, M = len(self.pred_centroids), len(self.ref_centroids)
         if K == 0 or M == 0:
             return self.inst_list if K == 0 else None
 
-        cent_cost = np.linalg.norm(self.pred_centroids[:, None] - self.ref_centroids[None, :], axis=2)
-        rot_cost = np.zeros_like(cent_cost)
-        reliability = np.ones_like(cent_cost)
-        pred_valid_rot = ~np.isnan(pred_rotation)
-        ref_valid_rot  = ~np.isnan(ref_rotation)
+        cent_cost = np.linalg.norm(
+            self.pred_centroids[:, None] - self.ref_centroids[None, :], axis=2
+        )
+
+        pred_rot_norm = np.mod(pred_rotation + 180, 360) - 180
+        ref_rot_norm  = np.mod(ref_rotation + 180, 360) - 180
+        dtheta = pred_rot_norm[:, None] - ref_rot_norm[None, :]
+        angular_diff = np.abs(np.mod(dtheta + 180, 360) - 180)
+        
+        pred_valid = ~np.isnan(pred_rotation)
+        ref_valid  = ~np.isnan(ref_rotation)
+        reliability = np.where(
+            pred_valid[:, None] & ref_valid[None, :], 1.0,
+            np.where(pred_valid[:, None] | ref_valid[None, :], 0.5, 0.1)
+        )
+        rot_cost = angular_diff * reliability
+
+        ambiguous = False
         for i in range(K):
-            for j in range(M):
-                if not (pred_valid_rot[i] and ref_valid_rot[j]):
-                    reliability[i, j] = 0.0 
+            close_refs = np.sum(cent_cost[i] < self.max_dist)
+            if close_refs >= 2:
+                ambiguous = True
+                break
 
-        dtheta = pred_rotation[:, None] - ref_rotation[None, :]
-        angular_sim = np.abs(np.cos(dtheta))
-        rot_cost = 1.0 - angular_sim 
-
-        min_cent_costs = np.min(cent_cost, axis=1)
-        cent_std = np.std(min_cent_costs) if K > 1 else 0.0
-        cent_mean = np.mean(min_cent_costs) if K > 0 else 0.0
-
-        if cent_std < 0.3 * cent_mean and cent_mean > 0:  # ambiguous case
-            rot_weight = 2.0
+        if ambiguous:
+            max_rot = 90.0
+            rot_norm = np.clip(rot_cost / max_rot, 0, 1)
+            rot_in_px = 0.01 * self.max_dist * rot_norm
+            combined_cost = cent_cost + rot_in_px
         else:
-            rot_weight = 0.2
-
-        combined_cost = cent_cost + rot_weight * rot_cost * reliability
+            combined_cost = cent_cost
 
         try:
             row_ind, col_ind = linear_sum_assignment(combined_cost)
-            log_print(f"[HUN+ROT] Assignment: {list(zip(row_ind, col_ind))}", enabled=self.debug_print)
         except Exception as e:
-            log_print(f"[HUN+ROT] Failed: {e}", enabled=self.debug_print)
+            log_print(f"[HUN+ROT] Assignment failed: {e}", enabled=self.debug_print)
             return None
 
-        assigned_costs = combined_cost[row_ind, col_ind]
-        if np.any(assigned_costs > self.max_dist * 1.5):
-            log_print(f"[HUN+ROT] High cost ({assigned_costs}), rejecting.", enabled=self.debug_print)
+        assigned_cent_dists = cent_cost[row_ind, col_ind]
+        max_allowed = self.max_dist * 2.5
+        if np.any(assigned_cent_dists > max_allowed):
+            log_print(f"[HUN+ROT] Rejected: centroid distances too large "
+                    f"({assigned_cent_dists} > {max_allowed})", enabled=self.debug_print)
             return None
 
+        log_print(
+            f"[HUN+ROT] Accepted: cent={assigned_cent_dists}, rot_diff={angular_diff[row_ind, col_ind]}°",
+            enabled=self.debug_print)
         return self._build_new_order(row_ind, col_ind)
 
     def compare_distance_improvement(self, new_order:list) -> bool:
@@ -156,27 +175,22 @@ class Hungarian:
             target_identity = self.ref_indices[c]
             source_instance = self.pred_indices[r]
             processed[target_identity] = source_instance
-        log_print(f"[HUN] Processed matches: {processed}", enabled=self.debug_print)
 
         unprocessed = [inst_idx for inst_idx in all_inst if inst_idx not in processed.keys()]
         unassigned = [inst_idx for inst_idx in all_inst if inst_idx not in processed.values()]
-        log_print(f"[HUN] Unprocessed identities: {unprocessed}, Unassigned instances: {unassigned}", enabled=self.debug_print)
 
-        for target_identity in unprocessed:  # First loop, find remaining pair without idx change
+        for target_identity in unprocessed:
             if target_identity in unassigned:
                 source_instance = target_identity
                 processed[target_identity] = source_instance
                 unassigned.remove(source_instance)
-        log_print(f"[HUN] Processed after first loop (self-assignment): {processed}", enabled=self.debug_print)
         
         unprocessed[:] = [inst_idx for inst_idx in all_inst if inst_idx not in processed.keys()]
-        log_print(f"[HUN] Unprocessed identities after first loop: {unprocessed}", enabled=self.debug_print)
 
-        for target_identity in unprocessed:  # Second loop, arbitarily reassign
+        for target_identity in unprocessed:
             source_instance = unassigned[-1]
             processed[target_identity] = source_instance
             unassigned.remove(source_instance)
-        log_print(f"[HUN] Processed after second loop (arbitrary assignment): {processed}", enabled=self.debug_print)
             
         sorted_processed = {k: processed[k] for k in sorted(processed)}
         new_order = list(sorted_processed.values())

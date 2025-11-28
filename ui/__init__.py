@@ -11,6 +11,7 @@ from .dialog import (
     Progress_Indicator_Dialog,
     Inference_interval_Dialog,
     Frame_Display_Dialog,
+    Track_Fix_Dialog,
 )
 
 from .video_slider import Slider_With_Marks, Video_Slider_Widget
@@ -30,6 +31,7 @@ __all__ = (
     Progress_Indicator_Dialog,
     Inference_interval_Dialog,
     Frame_Display_Dialog,
+    Track_Fix_Dialog,
     Menu_Widget,
     Shortcut_Manager,
     Video_Slider_Widget,

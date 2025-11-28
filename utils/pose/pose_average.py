@@ -41,9 +41,8 @@ def get_average_pose(
 
     while attempt < max_attempts:
         pose_window = _get_pose_window(frame_idx, len(pred_data_array), pose_range)
-        pred_data_sliced = pred_data_array[pose_window].copy()  # Shape: (W, N, D)
+        pred_data_sliced = pred_data_array[pose_window].copy()
 
-        # Filter frames based on confidence and body part count
         outlier_conf_mask = outlier_confidence(pred_data_sliced, confidence_threshold)
         outlier_bp_mask = outlier_bodypart(pred_data_sliced, bodypart_threshold)
         outlier_mask = np.logical_or(outlier_bp_mask, outlier_conf_mask)
@@ -52,7 +51,6 @@ def get_average_pose(
         truncate_mask = np.any(~np.isnan(pred_data_filtered[:, selected_instance_idx, :]), axis=1)
         pred_data_truncated = pred_data_filtered[truncate_mask]
 
-        # Extract only the selected instance for frame validity check
         inst_slice = pred_data_truncated[:, selected_instance_idx:selected_instance_idx+1, :]
         valid_frame_count = _get_valid_slice_count(inst_slice)
 
@@ -65,19 +63,19 @@ def get_average_pose(
         raise ValueError(f"Only {valid_frame_count} valid frames found for instance {selected_instance_idx} "
             f"around frame {frame_idx}, less than required {valid_frames_threshold}, ")
 
-    inst_data = pred_data_truncated[:, selected_instance_idx, :]  # (W', K*3)
-    conf_scores = inst_data[:, 2::3]  # (W', K)
+    inst_data = pred_data_truncated[:, selected_instance_idx, :]
+    conf_scores = inst_data[:, 2::3]
 
     centroids, local_coords = calculate_pose_centroids(inst_data[:, np.newaxis, :]) # inst data is already sliced, no need to slice again
 
-    centroids = np.squeeze(centroids, axis=1)  # (W', 2)
-    local_coords = np.squeeze(local_coords, axis=1)  # (W', K*2)
+    centroids = np.squeeze(centroids, axis=1)
+    local_coords = np.squeeze(local_coords, axis=1)
     rotation_angles = calculate_pose_rotations(local_coords[:, 0::2], local_coords[:, 1::2], angle_map_data=angle_map_data)
     aligned_local = pose_alignment_worker(local_coords, rotation_angles)
     avg_angle = _calculate_circular_mean(rotation_angles)
-    if set_centroid is not None : # If a specific centroid is provided, use it for alignment
+    if set_centroid is not None :
         centroids = set_centroid
-    if set_rotation is not None and ~np.isnan(set_rotation): # If a specific angle is provided, use it for alignment
+    if set_rotation is not None and ~np.isnan(set_rotation):
         avg_angle = set_rotation
     average_pose = pose_rotation_worker(avg_angle, centroids, aligned_local, conf_scores)
 
@@ -104,7 +102,7 @@ def _get_pose_window(frame_idx:int, total_frames:int, pose_range:int) -> slice:
 
 def _get_valid_slice_count(arr_3D:np.ndarray) -> int:
     if arr_3D.ndim != 3:
-        raise("Error: Input array must be a 3D array!")
+        raise ValueError("Error: Input array must be a 3D array!")
     not_nan = ~np.isnan(arr_3D)
     has_non_nan = np.any(not_nan, axis=(1,2))
     count = np.sum(has_non_nan)

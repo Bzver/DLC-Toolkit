@@ -752,27 +752,9 @@ class DLC_Inference(QtWidgets.QDialog):
             coords_array = crop_coord_to_array(self.crop_coord, temp_data_array.shape, self.frame_list)
             temp_data_array = temp_data_array + coords_array
 
-        if self.dlc_data.pred_data_array is not None or not np.any(self.dlc_data.pred_data_array): # Only do correction on new data
-            temp_data_array = self._correct_new_pred(temp_data_array)
-
         new_data_array[self.frame_list, :, :] = temp_data_array
         self.new_data_array = new_data_array
         return h5_files[-1]
-
-    def _correct_new_pred(self, temp_data_array:np.ndarray) -> np.ndarray:
-        head_idx, tail_idx = infer_head_tail_indices(self.dlc_data.keypoints)
-        if head_idx is None or tail_idx is None:
-            canon_pose, angle_map_data = None, None
-        else:
-            canon_pose, all_frame_pose = calculate_canonical_pose(temp_data_array, head_idx, tail_idx)
-            angle_map_data = build_angle_map(canon_pose, all_frame_pose, head_idx, tail_idx)
-
-        dialog = "Fixing track using temporal consistency..."
-        title = f"Fix Track Using Temporal"
-        progress = Progress_Indicator_Dialog(0, temp_data_array.shape[0], title, dialog, self)
-        tf = Track_Fixer(temp_data_array, canon_pose, angle_map_data, progress)
-        temp_data_array, _, _ = tf.track_correction()
-        return temp_data_array
 
     def _crossref_existing_pred(self):
         for frame_idx in self.frame_list:
