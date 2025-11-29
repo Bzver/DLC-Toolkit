@@ -8,6 +8,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QPushButton, QHBoxLayout, QVBoxLayout, QDialog, QLabel, QDialogButtonBox,
     QMessageBox, QSpinBox, QDoubleSpinBox, QCheckBox, QSizePolicy)
+
 from typing import List, Dict, Tuple
 from time import time
 
@@ -300,7 +301,7 @@ class Track_Fix_Dialog(QDialog):
         lookback_label = QLabel("Lookback Window:")
         self.lookback_spinbox = QSpinBox()
         self.lookback_spinbox.setRange(2, 1000)
-        self.lookback_spinbox.setValue(100)
+        self.lookback_spinbox.setValue(50)
         lookback_layout.addWidget(lookback_label)
         lookback_layout.addWidget(self.lookback_spinbox)
         

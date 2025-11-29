@@ -26,7 +26,7 @@ class Frame_App(QMainWindow):
             init_vid_callback = self._initialize_loaded_video,
             refresh_callback = self._refresh_ui, parent = self)
         self.vm = Video_Manager(self)
-        self.kem = Keypoint_Edit_Manager(self._on_kem_edit, self._on_amb_frames_return, self)
+        self.kem = Keypoint_Edit_Manager(self._on_kem_edit, self)
 
         nav_callback = Nav_Callback(
             change_frame_callback = self._change_frame,
@@ -358,9 +358,6 @@ class Frame_App(QMainWindow):
 
     def _on_kem_edit(self):
         self.flabel.on_track_data_changed()
-
-    def _on_amb_frames_return(self, frame_list):
-        self.dm.add_frames("ambiguous", frame_list)
 
     def changeEvent(self, event):
         if event.type() == QEvent.Type.WindowStateChange:

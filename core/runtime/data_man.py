@@ -197,9 +197,6 @@ class Data_Manager:
     def mark_refined_flabel(self, frame_idx):
         self.fm.move_frame(new_category="refined", old_category="marked", frame_idx=frame_idx)
 
-    def clear_ambiguous_frames(self):
-        self.fm.clear_category("ambiguous")
-
     def mark_all_refined_flabel(self):
         self.fm.move_category("refined", "marked")
 
@@ -309,9 +306,7 @@ class Data_Manager:
             return self.frames_in_any(["marked", "rejected", "approved"])
         
     def determine_list_to_nav_flabel(self) -> List[int]:
-        if self.get_frames("ambiguous"):
-            return self.get_frames("ambiguous")
-        elif self.plot_config.navigate_roi:
+        if self.plot_config.navigate_roi:
             return self.get_frames("roi_change")
         else:
             return self.frames_in_any(["marked", "refined"])

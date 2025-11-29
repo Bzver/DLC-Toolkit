@@ -16,7 +16,6 @@ class Frame_Manager:
 
         "roi_change":  {"display_name": "Instance Change Frames",   "color_hex": "#FF1100", "group": "flabel"},
         "outlier":     {"display_name": "Outlier Frames",           "color_hex": "#75541F", "group": "flabel"},
-        "ambiguous":  {"display_name": "Ambiguous Frames",          "color_hex": "#A200FF", "group": "flabel"},
     }
 
     def __init__(self, refresh_callback:Callable[[], None]):

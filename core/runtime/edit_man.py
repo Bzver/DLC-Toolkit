@@ -20,9 +20,8 @@ from core.tool import Uno_Stack
 DEBUG = False
 
 class Keypoint_Edit_Manager:
-    def __init__(self, track_edited_callback:Callable[[], None], ambiguous_frame_callback:Callable[[List[int]], None], parent=None):
+    def __init__(self, track_edited_callback:Callable[[], None], parent=None):
         self.main = parent
-        self.ambiguous_frame_callback = ambiguous_frame_callback
         self.track_edited_callback = track_edited_callback
         self.reset_kem()
 
@@ -68,16 +67,13 @@ class Keypoint_Edit_Manager:
             0, self.total_frames, "Temporal Track Fixing", "Fixing track using temporal consistency...", self.main)
 
         tf = Track_Fixer(self.pred_data_array, canon_pose, angle_map_data, progress)
-        self.pred_data_array, changes_applied, amongus_frames = tf.track_correction(max_dist, lookback)
+        self.pred_data_array, changed_frames, amongus_frames = tf.track_correction(max_dist, lookback)
 
-        if not changes_applied:
+        if not changed_frames:
             QMessageBox.information(self.main, "No Changes Applied", "No changes were applied.")
             return
         
-        msg = f"Applied {changes_applied} changes to the current track."
-        if amongus_frames is not None:
-            msg += f" {len(amongus_frames)} frames are ambiguous."
-            self.ambiguous_frame_callback(amongus_frames)
+        msg = f"Applied {len(changed_frames)} changes to the current track."
 
         QMessageBox.information(self.main, "Track Correction Finished", msg)
 

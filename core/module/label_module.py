@@ -70,7 +70,6 @@ class Frame_Label:
                     ("Direct Keypoint Edit (Q)", self._direct_keypoint_edit),
                     ("Open Outlier Cleaning Menu", self._call_outlier_finder),
                     ("Remove Current Frame From Refine Task", self.toggle_frame_status),
-                    ("Clear All Ambiguous Display", self._clear_amb),
                     ("Mark All As Refined", self._mark_all_as_refined),
                     ("Undo Changes (Ctrl+Z)", self._undo_changes),
                     ("Redo Changes (Ctrl+Y)", self._redo_changes),
@@ -213,7 +212,7 @@ class Frame_Label:
         title_text = self.dm.get_title_text(labeler=True, kp_edit=self.gview.is_kp_edit)
         self.status_bar.show_message(title_text, duration_ms=0)
 
-        if self.open_outlier or self.dm.plot_config.navigate_roi or self.dm.frames_in_any(["ambiguous"]):
+        if self.open_outlier or self.dm.plot_config.navigate_roi:
             color = self.dm.determine_nav_color_flabel()
         else:
             color = self.dm.determine_nav_color_fview()
@@ -229,8 +228,6 @@ class Frame_Label:
         elif self.dm.plot_config.navigate_roi:
             self.vid_play.sld.set_frame_category(*self.dm.get_cat_metadata("roi_change"))
             self.dm.handle_cat_update("roi_change", self.kem.update_roi())
-        elif self.dm.get_frames("ambiguous"):
-            self.vid_play.sld.set_frame_category(*self.dm.get_cat_metadata("ambiguous"))
         else:
             self.vid_play.sld.set_frame_category(*self.dm.get_cat_metadata("marked"))
             self.vid_play.sld.set_frame_category(*self.dm.get_cat_metadata("refined"))
@@ -250,9 +247,6 @@ class Frame_Label:
 
     def _mark_refined(self):
         self.dm.mark_refined_flabel(self.dm.current_frame_idx)
-
-    def _clear_amb(self):
-        self.dm.clear_ambiguous_frames()
 
     def _mark_all_as_refined(self):
         self.dm.mark_all_refined_flabel()
@@ -334,7 +328,6 @@ class Frame_Label:
         QMessageBox.information(self.main, "Designate No Mice Zone", "Click and drag on the video to select a zone. Release to apply.")
 
     def _temporal_track_correct(self):
-        self._clear_amb()
         if not self._track_edit_blocker():
             return
         self.kem.correct_track_using_temporal(self.dm.canon_pose, self.dm.angle_map_data)

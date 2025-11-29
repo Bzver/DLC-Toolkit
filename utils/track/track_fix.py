@@ -68,10 +68,10 @@ class Track_Fixer:
             self.progress.close()
 
         diff = self.new_order_array - np.arange(self.instance_count)
-        changes_applied = np.sum(np.any(diff != 0, axis=1))
+        changed_frames = np.where(np.any(diff != 0, axis=1))[0]
         fixed_data_array = self.pred_data_array[np.arange(self.total_frames)[:, None], self.new_order_array]
 
-        return fixed_data_array, changes_applied, amogus_frames
+        return fixed_data_array, changed_frames, amogus_frames
 
     def _centroids_tf_pass(self, max_dist:float, lookback_window):
         last_order = self.inst_list
