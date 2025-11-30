@@ -43,6 +43,9 @@ class Frame_Extractor:
             self._frame_cache.move_to_end(frame_index)
             return self._frame_cache[frame_index].copy()
 
+        if self.cap is None:
+            self.cap = cv2.VideoCapture(self.video_path)
+
         self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
         ret, frame = self.cap.read()
         if ret and frame is not None:

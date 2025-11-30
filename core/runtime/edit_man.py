@@ -4,7 +4,7 @@ import pandas as pd
 from PySide6 import QtWidgets
 from PySide6.QtWidgets import QMessageBox, QDialog
 
-from typing import Callable, Optional, List
+from typing import Callable, Optional
 
 from utils.track import (
     Track_Fixer, interpolate_track_all, delete_track, swap_track, interpolate_track,
@@ -15,7 +15,7 @@ from utils.pose import (
     calculate_pose_centroids, calculate_pose_rotations
 )
 from ui import Progress_Indicator_Dialog, Selectable_Instance, Track_Fix_Dialog
-from core.tool import Uno_Stack
+from core.tool import Uno_Stack, Parallel_Review_Dialog
 
 DEBUG = False
 
@@ -49,7 +49,7 @@ class Keypoint_Edit_Manager:
 
     ##############################################################################################
 
-    def correct_track_using_temporal(self, canon_pose, angle_map_data):
+    def correct_track_using_temporal(self, dlc_data, extractor, canon_pose, angle_map_data):
         centroids = np.stack([calculate_pose_centroids(self.pred_data_array, idx)[0] for idx in range(self.total_frames)])
         speeds_px_frame = np.linalg.norm(np.diff(centroids, axis=0), axis=2).flatten()
         speeds_px_frame = speeds_px_frame[~np.isnan(speeds_px_frame)]
@@ -72,11 +72,24 @@ class Keypoint_Edit_Manager:
         if not changed_frames:
             QMessageBox.information(self.main, "No Changes Applied", "No changes were applied.")
             return
-        
-        msg = f"Applied {len(changed_frames)} changes to the current track."
 
+        if amongus_frames:
+            reply = QMessageBox.question(
+                        self.main, f"Ambiguous Frames", f"{len(amongus_frames)} frames are ambiguous, start manual correction now?",
+                        QMessageBox.Yes | QMessageBox.No,
+                    )
+            if reply == QMessageBox.Yes:
+                dialog = Parallel_Review_Dialog(dlc_data, extractor,  self.pred_data_array, [], (changed_frames, amongus_frames), True, parent=self.main)
+                dialog.pred_data_exported.connect(self._get_pred_data_from_manual_review)
+                dialog.exec()
+                return
+            
+        msg = f"Applied {len(changed_frames)} changes to track."
         QMessageBox.information(self.main, "Track Correction Finished", msg)
+        self.track_edited_callback()
 
+    def _get_pred_data_from_manual_review(self, pred_data_array):
+        self.pred_data_array = pred_data_array
         self.track_edited_callback()
 
     ###################################################################################################################################################  

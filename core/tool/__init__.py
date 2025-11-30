@@ -11,6 +11,7 @@ from .plot_config import (
     Adjust_Property_Box,
     Plot_Config_Menu,
 )
+from .reviewer import Parallel_Review_Dialog
 from .annot_config import Annotation_Config, Annotation_Summary_Table
 from .undo_redo import Uno_Stack
 
@@ -25,6 +26,7 @@ __all__ = (
     Adjust_Property_Dialog,
     Adjust_Property_Box,
     Plot_Config_Menu,
+    Parallel_Review_Dialog,
     Annotation_Config,
     Annotation_Summary_Table,
     Uno_Stack,

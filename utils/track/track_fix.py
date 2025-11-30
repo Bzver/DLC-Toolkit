@@ -47,10 +47,10 @@ class Track_Fixer:
             gap_mask = np.all(np.isnan(self.pred_data_array), axis=(1,2))
             self.progress.setLabelText("Fixing tracks (centroid pass)…")
             self._centroids_tf_pass(max_dist, lookback_window)
+            self.new_order_array[gap_mask] = self.inst_array
             if np.any(self.new_order_array == -1):
                 self.progress.setLabelText("Fixing tracks (rotation pass)…")
                 self._rotation_tf_pass(max_dist, lookback_window)
-                self.new_order_array[gap_mask] = self.inst_array
             if np.any(self.new_order_array == -1):
                 amogus_frames = np.where(self.new_order_array[:,0]==-1)[0]
                 self.new_order_array[amogus_frames] = self.inst_array
@@ -68,7 +68,7 @@ class Track_Fixer:
             self.progress.close()
 
         diff = self.new_order_array - np.arange(self.instance_count)
-        changed_frames = np.where(np.any(diff != 0, axis=1))[0]
+        changed_frames = np.where(np.any(diff != 0, axis=1))[0].tolist()
         fixed_data_array = self.pred_data_array[np.arange(self.total_frames)[:, None], self.new_order_array]
 
         return fixed_data_array, changed_frames, amogus_frames

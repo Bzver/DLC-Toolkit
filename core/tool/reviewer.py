@@ -1,4 +1,3 @@
-import os
 import numpy as np
 import cv2
 
@@ -11,43 +10,50 @@ from typing import List, Tuple
 
 from .plot import Prediction_Plotter
 from .undo_redo import Uno_Stack
+from .mark_nav import navigate_to_marked_frame
 from ui import Clickable_Video_Label, Video_Slider_Widget, Shortcut_Manager
 from utils.helper import frame_to_pixmap, handle_unsaved_changes_on_close
+from utils.track import swap_track
 from core.dataclass import Loaded_DLC_Data
 from core.io import Frame_Extractor, Frame_Extractor_Img
 
 class Parallel_Review_Dialog(QDialog):
     pred_data_exported = Signal(object, tuple)
-    RERUN_PALLETTE = {0: "#383838", 1: "#68b3ff", 2: "#F749C6"}
-    TC_PALLETTE = {0: "#959595", 1: "#009353", 2: "#FF0040"}
+    RERUN_PALLETTE = {0: "#959595", 1: "#68b3ff", 2: "#F749C6"}
+    TC_PALLETTE    = {0: "#009353", 1: "#FF0040"}
 
     def __init__(self,
                  dlc_data:Loaded_DLC_Data,
                  extractor:Frame_Extractor|Frame_Extractor_Img,
                  new_data_array:np.ndarray,
                  frame_list:List[int], # Used to map local idx to global idx, irrelevant if tc_mode
-                 tc_mode:bool=False, # WIP
+                 tc_frame_tuple:Tuple[List[int], List[int]],
+                 tc_mode:bool=False,
                  parent=None):
         super().__init__(parent)
         self.dlc_data = dlc_data
         self.extractor = extractor
         self.new_data_array = new_data_array
-        self.frame_list = frame_list
         self.tc_mode = tc_mode
 
         self.backup_data_array = dlc_data.pred_data_array.copy()
         self.pred_data_array = dlc_data.pred_data_array.copy()
 
         self.total_frames = self.pred_data_array.shape[0]
-        if self.tc_mode:
-            self.frame_list = list(range(self.total_frames))
+        self.frame_list = list(range(self.total_frames)) if tc_mode else frame_list
         self.total_marked_frames = len(self.frame_list)
-        self.frame_status_array = np.zeros((self.total_marked_frames,), dtype=np.uint8)
 
         self.current_frame_idx = 0
         self.is_saved = False
         self.uno = Uno_Stack()
-        self.uno.save_state_for_undo(self.frame_status_array)
+
+        if self.tc_mode:
+            self.inst_array = np.array(range(self.dlc_data.pred_data_array.shape[1]))
+            self.uno.save_state_for_undo(self.pred_data_array)
+            self.corrected_frames, self.ambiguous_frames = tc_frame_tuple
+        else:
+            self.frame_status_array = np.zeros((self.total_marked_frames,), dtype=np.uint8)
+            self.uno.save_state_for_undo(self.frame_status_array)
 
         self.plotter = Prediction_Plotter(dlc_data=self.dlc_data)
 
@@ -63,14 +69,16 @@ class Parallel_Review_Dialog(QDialog):
         self.progress_slider.frame_changed.connect(self._handle_frame_change_from_comp)
         layout.addWidget(self.progress_slider)
 
-        approval_box = self._setup_control()
+        approval_box = self._setup_control_tc() if self.tc_mode else self._setup_control()
+
         layout.addWidget(approval_box)
         
         self._build_shortcut()
         self._navigation_title_controller()
         self._update_button_states()
 
-        self._change_frame(0)
+        self._display_current_frame()
+        self._refresh_ui()
 
     def _setup_video_display(self):
         frame_info_layout = QHBoxLayout()
@@ -139,20 +147,56 @@ class Parallel_Review_Dialog(QDialog):
 
         return approval_box
 
+    def _setup_control_tc(self):
+        swap_box = QGroupBox("Manual Track Correction")
+        swap_layout = QHBoxLayout()
+
+        self.swap_button = QPushButton("Swap Instance (W)")
+        self.big_swap_button = QPushButton("Swap Track (Shift + W)")
+        self.apply_button = QPushButton("Apply Changes (Ctrl + S)")
+
+        self.swap_button.clicked.connect(self._swap_instance)
+        self.big_swap_button.clicked.connect(self._swap_track)
+        self.apply_button.clicked.connect(self._save_prediction)
+
+        self.swap_button.setToolTip("Swap current frame instance only.")
+        self.big_swap_button.setToolTip("Swap current frame + all preceding frames.")
+
+        swap_layout.addWidget(self.swap_button)
+        swap_layout.addWidget(self.big_swap_button)
+        swap_layout.addWidget(self.apply_button)
+        swap_box.setLayout(swap_layout)
+
+        return swap_box
+
     def _build_shortcut(self):
         self.shortcut_man = Shortcut_Manager(self)
-        self.shortcut_man.add_shortcuts_from_config(shortcut_config={
+        common_sc={
             "prev_frame":{"key": "Left", "callback": lambda: self._change_frame(-1)},
             "next_frame":{"key": "Right", "callback": lambda: self._change_frame(1)},
             "prev_fast":{"key": "Shift+Left", "callback": lambda: self._change_frame(-10)},
             "next_fast":{"key": "Shift+Right", "callback": lambda: self._change_frame(10)},
+            "prev_mark":{"key": "Up", "callback": self._navigate_prev},
+            "next_mark":{"key": "Down", "callback": self._navigate_next},
             "playback":{"key": "Space", "callback": self._toggle_playback},
-            "approve":{"key": "A", "callback": lambda: self._mark_frame_status("Approved")},
-            "reject":{"key": "R", "callback": lambda: self._mark_frame_status("Rejected")},
             "undo": {"key": "Ctrl+Z", "callback": self._undo_changes},
             "redo": {"key": "Ctrl+Y", "callback": self._redo_changes},
             "save":{"key": "Ctrl+S", "callback": self._save_prediction},
-        })
+        }
+        ntc_sc={
+            **common_sc,
+            "approve":{"key": "A", "callback": lambda: self._mark_frame_status(True)},
+            "reject":{"key": "R", "callback": lambda: self._mark_frame_status(False)},
+        }
+        tc_sc={
+            **common_sc,
+            "swap":{"key": "W", "callback": self._swap_instance},
+            "big_swap":{"key": "Shift+W", "callback": self._swap_track},
+        }
+        shortcuts = tc_sc if self.tc_mode else ntc_sc
+        self.shortcut_man.add_shortcuts_from_config(shortcuts)
+
+    ###################################################################################################
 
     def _display_current_frame(self):
         global_idx = self.frame_list[self.current_frame_idx]
@@ -166,8 +210,8 @@ class Parallel_Review_Dialog(QDialog):
         for i in range(2):
             view = frame.copy()
             pred_data = None
-            if i == 0 and self.backup_data_array is not None:
-                pred_data = self.backup_data_array[global_idx]
+            if i == 0 and self.pred_data_array is not None:
+                pred_data = self.pred_data_array[global_idx]
             elif i == 1 and self.new_data_array is not None:
                 pred_data = self.new_data_array[global_idx]
 
@@ -191,8 +235,26 @@ class Parallel_Review_Dialog(QDialog):
             self._navigation_title_controller()
             self._update_button_states()
 
+    def _navigate_prev(self):
+        list_to_nav = self._determine_list_to_nav()
+        navigate_to_marked_frame(
+            self, list_to_nav, self.current_frame_idx, self._handle_frame_change_from_comp, "prev")
+
+    def _navigate_next(self):
+        list_to_nav = self._determine_list_to_nav()
+        navigate_to_marked_frame(
+            self, list_to_nav, self.current_frame_idx, self._handle_frame_change_from_comp, "next")
+
+    def _determine_list_to_nav(self):
+        if self.tc_mode:
+            return self.ambiguous_frames
+        else:
+            return np.where(self.frame_status_array==1)[0]
+
     def _toggle_playback(self):
         self.progress_slider.toggle_playback()
+
+    ###################################################################################################
 
     def _mark_frame_status(self, approved:bool):
         self._save_state_for_undo()
@@ -218,30 +280,35 @@ class Parallel_Review_Dialog(QDialog):
         self.frame_status_array[unproc_mask] = 2
         self._refresh_ui()
 
+    def _swap_instance(self):
+        self._save_state_for_undo()
+        self.new_data_array = swap_track(self.new_data_array, self.current_frame_idx)
+        self._display_current_frame()
+        self._refresh_ui()
+
+    def _swap_track(self):
+        self._save_state_for_undo()
+        self.new_data_array = swap_track(self.new_data_array, self.current_frame_idx, swap_range=[-1])
+        self._display_current_frame()
+        self._refresh_ui()
+
+    ###################################################################################################
+
     def _navigation_title_controller(self):
         global_idx = self.frame_list[self.current_frame_idx]
         self.global_frame_label.setText(f"Global: {global_idx} / {self.total_frames - 1}")
         self.selected_frame_label.setText(f"Selected: {self.current_frame_idx} / {self.total_marked_frames - 1}")
 
     def _update_button_states(self):
+        if self.tc_mode:
+            self.apply_button.setEnabled(True)
+            return
+        
         current_status = self.frame_status_array[self.current_frame_idx]
         self.approve_button.setEnabled(current_status != 1)
         self.reject_button.setEnabled(current_status != 2)
         self.approve_all_button.setEnabled(np.any(self.frame_status_array==0))
         self.reject_all_button.setEnabled(np.any(self.frame_status_array==0))
-
-    def refresh_slider(self):
-        self.progress_slider.clear_frame_category()
-        self.progress_slider.set_frame_category_array(self.frame_status_array, self.RERUN_PALLETTE)
-        self.progress_slider.commit_categories()
-
-    def get_approved_rejected_lists(self) -> tuple:
-        approved = np.array(self.frame_list)[self.frame_status_array == 1].tolist()
-        rejected = np.array(self.frame_list)[self.frame_status_array == 2].tolist()
-        return approved, rejected
-
-    def get_unprocessed_mask(self) -> np.ndarray:
-        return self.frame_status_array == 0
 
     def _acquire_unproc_mask(self) -> Tuple[np.ndarray, np.ndarray]:
         unproc_mask = self.frame_status_array == 0
@@ -263,11 +330,18 @@ class Parallel_Review_Dialog(QDialog):
     def _refresh_slider(self):
         self.is_saved = False
         self.progress_slider.clear_frame_category()
-        self.progress_slider.set_frame_category_array(self.frame_status_array, {0:"#383838", 1:"#68b3ff", 2:"#F749C6"})
+        if self.tc_mode:
+            self.progress_slider.set_frame_category("ambiguous", self.ambiguous_frames, self.TC_PALLETTE[1], priority=5)
+            self.progress_slider.set_frame_category("changed", self.corrected_frames, self.TC_PALLETTE[0])
+        else:
+            self.progress_slider.set_frame_category_array(self.frame_status_array, self.RERUN_PALLETTE)
         self.progress_slider.commit_categories()
+
+    ###################################################################################################
     
     def _save_state_for_undo(self):
-        self.uno.save_state_for_undo(self.frame_status_array)
+        data_array = self.pred_data_array if self.tc_mode else self.frame_status_array
+        self.uno.save_state_for_undo(data_array)
 
     def _undo_changes(self):
         data_array = self.uno.undo()
@@ -278,8 +352,13 @@ class Parallel_Review_Dialog(QDialog):
         self._undo_redo_worker(data_array)
 
     def _undo_redo_worker(self, data_array):
-        if data_array is not None and np.any(self.frame_status_array - data_array != 0):
-            for frame_idx in np.where(self.frame_status_array - data_array)[0]:
+        if data_array is None:
+            return
+
+        if self.tc_mode:
+            self.pred_data_array = data_array.copy()
+        elif np.any(self.frame_status_array!=data_array):
+            for frame_idx in np.where(self.frame_status_array!=data_array)[0]:
                 global_idx = self.frame_list[frame_idx]
                 status = data_array[frame_idx]
                 if status == 1:
@@ -288,7 +367,9 @@ class Parallel_Review_Dialog(QDialog):
                     self.pred_data_array[global_idx] = self.backup_data_array[global_idx]
 
             self.frame_status_array = data_array.copy()
-            self._refresh_ui()
+
+        self._display_current_frame()
+        self._refresh_ui()
 
     def _save_prediction(self):
         self._refresh_slider()
@@ -311,12 +392,16 @@ class Parallel_Review_Dialog(QDialog):
                 return
 
         self.is_saved = True
-        approve_list_global = np.array(self.frame_list)[self.frame_status_array==1].tolist()
-        rejected_list_global = np.array(self.frame_list)[self.frame_status_array==2].tolist()
-        list_tuple = (approve_list_global, rejected_list_global)
-        self.pred_data_exported.emit(self.pred_data_array, list_tuple)
+        if self.tc_mode:
+            self.pred_data_exported.emit(self.pred_data_array, ())
+        else:
+            approve_list_global = np.array(self.frame_list)[self.frame_status_array==1].tolist()
+            rejected_list_global = np.array(self.frame_list)[self.frame_status_array==2].tolist()
+            list_tuple = (approve_list_global, rejected_list_global)
+            self.pred_data_exported.emit(self.pred_data_array, list_tuple)
         self.accept()
 
     def closeEvent(self, event):
-        self.extractor.close()
+        if not self.tc_mode:
+            self.extractor.close()
         handle_unsaved_changes_on_close(self, event, self.is_saved, self._save_prediction)

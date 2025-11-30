@@ -347,7 +347,7 @@ class Track_Fix_Dialog(QDialog):
         lookback_label = QLabel("Lookback Window:")
         self.lookback_spinbox = QSpinBox()
         self.lookback_spinbox.setRange(2, 1000)
-        self.lookback_spinbox.setValue(50)
+        self.lookback_spinbox.setValue(20)
         lookback_layout.addWidget(lookback_label)
         lookback_layout.addWidget(self.lookback_spinbox)
         

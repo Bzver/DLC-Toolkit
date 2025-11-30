@@ -25,7 +25,6 @@ class Hungarian:
         self.inst_list = list(range(self.instance_count))
         self.full_set = np.all(self.pred_mask) and np.all(self.ref_mask)
         
-        # Global indices
         self.pred_indices = np.where(self.pred_mask)[0]
         self.ref_indices  = np.where(self.ref_mask)[0]
         

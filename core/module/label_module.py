@@ -164,7 +164,6 @@ class Frame_Label:
         self._plot_current_frame(frame)
 
     def _plot_current_frame(self, frame):
-
         pixmap, w, h = frame_to_pixmap(frame)
         pixmap_item = self.gview.gscene.addPixmap(pixmap)
         pixmap_item.setZValue(-1)
@@ -324,7 +323,8 @@ class Frame_Label:
     def _temporal_track_correct(self):
         if not self._track_edit_blocker():
             return
-        self.kem.correct_track_using_temporal(self.dm.canon_pose, self.dm.angle_map_data)
+        self.dm.dlc_data.pred_data_array = self.kem.pred_data_array
+        self.kem.correct_track_using_temporal(self.dm.dlc_data, self.vm.extractor, self.dm.canon_pose, self.dm.angle_map_data)
 
     def _delete_track(self):
         self.kem.del_trk(self.dm.current_frame_idx, self.gview.sbox)
