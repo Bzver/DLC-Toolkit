@@ -412,9 +412,6 @@ class Frame_View:
             delattr(self, 'plotter')
 
     def save_to_dlc(self):
-        fm_list = self.dm.frames_in_any(["refined", "marked", "approved", "rejected"])
-        if self.vm.image_files and not fm_list:
-            fm_list = list(range(self.vm.get_frame_counts()))
         if not self.pre_saving_sanity_check():
             return
         try:
@@ -425,9 +422,9 @@ class Frame_View:
             QMessageBox.critical(self, "Crop Region Not Set", e)
 
     def merge_data(self):
-        if self.vm.image_files:
-            QMessageBox.information(self.main, 
-                "Not Complatible", "Loaded DLC Data can only be saved in labeling mode (in place update), or saved as a new one with 'Export to DeepLabCut'.")
+        if self.vm.image_mode:
+            QMessageBox.information(self.main, "Not Complatible",
+                "Loaded DLC Data can only be saved in labeling mode (in place update), or saved as a new one (cropped) with 'Export to DeepLabCut'.")
             return
         if not self.pre_saving_sanity_check():
             return

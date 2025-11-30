@@ -223,7 +223,7 @@ class Frame_App(QMainWindow):
         self.dm.load_dlc_label(image_folder)
         try:
             self.vm.load_img_from_folder(image_folder)
-            self.dm.total_frames = len(self.vm.image_files)
+            self.dm.total_frames = self.vm.get_frame_counts()
             self.vid_play.set_total_frames(self.dm.total_frames)
         except Exception as e:
             QMessageBox.critical(self, "Error Opening DLC Label", e)

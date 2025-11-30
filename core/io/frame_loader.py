@@ -1,7 +1,10 @@
 import os
 import numpy as np
 from collections import OrderedDict
+
 import cv2
+from PIL import Image
+
 from typing import Optional, Tuple
 
 class Frame_Extractor:
@@ -100,3 +103,52 @@ class Frame_Extractor:
 
     def __del__(self):
         self.close()
+
+
+class Frame_Extractor_Img:
+    def __init__(self, img_folder: str):
+        if not os.path.isdir(img_folder):
+            raise FileNotFoundError(f"Image folder not found: {img_folder}")
+
+        self.img_files = [os.path.join(img_folder,f) for f in os.listdir(img_folder) 
+                          if f.endswith((".png", ".jpg")) and f.startswith("img")]
+
+        if len(self.img_files) == 0:
+            raise RuntimeError(f"No eligible image can be found in {img_folder}.")
+        
+        self.img_files.sort()
+
+        self.total_frames = len(self.img_files)
+        self.width, self.height = self.get_largest_dim()
+
+    def get_total_frames(self) -> int:
+        return self.total_frames
+    
+    def get_frame_dim(self) -> Tuple[int, int]:
+        return self.height, self.width
+
+    def get_frame(self, frame_index: int) -> Optional[np.ndarray]:
+        if frame_index < 0 or frame_index >= self.total_frames:
+            return None
+
+        frame = cv2.imread(self.img_files[frame_index])
+        if frame is not None:
+            return frame
+        else:
+            print(f"OpenCV failed to read frame {frame_index}")
+            return None
+
+    def get_largest_dim(self) -> Tuple[int, int]:
+        max_x, max_y = 0, 0
+        for path in self.img_files:
+            try:
+                with Image.open(path) as img:
+                    w, h = img.size
+                    max_x = max(max_x, w)
+                    max_y = max(max_y, h)
+            except Exception as e:
+                print(f"Skipping {path}: {e}")
+        return int(max_x), int(max_y)
+    
+    def close(self):
+        pass
