@@ -162,7 +162,11 @@ class Exporter:
 
         self.extractor.start_sequential_read(0)
         while current_frame_idx <= max(self.frame_list) if self.frame_list else -1:
-            idx, frame = self.extractor.read_next_frame() 
+            result = self.extractor.read_next_frame()
+            if result is None:
+                break
+
+            idx, frame = result
             if idx != current_frame_idx:
                 self.extractor.finish_sequential_read()
                 raise RuntimeError(f"Mismatch between frame indices: {idx} != {current_frame_idx}")

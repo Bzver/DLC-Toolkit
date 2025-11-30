@@ -109,38 +109,28 @@ class Frame_View:
         if not self.vm.check_status_msg():
             self.vid_play.display.setText("No video loaded")
 
+        if self.dm.dlc_data is not None and not hasattr(self, "plotter"):
+            self.plotter = Prediction_Plotter(dlc_data=self.dm.dlc_data, plot_config=self.dm.plot_config)
+
         frame = self.vm.get_frame(self.dm.current_frame_idx)
         if frame is None:
             self.vid_play.display.setText("Failed to load current frame.")
             return
-        
+
         if self.is_counting:
             self.blob_counter.set_current_frame(frame, self.dm.current_frame_idx)
         else:
             self._plot_current_frame(frame)
 
-    def _initialize_plotter(self):
-        current_frame_data = np.full((self.dm.dlc_data.instance_count, self.dm.dlc_data.num_keypoint*3), np.nan)
-        self.plotter = Prediction_Plotter(
-            dlc_data = self.dm.dlc_data, current_frame_data = current_frame_data,
-            plot_config = self.dm.plot_config, frame_cv2 = self.vm.current_frame)
-
     def _plot_current_frame(self, frame, count=None):
         if self.dm.dlc_data is not None and self.dm.dlc_data.pred_data_array is not None:
-            if not hasattr(self, "plotter"):
-                self._initialize_plotter()
-
             if self.dm.plot_config.plot_pred:
-                self.plotter.frame_cv2 = frame
-                self.plotter.current_frame_data = self.dm.dlc_data.pred_data_array[self.dm.current_frame_idx,:,:]
-                frame = self.plotter.plot_predictions()
+                frame = self.plotter.plot_predictions(frame, self.dm.dlc_data.pred_data_array[self.dm.current_frame_idx,:,:])
 
             if self.dm.has_current_frame_cat("labeled") and self.dm.plot_config.plot_labeled:
-                self.plotter.frame_cv2 = frame
-                self.plotter.current_frame_data = self.dm.label_data_array[self.dm.current_frame_idx,:,:]
                 old_colors = self.plotter.color.copy()
                 self.plotter.color = [(200, 130, 0), (40, 200, 40), (40, 120, 200), (200, 40, 40), (200, 200, 80)]
-                frame = self.plotter.plot_predictions()
+                frame = self.plotter.plot_predictions(frame, self.dm.label_data_array[self.dm.current_frame_idx,:,:])
                 self.plotter.color = old_colors
 
         pixmap, _, _ = frame_to_pixmap(frame)

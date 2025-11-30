@@ -53,7 +53,7 @@ def append_new_video_to_dlc_config(config_path:str, video_name:str):
     # Load original config
     with open(config_path, 'r') as f:
         try:
-            config_org = yaml.load(f, Loader=yaml.SafeLoader)
+            config_org = yaml.safe_load(f)
         except yaml.YAMLError as e:
             raise ValueError(f"Error parsing YAML file: {e}")
 

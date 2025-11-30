@@ -450,6 +450,9 @@ class Frame_View_3D(QtWidgets.QMainWindow):
     ###################################################################################################################################################
 
     def display_current_frame(self):
+        if self.dlc_data is not None and not hasattr(self, "plotter"):
+            self.plotter = Prediction_Plotter(dlc_data = self.dlc_data, plot_config = self.plot_config)
+
         for i, cap in enumerate(self.cap_list):
             if not cap or not cap.isOpened():
                 self.video_labels[i].setText(f"Video {i+1} Not Loaded/Available")
@@ -461,17 +464,11 @@ class Frame_View_3D(QtWidgets.QMainWindow):
             if not ret:
                 self.video_labels[i].setText(f"End of Video {i+1} / Error")
                 self.video_labels[i].setPixmap(QtGui.QPixmap()) # Clear any previous image
-
-            # Check if pred_data_array is initialized and has data for the current frame and camera
-            if self.pred_data_array is not None:
-                if not hasattr(self, "plotter"):
-                    self.initialize_2d_plotter(frame)
                 
                 current_frame_data = self.pred_data_array[self.current_frame_idx, i, :, :]
+
                 if not np.all(np.isnan(current_frame_data)):
-                    self.plotter.frame_cv2 = frame
-                    self.plotter.current_frame_data = current_frame_data
-                    frame = self.plotter.plot_predictions()
+                    frame = self.plotter.plot_predictions(frame, current_frame_data)
 
             target_width = self.video_labels[i].width() # Get the target size from the QLabel
             target_height = self.video_labels[i].height()
@@ -564,14 +561,6 @@ class Frame_View_3D(QtWidgets.QMainWindow):
         Z = np.zeros_like(X)
         self.ax.plot_surface(X, Y, Z, alpha=0.1, color='gray')
         self.canvas.draw_idle()
-
-    def initialize_2d_plotter(self, frame):
-        current_frame_data = np.full((self.dlc_data.instance_count, self.dlc_data.num_keypoint*3), np.nan)
-        self.plotter = Prediction_Plotter(
-            dlc_data = self.dlc_data,
-            current_frame_data = current_frame_data,
-            plot_config = self.plot_config,
-            frame_cv2 = frame)
 
     ###################################################################################################################################################
 

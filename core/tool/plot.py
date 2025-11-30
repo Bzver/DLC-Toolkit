@@ -10,40 +10,21 @@ from core.dataclass import Loaded_DLC_Data, Plot_Config, Plotter_Callbacks
 from ui import Selectable_Instance, Draggable_Keypoint
 
 class Prediction_Plotter:
+    Frame_CV2 = np.ndarray
+
     def __init__(
             self, dlc_data:Loaded_DLC_Data,
-            current_frame_data:np.ndarray,
-            plot_config:Optional[Plot_Config]=None,
-            frame_cv2:Optional[np.ndarray]=None,
-            graphics_scene:Optional[QGraphicsScene]=None,
-            plot_callback:Optional[Plotter_Callbacks]=None
+            plot_config:Optional[Plot_Config] = None,
+            plot_callback:Optional[Plotter_Callbacks] = None,
+            fast_mode:bool = True,
             ):
-        """
-        Initializes the prediction plotter for visualizing 2D pose predictions either on a CV2 image 
-        or a QGraphicsScene. Supports interactive editing and real-time rendering.
-
-        Args:
-            dlc_data (Loaded_DLC_Data): Metadata including instance count, keypoint names, skeleton
-                structure, and individual IDs.
-            current_frame_data (np.ndarray): Flattened array of shape (num_instances * num_keypoints * 3,) 
-                containing x, y, confidence for each keypoint of each instance.
-            plot_config (Plot_Config, optional): Configuration for plotting appearance and behavior. 
-                Uses default values if not provided.
-            frame_cv2 (np.ndarray, optional): BGR image frame for OpenCV-based drawing. 
-                Used when plotting in "CV" mode.
-            graphics_scene (QGraphicsScene, optional): Qt graphics scene for interactive rendering. 
-                Used when plotting in "GS" mode.
-            plot_callback (Refiner_Plotter_Callbacks, optional): Callback handler for keypoint drag 
-                events; required for interactive editing in graphics scene mode.
-
-        Raises:
-            ValueError: If neither or both of 'frame_cv2' and 'graphics_scene' are provided.
-        """
         self.dlc_data = dlc_data
-        self.current_frame_data = current_frame_data
-        self.frame_cv2 = frame_cv2
-        self.graphics_scene = graphics_scene
         self.plot_callback = plot_callback
+        self.cv_mode = fast_mode
+
+        self.current_frame_data = None
+        self.frame_cv2 = None
+        self.graphics_scene = None
 
         self.color = [(255, 165, 0), (51, 255, 51), (51, 153, 255), (255, 51, 51), (255, 255, 102)] # RGB
 
@@ -54,35 +35,38 @@ class Prediction_Plotter:
         else:
             self.plot_config = plot_config
 
-        if frame_cv2 is None and graphics_scene is not None:
-            self.mode = "GS"
-        elif graphics_scene is None and frame_cv2 is not None:
-            self.mode = "CV"
+        if fast_mode:
             self.color = [color[::-1] for color in self.color] # RGB to BGR
-        else:
-            raise ValueError("Either 'frame_cv2' or 'graphics_scene' must be provided, but not both.")
 
         self.keypoint_coords = {}
 
-    def plot_predictions(self) -> Optional[np.ndarray]:
-        """
-        Renders keypoints, labels, bounding boxes, and skeleton connections for all instances 
-        in the current frame based on the selected plotting mode.
+    def plot_predictions(self, frame:Frame_CV2|QGraphicsScene, current_frame_data:np.ndarray) -> Frame_CV2:
+        if frame is None:
+            raise ValueError("Nonetype cannot be used as plotting canvas.")
 
-        Drawing modes:
-            - "GS" (QGraphicsScene): Draws interactive, draggable keypoints with Qt items.
-              Connects drag events to the provided callback for refinement workflows.
-            - "CV" (OpenCV): Draws static circles on the input image using cv2.
+        if isinstance(frame, np.ndarray):
+            frame_type = "Frame_CV2"
+        elif isinstance(frame, QGraphicsScene):
+            frame_type = "QGraphicsScene"
+        else:
+            frame_type = "Unknown"
 
-        Additional elements:
-            - Keypoint text labels (if not hidden).
-            - Bounding box around each instance (if individuals are defined and >=2 keypoints visible).
-            - Skeleton lines connecting keypoints according to the skeleton definition.
+        if self.cv_mode and frame_type == "Frame_CV2":
+            self.frame_cv2 = frame
+        elif not self.cv_mode and frame_type == "QGraphicsScene":
+            self.graphics_scene = frame
+        else:
+            plotter_mode = "CV2" if self.cv_mode else "GraphicScene"
+            raise ValueError(
+                f"Frame and plotter mode mismatch! Plotter mode:{plotter_mode} - frame: {frame_type}")
+        
+        if current_frame_data is None or np.all(np.isnan(current_frame_data)) or self.dlc_data is None:
+            return frame
+        
+        self.current_frame_data = current_frame_data
+        return self._plot_worker()
 
-        Returns:
-            Optional[np.ndarray]: Modified frame_cv2 with overlays if in "CV" mode; 
-                                 otherwise None (drawing is done directly on the scene in "GS" mode).
-        """
+    def _plot_worker(self) -> Optional[np.ndarray]:
         for inst in range(self.dlc_data.instance_count):
             self.keypoint_coords = {} # Cleanup the keypoint coords of other insts
             color = self.color[inst % len(self.color)]
@@ -94,7 +78,10 @@ class Prediction_Plotter:
                 if np.isnan(x) or np.isnan(y) or conf <= self.plot_config.confidence_cutoff:
                     continue
 
-                if self.mode == "GS": # QGraphicsEllipseItem dot representing the keypoints 
+                if self.cv_mode:
+                    self.keypoint_coords[kp_idx] = (int(x),int(y),float(conf))
+                    cv2.circle(self.frame_cv2, (int(x), int(y)), int(self.plot_config.point_size//2), color, -1)
+                else:
                     self.keypoint_coords[kp_idx] = (float(x),float(y),float(conf))
                     keypoint_item = Draggable_Keypoint(
                         x - self.plot_config.point_size / 2, y - self.plot_config.point_size / 2,
@@ -109,10 +96,6 @@ class Prediction_Plotter:
                     keypoint_item.keypoint_moved.connect(self.plot_callback.keypoint_coords_callback)
                     keypoint_item.keypoint_drag_started.connect(self.plot_callback.keypoint_object_callback)
 
-                elif self.mode == "CV": # Draw the dot representing the keypoints
-                    self.keypoint_coords[kp_idx] = (int(x),int(y),float(conf))
-                    cv2.circle(self.frame_cv2, (int(x), int(y)), int(self.plot_config.point_size//2), color, -1) 
-
             if not self.plot_config.hide_text_labels:
                 self._plot_keypoint_label(color)
 
@@ -122,7 +105,7 @@ class Prediction_Plotter:
             if self.dlc_data.skeleton:
                 self._plot_skeleton(color)
 
-        if self.mode == "CV":
+        if self.cv_mode:
             return self.frame_cv2
 
     def _plot_bounding_box(self, color:Tuple[int, int, int], inst_idx:int, padding:int=10):
@@ -139,12 +122,12 @@ class Prediction_Plotter:
         min_y = min(y_coords)
         max_y = max(y_coords)
 
-        if self.mode == "GS":
-            view_width = self.graphics_scene.sceneRect().width()
-            view_height = self.graphics_scene.sceneRect().height()
-        elif self.mode == "CV":
+        if self.cv_mode:
             view_width = self.frame_cv2.shape[1]
             view_height = self.frame_cv2.shape[0]
+        else:
+            view_width = self.graphics_scene.sceneRect().width()
+            view_height = self.graphics_scene.sceneRect().height()
 
         min_x = max(0, min_x - padding)
         min_y = max(0, min_y - padding)
@@ -152,8 +135,15 @@ class Prediction_Plotter:
         max_y = min(view_height - 1, max_y + padding)
 
         bounding_box_label = f"Inst: {self.dlc_data.individuals[inst_idx]} | Conf:{kp_inst_mean:.4f}"
-
-        if self.mode == "GS": # Draw bounding box using QGraphicsRectItem
+        
+        if self.cv_mode:
+            cv2.rectangle(self.frame_cv2, (min_x, min_y), (max_x, max_y), color, 1) # Draw the bounding box
+            
+            if not self.plot_config.hide_text_labels:
+                cv2.putText(self.frame_cv2, f"{bounding_box_label}", (min_x, min_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, self.plot_config.point_size/20, color, 1, cv2.LINE_AA)
+                
+        else: # Draw bounding box using QGraphicsRectItem
             rect_item = Selectable_Instance(min_x, min_y, max_x - min_x, max_y - min_y, inst_idx, default_color_rgb=color)
             rect_item.setOpacity(self.plot_config.plot_opacity)
 
@@ -171,19 +161,16 @@ class Prediction_Plotter:
                 text_item_inst.setOpacity(self.plot_config.plot_opacity)
                 text_item_inst.setFlag(QGraphicsTextItem.ItemIgnoresTransformations) # Keep text size constant
                 self.graphics_scene.addItem(text_item_inst)
-        
-        elif self.mode == "CV":
-            cv2.rectangle(self.frame_cv2, (min_x, min_y), (max_x, max_y), color, 1) # Draw the bounding box
-            
-            if not self.plot_config.hide_text_labels:
-                cv2.putText(self.frame_cv2, f"{bounding_box_label}", (min_x, min_y),
-                    cv2.FONT_HERSHEY_SIMPLEX, self.plot_config.point_size/20, color, 1, cv2.LINE_AA)
+
 
     def _plot_keypoint_label(self, color:Tuple[int, int, int]):
         for kp_idx, (x, y, _) in self.keypoint_coords.items():
             keypoint_label = self.dlc_data.keypoints[kp_idx]
 
-            if self.mode == "GS":
+            if self.cv_mode:
+                cv2.putText(self.frame_cv2, str(keypoint_label), (int(x), int(y)),
+                    cv2.FONT_HERSHEY_SIMPLEX, self.plot_config.point_size/20, color, 1, cv2.LINE_AA)
+            else:
                 text_item = QGraphicsTextItem(f"{keypoint_label}")
 
                 font = text_item.font() # Get the default font of the QGraphicsTextItem
@@ -202,10 +189,6 @@ class Prediction_Plotter:
                 text_item.setFlag(QGraphicsTextItem.ItemIgnoresTransformations) # Keep text size constant
                 self.graphics_scene.addItem(text_item)
             
-            elif self.mode == "CV":
-                cv2.putText(self.frame_cv2, str(keypoint_label), (int(x), int(y)),
-                    cv2.FONT_HERSHEY_SIMPLEX, self.plot_config.point_size/20, color, 1, cv2.LINE_AA)
-
     def _plot_skeleton(self, color:Tuple[int, int, int]):
         for start_kp, end_kp in self.dlc_data.skeleton:
             start_kp_idx = self.dlc_data.keypoint_to_idx[start_kp]
@@ -216,14 +199,13 @@ class Prediction_Plotter:
             if not start_coord or not end_coord:
                 continue
             
-            if self.mode == "GS":
-                line = QGraphicsLineItem(start_coord[0], start_coord[1], end_coord[0], end_coord[1])
-                line.setPen(QtGui.QPen(QtGui.QColor(*color), self.plot_config.point_size/3))
-                line.setOpacity(self.plot_config.plot_opacity)
-                self.graphics_scene.addItem(line)
-
-            elif self.mode == "CV":
+            if self.cv_mode:
                 start_coord = start_coord[:2]
                 end_coord = end_coord[:2]
                 line_thick = 1 if self.plot_config.point_size < 5 else 2
                 cv2.line(self.frame_cv2, start_coord, end_coord, color, line_thick)
+            else:
+                line = QGraphicsLineItem(start_coord[0], start_coord[1], end_coord[0], end_coord[1])
+                line.setPen(QtGui.QPen(QtGui.QColor(*color), self.plot_config.point_size/3))
+                line.setOpacity(self.plot_config.plot_opacity)
+                self.graphics_scene.addItem(line)

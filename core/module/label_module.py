@@ -151,6 +151,10 @@ class Frame_Label:
     def display_current_frame(self):
         self.gview.sbox = None
 
+        if self.dm.dlc_data is not None and not hasattr(self, "plotter"):
+            self.plotter = Prediction_Plotter(
+                dlc_data = self.dm.dlc_data, plot_config=self.dm.plot_config, plot_callback=self.plotter_callback, fast_mode=False)
+
         frame = self.vm.get_frame(self.dm.current_frame_idx)
         if frame is None:
             self.gview.clear_graphic_scene()
@@ -159,16 +163,7 @@ class Frame_Label:
         self.gview.clear_graphic_scene()
         self._plot_current_frame(frame)
 
-    def _initialize_plotter(self):
-        current_frame_data = np.full((self.dm.dlc_data.instance_count, self.dm.dlc_data.num_keypoint*3), np.nan)
-        self.plotter = Prediction_Plotter(
-            dlc_data = self.dm.dlc_data, current_frame_data = current_frame_data,
-            plot_config = self.dm.plot_config, graphics_scene = self.gview.gscene, plot_callback=self.plotter_callback)
-
     def _plot_current_frame(self, frame):
-        if self.dm.dlc_data is not None:
-            if not hasattr(self, "plotter"):
-                self._initialize_plotter()
 
         pixmap, w, h = frame_to_pixmap(frame)
         pixmap_item = self.gview.gscene.addPixmap(pixmap)
@@ -188,9 +183,8 @@ class Frame_Label:
         self.gview.setTransform(new_transform)
 
         if self.kem.pred_data_array is not None:
-            self.plotter.current_frame_data = self.kem.get_current_frame_data(self.dm.current_frame_idx)
             self.plotter.plot_config = self.dm.plot_config
-            self.plotter.plot_predictions()
+            self.plotter.plot_predictions(self.gview.gscene, self.kem.get_current_frame_data(self.dm.current_frame_idx))
 
         self.gview.update() # Force update of the graphics view
         self.vid_play.set_current_frame(self.dm.current_frame_idx) # Update slider handle's position

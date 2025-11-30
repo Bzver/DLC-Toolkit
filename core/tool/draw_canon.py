@@ -69,12 +69,8 @@ class Canonical_Pose_Dialog(QDialog):
         dummy_dlc_data = self.dlc_data
         dummy_dlc_data.instance_count = 1
 
-        plotter = Prediction_Plotter(
-            dlc_data=dummy_dlc_data,
-            current_frame_data=reshaped_pose,
-            frame_cv2=blank_image,
-        )
-        plotted_image = plotter.plot_predictions()
+        plotter = Prediction_Plotter(dlc_data=dummy_dlc_data)
+        plotted_image = plotter.plot_predictions(blank_image, reshaped_pose)
 
         # Convert OpenCV image to QPixmap and display
         rgb_image = cv2.cvtColor(plotted_image, cv2.COLOR_BGR2RGB)
