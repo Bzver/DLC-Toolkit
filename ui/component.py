@@ -50,7 +50,6 @@ class Draggable_Keypoint(QtCore.QObject, QGraphicsEllipseItem):
             return value
         return super().itemChange(change, value)
 
-#######################################################################################################################################################
 
 class Selectable_Instance(QtCore.QObject, QGraphicsRectItem):
     bounding_box_clicked = Signal(object)                        # Signal to emit when this box is clicked
@@ -130,7 +129,6 @@ class Selectable_Instance(QtCore.QObject, QGraphicsRectItem):
         else:
             self.setPen(self.default_pen)
 
-###################################################################################################################################################
 
 class Clickable_Video_Label(QtWidgets.QLabel):
     clicked = Signal(int) # Signal to emit cam_idx when clicked
@@ -144,3 +142,20 @@ class Clickable_Video_Label(QtWidgets.QLabel):
         if event.button() == Qt.LeftButton:
             self.clicked.emit(self.cam_idx)
         super().mousePressEvent(event)
+
+
+class Spinbox_With_Label(QtWidgets.QWidget):
+    value_changed = Signal(int)
+
+    def __init__(self, label_text: str, spinbox_range: tuple, initial_val: int, parent=None):
+        super().__init__(parent)
+        layout = QtWidgets.QHBoxLayout(self)
+        label = QtWidgets.QLabel(label_text)
+        self.spinbox = QtWidgets.QSpinBox()
+        self.spinbox.setRange(*spinbox_range)
+        self.spinbox.setValue(initial_val)
+        self.spinbox.valueChanged.connect(lambda v: self.value_changed.emit(v))
+
+        layout.addWidget(label)
+        layout.addWidget(self.spinbox)
+        layout.setContentsMargins(0, 0, 0, 0)

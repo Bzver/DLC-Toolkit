@@ -2,6 +2,7 @@ from .component import (
     Draggable_Keypoint,
     Selectable_Instance,
     Clickable_Video_Label,
+    Spinbox_With_Label,
 )
 
 from .dialog import (
@@ -25,6 +26,7 @@ __all__ = (
     Draggable_Keypoint,
     Selectable_Instance,
     Clickable_Video_Label,
+    Spinbox_With_Label,
     Pose_Rotation_Dialog,
     Frame_List_Dialog,
     Head_Tail_Dialog,
