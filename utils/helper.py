@@ -2,7 +2,7 @@ import numpy as np
 import cv2
 from PySide6 import QtGui
 from PySide6.QtWidgets import QMessageBox
-from typing import List, Tuple, Callable, Union
+from typing import List, Tuple, Callable, Union, Iterable
 
 def get_instances_on_current_frame(pred_data_array:np.ndarray, current_frame_idx:int) -> List[int]:
     """
@@ -406,3 +406,12 @@ def indices_to_spans(indices: Union[np.ndarray, List[int]]) -> List[Tuple[int, i
 
     chunks = np.split(indices, split_at)
     return [(int(chunk[0]), int(chunk[-1])) for chunk in chunks]
+
+def array_to_iterable_runs(arr:np.ndarray) -> Iterable[Tuple[int, int, np.ndarray]]:
+    if len(arr) == 0:
+        return zip([], [], [])
+    change_points = np.where(arr[1:] != arr[:-1])[0] + 1 
+    starts = np.concatenate(([0], change_points))
+    ends = np.concatenate((change_points - 1, [len(arr) - 1]))
+    values = arr[starts]
+    return zip(starts, ends, values)

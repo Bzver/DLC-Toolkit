@@ -6,7 +6,7 @@ import traceback
 
 from ui import (
     Menu_Widget, Video_Player_Widget, Frame_List_Dialog, Status_Bar, Inference_interval_Dialog, Shortcut_Manager, Frame_Display_Dialog)
-from utils.helper import frame_to_pixmap, frame_to_qimage, get_roi_cv2, plot_roi
+from utils.helper import frame_to_pixmap, frame_to_qimage, get_roi_cv2, plot_roi, array_to_iterable_runs
 from core.runtime import Data_Manager, Video_Manager
 from core.tool import Mark_Generator, Blob_Counter, Prediction_Plotter
 
@@ -363,9 +363,12 @@ class Frame_View:
         inference_list = []
         last_inferenced_frame = 0
 
+        # To tame blob array's noisy nature
+        animal_count_array, merge_array = self._clean_blob_array_for_inference()
+
         for frame_idx in range(self.dm.total_frames):
-            animal_count = self.dm.blob_array[frame_idx, 0]
-            merge_status = self.dm.blob_array[frame_idx, 1]
+            animal_count = animal_count_array[frame_idx]
+            merge_status = merge_array[frame_idx]
             
             current_interval = 1
 
@@ -399,6 +402,42 @@ class Frame_View:
         )
         if reply == QMessageBox.Yes:
             self.call_inference(inference_list)
+
+    def _clean_blob_array_for_inference(self):
+        animal_count_array, merge_array = self.dm.blob_array[:, 0].copy(), self.dm.blob_array[:, 1].copy()
+        animal_count_array[animal_count_array>2] = 2
+
+        for start, end, value in array_to_iterable_runs(merge_array): # merge array has only 1 and 0
+            if end == start:
+                try:
+                    merge_array[start] = merge_array[start - 1]
+                except IndexError:
+                    pass
+                finally:
+                    continue
+            if value == 1:
+                merge_array[max(0,start-5):end+6] = value
+
+        merged_frames = set(np.where(merge_array==1)[0])
+
+        two_indices = set()
+        for start, end, value in array_to_iterable_runs(animal_count_array):
+            if end == start:
+                try:
+                    animal_count_array[start] = animal_count_array[start - 1]
+                except IndexError:
+                    pass
+                finally:
+                    continue
+            if value == 2:
+                two_indices.update(range(max(0,start-5), end+6))
+            if value == 1:
+                animal_count_array[max(0,start-5):min(self.dm.total_frames,end+6)] = value
+
+        two_indices = list(sorted(two_indices|merged_frames))
+        animal_count_array[two_indices] = 2
+
+        return animal_count_array, merge_array
 
     def _reload_prediction(self, prediction_path:str):
         """Reload prediction data from file and update visualization"""
