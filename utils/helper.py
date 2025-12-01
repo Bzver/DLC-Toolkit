@@ -2,7 +2,7 @@ import numpy as np
 import cv2
 from PySide6 import QtGui
 from PySide6.QtWidgets import QMessageBox
-from typing import List, Tuple, Callable, Union, Iterable
+from typing import List, Tuple, Callable, Union, Iterable, Optional
 
 def get_instances_on_current_frame(pred_data_array:np.ndarray, current_frame_idx:int) -> List[int]:
     """
@@ -129,20 +129,18 @@ def build_angle_map(canon_pose:np.ndarray, all_frame_poses:np.ndarray , head_idx
         canonical_body_angle = np.arctan2(canonical_vec[1], canonical_vec[0])
 
     # Build angle map for every possible connection
-    angle_map = []  # (i, j, expected_offset, weight)
-    all_angles = np.arctan2(all_frame_poses[:, 1::2], all_frame_poses[:, 0::2])  # (N, K)
+    angle_map = []
+    all_angles = np.arctan2(all_frame_poses[:, 1::2], all_frame_poses[:, 0::2]) 
 
     for i in range(num_keypoint):
         for j in range(num_keypoint):
             if i == j:
                 continue
 
-            # Vector from i to j in canon pose
             vec = canon_pose[j] - canon_pose[i]
             if np.linalg.norm(vec) < 1e-6:
                 continue
 
-            # Expected angle of this vector
             raw_angle = np.arctan2(vec[1], vec[0])
 
             # Offset relative to canonical body angle
@@ -171,6 +169,35 @@ def build_angle_map(canon_pose:np.ndarray, all_frame_poses:np.ndarray , head_idx
     angle_map_data = {"head_idx": head_idx, "tail_idx": tail_idx, "angle_map": angle_map}
 
     return angle_map_data
+
+def build_weighted_pose_vectors(pred_data_array:np.ndarray, angle_map_data:dict, max_connections:int=6, min_weight: float = 0.1) -> Optional[np.ndarray]:
+    angle_map = angle_map_data["angle_map"]
+    
+    reliable = [conn for conn in angle_map if conn["weight"] >= min_weight][:max_connections]
+    
+    if not reliable:
+        print("No reliable connections found in angle_map.")
+        return None
+    
+    M = len(reliable)
+    T, N = pred_data_array.shape[:2]
+    vectors = np.full((T, N, 2 * M), np.nan, dtype=np.float32)
+    
+    xs = pred_data_array[..., 0::3]
+    ys = pred_data_array[..., 1::3]
+    
+    for idx, conn in enumerate(reliable):
+        i, j, w = conn["i"], conn["j"], conn["weight"]
+
+        dx = w * (xs[:, :, j] - xs[:, :, i])
+        dy = w * (ys[:, :, j] - ys[:, :, i])
+        
+        valid = (~np.isnan(xs[:, :, i]) & ~np.isnan(xs[:, :, j]) & ~np.isnan(ys[:, :, i]) & ~np.isnan(ys[:, :, j]))
+        
+        vectors[:, :, 2*idx]     = np.where(valid, dx, np.nan)
+        vectors[:, :, 2*idx + 1] = np.where(valid, dy, np.nan)
+    
+    return vectors
 
 #########################################################################################################################################################1
 

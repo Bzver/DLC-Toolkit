@@ -51,7 +51,7 @@ class Parallel_Review_Dialog(QDialog):
             if tc_frame_tuple is None:
                 raise TypeError("Missing 1 required positional argument: 'tc_frame_tuple")
             self.inst_array = np.array(range(self.dlc_data.pred_data_array.shape[1]))
-            self.uno.save_state_for_undo(self.pred_data_array)
+            self.uno.save_state_for_undo(self.new_data_array)
             self.corrected_frames, self.ambiguous_frames = tc_frame_tuple
         else:
             self.frame_status_array = np.zeros((self.total_marked_frames,), dtype=np.uint8)
@@ -342,7 +342,7 @@ class Parallel_Review_Dialog(QDialog):
     ###################################################################################################
     
     def _save_state_for_undo(self):
-        data_array = self.pred_data_array if self.tc_mode else self.frame_status_array
+        data_array = self.new_data_array if self.tc_mode else self.frame_status_array
         self.uno.save_state_for_undo(data_array)
 
     def _undo_changes(self):
@@ -358,7 +358,7 @@ class Parallel_Review_Dialog(QDialog):
             return
 
         if self.tc_mode:
-            self.pred_data_array = data_array.copy()
+            self.new_data_array = data_array.copy()
         elif np.any(self.frame_status_array!=data_array):
             for frame_idx in np.where(self.frame_status_array!=data_array)[0]:
                 global_idx = self.frame_list[frame_idx]
@@ -395,7 +395,7 @@ class Parallel_Review_Dialog(QDialog):
 
         self.is_saved = True
         if self.tc_mode:
-            self.pred_data_exported.emit(self.pred_data_array, ())
+            self.pred_data_exported.emit(self.new_data_array, ())
         else:
             approve_list_global = np.array(self.frame_list)[self.frame_status_array==1].tolist()
             rejected_list_global = np.array(self.frame_list)[self.frame_status_array==2].tolist()

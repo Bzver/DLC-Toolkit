@@ -4,13 +4,12 @@ from PySide6.QtWidgets import QProgressDialog
 from typing import List, Dict, Any, Tuple, Optional
 import traceback
 
-from .hungarian import Hungarian
+from .hungarian import Hungarian, Transylvanian
 from utils.pose import (
-    calculate_pose_centroids, calculate_pose_rotations,
-    outlier_removal, outlier_confidence, outlier_pose, 
+    calculate_pose_centroids, outlier_removal, outlier_confidence, outlier_pose, 
     outlier_bodypart, outlier_duplicate, outlier_size, outlier_enveloped,
     )
-from utils.helper import log_print, clean_log
+from utils.helper import log_print, clean_log, build_weighted_pose_vectors
 
 DEBUG = True
 
@@ -36,7 +35,6 @@ class Track_Fixer:
         self.inst_array = np.array(self.inst_list)
 
         self.new_order_array = -np.ones((self.total_frames, self.instance_count), dtype=np.int8)
-
         self.current_frame_data = np.full_like(self.pred_data_array[0], np.nan)
 
         if DEBUG:
@@ -50,7 +48,7 @@ class Track_Fixer:
             self.new_order_array[gap_mask] = self.inst_array
             if np.any(self.new_order_array == -1):
                 self.progress.setLabelText("Fixing tracks (rotation pass)…")
-                self._rotation_tf_pass(max_dist, lookback_window)
+                self._vector_tf_pass(max_dist, lookback_window)
             if np.any(self.new_order_array == -1):
                 amogus_frames = np.where(self.new_order_array[:,0]==-1)[0]
                 self.new_order_array[amogus_frames] = self.inst_array
@@ -96,9 +94,6 @@ class Track_Fixer:
             self.current_frame_data = self.corrected_pred_data[frame_idx]
 
             valid_ref_mask = ref_last_updated > frame_idx - lookback_window
-            frame_gap = frame_idx if np.all(np.isnan(ref_last_updated)) else frame_idx - np.nanmax(ref_last_updated)
-            dynamic_max_dist = max_dist * np.sqrt(max(1, frame_gap))
-            log_print(f"Using {dynamic_max_dist} pixels as max_dist.")
 
             for i in range(self.instance_count):
                 log_print(f"x,y in pred: inst {i}: ({pred_centroids[i,0]:.1f}, {pred_centroids[i,1]:.1f})", enabled=DEBUG)
@@ -116,7 +111,8 @@ class Track_Fixer:
                 last_order = self.inst_list
                 continue
 
-            hun = Hungarian(pred_centroids, ref_centroids, valid_pred_mask, valid_ref_mask, max_dist=dynamic_max_dist, debug_print=DEBUG)
+            hun = Hungarian(pred_centroids, ref_centroids, valid_pred_mask, valid_ref_mask,
+                            max_dist=max_dist, ref_frame_gap=frame_idx-ref_last_updated, debug_print=DEBUG)
 
             skip_matching = False
             if last_order != self.inst_list and hun.full_set: # Try last order first if possible
@@ -135,6 +131,7 @@ class Track_Fixer:
                     self.new_order_array[frame_idx] = -1 # Ambiguous
                 elif new_order == self.inst_list:
                     last_order = new_order
+                    self.new_order_array[frame_idx] = np.array(last_order)
                     log_print(f"[TMOD] NO SWAP, already the best solution.", enabled=DEBUG)
                 else:
                     self.current_frame_data[:, :] = self.current_frame_data[new_order, :]
@@ -149,15 +146,19 @@ class Track_Fixer:
             ref_centroids[fixed_pred_mask] = fixed_pred_centroids[fixed_pred_mask]
             ref_last_updated[fixed_pred_mask] = frame_idx
                     
-    def _rotation_tf_pass(self, max_dist, lookback_window):
+    def _vector_tf_pass(self, max_dist, lookback_window):
         if self.angle_map is None:
-            log_print("[ROT] Skipping — no angle_map provided.", enabled=DEBUG)
+            log_print("[VEC] Skipping — no angle_map provided.", enabled=DEBUG)
             return
-        
-        amogus = np.where(self.new_order_array[:, 0] == -1)[0]
-        log_print(f"[ROT] Resolving {len(amogus)} ambiguous frames with rotation...", enabled=DEBUG)
+    
+        pose_vectors = build_weighted_pose_vectors(self.corrected_pred_data, self.angle_map)
+        if pose_vectors is None:
+            log_print("[VEC] Skipping — fail to get pose_vectors.", enabled=DEBUG)
+            return
 
-        pose_centroids, local_coords = calculate_pose_centroids(self.corrected_pred_data)
+        amogus = np.where(self.new_order_array[:, 0] == -1)[0]
+        log_print(f"[VEC] Resolving {len(amogus)} ambiguous frames with rotation...", enabled=DEBUG)
+
         self.progress.setRange(0, len(amogus))
 
         for i, frame_idx in enumerate(amogus):
@@ -165,46 +166,46 @@ class Track_Fixer:
                 self.progress.setValue(i)
                 if self.progress.wasCanceled():
                     raise RuntimeError("User cancelled track fixing operation.")
-            cur_centroids = pose_centroids[frame_idx]
-            if np.all(np.isnan(cur_centroids)):
+            cur_vector = pose_vectors[frame_idx]
+            if np.all(np.isnan(cur_vector)):
                 self.new_order_array[frame_idx] = self.inst_array
                 continue
-            log_print(f"---------- frame: {frame_idx} [ROTATION MODE] ---------- ", enabled=DEBUG)
-            cur_locc = local_coords[frame_idx]
-            cur_rota = calculate_pose_rotations(cur_locc[..., 0::2], cur_locc[..., 1::2], self.angle_map)
 
-            ref_frame = None
-            for offset in range(1, min(lookback_window, frame_idx + 1)):
-                candidate = frame_idx - offset
-                if candidate < 0:
+            log_print(f"---------- frame: {frame_idx} [VECTOR MODE] ---------- ", enabled=DEBUG)
+
+            ref_vector = np.full_like(cur_vector, np.nan)
+            frame_gap = np.zeros((ref_vector.shape[0]))
+            offset = 0
+            while np.any(frame_gap==0) and offset <= lookback_window:
+                offset += 1
+                cand = frame_idx - offset
+                if cand < 0:
                     break
-                if not np.all(np.isnan(pose_centroids[candidate])):
-                    ref_frame = candidate
-                    break
+                for inst in range(ref_vector.shape[0]):
+                    cand_vector = pose_vectors[cand, inst]
+                    if np.any(~np.isnan(ref_vector[inst])) or not np.any(~np.isnan(cand_vector)):
+                        continue
+                    ref_vector[inst] = cand_vector
+                    frame_gap[inst] = offset
+                    log_print(f"[VEC] Using pose from frame {cand} for inst {inst}.", enabled=DEBUG)
 
-            dynamic_max_dist = max_dist * np.sqrt(max(1, offset))
-            log_print(f"Using {dynamic_max_dist} pixels as max_dist.")
-
-            if ref_frame is None:
-                log_print(f"[ROT] No resolved reference for frame {frame_idx}. Fallback.", enabled=DEBUG)
+            if np.all(frame_gap==0):
+                log_print(f"[VEC] No resolved reference for frame {frame_idx}. Fallback.", enabled=DEBUG)
                 continue
 
-            ref_centroids = pose_centroids[ref_frame]
-            ref_locc = local_coords[ref_frame]
-            ref_rota = calculate_pose_rotations(ref_locc[..., 0::2], ref_locc[..., 1::2], self.angle_map)
+            valid_pred = np.any(~np.isnan(cur_vector), axis=1)
+            valid_ref  = np.any(~np.isnan(ref_vector), axis=1)
 
-            valid_pred = np.all(~np.isnan(cur_centroids), axis=1) & ~np.isnan(cur_rota)
-            valid_ref  = np.all(~np.isnan(ref_centroids), axis=1) & ~np.isnan(ref_rota)
-            pred_r = cur_rota[valid_pred]
-            ref_r  = ref_rota[valid_ref]
+            hunvec = Transylvanian(
+                cur_vector, ref_vector, valid_pred, valid_ref, max_dist=max_dist, ref_frame_gap=frame_gap, debug_print=DEBUG)
+            
+            new_order = hunvec.vector_hun_match()
 
-            hun = Hungarian(cur_centroids, ref_centroids, valid_pred, valid_ref, max_dist=dynamic_max_dist, debug_print=DEBUG)
-
-            new_order = hun.hungarian_matching_with_rotation(pred_r, ref_r)
             if new_order is None:
                 continue
 
             self.current_frame_data[:, :] = self.current_frame_data[new_order, :]
+            pose_vectors[frame_idx, :, :] = pose_vectors[frame_idx, new_order, :]
             self.new_order_array[frame_idx] = np.array(new_order)
 
     def _applying_last_order(self, last_order:List[int]):
