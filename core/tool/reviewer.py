@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGroupBox, QMessageBox)
 
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 from .plot import Prediction_Plotter
 from .undo_redo import Uno_Stack
@@ -27,7 +27,7 @@ class Parallel_Review_Dialog(QDialog):
                  extractor:Frame_Extractor|Frame_Extractor_Img,
                  new_data_array:np.ndarray,
                  frame_list:List[int], # Used to map local idx to global idx, irrelevant if tc_mode
-                 tc_frame_tuple:Tuple[List[int], List[int]],
+                 tc_frame_tuple:Optional[Tuple[List[int], List[int]]],
                  tc_mode:bool=False,
                  parent=None):
         super().__init__(parent)
@@ -48,6 +48,8 @@ class Parallel_Review_Dialog(QDialog):
         self.uno = Uno_Stack()
 
         if self.tc_mode:
+            if tc_frame_tuple is None:
+                raise TypeError("Missing 1 required positional argument: 'tc_frame_tuple")
             self.inst_array = np.array(range(self.dlc_data.pred_data_array.shape[1]))
             self.uno.save_state_for_undo(self.pred_data_array)
             self.corrected_frames, self.ambiguous_frames = tc_frame_tuple
