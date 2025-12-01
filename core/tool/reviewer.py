@@ -27,7 +27,7 @@ class Parallel_Review_Dialog(QDialog):
                  extractor:Frame_Extractor|Frame_Extractor_Img,
                  new_data_array:np.ndarray,
                  frame_list:List[int], # Used to map local idx to global idx, irrelevant if tc_mode
-                 tc_frame_tuple:Optional[Tuple[List[int], List[int]]],
+                 tc_frame_tuple:Optional[Tuple[List[int], List[int]]]=None,
                  tc_mode:bool=False,
                  parent=None):
         super().__init__(parent)

@@ -430,7 +430,7 @@ class Frame_Label:
 
     def save_prediction(self):
         self.kem.check_pred_data()
-        is_label_file = True if self.vm.image_files else False
+        is_label_file = True if self.vm.image_mode else False
         save_path, status, msg = self.dm.save_pred(self.kem.pred_data_array, is_label_file)
         if not status:
             QMessageBox.critical(self.main, "Saving Error", f"An error occurred during saving: {msg}")
