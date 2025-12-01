@@ -347,7 +347,7 @@ class Track_Fix_Dialog(QDialog):
         lookback_label = QLabel("Lookback Window:")
         self.lookback_spinbox = QSpinBox()
         self.lookback_spinbox.setRange(2, 1000)
-        self.lookback_spinbox.setValue(20)
+        self.lookback_spinbox.setValue(50)
         lookback_layout.addWidget(lookback_label)
         lookback_layout.addWidget(self.lookback_spinbox)
         
@@ -385,12 +385,15 @@ class Track_Fix_Dialog(QDialog):
             return
         
         if len(self.speeds_flat) > 0:
-            self.ax.hist(self.speeds_flat, bins=50, density=True, 
-                        alpha=0.7, color='steelblue', edgecolor='white')
             
             p95 = np.percentile(self.speeds_flat, 95)
             p99 = np.percentile(self.speeds_flat, 99)
             median = np.median(self.speeds_flat)
+
+            speeds_filtered = self.speeds_flat[self.speeds_flat<=p99*1.2]
+
+            self.ax.hist(speeds_filtered, bins=50, density=True, 
+                        alpha=0.7, color='steelblue', edgecolor='white')
             
             self.ax.axvline(median, color='blue', linestyle='--', label=f'Median: {median:.1f}')
             self.ax.axvline(p95, color='green', linestyle='--', label=f'95th %: {p95:.1f}')
@@ -400,6 +403,7 @@ class Track_Fix_Dialog(QDialog):
                 self.ax.axvline(max_dist_px_frame, color='red', linewidth=2,
                                label=f'Current max_dist: {max_dist_px_frame:.1f}')
             
+            self.ax.set_xlim(0, p99*1.2)
             self.ax.legend(fontsize=8)
         
         self.canvas.draw()

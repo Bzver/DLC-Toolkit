@@ -249,7 +249,7 @@ class Parallel_Review_Dialog(QDialog):
 
     def _determine_list_to_nav(self):
         if self.tc_mode:
-            return self.ambiguous_frames
+            return self.ambiguous_frames if self.ambiguous_frames else self.corrected_frames
         else:
             return np.where(self.frame_status_array==1)[0]
 
