@@ -430,7 +430,7 @@ class Frame_View:
                 finally:
                     continue
             if value == 2:
-                two_indices.update(range(max(0,start-5), end+6))
+                two_indices.update(range(max(0,start-5), min(self.dm.total_frames,end+6)))
             if value == 1:
                 animal_count_array[max(0,start-5):min(self.dm.total_frames,end+6)] = value
 
