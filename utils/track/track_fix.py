@@ -69,7 +69,7 @@ class Track_Fixer:
     def _centroids_tf_pass(self, max_dist:float, lookback_window):
         last_order = self.inst_list
         ref_centroids = np.full((self.instance_count, 2), np.nan)
-        ref_last_updated = np.full((self.instance_count,), -2 * lookback_window)
+        ref_last_updated = np.full((self.instance_count,), -2 * lookback_window, np.int32)
         valid_ref_mask = np.zeros_like(ref_last_updated, dtype=bool)
 
         for frame_idx in range(self.total_frames):
@@ -97,7 +97,7 @@ class Track_Fixer:
                 if np.all(~np.isnan(cand_centroids)):
                     ref_centroids_full = cand_centroids
                     valid_ref_mask_full = np.ones((cand_centroids.shape[0],), dtype=bool)
-                    ref_last_updated_full = np.full_like(valid_ref_mask_full, cand, dtype=np.int16)
+                    ref_last_updated_full = np.full_like(valid_ref_mask_full, cand, dtype=np.int32)
                     found_full_ref = True
                     log_print(f"Found full-reference frame: {cand}", enabled=DEBUG)
                     break
@@ -109,24 +109,28 @@ class Track_Fixer:
                     self.new_order_array[frame_idx] = np.array(last_order)
                 else:
                     self.new_order_array[frame_idx] = -1 # Mark as ambiguous
+                log_print("No valid ref frame found. Rebasing the reference on current frame.", enabled=DEBUG)
                 ref_centroids[valid_pred_mask] = pred_centroids[valid_pred_mask] # Rebase the prediction on current frame
                 ref_last_updated[valid_pred_mask] = frame_idx
                 last_order = self.inst_list
                 continue
 
+            new_order = None
             hun_full = None
             if not found_full_ref:
                 log_print("No full-reference frame found. Falling back to partial reference window.", enabled=DEBUG)
+            elif np.any(ref_last_updated != ref_last_updated_full):
+                hun_full = Hungarian(pred_centroids, ref_centroids_full, valid_pred_mask, valid_ref_mask_full,
+                    max_dist=max_dist, ref_frame_gap=frame_idx-ref_last_updated_full, debug_print=DEBUG)
             else:
-                if np.any(valid_ref_mask != valid_ref_mask_full):
-                    hun_full = Hungarian(pred_centroids, ref_centroids_full, valid_pred_mask, valid_ref_mask_full,
-                                max_dist=max_dist, ref_frame_gap=frame_idx-ref_last_updated_full, debug_print=DEBUG)
+                log_print("Already using full frame reference for Hungarian matching.", enabled=DEBUG)
 
             for i in range(self.instance_count):
                 log_print(f"x,y in pred: inst {i}: ({pred_centroids[i,0]:.1f}, {pred_centroids[i,1]:.1f})", enabled=DEBUG)
             for i in range(self.instance_count):
                 log_print(f"x,y in ref: inst {i}: ({ref_centroids[i,0]:.1f}, {ref_centroids[i,1]:.1f}) | "
                             f"last updated: {ref_last_updated[i]} | valid: {valid_ref_mask[i]}", enabled=DEBUG)
+
             if hun_full:
                 for i in range(self.instance_count):
                     log_print(f"x,y in ref (full): inst {i}: ({ref_centroids_full[i,0]:.1f}, {ref_centroids_full[i,1]:.1f}) | "
@@ -150,32 +154,31 @@ class Track_Fixer:
                               enabled=DEBUG)
 
             if not skip_matching:
+                log_print("[HUN] Trying to do Hungarian matching.", enabled=DEBUG)
                 hun_order = hun.hungarian_matching()
-                if not hun_order:
-                    new_order = None
-                elif hun_order == self.inst_list:
-                    new_order = hun_order
-                    if hun_full:
-                        hun_f_order = hun_full.hungarian_matching()
-                        if hun_f_order != hun_order:
-                            log_print("Mismatch: Hungarian ≠ Full Frame Hungarian, rejecting assignment.", enabled=DEBUG)
-                            new_order = None
-                else:
+                if hun_order and hun_full:
+                    log_print("[HUN] Trying to do Hungarian matching with full frame reference.", enabled=DEBUG)
+                    hun_f_order = hun_full.hungarian_matching()
+                    if hun_f_order != hun_order:
+                        log_print("Mismatch: Hungarian ≠ Full Frame Hungarian, rejecting assignment.", enabled=DEBUG)
+                        hun_order = None
+                    
+                if hun_order and hun_order != self.inst_list:
                     improved, avg_improv = hun.compare_distance_improvement(hun_order)
                     if improved:
                         log_print(f"[TMOD] Hungarian order improves overall distance by {avg_improv*100:.2f}% | Threshold: 10%",
                                 enabled=DEBUG)
-                        new_order = hun_order
                     else:
                         log_print(f"[TMOD] Hungarian order fails to sufficiently improve overall distance: {avg_improv*100:.2f}% | Threshold: 10%",
                                 enabled=DEBUG)
                         vec_order = self._vector_doublecheck(frame_idx, ref_last_updated, max_dist, lookback_window)
                         log_print(f"Vector double-check result: {vec_order}", enabled=DEBUG)
                         if hun_order != vec_order:
+                            hun_order = None
                             log_print("Mismatch: Hungarian ≠ Vector, rejecting assignment.", enabled=DEBUG)
-                            new_order = None
-                        else:
-                            new_order = hun_order
+
+                if hun_order:
+                    new_order = hun_order
 
                 if new_order is None:
                     log_print("[TMOD] Failed to build new order.", enabled=DEBUG)
