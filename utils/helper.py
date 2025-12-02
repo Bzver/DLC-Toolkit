@@ -203,6 +203,7 @@ def build_weighted_pose_vectors(pred_data_array:np.ndarray, angle_map_data:dict,
 
 def log_print(*args, enabled=True, **kwargs):
     if not enabled:
+        print(*args, **kwargs)
         return
     try:
         log_file = "D:/Project/debug_log.txt"

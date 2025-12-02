@@ -11,7 +11,7 @@ from utils.pose import (
     )
 from utils.helper import log_print, clean_log, build_weighted_pose_vectors
 
-DEBUG = True
+DEBUG = False
 
 class Track_Fixer:
     def __init__(self,
@@ -84,7 +84,7 @@ class Track_Fixer:
             valid_pred_mask = np.all(~np.isnan(pred_centroids), axis=1)
             if not np.any(valid_pred_mask):
                 self.new_order_array[frame_idx] = self.inst_array
-                log_print("Skipping due to no prediction on current frame.")
+                log_print("Skipping due to no prediction on current frame.", enabled=DEBUG)
                 continue
 
             full_seek_window = min(frame_idx, 5, lookback_window) # Only look for very recent match

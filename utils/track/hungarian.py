@@ -81,7 +81,7 @@ class Hungarian:
         K, M = len(self.pred_centroids), len(self.ref_centroids)
 
         if K == 0 or M == 0:
-            log_print(f"[HUN] No valid data for Hungarian matching (K={K}, M={M}). Returning default order.", enabled=self.debug_print)
+            log_print(f"[HUN] No valid data for Hungarian matching (K={K}, M={M}).", enabled=self.debug_print)
             return (K != 0), None
 
         if K == 1:
@@ -95,18 +95,21 @@ class Hungarian:
                     log_print(f"[HUN] Single pair matched. New order: {new_order}", enabled=self.debug_print)
                     return True, new_order
                 else:
-                    log_print(f"[HUN] Single pair not matched (Dist: {dist:.2f} >= {max_dist:.2f}). Proceed to hungarian regardless.",
+                    log_print(f"[HUN] Single pair not matched (Dist: {dist:.2f} >= {max_dist:.2f}).",
                               enabled=self.debug_print)
-                    return False, None
+                    return True, None
             else:
                 dist = np.linalg.norm(self.pred_centroids[0] - self.ref_centroids, axis=1)
                 ref_dg_array = np.column_stack((dist, self.dym_dist, self.frame_gap))
                 valid = ref_dg_array[:, 1] > ref_dg_array[:, 0]
                 if np.sum(valid) == 0:
-                    log_print("[HUN] No singe pair matched. Proceed to hungarian regardless.", enabled=self.debug_print)
+                    log_print("[HUN] No singe pair matched.", enabled=self.debug_print)
                     for i in range(M):
                         log_print(f"Inst {i} | Distances: {dist[i]:.2f}, Max_dist: {self.dym_dist[i]:.2f}", enabled=self.debug_print)
-                    return False, None
+                    ref_idx = self.ref_indices[np.argmin(dist)]
+                    new_order = self._build_new_order_simple(self.pred_indices[0], ref_idx)
+                    log_print(f"[HUN] Choose the pair with minimal dist. New order: {new_order}", enabled=self.debug_print)
+                    return True, new_order
                 elif np.sum(valid) == 1:
                     valid_idx_global = self.ref_indices[valid][0]
                     new_order = self._build_new_order_simple(self.pred_indices[0], valid_idx_global)
@@ -197,6 +200,9 @@ class Hungarian:
                 continue
             dist = np.linalg.norm(self.pred_centroids[i_old] - self.ref_centroids[j])
             current_dists.append(dist)
+
+        if len(current_dists) == 1: # No other choice
+            return float('inf')
 
         # Compute new assignment distances
         new_dists = []
