@@ -323,7 +323,7 @@ class Frame_Label:
     def _temporal_track_correct(self):
         if not self._track_edit_blocker():
             return
-        self.dm.dlc_data.pred_data_array = self.kem.pred_data_array
+        self.dm.dlc_data.pred_data_array = self.kem.pred_data_array.copy()
         self.kem.correct_track_using_temporal(self.dm.dlc_data, self.vm.extractor, self.dm.canon_pose, self.dm.angle_map_data)
 
     def _delete_track(self):

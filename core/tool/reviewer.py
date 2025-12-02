@@ -53,6 +53,8 @@ class Parallel_Review_Dialog(QDialog):
             self.inst_array = np.array(range(self.dlc_data.pred_data_array.shape[1]))
             self.uno.save_state_for_undo(self.new_data_array)
             self.corrected_frames, self.ambiguous_frames = tc_frame_tuple
+            self.corrected_set = set(self.corrected_frames)
+            self.ambiguous_set = set(self.ambiguous_frames)
         else:
             self.frame_status_array = np.zeros((self.total_marked_frames,), dtype=np.uint8)
             self.uno.save_state_for_undo(self.frame_status_array)
@@ -301,6 +303,14 @@ class Parallel_Review_Dialog(QDialog):
         self.global_frame_label.setText(f"Global: {global_idx} / {self.total_frames - 1}")
         self.selected_frame_label.setText(f"Selected: {self.current_frame_idx} / {self.total_marked_frames - 1}")
 
+        if self.tc_mode:
+            if self.current_frame_idx in self.ambiguous_set:
+                self.selected_frame_label.setStyleSheet(f"color: white; background-color: {self.TC_PALLETTE[1]};") 
+            elif self.current_frame_idx in self.corrected_set:
+                self.selected_frame_label.setStyleSheet(f"color: white; background-color: {self.TC_PALLETTE[0]};")
+            else:
+                self.selected_frame_label.setStyleSheet(f"color: #1E90FF; background-color: transparent;")
+
     def _update_button_states(self):
         if self.tc_mode:
             self.apply_button.setEnabled(True)
@@ -376,7 +386,7 @@ class Parallel_Review_Dialog(QDialog):
     def _save_prediction(self):
         self._refresh_slider()
 
-        if np.any(self.frame_status_array==0):
+        if not self.tc_mode and np.any(self.frame_status_array==0):
             msg_box = QMessageBox(self)
             msg_box.setIcon(QMessageBox.Warning)
             msg_box.setWindowTitle("Unprocessed Frames - Save and Exit?")
