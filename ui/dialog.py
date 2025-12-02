@@ -276,7 +276,7 @@ class Inference_interval_Dialog(QDialog):
 
         self.interval_widgets = {}
         categories = {
-            "No Animals (0)": "interval_0_animals",
+            "No Animals (0)": "interval_0_animal",
             "One Animal (1)": "interval_1_animal",
             "Multiple Animals (2+)": "interval_n_animals",
             "Animal Close Together": "interval_merged"

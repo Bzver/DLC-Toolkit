@@ -6,7 +6,7 @@ import traceback
 
 from ui import (
     Menu_Widget, Video_Player_Widget, Frame_List_Dialog, Status_Bar, Inference_interval_Dialog, Shortcut_Manager, Frame_Display_Dialog)
-from utils.helper import frame_to_pixmap, frame_to_qimage, get_roi_cv2, plot_roi, array_to_iterable_runs
+from utils.helper import frame_to_pixmap, frame_to_qimage, get_roi_cv2, plot_roi, calculate_blob_inference_intervals
 from core.runtime import Data_Manager, Video_Manager
 from core.tool import Mark_Generator, Blob_Counter, Prediction_Plotter
 
@@ -360,84 +360,13 @@ class Frame_View:
                 self.skip_counting = True
 
     def _handle_inference_intervals(self, intervals: dict):
-        inference_list = []
-        last_inferenced_frame = 0
-
-        # To tame blob array's noisy nature
-        animal_count_array, merge_array = self._clean_blob_array_for_inference()
-
-        for frame_idx in range(self.dm.total_frames):
-            animal_count = animal_count_array[frame_idx]
-            merge_status = merge_array[frame_idx]
-            
-            current_interval = 1
-
-            if animal_count == 0:
-                current_interval = intervals["interval_0_animals"]
-            elif animal_count == 1:
-                current_interval = intervals["interval_1_animal"]
-            elif merge_status == 1:
-                current_interval = intervals["interval_merged"]
-            else: # animal_count >= 2 and not merged
-                current_interval = intervals["interval_n_animals"]
-            
-            if frame_idx - last_inferenced_frame < current_interval:
-                continue
-
-            candidate = None
-            search_end = min(frame_idx + current_interval, self.dm.total_frames)
-            
-            for f in range(frame_idx, search_end):
-                if self.dm.blob_array[f, 5] != 0:
-                    break
-
-            selected_frame_idx = frame_idx if candidate is None else candidate
-
-            inference_list.append(selected_frame_idx)
-            last_inferenced_frame = selected_frame_idx
-        
+        inference_list= calculate_blob_inference_intervals(self.dm.blob_array, intervals)
         reply = QMessageBox.question(
             self.main, "Inference List Calculated",
             f"A total of {len(inference_list)} frames out of {self.dm.total_frames} will be inferenced, confirm?"
         )
         if reply == QMessageBox.Yes:
             self.call_inference(inference_list)
-
-    def _clean_blob_array_for_inference(self):
-        animal_count_array, merge_array = self.dm.blob_array[:, 0].copy(), self.dm.blob_array[:, 1].copy()
-        animal_count_array[animal_count_array>2] = 2
-
-        for start, end, value in array_to_iterable_runs(merge_array): # merge array has only 1 and 0
-            if end == start:
-                try:
-                    merge_array[start] = merge_array[start - 1]
-                except IndexError:
-                    pass
-                finally:
-                    continue
-            if value == 1:
-                merge_array[max(0,start-5):end+6] = value
-
-        merged_frames = set(np.where(merge_array==1)[0])
-
-        two_indices = set()
-        for start, end, value in array_to_iterable_runs(animal_count_array):
-            if end == start:
-                try:
-                    animal_count_array[start] = animal_count_array[start - 1]
-                except IndexError:
-                    pass
-                finally:
-                    continue
-            if value == 2:
-                two_indices.update(range(max(0,start-5), min(self.dm.total_frames,end+6)))
-            if value == 1:
-                animal_count_array[max(0,start-5):min(self.dm.total_frames,end+6)] = value
-
-        two_indices = list(sorted(two_indices|merged_frames))
-        animal_count_array[two_indices] = 2
-
-        return animal_count_array, merge_array
 
     def _reload_prediction(self, prediction_path:str):
         """Reload prediction data from file and update visualization"""

@@ -2,7 +2,7 @@ import numpy as np
 import cv2
 from PySide6 import QtGui
 from PySide6.QtWidgets import QMessageBox
-from typing import List, Tuple, Callable, Union, Iterable, Optional
+from typing import List, Tuple, Callable, Union, Iterable, Optional, Dict
 
 def get_instances_on_current_frame(pred_data_array:np.ndarray, current_frame_idx:int) -> List[int]:
     """
@@ -201,20 +201,35 @@ def build_weighted_pose_vectors(pred_data_array:np.ndarray, angle_map_data:dict,
 
 #########################################################################################################################################################1
 
-def log_print(*args, enabled=True, **kwargs):
-    if not enabled:
-        print(*args, **kwargs)
+def log_print(
+    *args,
+    to_file: bool = False,
+    file_loc: str = "debug_log.txt",
+    with_time: bool = False,
+    **kwargs,
+):
+    import time, os
+    prefix_args = ()
+    if with_time:
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        prefix_args = (f"[{timestamp}]",)
+
+    full_args = prefix_args + args
+    print(*full_args, **kwargs)
+
+    if not to_file:
         return
+
     try:
-        log_file = "D:/Project/debug_log.txt"
-        with open(log_file, 'a', encoding='utf-8') as f:
-            print(*args, file=f, **kwargs)
+        os.makedirs(os.path.dirname(file_loc) or ".", exist_ok=True)
+        with open(file_loc, "a", encoding="utf-8") as f:
+            print(*full_args, file=f, **kwargs)
     except:
         pass
 
-def clean_log():
+def clean_log(file_loc:str="debug_log.txt"):
     try:
-        log_file = "D:/Project/debug_log.txt"
+        log_file = file_loc
         with open(log_file, 'w', encoding='utf-8') as f:
             pass
     except:
@@ -232,6 +247,72 @@ def clean_inconsistent_nans(pred_data_array:np.ndarray):
     pred_data_array[full_nan_sweep_mask] = np.nan
     print("NaN keypoint confidence cleaned.")
     return pred_data_array
+
+def calculate_blob_inference_intervals(blob_array:np.ndarray, intervals:Dict[str, int]) -> List[int]:
+    total_frames = blob_array.shape[0]
+
+    inference_list = []
+    last_inferenced_frame = 0
+
+    animal_count_array, merge_array = clean_blob_array_for_inference(blob_array)
+
+    last_inferenced_frame = -max(intervals.values())
+    for frame_idx in range(total_frames):
+        animal_count = animal_count_array[frame_idx]
+        merge_status = merge_array[frame_idx]
+
+        if animal_count == 0:
+            current_interval = intervals["interval_0_animal"]
+        elif animal_count == 1:
+            current_interval = intervals["interval_1_animal"]
+        elif merge_status == 1:
+            current_interval = intervals["interval_merged"]
+        else: # animal_count >= 2 and not merged
+            current_interval = intervals["interval_n_animals"]
+        
+        if frame_idx - last_inferenced_frame >= current_interval:
+            inference_list.append(frame_idx)
+            last_inferenced_frame = frame_idx
+    
+    return inference_list
+
+def clean_blob_array_for_inference(blob_array:np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    total_frames = blob_array.shape[0]
+
+    animal_count_array, merge_array = blob_array[:, 0].copy(), blob_array[:, 1].copy()
+    animal_count_array[animal_count_array>2] = 2
+
+    for start, end, value in array_to_iterable_runs(merge_array): # merge array has only 1 and 0
+        if end == start:
+            try:
+                merge_array[start] = merge_array[start - 1]
+            except IndexError:
+                pass
+            finally:
+                continue
+        if value == 1:
+            merge_array[max(0,start-5):end+6] = value
+
+    merged_frames = set(np.where(merge_array==1)[0])
+
+    two_indices = set()
+    for start, end, value in array_to_iterable_runs(animal_count_array):
+        if end == start:
+            try:
+                animal_count_array[start] = animal_count_array[start - 1]
+            except IndexError:
+                pass
+            finally:
+                continue
+        if value == 2:
+            two_indices.update(range(max(0,start-5), min(total_frames,end+6)))
+        if value == 1:
+            animal_count_array[max(0,start-5):min(total_frames,end+6)] = value
+
+    two_indices = list(sorted(two_indices|merged_frames))
+    animal_count_array[two_indices] = 2
+
+    return animal_count_array, merge_array
 
 #########################################################################################################################################################1
 
