@@ -74,7 +74,7 @@ class Exporter:
             if self.progress_callback:
                 self.progress_callback.close()
             traceback.print_exc()
-            raise RuntimeError(f"Error extracting frames: {e}")
+            raise RuntimeError(e)
 
     def _extract_pred(self):
         if self.pred_data_array is None:
@@ -83,7 +83,7 @@ class Exporter:
             pred_data_array = self.pred_data_array[self.frame_list, :, :] # (F, I, K*3)
 
         if self.crop_coord is not None:
-            coords_array = crop_coord_to_array(self.crop_coord, pred_data_array.shape, self.frame_list)
+            coords_array = crop_coord_to_array(self.crop_coord, pred_data_array.shape)
             pred_data_array = pred_data_array - coords_array
             generate_crop_coord_notations(self.crop_coord, self.export_settings.save_path, self.frame_list)
 

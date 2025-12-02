@@ -383,22 +383,9 @@ def plot_roi(frame, roi) -> np.ndarray:
     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
     return frame
 
-def crop_coord_to_array(crop_coord:np.ndarray, arr_shape:Tuple[int, int, int], frame_list:List[int]):
+def crop_coord_to_array(crop_coord:np.ndarray, arr_shape:Tuple[int, int, int]):
     coord_array = np.zeros(arr_shape)
-    
-    if arr_shape[0] != len(frame_list):
-        diff = abs(arr_shape[0]-len(frame_list))
-        if diff > 1:
-            raise ValueError(
-                f"Dimension mismatch: arr_shape[0] = {arr_shape[0]}, "
-                f"but len(frame_list) = {len(frame_list)} (difference = {diff} > 1). "
-                f"Expected near-equal lengths for alignment."
-            )
-        final_len = min(arr_shape[0], len(frame_list))
-        frame_list = frame_list[0:final_len]
-
     x, y = crop_coord[0], crop_coord[1]
-    
     coord_array[:, :, 0::3] = x
     coord_array[:, :, 1::3] = y
     return coord_array

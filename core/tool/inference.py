@@ -359,7 +359,7 @@ class DLC_Inference(QDialog):
             (self.dlc_data.pred_frame_count, temp_data_array.shape[1], temp_data_array.shape[2]), np.nan)
 
         if self.crop_coord is not None:
-            coords_array = crop_coord_to_array(self.crop_coord, temp_data_array.shape, self.frame_list)
+            coords_array = crop_coord_to_array(self.crop_coord, temp_data_array.shape)
             temp_data_array = temp_data_array + coords_array
 
         new_data_array[self.frame_list, :, :] = temp_data_array
@@ -397,7 +397,7 @@ class DLC_Inference(QDialog):
     def _call_reviewer_window(self):
         self._load_and_remap_new_prediction()
         self.hide()
-        self.reviewer = Parallel_Review_Dialog(self.dlc_data, self.extractor_reviewer, self.new_data_array, self.frame_list, parent=self)
+        self.reviewer = Parallel_Review_Dialog(self.dlc_data, self.extractor_reviewer, self.new_data_array, self.frame_list, crop_coord=self.crop_coord, parent=self)
         self.reviewer.pred_data_exported.connect(self._save_pred_to_file)
         self.reviewer.exec()
 
@@ -419,7 +419,8 @@ class DLC_Inference(QDialog):
         self.reject()
 
     def closeEvent(self, event):
-        self.extractor_reviewer.close()
+        if hasattr(self, "extractor_reviewer"):
+            self.extractor_reviewer.close()
         if self.temp_directory is not None:
             self.temp_directory.cleanup()
 

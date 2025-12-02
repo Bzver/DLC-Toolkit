@@ -12,7 +12,7 @@ from .plot import Prediction_Plotter
 from .undo_redo import Uno_Stack
 from .mark_nav import navigate_to_marked_frame
 from ui import Clickable_Video_Label, Video_Slider_Widget, Shortcut_Manager
-from utils.helper import frame_to_pixmap, handle_unsaved_changes_on_close
+from utils.helper import frame_to_pixmap, handle_unsaved_changes_on_close, crop_coord_to_array
 from utils.track import swap_track
 from core.dataclass import Loaded_DLC_Data
 from core.io import Frame_Extractor, Frame_Extractor_Img
@@ -29,6 +29,7 @@ class Parallel_Review_Dialog(QDialog):
                  frame_list:List[int], # Used to map local idx to global idx, irrelevant if tc_mode
                  tc_frame_tuple:Optional[Tuple[List[int], List[int]]]=None,
                  tc_mode:bool=False,
+                 crop_coord:Optional[Tuple[int,int,int,int]]=None,
                  parent=None):
         super().__init__(parent)
         self.dlc_data = dlc_data
@@ -42,6 +43,18 @@ class Parallel_Review_Dialog(QDialog):
         self.total_frames = self.pred_data_array.shape[0]
         self.frame_list = list(range(self.total_frames)) if tc_mode else frame_list
         self.total_marked_frames = len(self.frame_list)
+
+        try:
+            x1, y1, x2, y2 = crop_coord
+            crop_coord_proc = x1, y1, x2, y2
+            self.crop_array = crop_coord_to_array(crop_coord_proc, new_data_array.shape)
+        except:
+            self.crop_array = None
+
+        if self.crop_array is not None:
+            self.backup_data_array -= self.crop_array
+            self.pred_data_array -= self.crop_array
+            self.new_data_array -= self.crop_array
 
         self.current_frame_idx = 0
         self.is_saved = False
@@ -346,7 +359,8 @@ class Parallel_Review_Dialog(QDialog):
             self.progress_slider.set_frame_category("ambiguous", self.ambiguous_frames, self.TC_PALLETTE[1], priority=5)
             self.progress_slider.set_frame_category("changed", self.corrected_frames, self.TC_PALLETTE[0])
         else:
-            self.progress_slider.set_frame_category_array(self.frame_status_array, self.RERUN_PALLETTE)
+            idx_to_color = {idx:hex_color for idx, hex_color in self.RERUN_PALLETTE.items()}
+            self.progress_slider.set_frame_category_array(self.frame_status_array, idx_to_color)
         self.progress_slider.commit_categories()
 
     ###################################################################################################
@@ -404,6 +418,12 @@ class Parallel_Review_Dialog(QDialog):
                 return
 
         self.is_saved = True
+
+        if self.crop_array is not None:
+            self.new_data_array += self.crop_array
+            self.pred_data_array += self.crop_array
+            self.backup_data_array += self.crop_array
+
         if self.tc_mode:
             self.pred_data_exported.emit(self.new_data_array, ())
         else:
