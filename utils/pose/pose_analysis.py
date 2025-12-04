@@ -35,9 +35,11 @@ def calculate_pose_centroids(
 
     pose_centroids = np.full(output_shape_pose, np.nan, dtype=np.float64)
     local_coords = np.full(output_shape_rltv, np.nan, dtype=np.float64)
+    
+    valid_mask = np.any(~np.isnan(x_vals), axis=-1)
 
-    pose_centroids[..., 0] = np.nanmean(x_vals, axis=-1)
-    pose_centroids[..., 1] = np.nanmean(y_vals, axis=-1)
+    pose_centroids[valid_mask, 0] = np.nanmean(x_vals[valid_mask], axis=-1)
+    pose_centroids[valid_mask, 1] = np.nanmean(y_vals[valid_mask], axis=-1)
 
     local_coords[..., 0::2] = x_vals - pose_centroids[..., 0, np.newaxis]
     local_coords[..., 1::2] = y_vals - pose_centroids[..., 1, np.newaxis]
