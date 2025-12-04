@@ -2,10 +2,12 @@ import numpy as np
 import pandas as pd
 
 from PySide6 import QtWidgets
-from PySide6.QtWidgets import QMessageBox, QDialog
+from PySide6.QtWidgets import QDialog
 
 from typing import Callable, Optional
 
+from core.tool import Uno_Stack, Parallel_Review_Dialog
+from ui import Progress_Indicator_Dialog, Selectable_Instance, Track_Fix_Dialog
 from utils.track import (
     Track_Fixer, interpolate_track_all, delete_track, swap_track, interpolate_track,
     )
@@ -14,8 +16,7 @@ from utils.pose import (
     rotate_selected_inst, generate_missing_inst, generate_missing_kp_for_inst,
     calculate_pose_centroids, calculate_pose_rotations
 )
-from ui import Progress_Indicator_Dialog, Selectable_Instance, Track_Fix_Dialog
-from core.tool import Uno_Stack, Parallel_Review_Dialog
+from utils.logger import Loggerbox, QMessageBox
 
 DEBUG = False
 
@@ -44,7 +45,7 @@ class Keypoint_Edit_Manager:
         if self.pred_data_array is not None:
             return True
         else:
-            QMessageBox.warning(self.main, "Error", "Prediction data not loaded. Please load a prediction file first.")
+            Loggerbox.warning(self.main, "Error", "Prediction data not loaded. Please load a prediction file first.")
             return False
 
     ##############################################################################################
@@ -70,14 +71,14 @@ class Keypoint_Edit_Manager:
         self.pred_data_array, changed_frames, amongus_frames = tf.track_correction(max_dist, lookback)
 
         if not changed_frames:
-            QMessageBox.information(self.main, "No Changes Applied", "No changes were applied.")
+            Loggerbox.info(self.main, "No Changes Applied", "No changes were applied.")
             return
 
         label = f"Applied {len(changed_frames)} changes to track. Review the changes now?"
         if amongus_frames:
             label = f"{len(amongus_frames)} frames are ambiguous, start manual correction now?"
         
-        reply = QMessageBox.question(self.main, f"Manual Review", label, QMessageBox.Yes | QMessageBox.No)
+        reply = Loggerbox.question(self.main, f"Manual Review", label, QMessageBox.Yes | QMessageBox.No)
         if reply == QMessageBox.Yes:
             dialog = Parallel_Review_Dialog(dlc_data, extractor,  self.pred_data_array, [], (changed_frames, amongus_frames), True, parent=self.main)
             dialog.pred_data_exported.connect(self._get_pred_data_from_manual_review)
@@ -142,7 +143,7 @@ class Keypoint_Edit_Manager:
         try:
             self.pred_data_array = delete_track(self.pred_data_array, frame_idx, selected_instance_idx)
         except ValueError as e:
-            QMessageBox.warning(self.main, "Deletion Error", str(e))
+            Loggerbox.error(self.main, "Deletion Error", str(e), exc=e)
             return
         self.track_edited_callback()
         
@@ -153,7 +154,7 @@ class Keypoint_Edit_Manager:
         try:
             self.pred_data_array = swap_track(self.pred_data_array, frame_idx, swap_range)
         except ValueError as e:
-            QMessageBox.warning(self.main, "Swap Error", str(e))
+            Loggerbox.error(self.main, "Swap Error", str(e), exc=e)
             return
         self.track_edited_callback()
 
@@ -170,11 +171,11 @@ class Keypoint_Edit_Manager:
             frames_to_interpolate.append(iter_frame_idx)
             iter_frame_idx += 1
             if iter_frame_idx >= self.total_frames:
-                QMessageBox.information(self.main, "Interpolation Failed", "No valid subsequent keypoint data found for this instance to interpolate to.")
+                Loggerbox.info(self.main, "Interpolation Failed", "No valid subsequent keypoint data found for this instance to interpolate to.")
                 return
 
         if not frames_to_interpolate:
-            QMessageBox.information(self.main, "Interpolation Info", "No gaps found to interpolate for the selected instance.")
+            Loggerbox.info(self.main, "Interpolation Info", "No gaps found to interpolate for the selected instance.")
             return
         
         frames_to_interpolate.sort()
@@ -189,7 +190,7 @@ class Keypoint_Edit_Manager:
         current_frame_inst = get_instances_on_current_frame(self.pred_data_array, frame_idx)
         missing_instances = [inst for inst in range(instance_count) if inst not in current_frame_inst]
         if missing_instances is None:
-            QMessageBox.information(self.main, "No Missing Instances", "No missing instances found in the current frame to fill.")
+            Loggerbox.info(self.main, "No Missing Instances", "No missing instances found in the current frame to fill.")
             return
 
         self.pred_data_array = generate_missing_inst(
@@ -227,17 +228,20 @@ class Keypoint_Edit_Manager:
             canon_pose)
         self.track_edited_callback()
 
-    def interpolate_all_for_inst(self, selected_instance:Optional[Selectable_Instance]):
+    def interpolate_all_for_inst(self, selected_instance:Optional[Selectable_Instance], max_gap:Optional[int]=None):
         if selected_instance is None:
-            QMessageBox.information(self.main, "No Instance Selected", "Please select a track to interpolate all frames for one instance.")
+            Loggerbox.info(self.main, "No Instance Selected", "Please select a track to interpolate all frames for one instance.")
             return False
-        max_gap_allowed, ok = QtWidgets.QInputDialog.getInt(
-            self.main,"Set Max Gap For Interpolation","Will not interpolate gap beyond this limit, set to 0 to ignore the limit.",
-            value=10, minValue=0, maxValue=1000
-        )
-        if not ok:
-            QMessageBox.information(self.main, "Input Cancelled", "Max Gap input cancelled.")
-            return False
+        if max_gap is None:
+            max_gap_allowed, ok = QtWidgets.QInputDialog.getInt(
+                self.main,"Set Max Gap For Interpolation","Will not interpolate gap beyond this limit, set to 0 to ignore the limit.",
+                value=10, minValue=0, maxValue=1000
+            )
+            if not ok:
+                Loggerbox.info(self.main, "Input Cancelled", "Max Gap input cancelled.")
+                return False
+        else:
+            max_gap_allowed = max_gap
 
         self._save_state_for_undo()
         self.pred_data_array = interpolate_track_all(self.pred_data_array, selected_instance.instance_id, max_gap_allowed)
@@ -252,7 +256,7 @@ class Keypoint_Edit_Manager:
             return current_frame_inst[0]
         if selected_instance is None:
             if self.last_selected_idx is None:
-                QMessageBox.information(self.main, "No Instance Seleted",
+                Loggerbox.info(self.main, "No Instance Seleted",
                     "When there are more than one instance present, "
                     "you need to click one of the instance bounding box to specify which to delete.")
                 return

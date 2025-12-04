@@ -4,15 +4,16 @@ import numpy as np
 
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QFileDialog
+from PySide6.QtWidgets import QVBoxLayout, QFileDialog
 
 from typing import List, Dict, Optional
 
-from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Status_Bar, Frame_List_Dialog
-from utils.helper import frame_to_pixmap
 from core.runtime import Data_Manager, Video_Manager
 from core.tool import Annotation_Config, Annotation_Summary_Table, get_next_frame_in_list
 from core.io import load_annotation
+from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Status_Bar, Frame_List_Dialog
+from utils.helper import frame_to_pixmap
+from utils.logger import Loggerbox
 
 class Frame_Annotator:
     BEHAVIORS_MAP = {
@@ -131,7 +132,7 @@ class Frame_Annotator:
             for cat in self.dm.fm.all_populated_categories()
         }
         if not frame_categories:
-            QMessageBox.information(self.main, "No Frames", "No frame categories with frames found.")
+            Loggerbox.info(self.main, "No Frames", "No frame categories with frames found.")
             return
 
         dialog = Frame_List_Dialog(frame_categories, parent=self.main)
@@ -328,7 +329,7 @@ class Frame_Annotator:
             try:
                 min_duration = max(2, int(value))
             except ValueError:
-                QMessageBox.warning(self.main, "Error", "Please input numbers of minimum frames.")
+                Loggerbox.warning(self.main, "Error", "Please input numbers of minimum frames.")
                 return
             
             before_counts = np.bincount(self.annot_array)
@@ -412,7 +413,7 @@ class Frame_Annotator:
 
     def _export_annotation_to_text(self):
         if self.annot_array is None:
-            QMessageBox.warning(self.main, "No Annotation", "No annotation data to export.")
+            Loggerbox.warning(self.main, "No Annotation", "No annotation data to export.")
             return
 
         file_dialog = QFileDialog(self.main)
@@ -423,10 +424,9 @@ class Frame_Annotator:
 
         try:
             self._export_txt_worker(file_path)
-            QMessageBox.information(self.main, "Export Successful", f"Annotation exported to {file_path}")
-
+            Loggerbox.info(self.main, "Export Successful", f"Annotation exported to {file_path}")
         except Exception as e:
-            QMessageBox.critical(self.main, "Export Error", f"Failed to export annotation: {e}")
+            Loggerbox.error(self.main, "Export Error", f"Failed to export annotation: {e}", exc=e)
 
     def _export_txt_worker(self, file_path):
         content = "Caltech Behavior Annotator - Annotation File\n\n"
@@ -447,7 +447,7 @@ class Frame_Annotator:
 
     def _export_annotation_to_mat(self):
         if self.annot_array is None:
-            QMessageBox.warning(self.main, "No Annotation", "No annotation data to export.")
+            Loggerbox.warning(self.main, "No Annotation", "No annotation data to export.")
             return
 
         file_dialog = QFileDialog(self.main)
@@ -465,6 +465,6 @@ class Frame_Annotator:
             }
             mat_to_save = {"annotation": annotation_struct}
             sio.savemat(file_path, mat_to_save)
-            print(f"Successfully saved to {file_path}")
+            Loggerbox.info(f"Successfully saved to {file_path}")
         except Exception as e:
-            print(f"Failed to save {file_path}, Exception: {e}")
+            Loggerbox.error(f"Failed to save {file_path}, Exception: {e}", exc=e)

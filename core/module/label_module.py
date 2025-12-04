@@ -2,13 +2,13 @@ import numpy as np
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QTransform
-from PySide6.QtWidgets import QMessageBox
 
-from ui import Menu_Widget, Video_Player_Widget, Pose_Rotation_Dialog, Status_Bar, Shortcut_Manager
-from utils.helper import frame_to_pixmap, calculate_snapping_zoom_level
 from core.runtime import Data_Manager, Video_Manager, Keypoint_Edit_Manager
 from core.tool import Outlier_Finder, Canvas, Prediction_Plotter
-from core.dataclass import Plot_Config, Plotter_Callbacks
+from ui import Menu_Widget, Video_Player_Widget, Pose_Rotation_Dialog, Status_Bar, Shortcut_Manager
+from utils.helper import frame_to_pixmap, calculate_snapping_zoom_level
+from utils.dataclass import Plot_Config, Plotter_Callbacks
+from utils.logger import Loggerbox
 
 class Frame_Label:
     def __init__(self,
@@ -286,7 +286,7 @@ class Frame_Label:
         if not self.kem.check_pred_data():
             return
         if self.open_outlier:
-            QMessageBox.warning(self.main, "Outlier Cleaning Pending", "An outlier cleaning operation is pending. Please dismiss the outlier widget first.")
+            Loggerbox.warning(self.main, "Outlier Cleaning Pending", "An outlier cleaning operation is pending. Please dismiss the outlier widget first.")
             return False
         if self.gview.is_kp_edit:
             self._direct_keypoint_edit()
@@ -318,7 +318,7 @@ class Frame_Label:
         self.gview.setCursor(Qt.CrossCursor)
         self.gview.is_drawing_zone = True
         self.kem._save_state_for_undo()
-        QMessageBox.information(self.main, "Designate No Mice Zone", "Click and drag on the video to select a zone. Release to apply.")
+        Loggerbox.info(self.main, "Designate No Mice Zone", "Click and drag on the video to select a zone. Release to apply.")
 
     def _temporal_track_correct(self):
         if not self._track_edit_blocker():
@@ -339,7 +339,7 @@ class Frame_Label:
 
     def _tri_swap_not_implemented(self):
         if self.dm.dlc_data.instance_count > 2:
-            QMessageBox.information(self.main, "Not Implemented",
+            Loggerbox.info(self.main, "Not Implemented",
                 "Swapping while instance count is larger than 2 has not been implemented.")
             return False
         return True
@@ -431,12 +431,13 @@ class Frame_Label:
     def save_prediction(self):
         self.kem.check_pred_data()
         is_label_file = True if self.vm.image_mode else False
-        save_path, status, msg = self.dm.save_pred(self.kem.pred_data_array, is_label_file)
-        if not status:
-            QMessageBox.critical(self.main, "Saving Error", f"An error occurred during saving: {msg}")
+        try:
+            save_path = self.dm.save_pred(self.kem.pred_data_array, is_label_file)
+        except Exception as e:
+            Loggerbox.error(self.main, "Saving Error", f"An error occurred during saving: {e}", exc=e)
             return
         self._reload_prediction(save_path)
-        QMessageBox.information(self.main, "Save Successful", str(msg))
+        Loggerbox.info(self.main, "Save Successful", f"Prediction saved in {save_path}.")
         self.is_saved = True
 
     def save_prediction_as_csv(self):

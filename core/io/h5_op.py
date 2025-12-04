@@ -2,11 +2,11 @@ import numpy as np
 import h5py
 
 from typing import Tuple
-import traceback
 
 from .io_helper import convert_prediction_array_to_save_format, remove_confidence_score
 from .csv_op import prediction_to_csv, csv_to_h5
-from core.dataclass import Loaded_DLC_Data, Export_Settings
+from utils.logger import logger
+from utils.dataclass import Loaded_DLC_Data, Export_Settings
 
 def save_prediction_to_existing_h5(
         prediction_filepath:str,
@@ -14,50 +14,37 @@ def save_prediction_to_existing_h5(
         keypoints:list=None,
         multi_animal:bool=False,
         ) -> Tuple[bool, str]:
-    try:
-        with h5py.File(prediction_filepath, "a") as pred_file:
-            key, subkey = validate_h5_keys(pred_file)
-            if not key or not subkey:
-                return False, f"Error: No valid key in the {prediction_filepath}."
-            if subkey == "table":
-                pred_file[key][subkey][...] = convert_prediction_array_to_save_format(pred_data_array)
-            else:
-                F = pred_data_array.shape[0]
+    with h5py.File(prediction_filepath, "a") as pred_file:
+        key, subkey = validate_h5_keys(pred_file)
+        if not key or not subkey:
+            return False, f"Error: No valid key in the {prediction_filepath}."
+        if subkey == "table":
+            pred_file[key][subkey][...] = convert_prediction_array_to_save_format(pred_data_array)
+        else:
+            F = pred_data_array.shape[0]
 
-                try:
-                    pred_file[key][subkey][...] = pred_data_array.reshape(F, -1)
-                except TypeError:
-                    pred_data_array = remove_confidence_score(pred_data_array)
-                    pred_file[key][subkey][...] = pred_data_array.reshape(F, -1)
-                if keypoints:
-                    pred_file = fix_h5_key_order_on_save(pred_file, key, multi_animal, keypoints)
-
-        return True, f"Successfully saved prediction to {prediction_filepath}."
-    except Exception as e:
-        print(f"Error saving prediction to HDF5: {e}")
-        traceback.print_exc()
-        return False, e
+            try:
+                pred_file[key][subkey][...] = pred_data_array.reshape(F, -1)
+            except TypeError:
+                pred_data_array = remove_confidence_score(pred_data_array)
+                pred_file[key][subkey][...] = pred_data_array.reshape(F, -1)
+            if keypoints:
+                pred_file = fix_h5_key_order_on_save(pred_file, key, multi_animal, keypoints)
     
 def save_predictions_to_new_h5(dlc_data:Loaded_DLC_Data, pred_data_array:np.ndarray, export_settings:Export_Settings):
     export_settings.export_mode = "CSV"
-    try:
-        csv_name = prediction_to_csv(
-            dlc_data=dlc_data,
-            pred_data_array=pred_data_array,
-            export_settings=export_settings,
-            keep_conf=True,
-            )
-        csv_to_h5(
-            project_dir=export_settings.save_path,
-            multi_animal=dlc_data.multi_animal,
-            scorer=dlc_data.scorer,
-            csv_name=csv_name
-            )
-        return True, "Prediction successfully saved to new HDF5 file!"
-    except Exception as e:
-        print(f"Error saving prediction to HDF5: {e}")
-        traceback.print_exc()
-        return False, e
+    csv_name = prediction_to_csv(
+        dlc_data=dlc_data,
+        pred_data_array=pred_data_array,
+        export_settings=export_settings,
+        keep_conf=True,
+        )
+    csv_to_h5(
+        project_dir=export_settings.save_path,
+        multi_animal=dlc_data.multi_animal,
+        scorer=dlc_data.scorer,
+        csv_name=csv_name
+        )
     
 def validate_h5_keys(pred_file:dict) -> Tuple[str, str]:
     pred_header = ["tracks", "df_with_missing", "predictions", "keypoints"]
@@ -88,12 +75,11 @@ def fix_h5_kp_order(pred_file: dict, key: str, config_data:dict) -> np.ndarray:
 
     for kp in ref_list:
         if kp not in keypoints:
-            print(f"Keypoint '{kp}' from prediction file not found in provided keypoints list.")
+            logger.warning(f"[H5OP] Keypoint '{kp}' from prediction file not found in provided keypoints list.")
             return data
 
     label_key = "axis0_label2" if multi_animal else "axis0_label1"
     label_array = np.array(pred_file[key][label_key])  # shape: (n_cols,), int indices
-
 
     if n_cols % (num_keypoint * 2) != 0 or  n_cols // (num_keypoint * 2) != instance_count:
         return data

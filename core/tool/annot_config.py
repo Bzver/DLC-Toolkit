@@ -4,10 +4,11 @@ from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QVBoxLayout, QHBoxLayout, QHeaderView,
-    QMessageBox, QDialog, QLineEdit, QPushButton, QFormLayout, QLabel,
-    QComboBox, QDialogButtonBox
+    QDialog, QLineEdit, QPushButton, QFormLayout, QLabel, QComboBox, QDialogButtonBox
 )
+
 from utils.helper import indices_to_spans
+from utils.logger import Loggerbox
 
 TABLE_STYLESHEET = """
         QTableWidget {
@@ -101,7 +102,7 @@ class Annotation_Config(QtWidgets.QWidget):
         new_key = item.text().strip()
 
         if len(new_key) != 1 or not new_key.isalpha():
-            QMessageBox.warning(self, "Invalid Input", "Key must be a single alphabet character.")
+            Loggerbox.warning(self, "Invalid Input", "Key must be a single alphabet character.")
             item.setText(self._behaviors_map[category].upper())
             return
 
@@ -109,7 +110,7 @@ class Annotation_Config(QtWidgets.QWidget):
 
         for cat, key in self._behaviors_map.items():
             if cat != category and key == new_key_lower:
-                QMessageBox.warning(
+                Loggerbox.warning(
                     self,
                     "Duplicate Key",
                     f"Key '{new_key}' is already assigned to category '{cat}'.\n"
@@ -127,19 +128,19 @@ class Annotation_Config(QtWidgets.QWidget):
         if dialog.exec() == QDialog.Accepted:
             category, key = dialog.get_inputs()
             if not category:
-                QMessageBox.warning(self, "Input Error", "Category name cannot be empty.")
+                Loggerbox.warning(self, "Input Error", "Category name cannot be empty.")
                 return
             if len(key) != 1 or not key.isalpha():
-                QMessageBox.warning(self, "Input Error", "Key must be a single alphabet character.")
+                Loggerbox.warning(self, "Input Error", "Key must be a single alphabet character.")
                 return
 
             if category in self._behaviors_map:
-                QMessageBox.warning(self, "Duplicate Category", f"Category '{category}' already exists.")
+                Loggerbox.warning(self, "Duplicate Category", f"Category '{category}' already exists.")
                 return
 
             if key in [v.lower() for v in self._behaviors_map.values()]:
                 existing = [k for k, v in self._behaviors_map.items() if v.lower() == key][0]
-                QMessageBox.warning(self, "Duplicate Key", f"Key '{key.upper()}' is already used by '{existing}'.")
+                Loggerbox.warning(self, "Duplicate Key", f"Key '{key.upper()}' is already used by '{existing}'.")
                 return
 
             self._behaviors_map[category] = key
@@ -149,19 +150,19 @@ class Annotation_Config(QtWidgets.QWidget):
     def _remove_category(self):
         selected = self.table_widget.selectedItems()
         if not selected:
-            QMessageBox.information(self, "No Selection", "Please select a category to remove.")
+            Loggerbox.info(self, "No Selection", "Please select a category to remove.")
             return
 
         row = selected[0].row()
         category_to_remove = self.table_widget.item(row, 0).text()
 
         if len(self._behaviors_map) <= 1:
-            QMessageBox.warning(self, "Cannot Remove", "At least one category must remain.")
+            Loggerbox.warning(self, "Cannot Remove", "At least one category must remain.")
             return
 
         other_categories = [cat for cat in self._behaviors_map.keys() if cat != category_to_remove]
         if not other_categories:
-            QMessageBox.warning(self, "No Target", "No other categories available for reassignment.")
+            Loggerbox.warning(self, "No Target", "No other categories available for reassignment.")
             return
 
         dialog = QDialog(self)
@@ -191,7 +192,7 @@ class Annotation_Config(QtWidgets.QWidget):
         self.map_change.emit(self._behaviors_map)
         self._populate_table()
         
-        QMessageBox.information(self, "Success",
+        Loggerbox.info(self, "Success",
                                 f"Category '{category_to_remove}' removed.\n"
                                 f"Frames reassigned to '{target_category}'.")
 

@@ -1,21 +1,19 @@
 import os
 import pickle
 import numpy as np
-
-from PySide6.QtWidgets import QMessageBox, QFileDialog, QDialog
-
+from PySide6.QtWidgets import QFileDialog, QDialog
 from typing import Callable, Tuple, List, Optional, Dict
-import traceback
 
 from .frame_man import Frame_Manager
-from ui import Head_Tail_Dialog
-from utils.helper import infer_head_tail_indices, build_angle_map
-from utils.pose import calculate_canonical_pose, calculate_pose_bbox
 from core.io import (
     Prediction_Loader, Exporter, remove_confidence_score, determine_save_path,
     backup_existing_prediction, save_prediction_to_existing_h5, prediction_to_csv
 )
-from core.dataclass import Plot_Config, Export_Settings, Blob_Config, Loaded_DLC_Data
+from ui import Head_Tail_Dialog
+from utils.helper import infer_head_tail_indices, build_angle_map
+from utils.pose import calculate_canonical_pose, calculate_pose_bbox
+from utils.logger import logger, Loggerbox, QMessageBox
+from utils.dataclass import Plot_Config, Export_Settings, Blob_Config, Loaded_DLC_Data
 
 class Data_Manager:
     HexColor = str
@@ -67,7 +65,7 @@ class Data_Manager:
                 self.load_dlc_label()
         else:
             if self.dlc_data is None:
-                QMessageBox.information(self.main, "Prediction Selected", "Prediction selected, now loading DLC config.")
+                Loggerbox.info(self.main, "Prediction Selected", "Prediction selected, now loading DLC config.")
                 dlc_config = self.config_file_dialog()
                 if dlc_config:
                     self.load_pred_to_dm(dlc_config, prediction_path)
@@ -86,8 +84,7 @@ class Data_Manager:
         try:
             self.dlc_data = data_loader.load_data()
         except Exception as e:
-            QMessageBox.critical(self.main, "Error Loading Prediction",
-                                    f"Unexpected error during prediction loading: {e}.")
+            Loggerbox.error(self.main, "Error Loading Prediction", f"Unexpected error during prediction loading: {e}.", exc=e)
 
         self._init_loaded_data()
 
@@ -97,15 +94,14 @@ class Data_Manager:
             self.dlc_data = data_loader.load_data(metadata_only=True)
             self.dlc_data.pred_frame_count = self.total_frames
         except Exception as e:
-            QMessageBox.critical(self.main, "Error Loading DLC Config",
-                                    f"Unexpected error during DLC Config loading: {e}.")
+            Loggerbox.error(self.main, "Error Loading DLC Config", f"Unexpected error during DLC Config loading: {e}.", exc=e)
 
     def load_dlc_label(self, image_folder:str, prediction_path:Optional[str]=None):
         """Load DLC Label without a preexisting prediction"""
         if not prediction_path:
             h5_candidates = [f for f in os.listdir(image_folder) if f.startswith("CollectedData_") and f.endswith(".h5")]
             if not h5_candidates:
-                QMessageBox.warning(self.main, "No H5 File", "No 'CollectedData_*.h5' file found in the selected folder.")
+                Loggerbox.warning(self.main, "No H5 File", "No 'CollectedData_*.h5' file found in the selected folder.")
                 return
             prediction_path = os.path.join(image_folder, h5_candidates[0])
 
@@ -121,7 +117,7 @@ class Data_Manager:
         try:
             self.dlc_data = data_loader.load_data(force_load_pred=True)
         except Exception as e:
-            QMessageBox.critical(self.main, "Error Loading Prediction", f"Failed to load prediction: {e}")
+            Loggerbox.error(self.main, "Error Loading Prediction", f"Failed to load prediction: {e}", exc=e)
             return
       
         self._init_loaded_data(loading_label=True)
@@ -155,7 +151,7 @@ class Data_Manager:
         if not pred_candidates:
             return None, None
         newest_pred = max(pred_candidates, key=os.path.getmtime)
-        print(f"Automatically fetched the newest prediction: {newest_pred}")
+        logger.info(f"[DATAMAN] Automatically fetched the newest prediction: {newest_pred}")
 
         dlc_sub_folders = ["dlc-models-pytorch", "evaluation-results-pytorch", "labeled-data", "training-datasets", "videos"]
         found = False
@@ -167,7 +163,7 @@ class Data_Manager:
             return None, None
         dlc_dir = self.video_file.split(fn)[0]
         dlc_config = os.path.join(dlc_dir, "config.yaml")
-        print(f"DLC config found: {dlc_config}")
+        logger.info(f"[DATAMAN] DLC config found: {dlc_config}")
         return dlc_config, newest_pred
 
     ###################################################################################################################################################
@@ -356,8 +352,7 @@ class Data_Manager:
             if dialog.exec() == QDialog.Accepted:
                 head_idx, tail_idx = dialog.get_selected_indices()
             else:
-                QMessageBox.warning(self.main, "Head/Tail Not Set", 
-                    "Canonical pose and angle map will not be available.")
+                Loggerbox.warning(self.main, "Head/Tail Not Set", "Canonical pose and angle map will not be available.")
                 self.canon_pose = None
                 self.angle_map_data = None
                 return
@@ -439,7 +434,7 @@ class Data_Manager:
             with open(file_path, 'wb') as f:
                 pickle.dump(workspace_state, f)
         except Exception as e:
-            QMessageBox.critical(self.main, "Error Saving Workspace", f"Failed to save workspace:\n{e}")
+            Loggerbox.error(self.main, "Error Saving Workspace", f"Failed to save workspace:\n{e}", exc=e)
 
     def load_workspace(self):
         """Load a previously saved workspace state."""
@@ -504,7 +499,7 @@ class Data_Manager:
                 self._init_loaded_data()
         
             if not os.path.isfile(self.video_file):
-                QMessageBox.critical(self.main, "Video File Missing", f"Cannot find video at {self.video_file}")
+                Loggerbox.error(self.main, "Video File Missing", f"Cannot find video at {self.video_file}")
                 self._select_missing_video()
                 if not self.video_file:
                     return
@@ -516,8 +511,7 @@ class Data_Manager:
                 self.save_workspace()
 
         except Exception as e:
-            QMessageBox.critical(self.main, "Error Loading Workspace", f"Failed to load workspace:\n{e}")
-            traceback.print_exc()
+            Loggerbox.error(self.main, "Error Loading Workspace", f"Failed to load workspace:\n{e}", exc=e)
 
     def _select_missing_video(self):
         file_dialog = QFileDialog(self.main)
@@ -534,14 +528,9 @@ class Data_Manager:
         else:
             save_path = determine_save_path(self.prediction, suffix="_track_labeler_modified_")
 
-        status, msg = save_prediction_to_existing_h5(
-            save_path,
-            pred_data_array,
-            self.dlc_data.keypoints,
-            self.dlc_data.multi_animal
-            )
-        
-        return save_path, status, msg
+        save_prediction_to_existing_h5(save_path, pred_data_array, self.dlc_data.keypoints, self.dlc_data.multi_animal)
+
+        return save_path
 
     def save_pred_to_csv(self):
         save_path = os.path.dirname(self.prediction)
@@ -549,11 +538,9 @@ class Data_Manager:
         exp_set = Export_Settings(self.video_file, self.video_name, save_path, "CSV")
         try:
             prediction_to_csv(self.dlc_data, self.dlc_data.pred_data_array, exp_set)
-            QMessageBox.information(self.main, "Save Successful",
-                f"Successfully saved modified prediction in csv to: {os.path.join(save_path, pred_file)}.csv")
+            Loggerbox.info(self.main, "Save Successful", f"Successfully saved modified prediction in csv to: {os.path.join(save_path, pred_file)}.csv")
         except Exception as e:
-            QMessageBox.critical(self.main, "Saving Error", f"An error occurred during csv saving: {e}")
-            print(f"An error occurred during csv saving: {e}")
+            Loggerbox.error(self.main, "Saving Error", f"An error occurred during csv saving: {e}", exc=e)
 
     def reload_pred_to_dm(self, prediction_path:str):
         data_loader = Prediction_Loader(self.dlc_data.dlc_config_filepath, prediction_path)
@@ -583,14 +570,14 @@ class Data_Manager:
         if self.dlc_data:
             try:
                 exporter.export_data_to_DLC()
-                QMessageBox.information(self.main, "Success", "Successfully exported frames and prediction to DLC.")
+                Loggerbox.info(self.main, "Success", "Successfully exported frames and prediction to DLC.")
             except Exception as e:
-                QMessageBox.critical(self.main, "Error Save Data", f"Error saving data to DLC: {e}")
+                Loggerbox.error(self.main, "Error Save Data", f"Error saving data to DLC: {e}", exc=e)
 
             if exp_set.export_mode == "Merge":
                 self._process_labeled_frame()
         else:
-            reply = QMessageBox.question(
+            reply = Loggerbox.question(
                 self.main,
                 "No Prediction Loaded",
                 "No prodiction has been loaded. Would you like export frames only?",
@@ -604,13 +591,13 @@ class Data_Manager:
     def merge_data(self, crop_mode:bool=False):
         refd_list = self.get_frames("refined")
         if not refd_list:
-            QMessageBox.warning(self.main, "No Refined Frame", "No frame has been refined, please refine some marked frames first.")
+            Loggerbox.warning(self.main, "No Refined Frame", "No frame has been refined, please refine some marked frames first.")
             return
         if not self.get_frames("labeled"):
             self.save_to_dlc(crop_mode)
             return
 
-        reply = QMessageBox.question(
+        reply = Loggerbox.question(
             self.main, "Confirm Merge",
             "This action will merge the selected data into the labeled dataset. "
             "Please ensure you have reviewed and refined the predictions on the marked frames.",
@@ -630,14 +617,14 @@ class Data_Manager:
                                  pred_data_array=self.label_data_array, crop_coord=crop_coord, with_conf=True)
             try:
                 exporter.export_data_to_DLC()
-                QMessageBox.information(self.main, "Success", "Successfully exported frames and prediction to DLC.")
+                Loggerbox.info(self.main, "Success", "Successfully exported frames and prediction to DLC.")
             except Exception as e:
-                QMessageBox.critical(self.main, "Error Merge Data", f"Error merging data to DLC: {e}")
+                Loggerbox.error(self.main, "Error Merge Data", f"Error merging data to DLC: {e}", exc=e)
 
             self._process_labeled_frame()
 
     def save_to_dlc_frame_only(self, exporter:Exporter):
-        QMessageBox.information(self.main, "Frame Only Mode", "Choose the directory of DLC project.")
+        Loggerbox.info(self.main, "Frame Only Mode", "Choose the directory of DLC project.")
         dlc_dir = QFileDialog.getExistingDirectory(
                     self.main, "Select Project Folder",
                     os.path.dirname(self.video_file),
@@ -647,6 +634,6 @@ class Data_Manager:
             return
         try:
             exporter.export_data_to_DLC(frame_only=True)
-            QMessageBox.information(self.main, "Success", "Successfully exported marked frames to DLC for labeling!")
+            Loggerbox.info(self.main, "Success", "Successfully exported marked frames to DLC for labeling!")
         except Exception as e:
-            QMessageBox.critical(self.main, "Error Export Frames", f"Error exporting marked frames to DLC: {e}")
+            Loggerbox.error(self.main, "Error Export Frames", f"Error exporting marked frames to DLC: {e}", exc=e)

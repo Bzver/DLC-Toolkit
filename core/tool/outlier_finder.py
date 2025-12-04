@@ -2,7 +2,7 @@ import numpy as np
 
 from PySide6 import QtWidgets
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QPushButton, QHBoxLayout, QVBoxLayout, QGroupBox, QLabel, QMessageBox
+from PySide6.QtWidgets import QPushButton, QHBoxLayout, QVBoxLayout, QGroupBox, QLabel
 
 from typing import Optional, Any, Dict
 
@@ -15,6 +15,7 @@ from utils.pose import (
     outlier_size,
     outlier_pose,
 )
+from utils.logger import Loggerbox
 
 class Outlier_Finder(QGroupBox):
     list_changed = Signal(list)
@@ -162,7 +163,7 @@ class Outlier_Container(QtWidgets.QWidget):
             )
             masks.append(mask)
         if not masks:
-            QMessageBox.warning(self, "No Detectors Enabled", "All outlier detectors are disabled.")
+            Loggerbox.warning(self, "No Detectors Enabled", "All outlier detectors are disabled.")
         else:
             combined = masks[0]
             if self.radio_or.isChecked():

@@ -1,21 +1,25 @@
 import os
 import numpy as np
-from collections import OrderedDict
-
 import cv2
 from PIL import Image
-
+from collections import OrderedDict
 from typing import Optional, Tuple
+
+from utils.logger import logger
 
 class Frame_Extractor:
     def __init__(self, video_path: str):
+        logger.info(f"[FLOADER] Initializing Frame_Extractor for video: {video_path}")
         self.video_path = os.path.abspath(video_path)
         if not os.path.isfile(self.video_path):
+            logger.error(f"[FLOADER] Video file not found: {self.video_path}")
             raise FileNotFoundError(f"Video file not found: {self.video_path}")
 
         self.cap = cv2.VideoCapture(self.video_path)
         if not self.cap.isOpened():
+            logger.error(f"[FLOADER] Failed to open video with OpenCV: {self.video_path}")
             raise RuntimeError(f"Failed to open video with OpenCV: {self.video_path}")
+        logger.info(f"[FLOADER] Video {self.video_path} opened successfully.")
 
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.fps = self.cap.get(cv2.CAP_PROP_FPS)
@@ -37,6 +41,7 @@ class Frame_Extractor:
 
     def get_frame(self, frame_index: int) -> Optional[np.ndarray]:
         if frame_index < 0 or frame_index >= self.total_frames:
+            logger.warning(f"[FLOADER] Frame index {frame_index} out of bounds (0-{self.total_frames-1}).")
             return None
 
         if frame_index in self._frame_cache:
@@ -54,35 +59,47 @@ class Frame_Extractor:
             self._frame_cache[frame_index] = frame.copy()
             return frame
         else:
-            print(f"OpenCV failed to read frame {frame_index}")
+            logger.warning(f"[FLOADER] OpenCV failed to read frame {frame_index}.")
             return None
 
     def start_sequential_read(self, start: int = 0, end: Optional[int] = None):
+        logger.info(f"[FLOADER] Starting sequential read from frame {start} to {end}.")
         if end is None:
             end = self.total_frames
         if not (0 <= start < self.total_frames):
+            logger.error(f"[FLOADER] Start frame {start} out of range (0-{self.total_frames-1}).")
             raise ValueError(f"Start frame {start} out of range")
         if end <= start:
+            logger.warning(f"[FLOADER] End frame {end} is less than or equal to start frame {start}. Adjusting end to {start + 1}.")
             end = start + 1
         end = min(end, self.total_frames)
+        logger.info(f"[FLOADER] Actual sequential read range: {start} to {end}.")
 
         if self._seq_cap is not None:
+            logger.debug("[FLOADER] Releasing existing sequential capture.")
             self._seq_cap.release()
 
         self._seq_cap = cv2.VideoCapture(self.video_path)
         if not self._seq_cap.isOpened():
+            logger.error(f"[FLOADER] Failed to open video for sequential reading: {self.video_path}")
             raise RuntimeError("Failed to open video for sequential reading")
+        logger.info(f"[FLOADER] Sequential capture for {self.video_path} opened successfully.")
 
         self._seq_cap.set(cv2.CAP_PROP_POS_FRAMES, start)
         self._seq_next_index = start
         self._seq_end = end
 
     def read_next_frame(self) -> Optional[Tuple[int, np.ndarray]]:
-        if self._seq_cap is None or self._seq_next_index >= self._seq_end:
+        if self._seq_cap is None:
+            logger.warning("[FLOADER] Sequential capture not started.")
+            return None
+        if self._seq_next_index >= self._seq_end:
+            logger.debug(f"[FLOADER] Reached end of sequential read at index {self._seq_next_index}.")
             return None
 
         ret, frame = self._seq_cap.read()
         if not ret:
+            logger.warning(f"[FLOADER] Failed to read frame {self._seq_next_index} during sequential read.")
             return None
 
         idx = self._seq_next_index
@@ -90,35 +107,43 @@ class Frame_Extractor:
         return idx, frame
 
     def finish_sequential_read(self):
+        logger.info("[FLOADER] Finishing sequential read.")
         if self._seq_cap is not None:
             self._seq_cap.release()
             self._seq_cap = None
+            logger.debug("[FLOADER] Sequential capture released.")
 
     def clear_cache(self):
+        logger.info("[FLOADER] Clearing frame cache.")
         self._frame_cache.clear()
 
     def close(self):
+        logger.info("[FLOADER] Closing Frame_Extractor.")
         self.clear_cache()
         if self.cap:
             self.cap.release()
             self.cap = None
+            logger.debug("[FLOADER] Main video capture released.")
         self.finish_sequential_read()
 
     def __del__(self):
+        logger.debug("[FLOADER] Frame_Extractor instance being deleted.")
         self.close()
 
 
 class Frame_Extractor_Img:
     def __init__(self, img_folder: str):
+        logger.info(f"[FLOADER] Initializing Frame_Extractor_Img for folder: {img_folder}")
         if not os.path.isdir(img_folder):
             raise FileNotFoundError(f"Image folder not found: {img_folder}")
 
-        self.img_files = [os.path.join(img_folder,f) for f in os.listdir(img_folder) 
-                          if f.endswith((".png", ".jpg")) and f.startswith("img")]
+        self.img_files = [os.path.join(img_folder,f) for f in os.listdir(img_folder)
+                            if f.endswith((".png", ".jpg")) and f.startswith("img")]
 
         if len(self.img_files) == 0:
+            logger.error(f"[FLOADER] No eligible image can be found in {img_folder}.")
             raise RuntimeError(f"No eligible image can be found in {img_folder}.")
-        
+        logger.info(f"[FLOADER] Found {len(self.img_files)} image files in {img_folder}.")
         self.img_files.sort()
 
         self.total_frames = len(self.img_files)
@@ -131,17 +156,21 @@ class Frame_Extractor_Img:
         return self.height, self.width
 
     def get_frame(self, frame_index: int) -> Optional[np.ndarray]:
+        logger.debug(f"[FLOADER] Attempting to get image frame {frame_index}")
         if frame_index < 0 or frame_index >= self.total_frames:
+            logger.warning(f"[FLOADER] Image frame index {frame_index} out of bounds (0-{self.total_frames-1}).")
             return None
 
         frame = cv2.imread(self.img_files[frame_index])
         if frame is not None:
             return frame
         else:
-            print(f"OpenCV failed to read frame {frame_index}")
+            logger.warning(f"[FLOADER] OpenCV failed to read image frame {frame_index}.")
             return None
+        logger.debug(f"[FLOADER] Successfully retrieved image frame {frame_index}.")
 
     def get_largest_dim(self) -> Tuple[int, int]:
+        logger.info("[FLOADER] Calculating largest image dimensions.")
         max_x, max_y = 0, 0
         for path in self.img_files:
             try:
@@ -150,8 +179,10 @@ class Frame_Extractor_Img:
                     max_x = max(max_x, w)
                     max_y = max(max_y, h)
             except Exception as e:
-                print(f"Skipping {path}: {e}")
+                logger.exception(f"[FLOADER] Image {path} cannot be opened with PIL.Image due to {e}")
+        logger.info(f"[FLOADER] Largest dimensions found: {max_x}x{max_y}.")
         return int(max_x), int(max_y)
     
     def close(self):
+        logger.info("[FLOADER] Closing Frame_Extractor_Img.")
         pass

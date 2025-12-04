@@ -1,6 +1,8 @@
 import numpy as np
 from typing import Optional
 
+from utils.logger import logger
+
 class Uno_Stack:
     def __init__(self, max_undo_stack_size:int=100):
         self._data_array = None
@@ -22,7 +24,7 @@ class Uno_Stack:
         
         self.redo_stack.append(self._data_array.copy())
         self._data_array = self.undo_stack.pop()
-        print("Undo performed.")
+        logger.info("[UNO] Undo performed.")
         return self._data_array
 
     def redo(self) -> Optional[np.ndarray]:
@@ -33,5 +35,5 @@ class Uno_Stack:
         
         self.undo_stack.append(self._data_array.copy())
         self._data_array = self.redo_stack.pop()
-        print("Redo performed.")
+        logger.info("[UNO] Redo performed.")
         return self._data_array

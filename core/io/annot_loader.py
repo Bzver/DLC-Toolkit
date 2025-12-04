@@ -2,13 +2,15 @@ import os
 from collections import defaultdict
 from typing import Dict, Tuple, List
 
+from utils.logger import logger
+
 def load_annotation(file_path: str) -> Tuple[Dict[str, str], Dict[str, List[Tuple[int, int]]]]:
     annot_raw = defaultdict(list)
     annot_processed = {}
     behav_map = {}
 
     if not os.path.exists(file_path):
-        print(f"Error: Annotation file not found at {file_path}")
+        logger.error(f"[ANTLOAD] Error: Annotation file not found at {file_path}")
         return annot_processed
 
     with open(file_path, 'r') as f:
@@ -33,9 +35,9 @@ def load_annotation(file_path: str) -> Tuple[Dict[str, str], Dict[str, List[Tupl
                     try:
                         behav_map[parts[0]] = parts[1]
                     except ValueError:
-                        print(f"Skipping malformed data line in {file_path}: {line}")
+                        logger.warning(f"[ANTLOAD] Skipping malformed data line in {file_path}: {line}")
                 else:
-                    print(f"Skipping malformed data line (incorrect number of parts) in {file_path}: {line}")
+                    logger.warning(f"[ANTLOAD] Skipping malformed data line (incorrect number of parts) in {file_path}: {line}")
 
             if found_start and line:
                 parts = line.split()
@@ -46,9 +48,9 @@ def load_annotation(file_path: str) -> Tuple[Dict[str, str], Dict[str, List[Tupl
                         type_name = parts[2]
                         annot_raw[type_name].append((start_frame, end_frame))
                     except ValueError:
-                        print(f"Skipping malformed data line in {file_path}: {line}")
+                        logger.warning(f"[ANTLOAD] Skipping malformed data line in {file_path}: {line}")
                 else:
-                    print(f"Skipping malformed data line (incorrect number of parts) in {file_path}: {line}")
+                    logger.warning(f"[ANTLOAD] Skipping malformed data line (incorrect number of parts) in {file_path}: {line}")
 
     for type_name, ranges in annot_raw.items():
         all_frames = set()

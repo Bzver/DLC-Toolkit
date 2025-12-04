@@ -1,14 +1,13 @@
 import numpy as np
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QMessageBox
-import traceback
 
+from core.runtime import Data_Manager, Video_Manager
+from core.tool import Mark_Generator, Blob_Counter, Prediction_Plotter
 from ui import (
     Menu_Widget, Video_Player_Widget, Frame_List_Dialog, Status_Bar, Inference_interval_Dialog, Shortcut_Manager, Frame_Display_Dialog)
 from utils.helper import frame_to_pixmap, frame_to_qimage, get_roi_cv2, plot_roi, calculate_blob_inference_intervals
-from core.runtime import Data_Manager, Video_Manager
-from core.tool import Mark_Generator, Blob_Counter, Prediction_Plotter
+from utils.logger import Loggerbox, QMessageBox
 
 class Frame_View:
     def __init__(self,
@@ -280,7 +279,7 @@ class Frame_View:
         if not self.vm.check_status_msg():
             return False
         if not self.dm.frames_in_any({"marked", "refined", "rejected", "approved"}):
-            QMessageBox.information(self.main, "No Marked Frames", "No frames have been marked for export.")
+            Loggerbox.info(self.main, "No Marked Frames", "No frames have been marked for export.")
             return False
         self.dm.save_workspace()
         return True
@@ -288,7 +287,7 @@ class Frame_View:
     def dlc_inference_marked(self):
         inference_list = self.dm.get_inference_list()
         if not inference_list:
-            QMessageBox.warning(self.main, "No Inference List", "No unapproved / unrejected / unrefined marked frames to inference.")
+            Loggerbox.warning(self.main, "No Inference List", "No unapproved / unrejected / unrefined marked frames to inference.")
             return
         
         self.call_inference(inference_list)
@@ -310,16 +309,16 @@ class Frame_View:
     
     def call_inference(self, inference_list:list):
         if not self.dm.video_file:
-            QMessageBox.warning(self.main, "Video Not Loaded", "No video is loaded, load a video first!")
+            Loggerbox.warning(self.main, "Video Not Loaded", "No video is loaded, load a video first!")
             return
         fm_list = self.dm.get_frames("marked")
         if not fm_list and not inference_list:
-            QMessageBox.warning(self.main, "No Marked Frame", "No frame has been marked, please mark some frames first.")
+            Loggerbox.warning(self.main, "No Marked Frame", "No frame has been marked, please mark some frames first.")
             return
         if self.is_counting:
             self._toggle_animal_counting()
         if self.dm.dlc_data is None:
-            QMessageBox.information(self.main, "Load DLC Config", "You need to load DLC config to inference with DLC models.")
+            Loggerbox.info(self.main, "Load DLC Config", "You need to load DLC config to inference with DLC models.")
 
             dlc_config = self.dm.config_file_dialog()
             if not dlc_config:
@@ -341,14 +340,12 @@ class Frame_View:
             self.inference_window.frames_exported.connect(self._handle_rerun_frames_exported)
             self.inference_window.prediction_saved.connect(self._reload_prediction)
         except Exception as e:
-            error_message = f"Inference Process failed to initialize. Exception: {e}"
-            detailed_message = f"{error_message}\n\nTraceback:\n{traceback.format_exc()}"
-            QMessageBox.warning(self.main, "Inference Failed", detailed_message)
+            Loggerbox.error(self.main, "Inference Failed", f"Inference Process failed to initialize. Exception: {e}", exc=e)
             return
 
     def _suggest_animal_counting(self):
         if self.dm.blob_array is None and not self.skip_counting and not self.is_counting:
-            reply = QMessageBox.question(
+            reply = Loggerbox.question(
                 self.main, "Animal Not Counted",
                 "Animal counting has not been performed for this video. For videos with a large "
                 "number of frames, skipping animal counting may lead to a significantly slower "
@@ -361,7 +358,7 @@ class Frame_View:
 
     def _handle_inference_intervals(self, intervals: dict):
         inference_list= calculate_blob_inference_intervals(self.dm.blob_array, intervals)
-        reply = QMessageBox.question(
+        reply = Loggerbox.question(
             self.main, "Inference List Calculated",
             f"A total of {len(inference_list)} frames out of {self.dm.total_frames} will be inferenced, confirm?"
         )
@@ -387,11 +384,11 @@ class Frame_View:
             self.dm.save_to_dlc(crop_status)
             self.refresh_and_display()
         except Exception as e:
-            QMessageBox.critical(self, "Crop Region Not Set", e)
+            Loggerbox.error(self, "Crop Region Not Set", e, exc=e)
 
     def merge_data(self):
         if self.vm.image_mode:
-            QMessageBox.information(self.main, "Not Complatible",
+            Loggerbox.info(self.main, "Not Complatible",
                 "Loaded DLC Data can only be saved in labeling mode (in place update), or saved as a new one (cropped) with 'Export to DeepLabCut'.")
             return
         if not self.pre_saving_sanity_check():
@@ -401,12 +398,11 @@ class Frame_View:
             self.dm.merge_data(crop_status)
             self.refresh_and_display()
         except Exception as e:
-            QMessageBox.critical(self, "Crop Region Not Set", e)
+            Loggerbox.error(self, "Crop Region Not Set", e, exc=e)
 
     def ask_crop_before_export(self) -> bool:
-        reply = QMessageBox.question(
-            self.main, "Crop Frame For Export?",
-            "Crop the frames before exporting to DLC?")
+        reply = Loggerbox.question(
+            self.main, "Crop Frame For Export?", "Crop the frames before exporting to DLC?")
         if reply == QMessageBox.Yes:
             if self.dm.roi is None:
                 frame = self.vm.get_frame(self.dm.current_frame_idx)

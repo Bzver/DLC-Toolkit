@@ -3,13 +3,14 @@ import numpy as np
 
 from PySide6 import QtWidgets
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QPushButton, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QMessageBox
+from PySide6.QtWidgets import QPushButton, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit
 from PySide6.QtGui import QIntValidator
 
 from typing import Optional, Dict, Any
 
-from core.dataclass import Loaded_DLC_Data
 from .outlier_finder import Outlier_Container
+from utils.logger import Loggerbox
+from utils.dataclass import Loaded_DLC_Data
 
 class Mark_Generator(QtWidgets.QGroupBox):
     clear_old = Signal(bool)
@@ -117,11 +118,11 @@ class Mark_Generator(QtWidgets.QGroupBox):
             start_frame = int(start_text) if start_text else 0
             end_frame = int(end_text) if end_text else self.total_frames - 1
         except ValueError:
-            QMessageBox.critical(self, "Invalid Input", "Please enter valid frame numbers.")
+            Loggerbox.error(self, "Invalid Input", "Please enter valid frame numbers.")
             return
 
         if not (0 <= start_frame <= end_frame < self.total_frames):
-            QMessageBox.critical(self, "Invalid Range", f"Frame range must be 0–{self.total_frames - 1}")
+            Loggerbox.error(self, "Invalid Range", f"Frame range must be 0–{self.total_frames - 1}")
             return
 
         frame_range = list(range(start_frame, end_frame + 1))
@@ -132,36 +133,36 @@ class Mark_Generator(QtWidgets.QGroupBox):
         if mode == "Random":
             num_text = self.random_textbox.text().strip()
             if not num_text:
-                QMessageBox.critical(self, "Missing Input", "Please enter number of frames to mark.")
+                Loggerbox.error(self, "Missing Input", "Please enter number of frames to mark.")
                 return
             try:
                 n = int(num_text)
                 import random
                 selected_frames = random.sample(frame_range, min(n, len(frame_range)))
             except (ValueError, TypeError):
-                QMessageBox.critical(self, "Invalid Number", "Please enter a valid positive number.")
+                Loggerbox.error(self, "Invalid Number", "Please enter a valid positive number.")
                 return
 
         elif mode == "Stride":
             stride_text = self.stride_textbox.text().strip()
             if not stride_text:
-                QMessageBox.critical(self, "Missing Input", "Please enter a stride interval.")
+                Loggerbox.error(self, "Missing Input", "Please enter a stride interval.")
                 return
             try:
                 step = int(stride_text)
                 selected_frames = frame_range[::step]
             except ValueError:
-                QMessageBox.critical(self, "Invalid Stride", "Stride must be a positive integer.")
+                Loggerbox.error(self, "Invalid Stride", "Stride must be a positive integer.")
                 return
 
         elif mode == "Outlier":
             if self.dlc_data is None:
-                QMessageBox.critical(self, "No DLC Data", "Outlier detection requires DLC data.")
+                Loggerbox.error(self, "No DLC Data", "Outlier detection requires DLC data.")
                 return
 
             outlier_mask = self.outlier_container.get_combined_mask()
             if outlier_mask is None or not np.any(outlier_mask):
-                QMessageBox.information(self, "No Outliers Found",
+                Loggerbox.info(self, "No Outliers Found",
                                         "No frames matched the selected outlier criteria in the given range.")
                 return
 
@@ -178,14 +179,13 @@ class Mark_Generator(QtWidgets.QGroupBox):
 
             combined_mask = np.any(outlier_mask, axis=1) & mask_range_processed
             if not np.any(combined_mask):
-                QMessageBox.information(self, "No Outliers in Range",
-                                        "No outliers found within the selected frame range.")
+                Loggerbox.info(self, "No Outliers in Range", "No outliers found within the selected frame range.")
                 return
 
             selected_frames = np.where(outlier_mask)[0].tolist()
 
         else:
-            QMessageBox.critical(self, "Invalid Mode", "Unknown mode selected.")
+            Loggerbox.error(self, "Invalid Mode", "Unknown mode selected.")
 
         selected_frames.sort()
         self.clear_old.emit(not self.keep_old_checkbox.isChecked())

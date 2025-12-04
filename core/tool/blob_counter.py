@@ -17,7 +17,8 @@ from typing import Optional, Tuple, List
 from ui import Progress_Indicator_Dialog, Frame_Display_Dialog
 from utils.helper import get_roi_cv2, plot_roi, frame_to_qimage
 from core.io import Frame_Extractor
-from core.dataclass import Blob_Config
+from utils.logger import logger
+from utils.dataclass import Blob_Config
 
 class Blob_Counter(QGroupBox):
     Frame_CV2 = np.ndarray
@@ -337,9 +338,9 @@ class Blob_Counter(QGroupBox):
         roi = get_roi_cv2(frame)
         if roi is not None:
             self.roi = roi
-            print(f"ROI set to {self.roi}")
+            logger.info(f"[BLOB] ROI set to {self.roi}")
         else:
-            print("ROI selection canceled.")
+            logger.info("[BLOB] ROI selection canceled.")
         
         self.parameters_changed.emit()
         self.roi_set.emit(np.array(self.roi))

@@ -1,8 +1,9 @@
 import numpy as np
 import cv2
 from PySide6 import QtGui
-from PySide6.QtWidgets import QMessageBox
 from typing import List, Tuple, Callable, Union, Iterable, Optional, Dict
+
+from utils.logger import logger, Loggerbox, QMessageBox
 
 def get_instances_on_current_frame(pred_data_array:np.ndarray, current_frame_idx:int) -> List[int]:
     """
@@ -114,9 +115,9 @@ def infer_head_tail_indices(keypoint_names:List[str]) -> Tuple[int,int]:
             break
 
     if head_idx is None:
-        print("Warning: Could not infer head keypoint from keypoint names.")
+        logger.warning("Could not infer head keypoint from keypoint names.")
     if tail_idx is None:
-        print("Warning: Could not infer tail keypoint from keypoint names.")
+        logger.warning("Could not infer tail keypoint from keypoint names.")
 
     return head_idx, tail_idx
 
@@ -176,7 +177,7 @@ def build_weighted_pose_vectors(pred_data_array:np.ndarray, angle_map_data:dict,
     reliable = [conn for conn in angle_map if conn["weight"] >= min_weight][:max_connections]
     
     if not reliable:
-        print("No reliable connections found in angle_map.")
+        logger.warning("No reliable connections found in angle_map.")
         return None
     
     M = len(reliable)
@@ -201,51 +202,15 @@ def build_weighted_pose_vectors(pred_data_array:np.ndarray, angle_map_data:dict,
 
 #########################################################################################################################################################1
 
-def log_print(
-    *args,
-    to_file: bool = False,
-    file_loc: str = "debug_log.txt",
-    with_time: bool = False,
-    **kwargs,
-):
-    import time, os
-    prefix_args = ()
-    if with_time:
-        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-        prefix_args = (f"[{timestamp}]",)
-
-    full_args = prefix_args + args
-    print(*full_args, **kwargs)
-
-    if not to_file:
-        return
-
-    try:
-        os.makedirs(os.path.dirname(file_loc) or ".", exist_ok=True)
-        with open(file_loc, "a", encoding="utf-8") as f:
-            print(*full_args, file=f, **kwargs)
-    except:
-        pass
-
-def clean_log(file_loc:str="debug_log.txt"):
-    try:
-        log_file = file_loc
-        with open(log_file, 'w', encoding='utf-8') as f:
-            pass
-    except:
-        pass
-
-#########################################################################################################################################################1
-
 def clean_inconsistent_nans(pred_data_array:np.ndarray):
-    print("Cleaning up NaN keypoints that somehow has confidence value...")
+    logger.info("Cleaning up NaN keypoints that somehow has confidence value...")
     nan_mask = np.isnan(pred_data_array)
     x_is_nan = nan_mask[:, :, 0::3]
     y_is_nan = nan_mask[:, :, 1::3]
     keypoints_to_fully_nan = x_is_nan | y_is_nan
     full_nan_sweep_mask = np.repeat(keypoints_to_fully_nan, 3, axis=-1)
     pred_data_array[full_nan_sweep_mask] = np.nan
-    print("NaN keypoint confidence cleaned.")
+    logger.info("NaN keypoint confidence cleaned.")
     return pred_data_array
 
 def calculate_blob_inference_intervals(blob_array:np.ndarray, intervals:Dict[str, int]) -> List[int]:
@@ -325,51 +290,27 @@ def handle_unsaved_changes_on_close(
         is_saved:bool,
         save_callback:Callable[[], bool]
         ):
-    """
-    Prompts the user when attempting to close a window with unsaved changes, offering 
-    options to save, discard, or cancel the close action.
-
-    Args:
-        parent: Parent widget (e.g., QMainWindow) used for modal dialog positioning.
-        event: Close event object that will be accepted or ignored based on user choice.
-        is_saved (bool): Flag indicating whether the current state is already saved. 
-                         If True, the window closes immediately without prompting.
-        save_callback (Callable[[], bool]): Function to call when the user chooses to save. 
-                                            Should return True on successful save, False otherwise.
-
-    Returns:
-        None: This function directly controls the event's acceptance or rejection.
-              It does not return a value but affects application flow by accepting 
-              or ignoring the close event based on user interaction.
-    """
     if is_saved:
         event.accept()
         return
     
-    close_call = QMessageBox(parent)
-    close_call.setWindowTitle("Changes Unsaved")
-    close_call.setText("Do you want to save your changes before closing?")
-    close_call.setIcon(QMessageBox.Icon.Question)
+    reply = Loggerbox.question(
+        parent,
+        "Changes Unsaved",
+        "Do you want to save your changes before closing?",
+        buttons=QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+        default=QMessageBox.Cancel
+    )
 
-    save_btn = close_call.addButton("Save", QMessageBox.ButtonRole.AcceptRole)
-    discard_btn = close_call.addButton("Don't Save", QMessageBox.ButtonRole.DestructiveRole)
-    close_btn = close_call.addButton("Close", QMessageBox.RejectRole)
-    
-    close_call.setDefaultButton(close_btn)
-
-    close_call.exec()
-    clicked_button = close_call.clickedButton()
-    
-    if clicked_button == save_btn:
-        success = save_callback()
-        if success:
+    if reply == QMessageBox.Save:
+        if save_callback():
             event.accept()
         else:
             event.ignore()
-    elif clicked_button == discard_btn:
-        event.accept()  # Close without saving
+    elif reply == QMessageBox.Discard:
+        event.accept()
     else:
-        event.ignore()  # Cancel the close action
+        event.ignore()
 
 ###########################################################################################
 

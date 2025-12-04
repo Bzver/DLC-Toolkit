@@ -6,8 +6,9 @@ import numpy as np
 
 from typing import List, Tuple, Optional
 
-from core.dataclass import Loaded_DLC_Data, Export_Settings
 from .io_helper import backup_existing_prediction, remove_confidence_score
+from utils.logger import logger
+from utils.dataclass import Loaded_DLC_Data, Export_Settings
 
 def prediction_to_csv(
         dlc_data:Loaded_DLC_Data,
@@ -66,43 +67,38 @@ def csv_to_h5(
         multi_animal:bool,
         scorer:str="machine-labeled",
         csv_name:str="MachineLabelsRefine"
-        ) -> bool:
+        ):
+    fn = os.path.join(project_dir, f"{csv_name}.csv")
+    with open(fn) as datafile:
+        total_lines = sum(1 for _ in datafile)
     
-    try:
-        fn = os.path.join(project_dir, f"{csv_name}.csv")
-        with open(fn) as datafile:
-            total_lines = sum(1 for _ in datafile)
+    with open(fn) as datafile: # Reopen the file to read the head
+        head = list(islice(datafile, 0, 5))
+    if multi_animal:
+        header = list(range(4))
+    else:
+        header = list(range(3))
         
-        with open(fn) as datafile: # Reopen the file to read the head
-            head = list(islice(datafile, 0, 5))
-        if multi_animal:
-            header = list(range(4))
-        else:
-            header = list(range(3))
-            
-        if head[-1].split(",")[0] == "labeled-data":
-            index_col = [0, 1, 2]
-        else:
-            index_col = 0
-        
-        data = pd.read_csv(fn, index_col=index_col, header=header)
-        
-        expected_rows = total_lines - len(header)
-        if len(data) == expected_rows - 1: # First nan frame is dropped, add it back
-            print("Adding missing first frame with NaN values...")
-            nan_row = pd.DataFrame(
-                np.nan, index=[data.index[0] - 1] if index_col != False else [0], columns=data.columns
-            )
-            data = pd.concat([nan_row, data])
-            data.sort_index(inplace=True)
+    if head[-1].split(",")[0] == "labeled-data":
+        index_col = [0, 1, 2]
+    else:
+        index_col = 0
+    
+    data = pd.read_csv(fn, index_col=index_col, header=header)
+    
+    expected_rows = total_lines - len(header)
+    if len(data) == expected_rows - 1: # First nan frame is dropped, add it back
+        logger.warning("Adding missing first frame with NaN values...")
+        nan_row = pd.DataFrame(
+            np.nan, index=[data.index[0] - 1] if index_col != False else [0], columns=data.columns
+        )
+        data = pd.concat([nan_row, data])
+        data.sort_index(inplace=True)
 
-        data.columns = data.columns.set_levels([f"{scorer}"], level="scorer")
-        guarantee_multiindex_rows(data)
-        data.to_hdf(fn.replace(".csv", ".h5"), key="df_with_missing", mode="w")
-        data.to_csv(fn)
-        return True
-    except FileNotFoundError:
-        print(f"Expected file: {csv_name}.csv not found in {project_dir}!")
+    data.columns = data.columns.set_levels([f"{scorer}"], level="scorer")
+    guarantee_multiindex_rows(data)
+    data.to_hdf(fn.replace(".csv", ".h5"), key="df_with_missing", mode="w")
+    data.to_csv(fn)
 
 def construct_header_row(
         dlc_data:Loaded_DLC_Data,

@@ -1,14 +1,15 @@
 from PySide6 import QtWidgets
 from PySide6.QtCore import QEvent
 from PySide6.QtGui import QCloseEvent
-from PySide6.QtWidgets import QMainWindow, QVBoxLayout, QMessageBox, QHBoxLayout, QApplication
+from PySide6.QtWidgets import QMainWindow, QVBoxLayout, QHBoxLayout, QApplication
 
-from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Toggle_Switch, Status_Bar, Frame_List_Dialog
-from utils.helper import handle_unsaved_changes_on_close
 from core.runtime import Data_Manager, Video_Manager, Keypoint_Edit_Manager
 from core.module import Frame_View, Frame_Label, Frame_Annotator
 from core.tool import Canonical_Pose_Dialog, Plot_Config_Menu, navigate_to_marked_frame
-from core.dataclass import Nav_Callback, Plot_Config
+from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Toggle_Switch, Status_Bar, Frame_List_Dialog
+from utils.helper import handle_unsaved_changes_on_close
+from utils.logger import Loggerbox
+from utils.dataclass import Nav_Callback, Plot_Config
 
 class Frame_App(QMainWindow):
     def __init__(self):
@@ -137,7 +138,6 @@ class Frame_App(QMainWindow):
 
     def _switch_to_flabel(self):
         if self.dm.dlc_data is None:
-            QMessageBox.information(self, )
             self._switch_to_fview()
             raise Exception("DLC data not loaded, you need to load it before labeling.")
         self.fview.deactivate(self.menu_widget)
@@ -226,7 +226,7 @@ class Frame_App(QMainWindow):
             self.dm.total_frames = self.vm.get_frame_counts()
             self.vid_play.set_total_frames(self.dm.total_frames)
         except Exception as e:
-            QMessageBox.critical(self, "Error Opening DLC Label", e)
+            Loggerbox.error(self, "Error Opening DLC Label", e, exec=e)
         self.at.display_current_frame()
         self.flabel.reset_zoom()
 
@@ -314,7 +314,7 @@ class Frame_App(QMainWindow):
         if not self.vm.check_status_msg():
             return
         if not self.dm.dlc_data:
-            QMessageBox.warning(self, "No Prediction", "No prediction has been loaded, please load prediction first.")
+            Loggerbox.warning(self, "No Prediction", "No prediction has been loaded, please load prediction first.")
             return
         
         self.open_config = not self.open_config

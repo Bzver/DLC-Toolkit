@@ -1,7 +1,7 @@
 import bisect
-
-from PySide6.QtWidgets import QMessageBox
 from typing import Optional, Callable, List, Literal
+
+from utils.logger import Loggerbox
 
 def navigate_to_marked_frame(
         parent,
@@ -27,7 +27,7 @@ def navigate_to_marked_frame(
         - On exception during callback, shows a critical error message.
     """
     if not frame_list:
-        QMessageBox.warning(parent, "No Marked Frames", "No marked frames to navigate.")
+        Loggerbox.warning(parent, "No Marked Frames", "No marked frames to navigate.")
         return
     
     frame_list.sort()
@@ -40,13 +40,13 @@ def navigate_to_marked_frame(
         no_frame_message = "No next marked frame found."
     
     if dest_frame_idx is None:
-        QMessageBox.warning(parent, "Navigation", no_frame_message)
+        Loggerbox.warning(parent, "Navigation", no_frame_message)
         return
 
     try:
         change_frame_callback(dest_frame_idx)
     except Exception as e:
-        QMessageBox.critical(parent, "Exception", f"Enountering exception: {e}.")
+        Loggerbox.error(parent, "Exception", e, exc=e)
 
 def _get_prev_frame_in_list(frame_list:List[int], current_frame_idx:int) -> Optional[int]:
     try:

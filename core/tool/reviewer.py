@@ -3,19 +3,19 @@ import cv2
 
 from PySide6 import QtGui
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGroupBox, QMessageBox)
+from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGroupBox
 
 from typing import List, Tuple, Optional
 
 from .plot import Prediction_Plotter
 from .undo_redo import Uno_Stack
 from .mark_nav import navigate_to_marked_frame
+from core.io import Frame_Extractor, Frame_Extractor_Img
 from ui import Clickable_Video_Label, Video_Slider_Widget, Shortcut_Manager
 from utils.helper import frame_to_pixmap, handle_unsaved_changes_on_close, crop_coord_to_array
 from utils.track import swap_track
-from core.dataclass import Loaded_DLC_Data
-from core.io import Frame_Extractor, Frame_Extractor_Img
+from utils.dataclass import Loaded_DLC_Data
+from utils.logger import Loggerbox, QMessageBox
 
 class Parallel_Review_Dialog(QDialog):
     pred_data_exported = Signal(object, tuple)
@@ -401,18 +401,19 @@ class Parallel_Review_Dialog(QDialog):
         self._refresh_slider()
 
         if not self.tc_mode and np.any(self.frame_status_array==0):
-            msg_box = QMessageBox(self)
-            msg_box.setIcon(QMessageBox.Warning)
-            msg_box.setWindowTitle("Unprocessed Frames - Save and Exit?")
-            msg_box.setText(
-                f"You have {np.sum(self.frame_status_array==0)} unprocessed frame(s).\n\n"
-                "This action will save your progress and close the window.\n"
-                "All unprocessed frames will remain as original and will not be marked as approved.\n\n"
-                "Are you sure you want to continue?"
+            unprocessed_count = np.sum(self.frame_status_array==0)
+            reply = Loggerbox.question(
+                parent=self,
+                title="Unprocessed Frames - Save and Exit?",
+                text=(
+                    f"You have {unprocessed_count} unprocessed frame(s).\n\n"
+                    "This action will save your progress and close the window.\n"
+                    "All unprocessed frames will remain as original and will not be marked as approved.\n\n"
+                    "Are you sure you want to continue?"
+                ),
+                buttons=QMessageBox.Yes | QMessageBox.No,
+                default=QMessageBox.No
             )
-            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-            msg_box.setDefaultButton(QMessageBox.No)
-            reply = msg_box.exec_()
 
             if reply == QMessageBox.No:
                 return

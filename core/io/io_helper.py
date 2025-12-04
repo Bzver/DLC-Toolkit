@@ -4,6 +4,8 @@ import yaml
 import numpy as np
 from typing import List, Tuple, Dict
 
+from utils.logger import logger
+
 def backup_existing_prediction(save_filepath:str):
     if not os.path.isfile(save_filepath):
         return
@@ -39,34 +41,31 @@ def determine_save_path(prediction_filepath:str, suffix:str) -> str:
     pred_file_to_save_path = os.path.join(pred_file_dir,f"{base_name}{suffix}{save_idx}.h5")
 
     shutil.copy(prediction_filepath, pred_file_to_save_path)
-    print(f"Saved modified prediction to: {pred_file_to_save_path}")
+    logger.info(f"[IO] Saved modified prediction to: {pred_file_to_save_path}")
     return pred_file_to_save_path
     
 def append_new_video_to_dlc_config(config_path:str, video_name:str):
     dlc_dir = os.path.dirname(config_path)
     config_backup = os.path.join(dlc_dir, "config_bak.yaml")
-    print("Backup up the original config.yaml as config_bak.yaml")
+    logger.info("[IO] Backup up the original config.yaml as config_bak.yaml")
     shutil.copy(config_path ,config_backup)
 
     video_filepath = os.path.join(dlc_dir, "videos", f"{video_name}.mp4")
 
     # Load original config
     with open(config_path, 'r') as f:
-        try:
-            config_org = yaml.safe_load(f)
-        except yaml.YAMLError as e:
-            raise ValueError(f"Error parsing YAML file: {e}")
+        config_org = yaml.safe_load(f)
 
         if video_filepath in config_org["video_sets"]:
-            print(f"Video {video_filepath} already exists in video_sets. Skipping update.")
+            logger.info(f"[IO] Video {video_filepath} already exists in video_sets. Skipping update.")
             return
 
         config_org["video_sets"][video_filepath] = {"crop": "0, 0, 0, 0"}
-        print("Appended new video_sets to the originals.")
+        logger.info("[IO] Appended new video_sets to the originals.")
 
     with open(config_path, 'w') as file:
         yaml.dump(config_org, file, default_flow_style=False, sort_keys=False)
-        print(f"DeepLabCut config in {config_path} has been updated.")
+        logger.info(f"[IO] DeepLabCut config in {config_path} has been updated.")
 
 def add_mock_confidence_score(array:np.ndarray) -> np.ndarray:
     array_dim = len(array.shape) # Always check for dimension first

@@ -7,19 +7,19 @@ import numpy as np
 
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QHBoxLayout, QPushButton, QDialog
+from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QPushButton, QDialog
 
-import traceback
 from typing import List, Optional, Tuple
 
 from ui import Spinbox_With_Label, Progress_Indicator_Dialog
-from core.dataclass import Loaded_DLC_Data, Export_Settings
 from core.io import (
     Exporter, Prediction_Loader, Frame_Extractor, Frame_Extractor_Img,
     save_predictions_to_new_h5, determine_save_path, save_prediction_to_existing_h5
     )
 from .reviewer import Parallel_Review_Dialog
 from utils.helper import crop_coord_to_array, get_roi_cv2
+from utils.logger import logger, Loggerbox
+from utils.dataclass import Loaded_DLC_Data, Export_Settings
 
 DEBUG = False
 
@@ -255,7 +255,7 @@ class DLC_Inference(QDialog):
                 self.crop_coord = np.array(roi)
                 self.roi_set.emit(self.crop_coord)
             else:
-                QMessageBox.information(self, "Crop Region Not Set", "User cancel the ROI selection.")
+                Loggerbox.info(self, "Crop Region Not Set", "User cancel the ROI selection.")
                 return
 
         inference_video_path = None
@@ -271,7 +271,7 @@ class DLC_Inference(QDialog):
                 self._extract_marked_frame_images(self.crop_coord)
                 self.extractor_reviewer = Frame_Extractor_Img(self.temp_dir)
         except Exception as e:
-            self._panic_exit(reason=f"Error during frame image extraction. Error:{e}")
+            self._panic_exit(reason=f"Error during frame image extraction. Error:{e}", exception=e)
             return
 
         QtWidgets.QApplication.processEvents()
@@ -287,7 +287,7 @@ class DLC_Inference(QDialog):
             else:
                 self._analyze_frame_images()
         except Exception as e:
-            self._panic_exit(reason=f"Error during frame analysis. Error:{e}")
+            self._panic_exit(reason=f"Error during frame analysis. Error:{e}", exception=e)
             return
         
         self.on_hold_dialog.accept()
@@ -301,7 +301,7 @@ class DLC_Inference(QDialog):
         config_path = self.dlc_data.dlc_config_filepath
         dlc_dir = os.path.dirname(self.dlc_data.dlc_config_filepath)
         config_backup = os.path.join(dlc_dir, "config_bak.yaml")
-        print("Backup up the original config.yaml as config_bak.yaml")
+        logger.info("[INFER] Backup up the original config.yaml as config_bak.yaml")
         shutil.copy(config_path ,config_backup)
 
         with open(config_path, 'r') as f:
@@ -315,19 +315,23 @@ class DLC_Inference(QDialog):
 
         with open(config_path, 'w') as file:
             yaml.dump(config_org, file, default_flow_style=False, sort_keys=False)
-            print(f"DeepLabCut config in {config_path} has been updated.")
+            logger.info(f"[INFER] DeepLabCut config in {config_path} has been updated.")
 
     def _extract_marked_frame_images(self, crop_coord=None):
         progress = Progress_Indicator_Dialog(0, 100, "Frame Extraction", "Extracting frames from video", parent=self)
         exporter = Exporter(
             dlc_data=self.dlc_data, export_settings=self.export_set, frame_list=self.frame_list, progress_callback=progress, crop_coord=crop_coord)
-        exporter.export_data_to_DLC(frame_only=True)
+        corrected_indices = exporter.export_data_to_DLC(frame_only=True)
+        if corrected_indices:
+            self.frame_list = corrected_indices
 
     def _extract_marked_frame_as_video(self, crop_coord=None):
         progress = Progress_Indicator_Dialog(0, 100, "Frame Extraction", "Extracting frames from video", parent=self)
         exporter = Exporter(
             dlc_data=self.dlc_data, export_settings=self.export_set, frame_list=self.frame_list, progress_callback=progress, crop_coord=crop_coord)
-        exporter.export_frame_to_video()
+        corrected_indices = exporter.export_frame_to_video()
+        if corrected_indices:
+            self.frame_list = corrected_indices
 
     def _analyze_frame_images(self):
         import deeplabcut
@@ -377,17 +381,13 @@ class DLC_Inference(QDialog):
         pred_filepath = os.path.join(video_path, pred_filename)
         self.dlc_data.prediction_filepath = pred_filepath # So that it will be picked up by prediction_to_csv later
         self.export_set.save_path = video_path
-        status, msg = save_predictions_to_new_h5(
-            dlc_data=self.dlc_data,
-            pred_data_array=self.new_data_array,
-            export_settings=self.export_set)
-    
-        if not status:
-            QMessageBox.critical(self, "Saving Error", f"An error occurred during saving: {msg}")
-            print(f"An error occurred during saving: {msg}")
+        try:
+            save_predictions_to_new_h5(dlc_data=self.dlc_data, pred_data_array=self.new_data_array, export_settings=self.export_set)
+        except Exception as e:
+            Loggerbox.error(self, "Saving Error", f"An error occurred during saving: {e}", exc=e)
             return
         
-        print(f"Prediction saved to {pred_filepath}")
+        logger.info(f"[INFER] Prediction saved to {pred_filepath}")
         
         list_tuple = (self.frame_list, [])
         self.prediction_saved.emit(pred_filepath)
@@ -403,26 +403,21 @@ class DLC_Inference(QDialog):
 
     def _save_pred_to_file(self, pred_data_array:np.ndarray, list_tuple:Tuple[List[int], List[int]]):
         pred_filepath = determine_save_path(self.dlc_data.prediction_filepath, suffix="_rerun_")
-        status, msg = save_prediction_to_existing_h5(pred_filepath, pred_data_array)
-        if not status:
-            QMessageBox.critical(self, "Error", f"Error saving prediction to file: {msg}")
+        try:
+            save_prediction_to_existing_h5(pred_filepath, pred_data_array)
+        except Exception as e:
+            Loggerbox.error(self, "Error", f"Error saving prediction to file: {e}", exc=e)
         else:
             self.prediction_saved.emit(pred_filepath)
             self.frames_exported.emit(list_tuple)
 
-    def _panic_exit(self, reason:str="Check terminal for reason."):
-        traceback.print_exc()
-        QMessageBox.warning(self, "Rerun Failed", reason)
-        if hasattr(self, 'temp_directory') and self.temp_directory:
-            self.temp_directory.cleanup()
-            self.temp_directory = None
+    def _panic_exit(self, reason:str="Check terminal for reason.", exception:Optional[Exception]=None):
+        Loggerbox.error(self, "Rerun Failed", reason, exception)
         self.reject()
 
     def closeEvent(self, event):
         if hasattr(self, "extractor_reviewer"):
             self.extractor_reviewer.close()
-        if self.temp_directory is not None:
-            self.temp_directory.cleanup()
 
 class On_Hold_Dialog(QDialog):
     def __init__(self, parent=None):

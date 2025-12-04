@@ -1,6 +1,8 @@
 from typing import Dict, List, Callable, Any, Set
 from collections import defaultdict
 
+from utils.logger import logger
+
 class Frame_Manager:
     PREDEFINED = {
         "marked":      {"display_name": "Pending Frames",       "color_hex": "#E28F13", "group": "fview"},
@@ -188,6 +190,6 @@ class Frame_Manager:
 
     def print_all_category_len(self):
         all_cat = self.all_categories()
-        print("----------------------------------------")
+        logger.info("----------------------------------------")
         for cat in all_cat:
-            print(f"Category: {cat} - {self.get_len(cat)}")
+            logger.info(f"[FRMAN] Category: {cat} - {self.get_len(cat)}")
