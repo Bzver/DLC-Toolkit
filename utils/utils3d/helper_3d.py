@@ -3,8 +3,8 @@ from itertools import combinations
 from typing import Tuple, Literal
 
 from .triangulation import triangulate_point_simple
-from core.dataclass import Swap_Calculation_Config
 from utils.track import swap_track
+from utils.dataclass import Swap_Calculation_Config
 
 def calculate_identity_swap_score_per_frame(
         keypoint_data_tr:dict,

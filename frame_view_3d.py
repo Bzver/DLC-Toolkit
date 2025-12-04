@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 from utils import helper as duh, utils3d as utls3
-from core.dataclass import Plot_Config, Nav_Callback
+from utils.dataclass import Plot_Config, Nav_Callback
 from ui import (
     Menu_Widget, Video_Slider_Widget, Nav_Widget, Clickable_Video_Label, Progress_Indicator_Dialog, Status_Bar
     )

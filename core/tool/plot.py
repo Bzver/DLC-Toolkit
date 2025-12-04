@@ -6,8 +6,8 @@ from PySide6.QtWidgets import QGraphicsRectItem, QGraphicsEllipseItem, QGraphics
 
 from typing import Optional, Tuple
 
-from core.dataclass import Loaded_DLC_Data, Plot_Config, Plotter_Callbacks
 from ui import Selectable_Instance, Draggable_Keypoint
+from utils.dataclass import Loaded_DLC_Data, Plot_Config, Plotter_Callbacks
 
 class Prediction_Plotter:
     Frame_CV2 = np.ndarray

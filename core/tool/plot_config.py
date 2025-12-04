@@ -3,7 +3,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QGroupBox, QDialog, QVBoxLayout
 
 from ui import Toggle_Switch
-from core.dataclass import Plot_Config
+from utils.dataclass import Plot_Config
 
 class Plot_Config_Menu(QGroupBox):
     config_changed = Signal(object)

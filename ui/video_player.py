@@ -6,7 +6,7 @@ from PySide6.QtGui import QFont
 from typing import Callable
 
 from .video_slider import Video_Slider_Widget
-from core.dataclass import Nav_Callback
+from utils.dataclass import Nav_Callback
 
 class Video_Player_Widget(QtWidgets.QWidget):
     def __init__(self,
