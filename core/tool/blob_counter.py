@@ -1,10 +1,11 @@
 import cv2
 import numpy as np
+import time
 from PySide6 import QtWidgets, QtGui
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
-    QSizePolicy, QSlider, QComboBox, QPushButton
+    QSizePolicy, QSlider, QComboBox, QPushButton,
 )
 
 import matplotlib
@@ -14,10 +15,10 @@ from matplotlib.figure import Figure
 
 from typing import Optional, Tuple, List
 
-from ui import Progress_Indicator_Dialog, Frame_Display_Dialog
+from ui import Progress_Indicator_Dialog, Frame_Display_Dialog, Frame_Range_Dialog
 from utils.helper import get_roi_cv2, plot_roi, frame_to_qimage
 from core.io import Frame_Extractor
-from utils.logger import logger
+from utils.logger import Loggerbox, QMessageBox, logger
 from utils.dataclass import Blob_Config
 
 class Blob_Counter(QGroupBox):
@@ -31,7 +32,7 @@ class Blob_Counter(QGroupBox):
                  frame_extractor:Frame_Extractor,
                  config: Optional[Blob_Config]=None,
                  roi:Optional[np.ndarray] = None,
-                 blob_array:bool=False,
+                 blob_array:Optional[np.ndarray] = None,
                  parent=None):
         super().__init__(parent)
         self.setTitle("Blob Counting Controls")
@@ -134,8 +135,8 @@ class Blob_Counter(QGroupBox):
         self.refresh_hist_btn.clicked.connect(self._plot_blob_histogram)
         self.blb_layout.addWidget(self.refresh_hist_btn)
 
-        self.count_all_btn = QPushButton("Count Animals in Entire Video")
-        self.count_all_btn.clicked.connect(self._count_entire_video)
+        self.count_all_btn = QPushButton("Count Animals")
+        self.count_all_btn.clicked.connect(self._count_video)
         self.blb_layout.addWidget(self.count_all_btn)
 
         self.count_label = QLabel("Animal Count: 0")
@@ -153,6 +154,7 @@ class Blob_Counter(QGroupBox):
             self._reset_blob_array()
 
         self.blob_array = blob_array
+        self.last_reset_query = 0
 
     def set_current_frame(self, frame:Frame_CV2, frame_idx:int):
         self.current_frame = frame
@@ -199,12 +201,7 @@ class Blob_Counter(QGroupBox):
             return
         
         contours = self._process_contour_from_frame(self.current_frame)
-        count, merge = self._perform_blob_counting(contours)
-        x1, y1, x2, y2 = self._perform_bbox_calculation(contours)
-
-        if self.blob_array is None:
-            self._reset_blob_array()
-        self._update_blob_array(self.frame_idx, count, merge, x1, y1, x2, y2)
+        count, _ = self._perform_blob_counting(contours)
 
         self.count_label.setText(f"Animal Count: {count}")
         display_frame = self._draw_mask(self.current_frame, contours)
@@ -213,11 +210,21 @@ class Blob_Counter(QGroupBox):
     def _get_total_frames(self):
         self.total_frames = self.frame_extractor.get_total_frames()
 
-    def _count_entire_video(self):
-        self.frame_extractor.start_sequential_read(start=0)
-        frame_idx = 0
+    def _count_video(self):
+        fm_dialog = Frame_Range_Dialog(self.total_frames, parent=self)
+        fm_dialog.range_selected.connect(self._count_entire_video)
+        fm_dialog.exec()
 
-        progress = Progress_Indicator_Dialog(0, self.total_frames, "Counting", "Blob counting...", self)
+    def _count_entire_video(self, frame_range_tuple):
+        start_idx, end_idx = frame_range_tuple
+        if end_idx < start_idx:
+            logger.error(f"[BCOUNT] End_idx {end_idx} < start_idx {start_idx} during video counting bootstrap.")
+            return
+
+        self.frame_extractor.start_sequential_read(start=start_idx, end=end_idx)
+        frame_idx = start_idx
+
+        progress = Progress_Indicator_Dialog(0, end_idx-start_idx, "Counting", "Blob counting...", self)
 
         while frame_idx < self.total_frames:
             if progress.wasCanceled():
@@ -229,13 +236,12 @@ class Blob_Counter(QGroupBox):
             actual_idx, frame = result
             assert actual_idx == frame_idx, "Frame index mismatch!"
 
-            if self.blob_array[frame_idx, 5] == 0:
-                contours = self._process_contour_from_frame(frame)
-                count, merged = self._perform_blob_counting(contours)
-                x1, y1, x2, y2 = self._perform_bbox_calculation(contours)
-                self._update_blob_array(frame_idx, count, merged, x1, y1, x2, y2)
+            contours = self._process_contour_from_frame(frame)
+            count, merged = self._perform_blob_counting(contours)
+            x1, y1, x2, y2 = self._perform_bbox_calculation(contours)
+            self._update_blob_array(frame_idx, count, merged, x1, y1, x2, y2)
 
-            progress.setValue(frame_idx)
+            progress.setValue(frame_idx-start_idx)
             QtWidgets.QApplication.processEvents()
             frame_idx += 1
 
@@ -433,7 +439,26 @@ class Blob_Counter(QGroupBox):
         self._reprocess_current_frame()
 
     def _reset_blob_array(self):
-        self.blob_array = np.zeros((self.total_frames, 6), dtype=np.uint16) # count, is_merged, x1, y1, x2, y2
+        if not hasattr(self, "blob_array") or self.blob_array is None:
+            logger.info("[BCOUNT] Preallocating blob array with numeric zeros.")
+            self.blob_array = np.zeros((self.total_frames, 6), dtype=np.uint16)
+            return
+        if np.any(self.blob_array != 0):
+            now = time.time()
+            elapsed = now - self.last_reset_query
+            if elapsed < 60.0:
+                logger.debug("[BCOUNT] Skipping reset prompt (cooldown active).")
+                return
+            self.last_reset_query = now
+            reply = Loggerbox.question(
+                self, "Blob Counting Reset", "Parameters have changed, do you want to reset the blob counting result?"
+            )
+            if reply == QMessageBox.No:
+                return
+
+        logger.info("[BCOUNT] Restting blob array.")
+        self.blob_array = np.zeros((self.total_frames, 6), dtype=np.uint16)
+            
 
 class Blob_Background(QtWidgets.QWidget):
     roi_requested = Signal()
