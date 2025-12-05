@@ -41,8 +41,13 @@ def outlier_confidence(pred_data_array:np.ndarray, threshold:float=0.5) -> np.nd
     Returns:
         np.ndarray: Boolean mask of shape (num_frames, num_instances) where True indicates low confidence.
     """
+    T, I, _ = pred_data_array.shape
     confidence_scores = pred_data_array[:, :, 2::3]
-    inst_conf = np.nanmean(confidence_scores, axis=2)
+
+    inst_conf = np.full((T, I), np.nan)
+    valid_mask = np.any(~np.isnan(confidence_scores), axis=2)
+
+    inst_conf[valid_mask] = np.nanmean(confidence_scores[valid_mask], axis=2)
     low_conf_mask = inst_conf < threshold
     return low_conf_mask
 
