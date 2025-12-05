@@ -9,6 +9,7 @@ from .dialog import (
     Frame_List_Dialog,
     Head_Tail_Dialog,
     Inference_interval_Dialog,
+    Frame_Range_Dialog,
     Frame_Display_Dialog,
     Track_Fix_Dialog,
 )
@@ -31,6 +32,7 @@ __all__ = (
     Head_Tail_Dialog,
     Progress_Indicator_Dialog,
     Inference_interval_Dialog,
+    Frame_Range_Dialog,
     Frame_Display_Dialog,
     Track_Fix_Dialog,
     Menu_Widget,

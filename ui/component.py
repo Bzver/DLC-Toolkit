@@ -159,3 +159,6 @@ class Spinbox_With_Label(QtWidgets.QWidget):
         layout.addWidget(label)
         layout.addWidget(self.spinbox)
         layout.setContentsMargins(0, 0, 0, 0)
+
+    def value(self):
+        return self.spinbox.value()

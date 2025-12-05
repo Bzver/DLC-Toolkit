@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 
 from typing import List, Dict, Tuple
 
+from .component import Spinbox_With_Label
 from utils.logger import Loggerbox
 
 class Pose_Rotation_Dialog(QDialog):
@@ -174,16 +175,8 @@ class Inference_interval_Dialog(QDialog):
         }
 
         for label_text, key in categories.items():
-            h_layout = QHBoxLayout()
-            label = QLabel(label_text)
-            spin_box = QSpinBox()
-            spin_box.setMinimum(1)
-            spin_box.setMaximum(1000)
-            spin_box.setValue(1)
-            h_layout.addWidget(label)
-            h_layout.addStretch()
-            h_layout.addWidget(spin_box)
-            main_layout.addLayout(h_layout)
+            spin_box = Spinbox_With_Label(label_text, (1,1000), 1)
+            main_layout.addWidget(spin_box)
             self.interval_widgets[key] = spin_box
 
         # Buttons
@@ -203,6 +196,45 @@ class Inference_interval_Dialog(QDialog):
         intervals = {key: widget.value() for key, widget in self.interval_widgets.items()}
         self.intervals_selected.emit(intervals)
         self.accept()
+
+
+class Frame_Range_Dialog(QDialog):
+    range_selected = Signal(tuple)
+
+    def __init__(self, total_frames:int, parent=None):
+        super().__init__(parent)
+        self.total_frames = total_frames
+
+        self.setWindowTitle("Set Frame Range")
+        self.setMinimumWidth(300)
+
+        main_layout = QVBoxLayout(self)
+
+        self.start_spin = Spinbox_With_Label("Start:", (0, self.total_frames-1), 0)
+        self.end_spin = Spinbox_With_Label("End:", (0, self.total_frames-1), self.total_frames-1)
+        main_layout.addWidget(self.start_spin)
+        main_layout.addWidget(self.end_spin)
+
+        button_layout = QHBoxLayout()
+        ok_button = QPushButton("OK")
+        cancel_button = QPushButton("Cancel")
+
+        ok_button.clicked.connect(self._accept_input)
+        cancel_button.clicked.connect(self.reject)
+
+        button_layout.addStretch()
+        button_layout.addWidget(ok_button)
+        button_layout.addWidget(cancel_button)
+        main_layout.addLayout(button_layout)
+
+    def _accept_input(self):
+        start_idx = self.start_spin.value()
+        end_idx = self.end_spin.value()
+        if end_idx >= start_idx:
+            self.range_selected.emit((start_idx, end_idx))
+            self.accept()
+        else:
+            Loggerbox(self, "Invalid Parameters", f"End frame ({end_idx}) cannot be lower than start frame ({start_idx}).")
 
 
 class Track_Fix_Dialog(QDialog):
