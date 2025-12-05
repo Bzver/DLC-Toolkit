@@ -135,12 +135,26 @@ class Data_Manager:
         if f"{self.video_name}_workspace.pkl" in os.listdir(video_folder):
             file_path = os.path.join(video_folder, f"{self.video_name}_workspace.pkl")
             self._load_workspace(file_path)
-            return True
         
+            _, pred_path = self.auto_loader()
+            if pred_path:
+                if not self.dlc_data:
+                    dlc_config_filepath = self.config_file_dialog()
+                    if not dlc_config_filepath:
+                        return True
+                self.load_pred_to_dm(prediction_path=pred_path, dlc_config_path=dlc_config_filepath)
+                if not self.frames_in_any(("marked","refined","approved","rejected")):
+                    frame_mask = np.any(~np.isnan(self.dlc_data.pred_data_array), axis=(1,2))
+                    frames_with_pred = np.where(frame_mask)[0].tolist()
+                    self.add_frames("approved", frames_with_pred)
+
+            return True
+
         return False
 
     def auto_loader(self):
-        if self.prediction:
+        if self.dlc_data is not None and self.dlc_data.pred_data_array is not None:
+           logger.info("[DATAMAN] Prediction already loaded in the current dlc_data. Skipping auto load.")
            return None, None
         video_folder = os.path.dirname(self.video_file)
         pred_candidates = []
@@ -149,6 +163,7 @@ class Data_Manager:
                 full_path = os.path.join(video_folder, f)
                 pred_candidates.append(full_path)
         if not pred_candidates:
+            logger.info("[DATAMAN] No prediction found to auto load.")
             return None, None
         newest_pred = max(pred_candidates, key=os.path.getmtime)
         logger.info(f"[DATAMAN] Automatically fetched the newest prediction: {newest_pred}")
@@ -160,7 +175,7 @@ class Data_Manager:
                 found = True
                 break
         if not found:
-            return None, None
+            return None, newest_pred
         dlc_dir = self.video_file.split(fn)[0]
         dlc_config = os.path.join(dlc_dir, "config.yaml")
         logger.info(f"[DATAMAN] DLC config found: {dlc_config}")
