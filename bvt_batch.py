@@ -1,7 +1,4 @@
 import os
-import shutil
-import time
-
 from PySide6 import QtWidgets
 from typing import List, Tuple, Optional
 
@@ -25,21 +22,12 @@ def inference_workspace_vid(
     ):
     assert os.path.isfile(workspace_file), f"[BATCH] Workspace file not found: {workspace_file}"
 
-    mmddhhmmss = time.strftime("%m%d%H%M%S", time.localtime(time.time()))
-
-    file, ext = os.path.splitext(workspace_file)
-    assert ext == ".pkl", f"[BATCH] Unsupported workspace extension: {ext}"
-
-    workcopy = f"{file}_batchcop_{mmddhhmmss}{ext}"
-    shutil.copy(workspace_file, workcopy)
-    logger.info(f"[BATCH] Operating in a copy of {workspace_file}: {workcopy}")
-
-    logger.info(f"[BATCH] Workspace in {workcopy} has been loaded.")
+    logger.info(f"[BATCH] Workspace in {workspace_file} has been loaded.")
 
     dialog = QtWidgets.QDialog()
     dm = Data_Manager(init_vid_callback=_pseudo_callback, refresh_callback=_pseudo_callback, parent=dialog)
     
-    dm._load_workspace(workcopy)
+    dm._load_workspace(workspace_file)
     
     if dlc_config_path is not None and os.path.isfile(dlc_config_path):
         dm.load_metadata_to_dm(dlc_config_path)
@@ -126,6 +114,7 @@ if __name__ == "__main__":
             inference_workspace_vid(
                 workspace_file=f,
                 dlc_config_path="D:/Project/DLC-Models/NTD/config.yaml",
+                crop=True,
                 blob_based_infer=True,
                 infer_interval=(1,10,3,1),
                 batch_size=128,
