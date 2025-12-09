@@ -370,10 +370,12 @@ class Parallel_Review_Dialog(QDialog):
         self.uno.save_state_for_undo(data_array)
 
     def _undo_changes(self):
-        data_array = self.uno.undo()
+        data_array = self.new_data_array if self.tc_mode else self.frame_status_array
+        data_array = self.uno.undo(data_array)
         self._undo_redo_worker(data_array)
 
     def _redo_changes(self):
+        data_array = self.new_data_array if self.tc_mode else self.frame_status_array
         data_array = self.uno.redo()
         self._undo_redo_worker(data_array)
 

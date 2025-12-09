@@ -88,6 +88,7 @@ class Keypoint_Edit_Manager:
         self.track_edited_callback()
 
     def _get_pred_data_from_manual_review(self, pred_data_array):
+        self._save_state_for_undo()
         self.pred_data_array = pred_data_array
         self.track_edited_callback()
 
@@ -119,6 +120,7 @@ class Keypoint_Edit_Manager:
         self.pred_data_array[frame_idx, instance_id, keypoint_id*3:keypoint_id*3+3] = np.nan
 
     def rot_inst(self, frame_idx, instance_idx, angle_delta):
+        self._save_state_for_undo()
         self.pred_data_array = rotate_selected_inst(self.pred_data_array, frame_idx, instance_idx, angle_delta)
         self.track_edited_callback()
 
@@ -267,14 +269,14 @@ class Keypoint_Edit_Manager:
     ###################################################################################################################################################  
 
     def undo(self):
-        data_array = self.uno.undo()
+        data_array = self.uno.undo(self.pred_data_array)
         if data_array is not None:
             self.pred_data_array = data_array
 
     def redo(self):
-        data_array = self.uno.redo()
+        data_array = self.uno.redo(self.pred_data_array)
         if data_array is not None:
             self.pred_data_array = data_array
-    
+
     def _save_state_for_undo(self):
         self.uno.save_state_for_undo(self.pred_data_array)

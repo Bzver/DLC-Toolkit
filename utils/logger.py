@@ -85,7 +85,7 @@ class Loggerbox:
             logger.error(f"{title}, {text}.")
         else:
             logger.exception(f"{title}, {text}.")
-            raise exc(f"{title}, {text}.") # Re raise them to be caught by bvt_batch
+            raise RuntimeError(f"{title}, {text}.")
             
         return cls.show(parent, title, text, QMessageBox.Critical)
 
