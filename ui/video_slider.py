@@ -3,7 +3,7 @@ from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, QTimer, Signal, QRect
 from PySide6.QtWidgets import (
     QPushButton, QHBoxLayout, QVBoxLayout, QStyle, QStyleOptionSlider, QSlider, QLineEdit, QLabel, QApplication)
-from PySide6.QtGui import QPainter, QColor, QImage, QIntValidator, QFont, QPixmap
+from PySide6.QtGui import QPainter, QColor, QImage, QIntValidator, QFont, QPixmap, QKeyEvent
 from typing import List, Dict
 
 from utils.helper import indices_to_spans
@@ -373,14 +373,16 @@ class Frame_Input(QHBoxLayout):
         super().__init__(parent)
         self.max_frame = 1
 
-        self.frame_input = QLineEdit("0")
+        self.frame_input = No_Focus_Line_Edit("0")
         validator = QIntValidator(0, 2147483647, self)
         self.frame_input.setValidator(validator)
+
         self.frame_input.textChanged.connect(self._on_frame_idx_input)
+        self.frame_input.value_changed.connect(self._on_lineedit_keypress)
         self.frame_input.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
 
         separator = QLabel("|")
-        self.total_line = QLineEdit("0")
+        self.total_line = No_Focus_Line_Edit("0")
         self.total_line.setReadOnly(True)
         self.total_line.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
 
@@ -401,6 +403,17 @@ class Frame_Input(QHBoxLayout):
     def set_total_frames(self, total_frames:int):
         self.total_line.setText(str(total_frames))
         self.max_frame = total_frames
+
+    def _on_lineedit_keypress(self, value):
+        frame_idx = value
+        if frame_idx > self.max_frame:
+            self.frame_input.setText(str(self.max_frame))
+            frame_idx = self.max_frame
+        elif frame_idx < 0:
+            self.frame_input.setText(str(0))
+            frame_idx = 0
+
+        self.frame_changed_sig.emit(frame_idx)
 
     def _on_frame_idx_input(self):
         frame_input_text = self.frame_input.text()
@@ -468,3 +481,16 @@ class Zoomed_zoom_slider(Slider_With_Marks):
             self.set_frame_category(sub_cat, self._full_idx_to_color, force_full_update=True)
         else:
             self.reset_category()
+
+class No_Focus_Line_Edit(QLineEdit):
+    value_changed = Signal(int)
+
+    def keyPressEvent(self, event: QKeyEvent):
+        if event.key() in (Qt.Key_Left, Qt.Key_Right):
+            delta = -1 if event.key() == Qt.Key_Left else 1
+            if event.modifiers() and event.modifiers() & Qt.ShiftModifier:
+                delta *= 10
+            self.value_changed.emit(int(self.text())+delta)
+            return
+
+        super().keyPressEvent(event)
