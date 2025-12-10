@@ -134,7 +134,6 @@ class Frame_Label:
     def reset_state(self):
         self.open_outlier = False
         self.skip_outlier_clean= False
-        self.is_saved = True
         self.reset_zoom()
             
     def init_loaded_vid(self):
@@ -374,7 +373,6 @@ class Frame_Label:
 
     def on_track_data_changed(self):
         self.gview.sbox = None
-        self.is_saved = False
         self.refresh_and_display()
 
     def _on_keypoint_delete(self):
@@ -385,7 +383,6 @@ class Frame_Label:
             self.kem.del_kp(self.dm.current_frame_idx, instance_id, keypoint_id)
             self.status_bar.show_message(f"{self.dm.dlc_data.keypoints[keypoint_id]} of instance {instance_id} deleted.")
             self.gview.drag_kp = None
-            self.is_saved = False
             self.refresh_and_display()
 
     def _on_rotation_changed(self, instance_idx, angle_delta: float):
@@ -414,7 +411,6 @@ class Frame_Label:
         self.kem.update_kp_pos(
             self.dm.current_frame_idx, instance_id, keypoint_id, new_x, new_y)
         self.status_bar.show_message(f"{self.dm.dlc_data.keypoints[keypoint_id]} of instance {instance_id} moved by ({new_x}, {new_y})")
-        self.is_saved = False
         self.refresh_ui()
         QTimer.singleShot(0, self.display_current_frame)
 
@@ -422,7 +418,6 @@ class Frame_Label:
         self._mark_refined()
         self.kem.update_inst_pos(self.dm.current_frame_idx, instance_id, dx, dy)
         self.status_bar.show_message(f"Instance {instance_id} moved by ({dx}, {dy})")
-        self.is_saved = False
         self.refresh_ui()
         QTimer.singleShot(0, self.display_current_frame)
 
@@ -433,12 +428,11 @@ class Frame_Label:
         is_label_file = True if self.vm.image_mode else False
         try:
             save_path = self.dm.save_pred(self.kem.pred_data_array, is_label_file)
+            self._reload_prediction(save_path)
         except Exception as e:
             Loggerbox.error(self.main, "Saving Error", f"An error occurred during saving: {e}", exc=e)
             return
-        self._reload_prediction(save_path)
         Loggerbox.info(self.main, "Save Successful", f"Prediction saved in {save_path}.")
-        self.is_saved = True
 
     def save_prediction_as_csv(self):
         self.dm.save_pred_to_csv()
@@ -446,12 +440,10 @@ class Frame_Label:
     def _undo_changes(self):
         self.kem.undo()
         self.refresh_and_display()
-        self.is_saved = False
 
     def _redo_changes(self):
         self.kem.redo()
         self.refresh_and_display()
-        self.is_saved = False
 
     def _reload_prediction(self, prediction_path):
         self.dm.reload_pred_to_dm(prediction_path)

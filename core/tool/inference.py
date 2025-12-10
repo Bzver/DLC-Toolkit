@@ -395,7 +395,17 @@ class DLC_Inference(QDialog):
         self.accept()
 
     def _call_reviewer_window(self):
-        self._load_and_remap_new_prediction()
+        temp_pred_filename = self._load_and_remap_new_prediction()
+        video_path = os.path.dirname(self.video_filepath)
+        if "image_predictions_" in temp_pred_filename:
+            pred_filename = temp_pred_filename.replace("image_predictions_", self.export_set.video_name)
+        else:
+            pred_filename = temp_pred_filename.replace("temp_extract", self.export_set.video_name)
+
+        pred_filepath = os.path.join(video_path, pred_filename)
+        self.dlc_data.prediction_filepath = pred_filepath # So that it will be picked up by prediction_to_csv later
+        self.export_set.save_path = video_path
+
         self.hide()
         self.reviewer = Parallel_Review_Dialog(self.dlc_data, self.extractor_reviewer, self.new_data_array, self.frame_list, crop_coord=self.crop_coord, parent=self)
         self.reviewer.pred_data_exported.connect(self._save_pred_to_file)
@@ -403,8 +413,13 @@ class DLC_Inference(QDialog):
 
     def _save_pred_to_file(self, pred_data_array:np.ndarray, list_tuple:Tuple[List[int], List[int]]):
         pred_filepath = determine_save_path(self.dlc_data.prediction_filepath, suffix="_rerun_")
+
         try:
-            save_prediction_to_existing_h5(pred_filepath, pred_data_array)
+            if os.path.isfile(pred_filepath):
+                save_prediction_to_existing_h5(pred_filepath, pred_data_array)
+            else:
+                pred_filepath = self.dlc_data.prediction_filepath
+                save_predictions_to_new_h5(self.dlc_data, pred_data_array, self.export_set)
         except Exception as e:
             Loggerbox.error(self, "Error", f"Error saving prediction to file: {e}", exc=e)
         else:

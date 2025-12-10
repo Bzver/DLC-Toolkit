@@ -1,4 +1,4 @@
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, replace
 
 from typing import List, Optional, Literal, Dict, Callable, Tuple
 from numpy.typing import NDArray
@@ -38,6 +38,9 @@ class Export_Settings:
     video_name: str
     save_path: str
     export_mode: Literal["Append", "Merge", "CSV"]
+
+    def copy(self, **kwargs):
+        return replace(self, **kwargs)
 
 @dataclass
 class Swap_Calculation_Config:

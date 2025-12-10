@@ -40,8 +40,10 @@ def determine_save_path(prediction_filepath:str, suffix:str) -> str:
     
     pred_file_to_save_path = os.path.join(pred_file_dir,f"{base_name}{suffix}{save_idx}.h5")
 
-    shutil.copy(prediction_filepath, pred_file_to_save_path)
-    logger.info(f"[IO] Saved modified prediction to: {pred_file_to_save_path}")
+    if os.path.isfile(prediction_filepath):
+        shutil.copy(prediction_filepath, pred_file_to_save_path)
+
+    logger.info(f"[IO] Modified prediction will be saved to: {pred_file_to_save_path}")
     return pred_file_to_save_path
     
 def append_new_video_to_dlc_config(config_path:str, video_name:str):

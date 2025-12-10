@@ -7,7 +7,7 @@ from typing import Callable, Tuple, List, Optional, Dict
 from .frame_man import Frame_Manager
 from core.io import (
     Prediction_Loader, Exporter, remove_confidence_score, determine_save_path,
-    backup_existing_prediction, save_prediction_to_existing_h5, prediction_to_csv
+    backup_existing_prediction, save_prediction_to_existing_h5, save_predictions_to_new_h5, prediction_to_csv
 )
 from ui import Head_Tail_Dialog
 from utils.helper import infer_head_tail_indices, build_angle_map
@@ -43,7 +43,6 @@ class Data_Manager:
         self.roi = None
 
         # flabel only
-        self.prediction = None  # To track modified prediction file
         self.angle_map_data = None
         self.inst_count_per_frame_pred = None
 
@@ -105,7 +104,7 @@ class Data_Manager:
                 return
             prediction_path = os.path.join(image_folder, h5_candidates[0])
 
-        self.prediction = prediction_path
+        self.dlc_data.prediction_filepath = prediction_path
         dlc_dir = os.path.dirname(os.path.dirname(image_folder))
         dlc_config = os.path.join(dlc_dir, "config.yaml")
 
@@ -124,7 +123,6 @@ class Data_Manager:
         self.refresh_callback()
 
     def _init_loaded_data(self, loading_label:bool=False):
-        self.prediction = self.dlc_data.prediction_filepath
         if not loading_label:
             self._process_labeled_frame()
         self._init_canon_pose()
@@ -438,7 +436,6 @@ class Data_Manager:
             'frame_store': self.fm.to_dict(),
             'plot_config': self.plot_config.to_dict(),
             'blob_config': self.blob_config.to_dict() if self.blob_config is not None else None,
-            'prediction': self.prediction,
             'angle_map_data': self.angle_map_data,
             'inst_count_per_frame_pred': self.inst_count_per_frame_pred,
             'blob_array': self.blob_array,
@@ -472,7 +469,6 @@ class Data_Manager:
             self.video_name = workspace_state.get('video_name')
             self.project_dir = workspace_state.get('project_dir')
             self.canon_pose = workspace_state.get('canon_pose')
-            self.prediction = workspace_state.get('prediction')
             self.angle_map_data = workspace_state.get('angle_map_data')
             self.inst_count_per_frame_pred = workspace_state.get('inst_count_per_frame_pred')
             self.blob_array = workspace_state.get('blob_array')
@@ -537,19 +533,24 @@ class Data_Manager:
 
     def save_pred(self, pred_data_array:np.ndarray, is_label_file:bool=False):
         if is_label_file:
-            backup_existing_prediction(self.prediction) # Only backup for label file as overwriting in situ
+            backup_existing_prediction(self.dlc_data.prediction_filepath) # Only backup for label file as overwriting in situ
             pred_data_array = remove_confidence_score(pred_data_array)
-            save_path = self.prediction
+            save_path = self.dlc_data.prediction_filepath
         else:
-            save_path = determine_save_path(self.prediction, suffix="_track_labeler_modified_")
+            save_path = determine_save_path(self.dlc_data.prediction_filepath, suffix="_track_labeler_modified_")
 
-        save_prediction_to_existing_h5(save_path, pred_data_array, self.dlc_data.keypoints, self.dlc_data.multi_animal)
+        if os.path.isfile(save_path):
+            save_prediction_to_existing_h5(save_path, pred_data_array, self.dlc_data.keypoints, self.dlc_data.multi_animal)
+        else:
+            self.dlc_data.prediction_filepath = save_path
+            exp_set = Export_Settings(self.video_file, self.video_name, os.path.dirname(save_path), "Merge")
+            save_predictions_to_new_h5(self.dlc_data, pred_data_array, exp_set)
 
         return save_path
 
     def save_pred_to_csv(self):
-        save_path = os.path.dirname(self.prediction)
-        pred_file = os.path.basename(self.prediction).split(".")[0]
+        save_path = os.path.dirname(self.dlc_data.prediction_filepath)
+        pred_file = os.path.basename(self.dlc_data.prediction_filepath).split(".")[0]
         exp_set = Export_Settings(self.video_file, self.video_name, save_path, "CSV")
         try:
             prediction_to_csv(self.dlc_data, self.dlc_data.pred_data_array, exp_set)
@@ -559,7 +560,6 @@ class Data_Manager:
 
     def reload_pred_to_dm(self, prediction_path:str):
         data_loader = Prediction_Loader(self.dlc_data.dlc_config_filepath, prediction_path)
-        self.prediction = prediction_path
         self.dlc_data = data_loader.load_data()
         self._init_canon_pose()
 
