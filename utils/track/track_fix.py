@@ -2,7 +2,6 @@ import numpy as np
 
 from PySide6.QtWidgets import QProgressDialog
 from typing import List, Dict, Any, Tuple, Optional
-import traceback
 
 from .hungarian import Hungarian, Transylvanian
 from utils.pose import (
@@ -75,7 +74,7 @@ class Track_Fixer:
             logger.debug(f"---------- frame: {frame_idx} ---------- ")
 
             pred_centroids, _ = calculate_pose_centroids(self.corrected_pred_data, frame_idx)
-            valid_pred_mask = np.all(~np.isnan(pred_centroids), axis=1)
+            valid_pred_mask = np.any(~np.isnan(pred_centroids), axis=1)
             if not np.any(valid_pred_mask):
                 self.new_order_array[frame_idx] = self.inst_array
                 logger.debug("[TMOD] Skipping due to no prediction on current frame.")

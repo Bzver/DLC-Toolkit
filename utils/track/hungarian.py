@@ -112,19 +112,23 @@ class Hungarian:
                     logger.debug(f"[HUN] Single pair matched. New order: {new_order}")
                     return True, new_order
                 else:
-                    best_cand = np.argmin(ref_dg_array, axis=0)
-                    dist_best, _, time_best = best_cand
+                    dist_best = np.argmin(ref_dg_array[:, 0])
+                    time_best = np.where(ref_dg_array[:, 2]==np.min(ref_dg_array[:,2]))[0]
+                    if len(time_best) > 1:
+                        logger.debug(f"[HUN] Multiple Time Best candidates. Reroute to Hungarian.")
+                        return False, None
+                    time_best = time_best[0]
                     if dist_best == time_best:
                         best_idx_global = self.ref_indices[dist_best]
                         new_order = self._build_new_order_simple(self.pred_indices[0], best_idx_global)
                         logger.debug(f"[HUN] Single pair matched. New order: {new_order}")
                         return True, new_order
                     else:
-                        logger.debug("[HUN] Distance-wise best instance is not the same as time-wise. Returning Distance best as new order.\n"
+                        logger.debug("[HUN] Distance-wise best instance is not the same as time-wise. Mark as ambiguous.\n"
                                     f"Inst {dist_best} (Dist Best) | Distances: {dist[dist_best]:.2f}, Gap: {ref_dg_array[dist_best, 2]}\n"
                                     f"Inst {time_best} (Time Best) | Distances: {dist[time_best]:.2f}, Gap: {ref_dg_array[time_best, 2]}")
                         new_order = self._build_new_order_simple(self.pred_indices[0], dist_best)
-                        return True, new_order
+                        return True, None
 
         return False, None
 
