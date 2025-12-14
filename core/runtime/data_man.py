@@ -429,7 +429,7 @@ class Data_Manager:
         if self.blob_config and self.roi is None:
             self.roi = np.array(self.blob_config.roi)
 
-        if self.dlc_data is not None:
+        if self.dlc_data is not None and self.dlc_data.pred_data_array is not None:
             self._init_loaded_data()
     
         if not os.path.isfile(self.video_file):
