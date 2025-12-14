@@ -1,34 +1,45 @@
 import os
 import sys
 import logging
-
+from logging.handlers import RotatingFileHandler
 from PySide6.QtWidgets import QMessageBox
 
-def setup_logging(name='BVT', level=logging.INFO):
+def setup_logging(name='BVT', level=logging.INFO, max_bytes=10 * 1024 * 1024, backup_count=5):
     logger = logging.getLogger(name)
     logger.setLevel(level)
 
     if not logger.handlers:
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setLevel(logging.INFO)
-        formatter = logging.Formatter(fmt='%(asctime)s - %(name)s - %(levelname)s - %(message)s',datefmt='%Y-%m-%d %H:%M:%S')
+        formatter = logging.Formatter(
+            fmt='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
         console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
 
         log_dir = 'logs'
         os.makedirs(log_dir, exist_ok=True)
         log_file = os.path.join(log_dir, 'bvt.log')
-        file_handler = logging.FileHandler(log_file)
+
+        file_handler = RotatingFileHandler(
+            filename=log_file,
+            maxBytes=max_bytes,
+            backupCount=backup_count,
+            encoding='utf-8'
+        )
         file_handler.setLevel(logging.DEBUG)
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
+
+        logger.info(f"[LOGGER] Initialized. Log rotation: {max_bytes / (1024**2):.1f} MB max, {backup_count} backups.")
 
     return logger
 
 logger = setup_logging()
 
 _HEADLESS_MODE = False
-_HEADLESS_RESPONSE = QMessageBox.No  # Default auto-response for questions
+_HEADLESS_RESPONSE = QMessageBox.No
 
 def set_headless_mode(enable: bool = True, auto_response: QMessageBox.StandardButton = QMessageBox.No):
     global _HEADLESS_MODE, _HEADLESS_RESPONSE

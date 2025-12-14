@@ -100,6 +100,8 @@ class Load_Label_Dialog(QDialog):
         self.setWindowTitle("Load DLC Label")
         self.dlc_data = dlc_data
 
+        self._swap_time = 0
+
         self.config_path = self.dlc_data.dlc_config_filepath
         self.project_folders = get_existing_projects(self.config_path)
         if not self.project_folders:
@@ -129,22 +131,22 @@ class Load_Label_Dialog(QDialog):
         combo_frame.addWidget(combo_label)
         combo_frame.addWidget(self.combo)
 
-        okay_frame = QHBoxLayout()
+        self.okay_frame = QHBoxLayout()
         self.offset_btn = QPushButton("Check Label Offset")
         self.offset_btn.clicked.connect(self._check_offset)
         self.okay_btn = QPushButton("Accept")
         self.okay_btn.clicked.connect(self._okay)
 
-        okay_frame.addWidget(self.offset_btn)
-        okay_frame.addWidget(self.okay_btn)
+        self.okay_frame.addWidget(self.offset_btn)
+        self.okay_frame.addWidget(self.okay_btn)
 
         label_layout.addLayout(combo_frame)
-        label_layout.addLayout(okay_frame)
+        label_layout.addLayout(self.okay_frame)
         self.setLayout(label_layout)
 
     def _check_offset(self):
         if not self.selected_folder or not self.extractor:
-            self.offset_btn.setEnabled(False)
+            self._swap_buttons()
             return
         
         crop_file = os.path.join(self.selected_folder, "crop.yaml")
@@ -197,6 +199,39 @@ class Load_Label_Dialog(QDialog):
         image = frame_to_qimage(frame)
         self.od_dialog.update_image(image)
 
+    def _swap_buttons(self):
+        self._swap_time += 1
+
+        item_j = self.okay_frame.takeAt(1)
+        widget_j = item_j.widget()
+        item_i = self.okay_frame.takeAt(0)
+        widget_i = item_i.widget()
+        self.okay_frame.insertWidget(0, widget_j)
+        self.okay_frame.insertWidget(1, widget_i)
+
+        taunts = [
+            None,
+            "Try again.",
+            "Hmm. Maybe this button is for another use case?",
+            "Perhaps come back when you've already loaded an existing prediction?",
+            "Admiring your persistence. Truly.",
+            "Warning: Excessive clicking may cause\n   - mild confusion  - sudden awareness  - urge to read the README",
+            "I give up. You win.",
+            (
+            "<pre>  The cow says: *mooove* a prediction in place first.\n"
+            "        ^__^\n"
+            "        (oo)\\_______\n"
+            "        (__)\\       )\\/\\\n"
+            "            ||---ww |\n"
+            "            ||     ||\n\n"
+            "</pre>"
+            )
+        ]
+        if self._swap_time < len(taunts):
+            self.offset_btn.setToolTip(taunts[self._swap_time])
+        else:
+            self.offset_btn.setVisible(False)
+
     def _on_selection_changed(self, index):
         if index >= 0:
             text = self.combo.itemText(index)
@@ -215,7 +250,7 @@ class Load_Label_Dialog(QDialog):
                 )
         self.folder_selected.emit(self.selected_folder)
         self.accept()
-        
+
 
 class Offset_Display_Dialog(Frame_Display_Dialog):
     offset_changed = Signal(tuple)
@@ -225,7 +260,7 @@ class Offset_Display_Dialog(Frame_Display_Dialog):
         self.x, self.y = offset
 
         self.x_spin = Spinbox_With_Label("X:", (0, 10000), self.x)
-        self.y_spin = Spinbox_With_Label("Y", (0, 10000), self.y)
+        self.y_spin = Spinbox_With_Label("Y:", (0, 10000), self.y)
         self.x_spin.value_changed.connect(self._on_spinbox_spin)
         self.y_spin.value_changed.connect(self._on_spinbox_spin)
 
