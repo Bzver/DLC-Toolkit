@@ -6,12 +6,14 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from PySide6 import QtWidgets, QtGui
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QPushButton, QHBoxLayout, QVBoxLayout, QDialog, QLabel, QDialogButtonBox, QSpinBox, QDoubleSpinBox, QCheckBox, QSizePolicy)
+    QPushButton, QHBoxLayout, QVBoxLayout, QDial, QDialog, QLabel, QDialogButtonBox,
+    QSpinBox, QDoubleSpinBox, QCheckBox, QSizePolicy, QScrollArea, QComboBox)
 
 from typing import List, Dict, Tuple
 
 from .component import Spinbox_With_Label
 from utils.logger import Loggerbox
+
 
 class Pose_Rotation_Dialog(QDialog):
     rotation_changed = Signal(int, float)  # (selected_instance_idx, angle_delta)
@@ -27,7 +29,7 @@ class Pose_Rotation_Dialog(QDialog):
         self.angle_label = QLabel(f"Angle: {self.base_angle:.1f}°")
         layout.addWidget(self.angle_label)
 
-        self.dial = QtWidgets.QDial()
+        self.dial = QDial()
         self.dial.setRange(0, 360)
         self.dial.setValue(self.base_angle)
         self.dial.setWrapping(True)
@@ -70,7 +72,7 @@ class Frame_List_Dialog(QDialog):
         self.checkboxes: Dict[str, QCheckBox] = {}
         main_layout = QVBoxLayout(self)
 
-        scroll_area = QtWidgets.QScrollArea()
+        scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_content = QtWidgets.QWidget()
         scroll_layout = QVBoxLayout(scroll_content)
@@ -116,29 +118,29 @@ class Frame_List_Dialog(QDialog):
         self.accept()
 
 
-class Head_Tail_Dialog(QtWidgets.QDialog):
+class Head_Tail_Dialog(QDialog):
     def __init__(self, keypoints, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Select Head and Tail Keypoints")
         self.keypoints = keypoints
         self.head_idx, self.tail_idx = None, None
 
-        layout = QtWidgets.QVBoxLayout(self)
+        layout = QVBoxLayout(self)
 
-        head_label = QtWidgets.QLabel("Select Head Keypoint:")
-        self.head_combo = QtWidgets.QComboBox()
+        head_label = QLabel("Select Head Keypoint:")
+        self.head_combo = QComboBox()
         self.head_combo.addItems(self.keypoints)
         layout.addWidget(head_label)
         layout.addWidget(self.head_combo)
 
-        tail_label = QtWidgets.QLabel("Select Tail Keypoint:")
-        self.tail_combo = QtWidgets.QComboBox()
+        tail_label = QLabel("Select Tail Keypoint:")
+        self.tail_combo = QComboBox()
         self.tail_combo.addItems(self.keypoints)
         layout.addWidget(tail_label)
         layout.addWidget(self.tail_combo)
 
-        button_box = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
         )
         button_box.accepted.connect(self.on_accept)
         button_box.rejected.connect(self.reject)
@@ -340,17 +342,17 @@ class Frame_Display_Dialog(QDialog):
         super().__init__(parent)
 
         self.setWindowTitle(title)
-        dialog_layout = QVBoxLayout(self)
+        self.dialog_layout = QVBoxLayout(self)
 
-        label = QLabel()
-        label.setPixmap(QtGui.QPixmap.fromImage(image))
-        label.setAlignment(Qt.AlignCenter)
-        label.setScaledContents(False)
-        label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.label = QLabel()
+        self.label.setPixmap(QtGui.QPixmap.fromImage(image))
+        self.label.setAlignment(Qt.AlignCenter)
+        self.label.setScaledContents(False)
+        self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        scroll_area = QtWidgets.QScrollArea()
-        scroll_area.setWidget(label)
+        scroll_area = QScrollArea()
+        scroll_area.setWidget(self.label)
         scroll_area.setWidgetResizable(True)
 
-        dialog_layout.addWidget(scroll_area)
+        self.dialog_layout.addWidget(scroll_area)
         self.showMaximized()

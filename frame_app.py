@@ -1,15 +1,16 @@
+import os
 from PySide6 import QtWidgets
 from PySide6.QtCore import QEvent
-from PySide6.QtGui import QCloseEvent
-from PySide6.QtWidgets import QMainWindow, QVBoxLayout, QHBoxLayout, QApplication
+from PySide6.QtWidgets import QMainWindow, QVBoxLayout, QHBoxLayout, QApplication, QFileDialog
 
-from core.runtime import Data_Manager, Video_Manager, Keypoint_Edit_Manager
+from core.runtime import Data_Manager, Video_Manager
 from core.module import Frame_View, Frame_Label, Frame_Annotator
-from core.tool import Canonical_Pose_Dialog, Plot_Config_Menu, navigate_to_marked_frame
-from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Toggle_Switch, Status_Bar, Frame_List_Dialog
-from utils.helper import handle_unsaved_changes_on_close
-from utils.logger import Loggerbox
+from core.tool import Canonical_Pose_Dialog, Plot_Config_Menu, DLC_Save_Dialog, Load_Label_Dialog, navigate_to_marked_frame
+from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Toggle_Switch, Status_Bar, Frame_List_Dialog, Frame_Display_Dialog
+from utils.helper import frame_to_qimage, get_roi_cv2, plot_roi
+from utils.logger import Loggerbox, QMessageBox
 from utils.dataclass import Nav_Callback, Plot_Config
+
 
 class Frame_App(QMainWindow):
     def __init__(self):
@@ -25,9 +26,10 @@ class Frame_App(QMainWindow):
 
         self.dm = Data_Manager(
             init_vid_callback = self._initialize_loaded_video,
-            refresh_callback = self._refresh_ui, parent = self)
+            refresh_callback = self._refresh_ui,
+            parent = self
+            )
         self.vm = Video_Manager(self)
-        self.kem = Keypoint_Edit_Manager(self._on_kem_edit, self)
 
         nav_callback = Nav_Callback(
             change_frame_callback = self._change_frame,
@@ -59,9 +61,10 @@ class Frame_App(QMainWindow):
         self._setup_menu()
         self._setup_shortcut()
 
-        self.fview = Frame_View(self.dm, self.vm, self.vid_play, self.status_bar, self._handle_right_panel_menu_change, self)
+        self.fview = Frame_View(
+            self.dm, self.vm, self.vid_play, self.status_bar, self._handle_right_panel_menu_change, self._load_dlc_config, self)
         self.flabel = Frame_Label(
-            self.dm, self.vm, self.kem, self.vid_play, self.status_bar, self._handle_right_panel_menu_change, self._plot_config_callback, self)
+            self.dm, self.vm, self.vid_play, self.status_bar, self._handle_right_panel_menu_change, self._plot_config_callback, self)
         self.fannot = Frame_Annotator(self.dm, self.vm, self.vid_play, self.status_bar, self._handle_right_panel_menu_change, self)
 
         self._switch_to_fview()
@@ -76,18 +79,27 @@ class Frame_App(QMainWindow):
                         "submenu": "Load",
                         "items": [
                             ("Load Video", self._load_video),
-                            ("Load Prediction", self._load_prediction),
-                            ("Load DLC Config", self._load_dlc_config),
                             ("Load Workspace", self._load_workspace),
                             ("Load DLC Label Data", self._load_dlc_label_data),
+                            ("Load Prediction", self._load_prediction),
+                            ("Load DLC Config", self._load_dlc_config),
                         ]
                     },
-                    ("View Canonical Pose", self._view_canonical_pose),
-                    ("Config Menu", self._open_plot_config_menu),
-                    ("Save the Current Workspace", self._save_workspace),
                     {
-                        "submenu": "Export",
+                        "submenu": "View",
                         "items": [
+                            ("Canonical Pose", self._view_canonical_pose),
+                            ("Config Menu", self._open_plot_config_menu),
+                            ("ROI Region", self._check_roi),
+                        ]
+                    },
+                    {
+                        "submenu": "Save",
+                        "items": [
+                            ("Save the Current Workspace", self._save_workspace),
+                            ("Save Prediction as H5", self._save_prediction),
+                            ("Save Prediction as CSV", self._save_prediction_as_csv),
+                            ("Save to DeepLabCut", self._save_to_dlc),
                             ("Copy Frame Lists To Clipboard", self._export_dm_lists),
                             ("Copy Slider To Clipboard", self._export_slider),
                         ]
@@ -113,7 +125,6 @@ class Frame_App(QMainWindow):
         self._switch_to_fview()
         self.dm.reset_dm()
         self.vm.reset_vm()
-        self.kem.reset_kem()
         self.vid_play.set_total_frames(0)
         self.vid_play.nav.set_current_video_name("---")
         self.fview.reset_state()
@@ -141,8 +152,6 @@ class Frame_App(QMainWindow):
             self._switch_to_fview()
             raise Exception("DLC data not loaded, you need to load it before labeling.")
         self.fview.deactivate(self.menu_widget)
-        if self.kem.pred_data_array is None and self.dm.dlc_data is not None:
-            self.kem.pred_data_array = self.dm.dlc_data.pred_data_array
         self.flabel.activate(self.menu_widget)
         self.at = self.flabel
         self.dm.handle_mode_switch_fview_to_flabel()
@@ -182,18 +191,21 @@ class Frame_App(QMainWindow):
     ###################################################################################################
 
     def _load_video(self):
+        file_dialog = QFileDialog(self)
+        video_path, _ = file_dialog.getOpenFileName(self, "Load Video", "", "Video Files (*.mp4 *.avi *.mov *.mkv);;All Files (*)")
+        if not video_path:
+            return
         self._reset_state()
-        video_path = self.vm.load_video_dialog()
-        if video_path:
-            self.dm.update_video_path(video_path)
-            if self.dm.auto_loader_workspace():
-                self.status_bar.show_message("Automatically loaded workspace file.", duration_ms=10000)
-                return
-            dlc_config_path, pred_path = self.dm.auto_loader()
-            if dlc_config_path and pred_path:
-                self.dm.load_pred_to_dm(dlc_config_path, pred_path)
-                self.kem.set_pred_data(self.dm.dlc_data.pred_data_array)
-            self._initialize_loaded_video(video_path)
+
+        self.vm.update_video_path(video_path)
+        self.dm.update_video_path(video_path)
+        if self.dm.auto_loader_workspace():
+            self.status_bar.show_message("Automatically loaded workspace file.", duration_ms=10000)
+            return
+        dlc_config_path, pred_path = self.dm.auto_loader()
+        if dlc_config_path and pred_path:
+            self.dm.load_pred_to_dm(dlc_config_path, pred_path)
+        self._initialize_loaded_video(video_path)
 
     def _initialize_loaded_video(self, video_path:str):
         self.vm.init_extractor(video_path)
@@ -208,45 +220,143 @@ class Frame_App(QMainWindow):
     def _load_prediction(self):
         if not self.vm.check_status_msg():
             return
-        if self.dm.pred_file_dialog():
-            self.kem.set_pred_data(self.dm.dlc_data.pred_data_array)
-            self.at.display_current_frame()
-            self.flabel.reset_zoom()
-
-    def _load_dlc_label_data(self):
-        self._reset_state()
-        image_folder = self.vm.load_label_folder_dialog()
-        if not image_folder:
-            return
-        self.dm.load_dlc_label(image_folder)
         try:
-            self.vm.load_img_from_folder(image_folder)
-            self.dm.total_frames = self.vm.get_frame_counts()
-            self.vid_play.set_total_frames(self.dm.total_frames)
+            file_dialog = QFileDialog(self)
+            prediction_path, _ = file_dialog.getOpenFileName(self, "Select Prediction", "", "HDF5 Files (*.h5)")
+            if not prediction_path:
+                return
+
+            if self.dm.dlc_data is None:
+                Loggerbox.info(self, "Prediction Selected", "Prediction selected, now loading DLC config.")
+                dlc_config = self.config_file_dialog()
+                if dlc_config:
+                    self.dm.load_pred_to_dm(dlc_config, prediction_path)
+            else:
+                self.dm.load_pred_to_dm(self.dm.dlc_data.dlc_config_filepath, prediction_path)
         except Exception as e:
-            Loggerbox.error(self, "Error Opening DLC Label", e, exec=e)
+            Loggerbox.error(self, "Error Loading Prediction", f"Unexpected error during prediction loading: {e}.", exc=e)
+        
         self.at.display_current_frame()
         self.flabel.reset_zoom()
 
+    def _load_dlc_label_data(self):
+        if self.dm.dlc_data is None:
+            Loggerbox.info(self, "DLC Config Not Loaded", "DLC Config is needed before loading DLC label.")
+            self._load_dlc_config()
+            if self.dm.dlc_data is None:
+                return
+
+        folder_dialog = Load_Label_Dialog(self.dm.dlc_data, roi=self.dm.roi, video_file=self.dm.video_file, parent=self)
+        folder_dialog.folder_selected.connect(self._on_label_folder_return)
+        folder_dialog.exec()
+
     def _load_dlc_config(self):
-        if not self.vm.check_status_msg():
-            return
-        dlc_config_file = self.dm.config_file_dialog()
-        if dlc_config_file:
-            self.dm.load_metadata_to_dm(dlc_config_file)
+        file_dialog = QFileDialog(self)
+        dlc_config_path, _ = file_dialog.getOpenFileName(self, "Select DLC Config", "", "YAML Files (config.yaml);;All Files (*)")
+        if dlc_config_path:
+            try:
+                self.dm.load_metadata_to_dm(dlc_config_path)
+            except Exception as e:
+                Loggerbox.error(self, "Error Loading DLC Config", f"Unexpected error during DLC Config loading: {e}.", exc=e)
 
     def _load_workspace(self):
+        workspace_path, _ = QFileDialog.getOpenFileName(
+            self, "Load Workspace", "", "Pickle Files (*.pkl);;All Files (*)"
+        )
+        if not workspace_path:
+            return
         self._reset_state()
-        self.dm.load_workspace()
+        try:
+            self.dm.load_workspace(workspace_path)
+        except Exception as e:
+            Loggerbox.error(self, "Error Loading Workspace", f"Failed to load workspace:\n{e}", exc=e)
+
         if self.dm.video_file:
             self.at.display_current_frame()
 
     def _save_workspace(self):
-        if self.at == self.flabel:
-            self.flabel.save_prediction()
-        if self.dm.video_file:
-            self.status_bar.show_message(f"Workspace Saved to {self.dm.video_file}")
-            self.dm.save_workspace()
+        if not self.vm.check_status_msg():
+            return
+        self.status_bar.show_message(f"Workspace Saved to {self.dm.video_file}")
+        self.dm.save_workspace()
+
+    def _save_prediction(self):
+        if not self._save_blocker():
+            return
+        default_path, _ = os.path.splitext(self.dm.video_file)
+        save_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Prediction as H5", f"{default_path}.h5",  "HDF5 Files (*.h5)"
+        )
+        if not save_path:
+            return
+        if not save_path.lower().endswith(('.h5','.hdf5')):
+            save_path += '.h5'
+        try:
+            self.dm.save_pred(self.dm.dlc_data.pred_data_array, save_path)
+        except Exception as e:
+            Loggerbox.error(self, "Saving Error", f"An error occurred during saving: {e}", exc=e)
+        else:
+            self.dm.dlc_data.prediction_filepath = save_path
+            Loggerbox.info(self, "Save Successful", f"Prediction saved in {save_path}.")
+
+    def _save_prediction_as_csv(self):
+        if not self._save_blocker():
+            return
+        default_path, _ = os.path.splitext(self.dm.video_file)
+        save_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Prediction as CSV", f"{default_path}.csv",  "CSV Files (*.csv)"
+        )
+        if not save_path:
+            return
+        if not save_path.lower().endswith('.csv'):
+            save_path += '.csv'
+        try:
+            self.dm.save_pred_to_csv(self.dm.dlc_data.pred_data_array, save_path)
+        except Exception as e:
+            Loggerbox.error(self, "Saving Error", f"An error occurred during csv saving: {e}", exc=e)
+        else:
+            Loggerbox.info(self, "Save Successful", f"Prediction saved in {save_path}.")
+
+    def _save_to_dlc(self):
+        if not self._save_blocker():
+            return
+        if not self.dm.frames_in_any({"marked", "refined", "rejected", "approved"}):
+            reply = Loggerbox.question(
+                self, "No Marked Frames", "No frames have been marked for export. Mark all?")
+            if reply == QMessageBox.Yes:
+                self.dm.add_frames("marked", range(self.dm.total_frames))
+            else:
+                return
+
+        self.dm.save_workspace()
+
+        save_dialog = DLC_Save_Dialog(self.dm.dlc_data, self.dm.roi, self.dm.video_file, self)
+        save_dialog.folder_selected.connect(self._on_save_folder_return)
+        save_dialog.exec()
+
+    def _save_blocker(self):
+        if self.dm.dlc_data is not None and self.dm.dlc_data.pred_data_array is not None:
+            return True
+
+        Loggerbox.warning(self, "No Prediction", "No prediction to be saved.")
+        return False
+
+    def ask_crop_before_export(self) -> bool:
+        reply = Loggerbox.question(
+            self, "Crop Frame For Export?", "Crop the frames before exporting to DLC?")
+        if reply == QMessageBox.Yes:
+            if self.dm.roi is None:
+                frame = self.vm.get_frame(self.dm.current_frame_idx)
+                roi = get_roi_cv2(frame)
+                if roi is not None:
+                    self.dm.roi = roi
+                    return True
+                else:
+                    raise RuntimeError("User cancel the ROI selection.")
+            else:
+                return True
+        else:
+            return False
 
     def _export_dm_lists(self):
         if not self.dm.video_file:
@@ -283,7 +393,6 @@ class Frame_App(QMainWindow):
         new_frame_idx = self.dm.current_frame_idx + delta
         if 0 <= new_frame_idx < self.dm.total_frames:
             self.dm.current_frame_idx = new_frame_idx
-            self.kem.last_selected_idx = None
             self.at.display_current_frame()
             self.at.navigation_title_controller()
 
@@ -306,6 +415,21 @@ class Frame_App(QMainWindow):
         if not self.vm.check_status_msg():
             return
         dialog = Canonical_Pose_Dialog(self.dm.dlc_data, self.dm.canon_pose)
+        dialog.exec()
+
+    def _check_roi(self):
+        if not self.vm.check_status_msg():
+            return
+        frame = self.vm.get_frame(self.dm.current_frame_idx)
+        if self.dm.roi is None:
+            roi = get_roi_cv2(frame)
+            if roi is None:
+                return
+            self.dm.roi = roi
+        
+        frame = plot_roi(frame, self.dm.roi)
+        qimage = frame_to_qimage(frame)
+        dialog = Frame_Display_Dialog(title=f"Crop Region", image=qimage)
         dialog.exec()
 
     def _open_plot_config_menu(self):
@@ -353,23 +477,53 @@ class Frame_App(QMainWindow):
 
     def _handle_frame_change_from_comp(self, new_frame_idx: int):
         self.dm.current_frame_idx = new_frame_idx
-        self.kem.last_selected_idx = None
         self.at.navigation_title_controller()
         self.at.display_current_frame()
 
-    def _on_kem_edit(self):
-        self.flabel.on_track_data_changed()
+    def _on_label_folder_return(self, image_folder):
+        if not image_folder:
+            return
+        if self.dm.dlc_data.pred_data_array is None: # No existing predictions
+            self.vm.update_video_path(image_folder)
+            self.dm.load_dlc_label(image_folder)
+            try:
+                self.vm.load_img_from_folder(image_folder)
+                self.dm.total_frames = self.vm.get_frame_counts()
+                self.vid_play.set_total_frames(self.dm.total_frames)
+            except Exception as e:
+                Loggerbox.error(self, "Error Opening DLC Label", e, exec=e)
+                return
+        else:
+            label_file = os.path.join(image_folder, f"CollectedData_{self.dm.dlc_data.scorer}.h5")
+            if not os.path.isfile(label_file):
+                Loggerbox.error(self, "Error Opening DLC Label", f"{image_folder} does not seem to have predictions!")
+                return
+            try:
+                self.dm.load_labeled_overlay(label_file)
+            except Exception as e:
+                Loggerbox.error(self, "Error Opening DLC Label", e, exec=e)
+                return
+            self.dm.plot_config.plot_labeled = True
+            self.dm.plot_config.navigate_labeled = True
+            if not self.open_config:
+                self._open_plot_config_menu()
+
+        self.at.display_current_frame()
+        self.flabel.reset_zoom()
+
+    def _on_save_folder_return(self, save_folder):
+        try:
+            crop_status = self.ask_crop_before_export()
+            self.dm.save_to_dlc(save_folder, crop_status)
+        except Exception as e:
+            Loggerbox.error(self, "Crop Region Not Set", e, exc=e)
+        else:
+            self.refresh_and_display()
 
     def changeEvent(self, event):
         if event.type() == QEvent.Type.WindowStateChange:
             self.flabel.reset_zoom()
         super().changeEvent(event)
-
-    def closeEvent(self, event: QCloseEvent):
-        if not self.vm.video_file:
-            return
-        if self.vm.check_status_msg():
-            handle_unsaved_changes_on_close(self, event, True, self._save_workspace)
 
 #######################################################################################################################################################
 

@@ -9,6 +9,9 @@ from .io_helper import (
     append_new_video_to_dlc_config,
     remove_confidence_score,
     backup_existing_prediction,
+    timestamp_new_prediction,
+    get_existing_projects,
+    generate_crop_coord_notations,
     )
 
 __all__ = (
@@ -23,5 +26,8 @@ __all__ = (
     determine_save_path,
     append_new_video_to_dlc_config,
     remove_confidence_score,
-    backup_existing_prediction
+    backup_existing_prediction,
+    timestamp_new_prediction,
+    get_existing_projects,
+    generate_crop_coord_notations,
 )

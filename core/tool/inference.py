@@ -14,14 +14,13 @@ from typing import List, Optional, Tuple
 from ui import Spinbox_With_Label, Progress_Indicator_Dialog
 from core.io import (
     Exporter, Prediction_Loader, Frame_Extractor, Frame_Extractor_Img,
-    save_predictions_to_new_h5, determine_save_path, save_prediction_to_existing_h5
+    save_predictions_to_new_h5, timestamp_new_prediction,
     )
 from .reviewer import Parallel_Review_Dialog
-from utils.helper import crop_coord_to_array, get_roi_cv2
+from utils.helper import crop_coord_to_array, get_roi_cv2, validate_crop_coord
 from utils.logger import logger, Loggerbox
-from utils.dataclass import Loaded_DLC_Data, Export_Settings
+from utils.dataclass import Loaded_DLC_Data
 
-DEBUG = False
 
 class DLC_Inference(QDialog):
     prediction_saved = Signal(str)
@@ -29,8 +28,12 @@ class DLC_Inference(QDialog):
     roi_set = Signal(object)
 
     def __init__(
-        self, dlc_data:Loaded_DLC_Data, frame_list:List[int],
-        video_filepath:str, roi:Optional[np.ndarray]=None, parent=None
+        self,
+        dlc_data:Loaded_DLC_Data,
+        frame_list:List[int],
+        video_filepath:str,
+        roi:Optional[np.ndarray]=None,
+        parent=None
         ):
         super().__init__(parent)
         self.setWindowTitle("Run Predictions in DLC")
@@ -42,18 +45,12 @@ class DLC_Inference(QDialog):
         self.frame_list.sort()
         self.cropping = False
 
-        try:
-            x1, y1, x2, y2 = roi
-            self.crop_coord = x1, y1, x2, y2
-        except:
-            self.crop_coord = None
+        self.crop_coord = validate_crop_coord(roi)
+        self.video_name, _ = os.path.splitext(os.path.basename(self.video_filepath))
 
-        video_name = os.path.basename(self.video_filepath).split(".")[0]
         self.temp_directory = tempfile.TemporaryDirectory()
         self.temp_dir = self.temp_directory.name
-        self.export_set = Export_Settings(
-            video_filepath=self.video_filepath, video_name=video_name, save_path=self.temp_dir, export_mode="Append")
-        self.extractor = Frame_Extractor(self.export_set.video_filepath)
+        self.extractor = Frame_Extractor(self.video_filepath)
 
         if self.dlc_data.pred_data_array is None:
             self.fresh_pred = True
@@ -261,7 +258,7 @@ class DLC_Inference(QDialog):
         inference_video_path = None
         try:
             if len(self.frame_list)  > 0.9 * self.total_frames and self.crop_coord is None:
-                inference_video_path = self.export_set.video_filepath
+                inference_video_path = self.video_filepath
                 self.extractor_reviewer = Frame_Extractor(inference_video_path)
             elif len(self.frame_list) > 5000:
                 inference_video_path = os.path.join(self.temp_dir, "temp_extract.mp4")
@@ -292,10 +289,7 @@ class DLC_Inference(QDialog):
         
         self.on_hold_dialog.accept()
         self.show()
-        if self.fresh_pred:
-            self._process_new_pred()
-        else:
-            self._call_reviewer_window()
+        self._process_new_pred()
 
     def _update_config(self):
         config_path = self.dlc_data.dlc_config_filepath
@@ -320,7 +314,13 @@ class DLC_Inference(QDialog):
     def _extract_marked_frame_images(self, crop_coord=None):
         progress = Progress_Indicator_Dialog(0, 100, "Frame Extraction", "Extracting frames from video", parent=self)
         exporter = Exporter(
-            dlc_data=self.dlc_data, export_settings=self.export_set, frame_list=self.frame_list, progress_callback=progress, crop_coord=crop_coord)
+            dlc_data=self.dlc_data,
+            save_folder=self.temp_dir,
+            video_filepath=self.video_filepath,
+            frame_list=self.frame_list,
+            progress_callback=progress,
+            crop_coord=crop_coord
+            )
         corrected_indices = exporter.export_data_to_DLC(frame_only=True)
         if corrected_indices:
             self.frame_list = corrected_indices
@@ -328,7 +328,13 @@ class DLC_Inference(QDialog):
     def _extract_marked_frame_as_video(self, crop_coord=None):
         progress = Progress_Indicator_Dialog(0, 100, "Frame Extraction", "Extracting frames from video", parent=self)
         exporter = Exporter(
-            dlc_data=self.dlc_data, export_settings=self.export_set, frame_list=self.frame_list, progress_callback=progress, crop_coord=crop_coord)
+            dlc_data=self.dlc_data,
+            save_folder=self.temp_dir,
+            video_filepath=self.video_filepath,
+            frame_list=self.frame_list,
+            progress_callback=progress,
+            crop_coord=crop_coord
+            )
         corrected_indices = exporter.export_frame_to_video()
         if corrected_indices:
             self.frame_list = corrected_indices
@@ -374,57 +380,36 @@ class DLC_Inference(QDialog):
         temp_pred_filename = self._load_and_remap_new_prediction()
         video_path = os.path.dirname(self.video_filepath)
         if "image_predictions_" in temp_pred_filename:
-            pred_filename = temp_pred_filename.replace("image_predictions_", self.export_set.video_name)
+            pred_filename = temp_pred_filename.replace("image_predictions_", self.video_name)
         else:
-            pred_filename = temp_pred_filename.replace("temp_extract", self.export_set.video_name)
+            pred_filename = temp_pred_filename.replace("temp_extract", self.video_name)
 
         pred_filepath = os.path.join(video_path, pred_filename)
-        self.dlc_data.prediction_filepath = pred_filepath # So that it will be picked up by prediction_to_csv later
-        self.export_set.save_path = video_path
+        self.save_path = timestamp_new_prediction(pred_filepath)
+
+        if self.fresh_pred:
+            pred_data_array=self.new_data_array
+            list_tuple = (self.frame_list, [])
+            self._save_pred_to_file(pred_data_array, list_tuple)
+        else:
+            self.hide()
+            QtWidgets.QApplication.ProcessEvents()
+            self.reviewer = Parallel_Review_Dialog(self.dlc_data, self.extractor_reviewer, self.new_data_array, self.frame_list, crop_coord=self.crop_coord, parent=self)
+            self.reviewer.pred_data_exported.connect(self._save_pred_to_file)
+            self.reviewer.exec()
+
+    def _save_pred_to_file(self, pred_data_array:np.ndarray, list_tuple:Tuple[List[int], List[int]]):
         try:
-            save_predictions_to_new_h5(dlc_data=self.dlc_data, pred_data_array=self.new_data_array, export_settings=self.export_set)
+            save_predictions_to_new_h5(dlc_data=self.dlc_data, pred_data_array=pred_data_array, save_path=self.save_path)
         except Exception as e:
             Loggerbox.error(self, "Saving Error", f"An error occurred during saving: {e}", exc=e)
             return
         
-        logger.info(f"[INFER] Prediction saved to {pred_filepath}")
-        
-        list_tuple = (self.frame_list, [])
-        self.prediction_saved.emit(pred_filepath)
+        logger.info(f"[INFER] Prediction saved to {self.save_path}")
+
+        self.prediction_saved.emit(self.save_path)
         self.frames_exported.emit(list_tuple)
         self.accept()
-
-    def _call_reviewer_window(self):
-        temp_pred_filename = self._load_and_remap_new_prediction()
-        video_path = os.path.dirname(self.video_filepath)
-        if "image_predictions_" in temp_pred_filename:
-            pred_filename = temp_pred_filename.replace("image_predictions_", self.export_set.video_name)
-        else:
-            pred_filename = temp_pred_filename.replace("temp_extract", self.export_set.video_name)
-
-        pred_filepath = os.path.join(video_path, pred_filename)
-        self.dlc_data.prediction_filepath = pred_filepath # So that it will be picked up by prediction_to_csv later
-        self.export_set.save_path = video_path
-
-        self.hide()
-        self.reviewer = Parallel_Review_Dialog(self.dlc_data, self.extractor_reviewer, self.new_data_array, self.frame_list, crop_coord=self.crop_coord, parent=self)
-        self.reviewer.pred_data_exported.connect(self._save_pred_to_file)
-        self.reviewer.exec()
-
-    def _save_pred_to_file(self, pred_data_array:np.ndarray, list_tuple:Tuple[List[int], List[int]]):
-        pred_filepath = determine_save_path(self.dlc_data.prediction_filepath, suffix="_rerun_")
-
-        try:
-            if os.path.isfile(pred_filepath):
-                save_prediction_to_existing_h5(pred_filepath, pred_data_array)
-            else:
-                pred_filepath = self.dlc_data.prediction_filepath
-                save_predictions_to_new_h5(self.dlc_data, pred_data_array, self.export_set)
-        except Exception as e:
-            Loggerbox.error(self, "Error", f"Error saving prediction to file: {e}", exc=e)
-        else:
-            self.prediction_saved.emit(pred_filepath)
-            self.frames_exported.emit(list_tuple)
 
     def _panic_exit(self, reason:str="Check terminal for reason.", exception:Optional[Exception]=None):
         Loggerbox.error(self, "Rerun Failed", reason, exception)
@@ -433,6 +418,7 @@ class DLC_Inference(QDialog):
     def closeEvent(self, event):
         if hasattr(self, "extractor_reviewer"):
             self.extractor_reviewer.close()
+
 
 class On_Hold_Dialog(QDialog):
     def __init__(self, parent=None):

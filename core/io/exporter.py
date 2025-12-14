@@ -8,47 +8,42 @@ from PySide6.QtWidgets import QProgressDialog
 from .csv_op import prediction_to_csv, csv_to_h5
 from .io_helper import append_new_video_to_dlc_config, generate_crop_coord_notations, remove_confidence_score
 from .frame_loader import Frame_Extractor
-from utils.helper import crop_coord_to_array
+from utils.helper import crop_coord_to_array, validate_crop_coord
 from utils.logger import logger
-from utils.dataclass import Loaded_DLC_Data, Export_Settings
+from utils.dataclass import Loaded_DLC_Data
+
 
 class Exporter:
     """A class to handle saving or merging predictions back to DLC"""
     Frame_CV2 = np.ndarray
 
-    def __init__(self, dlc_data: Loaded_DLC_Data, export_settings: Export_Settings,
-            frame_list: List[int], pred_data_array:Optional[np.ndarray]=None,
+    def __init__(
+            self,
+            dlc_data: Loaded_DLC_Data,
+            save_folder:str,
+            video_filepath: str,
+            frame_list: List[int],
+            pred_data_array:Optional[np.ndarray]=None,
             progress_callback:Optional[QProgressDialog]=None,
             crop_coord:Optional[np.ndarray]=None,
-            with_conf:bool=True,
             ):
-        logger.info(f"[EXPORTER] Initializing Exporter for save path: {export_settings.save_path}")
+        logger.info(f"[EXPORTER] Initializing Exporter for save path: {save_folder}")
         self.dlc_data = dlc_data
-        self.export_settings = export_settings
+        self.save_folder = save_folder
+        self.video_filepath = video_filepath
+
         self.frame_list = frame_list
         self.pred_data_array = pred_data_array
         self.progress_callback = progress_callback
 
-        try:
-            x1, y1, x2, y2 = crop_coord
-            self.crop_coord = x1, y1, x2, y2
-            logger.info(f"[EXPORTER] Crop coordinates set to: {self.crop_coord}")
-        except TypeError: # This handles cases where crop_coord is None or not iterable
-            self.crop_coord = None
-            logger.debug("[EXPORTER] No valid crop coordinates provided or crop_coord is None.")
-        except Exception as e: # Catch other potential errors during unpacking
-            self.crop_coord = None
-            logger.error(f"[EXPORTER] Error unpacking crop coordinates: {crop_coord}. Error: {e}")
+        self.video_name, _ = os.path.splitext(os.path.basename(self.video_filepath))
 
-        self.with_conf = with_conf
+        self.crop_coord = validate_crop_coord(crop_coord)
+        self.extractor = Frame_Extractor(self.video_filepath)
 
-        self.extractor = Frame_Extractor(self.export_settings.video_filepath)
-
-        os.makedirs(self.export_settings.save_path, exist_ok=True)
-        logger.info(f"[EXPORTER] Ensuring save directory exists: {self.export_settings.save_path}")
+        os.makedirs(self.save_folder, exist_ok=True)
 
     def export_data_to_DLC(self, frame_only:bool=False) -> Optional[List[int]]:
-        logger.info(f"[EXPORTER] Starting data export to DLC. frame_only: {frame_only}")
         corrected_indices = self._extract_frame()
         if corrected_indices:
             self.frame_list = corrected_indices
@@ -58,7 +53,6 @@ class Exporter:
 
         if frame_only:
             if frame_only:
-                logger.info("[EXPORTER] Frame-only export requested. Skipping prediction extraction.")
                 return corrected_indices
             self._extract_pred()
             logger.info("[EXPORTER] Prediction data extracted successfully.")
@@ -68,17 +62,17 @@ class Exporter:
         return self._continuous_frame_extraction(to_video=True)
 
     def _extract_frame(self) -> Optional[List[int]]:
-        logger.debug(f"[EXPORTER] Entering _extract_frame. Video filepath: {self.export_settings.video_filepath}")
-        if os.path.isdir(self.export_settings.video_filepath): # Loading DLC labels
+        logger.debug(f"[EXPORTER] Entering _extract_frame. Video filepath: {self.video_filepath}")
+        if os.path.isdir(self.video_filepath): # Loading DLC labels
             logger.info("[EXPORTER] Video filepath detected as a directory. Extracting DLC labels.")
             self._extract_dlc_label()
             return None # _extract_dlc_label handles the writing, no indices to return here
 
         total_video_frames = self.extractor.get_total_frames()
         logger.info(f"[EXPORTER] Total frames in video: {total_video_frames}")
-        if os.path.dirname(self.dlc_data.dlc_config_filepath) in self.export_settings.save_path:
-            append_new_video_to_dlc_config(self.dlc_data.dlc_config_filepath, self.export_settings.video_name)
-            logger.info(f"[EXPORTER] Appended new video '{self.export_settings.video_name}' to DLC config.")
+        if os.path.dirname(self.dlc_data.dlc_config_filepath) in self.save_folder:
+            append_new_video_to_dlc_config(self.dlc_data.dlc_config_filepath, os.path.basename(self.save_folder))
+            logger.info(f"[EXPORTER] Appended new video '{os.path.basename(self.save_folder)}' to DLC config.")
         else:
             logger.debug("[EXPORTER] DLC config path not within save path. Skipping config update.")
 
@@ -108,24 +102,23 @@ class Exporter:
             logger.info(f"[EXPORTER] Applying crop coordinates {self.crop_coord} to prediction data.")
             coords_array = crop_coord_to_array(self.crop_coord, pred_data_array.shape)
             pred_data_array = pred_data_array - coords_array
-            generate_crop_coord_notations(self.crop_coord, self.export_settings.save_path, self.frame_list)
+            x1, y1, _, _ = self.crop_coord
+            generate_crop_coord_notations((x1, y1), self.save_folder, self.frame_list)
             logger.debug("[EXPORTER] Generated crop coordinate notations.")
         else:
             logger.debug("[EXPORTER] No crop coordinates to apply to prediction data.")
 
-        if not self.with_conf:
-            logger.info("[EXPORTER] Removing confidence scores from prediction data.")
-            pred_data_array = remove_confidence_score(pred_data_array)
-        else:
-            logger.debug("[EXPORTER] Confidence scores retained in prediction data.")
+        logger.info("[EXPORTER] Removing confidence scores from prediction data.")
+        pred_data_array = remove_confidence_score(pred_data_array)
 
-        csv_name = prediction_to_csv(self.dlc_data, pred_data_array, self.export_settings, self.frame_list)
+        csv_name = f"CollectedData_{self.dlc_data.scorer}.csv"
+        save_path = os.path.join(self.save_folder, csv_name)
+        prediction_to_csv(self.dlc_data, pred_data_array, save_path, self.frame_list, to_dlc=True)
         if not csv_name:
-            logger.error("[EXPORTER] Failed to export predictions to CSV.")
             raise RuntimeError("Error exporting predictions to csv.")
-        logger.info(f"[EXPORTER] Predictions exported to CSV: {csv_name}")
+        logger.info(f"[EXPORTER] Predictions exported to CSV: {save_path}")
 
-        csv_to_h5(self.export_settings.save_path, self.dlc_data.multi_animal, self.dlc_data.scorer, csv_name=csv_name)
+        csv_to_h5(save_path, self.dlc_data.multi_animal, self.dlc_data.scorer)
         logger.info("[EXPORTER] Converted CSV to H5 format.")
         
     def _apply_crop(self, frame:Frame_CV2):
@@ -143,21 +136,20 @@ class Exporter:
     
     def _extract_dlc_label(self):
         logger.debug("[EXPORTER] Entering _extract_dlc_label.")
-        if self.export_settings.save_path == self.export_settings.video_filepath:
-            self.export_settings.video_filepath += "_cropped"
-            video_name = self.export_settings.video_name + "_cropped"
-            logger.warning(f"[EXPORTER] Save path is same as video filepath. Appending '_cropped'. New video path: {self.export_settings.video_filepath}")
-        else:
-            video_name = self.export_settings.video_name
-        image_folder = self.export_settings.video_filepath
+        if self.save_folder == self.video_filepath:
+            self.video_filepath += "_cropped"
+            logger.warning(f"[EXPORTER] Save path is same as video filepath. Appending '_cropped'. New video path: {self.video_filepath}")
+
+        image_folder = self.video_filepath
         img_exts = ('.png', '.jpg')
         image_files = sorted([
                 os.path.join(image_folder,f) for f in os.listdir(image_folder)
                 if f.lower().endswith(img_exts) and f.startswith("img")
             ])
         logger.info(f"[EXPORTER] Found {len(image_files)} image files in {image_folder} for DLC label extraction.")
+
         for i, frame_idx in enumerate(self.frame_list):
-            image_output_path = os.path.join(self.export_settings.save_path, f"img{str(int(frame_idx)).zfill(8)}.png")
+            image_output_path = os.path.join(self.save_folder, f"img{str(int(frame_idx)).zfill(8)}.png")
             image_input_path = image_files[i]
             logger.debug(f"[EXPORTER] Processing DLC labeled frame {frame_idx} from {image_input_path}.")
             frame = cv2.imread(image_input_path)
@@ -168,8 +160,9 @@ class Exporter:
 
             cv2.imwrite(image_output_path, frame)
             logger.debug(f"[EXPORTER] Wrote cropped DLC labeled image to {image_output_path}.")
-        append_new_video_to_dlc_config(self.dlc_data.dlc_config_filepath, video_name)
-        logger.info(f"[EXPORTER] Appended video '{video_name}' to DLC config after DLC label extraction.")
+        
+        append_new_video_to_dlc_config(self.dlc_data.dlc_config_filepath, os.path.basename(self.save_folder))
+        logger.info(f"[EXPORTER] Appended video '{os.path.basename(self.save_folder)}' to DLC config after DLC label extraction.")
 
     def _sparse_frame_extraction(self):
         logger.debug(f"[EXPORTER] Entering _sparse_frame_extraction for {len(self.frame_list)} frames.")
@@ -187,7 +180,7 @@ class Exporter:
                     self.progress_callback.close()
                     raise Exception("Frame extraction canceled by user.")
 
-            image_output_path = os.path.join(self.export_settings.save_path, f"img{str(int(frame_idx)).zfill(8)}.png")
+            image_output_path = os.path.join(self.save_folder, f"img{str(int(frame_idx)).zfill(8)}.png")
             logger.debug(f"[EXPORTER] Attempting to extract sparse frame {frame_idx}.")
             frame = self.extractor.get_frame(frame_idx)
             if frame is None:
@@ -249,7 +242,7 @@ class Exporter:
                 frame = self._apply_crop(frame)
 
                 if to_video and not writer:
-                    video_output_path = os.path.join(self.export_settings.save_path, "temp_extract.mp4")
+                    video_output_path = os.path.join(self.save_folder, "temp_extract.mp4")
                     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
                     writer = cv2.VideoWriter(filename=video_output_path, fourcc=fourcc, fps=10.0, frameSize=frame.shape[1::-1])
                     if not writer.isOpened():
@@ -260,7 +253,7 @@ class Exporter:
 
                 if not to_video:
                     image_path = f"img{str(current_frame_idx).zfill(8)}.png"
-                    image_output_path = os.path.join(self.export_settings.save_path, image_path)
+                    image_output_path = os.path.join(self.save_folder, image_path)
                     cv2.imwrite(image_output_path, frame)
                 else:
                     writer.write(frame)

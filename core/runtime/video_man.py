@@ -1,9 +1,9 @@
-from PySide6.QtWidgets import QFileDialog
-
 from typing import Optional, Tuple
 from numpy.typing import NDArray
 
 from core.io import Frame_Extractor, Frame_Extractor_Img
+from utils.logger import Loggerbox
+
 
 class Video_Manager:
     def __init__(self, parent=None):
@@ -16,17 +16,8 @@ class Video_Manager:
         self.video_file = None
         self.image_mode = False
 
-    def load_video_dialog(self) -> Optional[str]:
-        file_dialog = QFileDialog(self.main)
-        video_path, _ = file_dialog.getOpenFileName(self.main, "Load Video", "", "Video Files (*.mp4 *.avi *.mov *.mkv);;All Files (*)")
+    def update_video_path(self, video_path):
         self.video_file = video_path
-        return video_path
-
-    def load_label_folder_dialog(self) -> Optional[str]:
-        folder_dialog = QFileDialog(self.main)
-        image_folder = folder_dialog.getExistingDirectory(self.main, "Select Image Folder")
-        self.video_file = image_folder
-        return image_folder
 
     def load_img_from_folder(self, image_folder):
         self.extractor = Frame_Extractor_Img(image_folder)
@@ -50,7 +41,11 @@ class Video_Manager:
         return self.extractor.get_frame(0) is not None
 
     def check_status_msg(self) -> bool:
-        return (self.current_frame is not None or self.get_extractor_status())
+        if self.extractor is not None and self.get_extractor_status():
+            return True
+        else:
+            Loggerbox.warning(self.main, "No Video Loaded", "Please load a video via Load Video, Load Workspace or Load DLC Label first.")
+            return False
 
     def get_frame_counts(self) -> int:
         return self.extractor.get_total_frames()

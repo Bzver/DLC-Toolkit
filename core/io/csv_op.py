@@ -8,15 +8,17 @@ from typing import List, Tuple, Optional
 
 from .io_helper import backup_existing_prediction, remove_confidence_score
 from utils.logger import logger
-from utils.dataclass import Loaded_DLC_Data, Export_Settings
+from utils.dataclass import Loaded_DLC_Data
+
 
 def prediction_to_csv(
         dlc_data:Loaded_DLC_Data,
         pred_data_array:np.ndarray, 
-        export_settings:Export_Settings,
+        save_path:str,
         frame_list: Optional[List[int]]=None,
         keep_conf:bool=False,
-        ) -> str:
+        to_dlc:bool=False,
+        ):
     
     pred_data_flattened = pred_data_array.reshape(pred_data_array.shape[0], -1) # [F, I, K] to [F, I*K]
 
@@ -33,10 +35,11 @@ def prediction_to_csv(
 
     labels_df = pd.DataFrame(pred_data_processed, columns=columns)
 
-    if export_settings.export_mode != "CSV":
+    if to_dlc:
+        dir_pro = os.path.basename(os.path.dirname(save_path))
         labels_df["frame"] = labels_df["frame"].apply(
             lambda x: (
-                f"labeled-data/{export_settings.video_name}/"
+                f"labeled-data/{dir_pro}/"
                 f"img{str(int(x)).zfill(8)}.png"
             )
         )
@@ -44,35 +47,19 @@ def prediction_to_csv(
 
     final_df = pd.concat([header_df, labels_df], ignore_index=True)
     final_df.columns = [None] * len(final_df.columns)
+    backup_existing_prediction(save_path)
 
-    if export_settings.export_mode == "Append":
-        csv_name = f"CollectedData_{dlc_data.scorer}"
-        if os.path.isfile(os.path.join(export_settings.save_path, f"{csv_name}.csv")):
-            csv_name = "MachineLabelsRefine"
-    elif export_settings.export_mode == "Merge":
-        csv_name = f"CollectedData_{dlc_data.scorer}"
-    else:
-        prediction_filename = os.path.basename(dlc_data.prediction_filepath)
-        csv_name = prediction_filename.split(".h5")[0]
-
-    save_filepath = os.path.join(export_settings.save_path, f"{csv_name}.csv")
-
-    backup_existing_prediction(save_filepath)
-
-    final_df.to_csv(save_filepath, index=False, header=None)
-    return csv_name
+    final_df.to_csv(save_path, index=False, header=None)
 
 def csv_to_h5(
-        project_dir:str,
+        csv_path:str,
         multi_animal:bool,
         scorer:str="machine-labeled",
-        csv_name:str="MachineLabelsRefine"
         ):
-    fn = os.path.join(project_dir, f"{csv_name}.csv")
-    with open(fn) as datafile:
+    with open(csv_path) as datafile:
         total_lines = sum(1 for _ in datafile)
     
-    with open(fn) as datafile: # Reopen the file to read the head
+    with open(csv_path) as datafile: # Reopen the file to read the head
         head = list(islice(datafile, 0, 5))
     if multi_animal:
         header = list(range(4))
@@ -84,7 +71,7 @@ def csv_to_h5(
     else:
         index_col = 0
     
-    data = pd.read_csv(fn, index_col=index_col, header=header)
+    data = pd.read_csv(csv_path, index_col=index_col, header=header)
     
     expected_rows = total_lines - len(header)
     if len(data) == expected_rows - 1: # First nan frame is dropped, add it back
@@ -97,8 +84,8 @@ def csv_to_h5(
 
     data.columns = data.columns.set_levels([f"{scorer}"], level="scorer")
     guarantee_multiindex_rows(data)
-    data.to_hdf(fn.replace(".csv", ".h5"), key="df_with_missing", mode="w")
-    data.to_csv(fn)
+    data.to_hdf(csv_path.replace(".csv", ".h5"), key="df_with_missing", mode="w")
+    data.to_csv(csv_path)
 
 def construct_header_row(
         dlc_data:Loaded_DLC_Data,
@@ -146,7 +133,7 @@ def construct_header_row(
     
     return header_df, columns
 
-def guarantee_multiindex_rows(df): # Adapted from DeepLabCut
+def guarantee_multiindex_rows(df): # Adopted from DeepLabCut
     # Make paths platform-agnostic if they are not already
     if not isinstance(df.index, pd.MultiIndex):  # Backwards compatibility
         path = df.index[0]

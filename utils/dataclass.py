@@ -1,7 +1,8 @@
-from dataclasses import dataclass, asdict, replace
+from dataclasses import dataclass, asdict
 
-from typing import List, Optional, Literal, Dict, Callable, Tuple
+from typing import List, Optional, Dict, Callable, Tuple
 from numpy.typing import NDArray
+
 
 @dataclass
 class Loaded_DLC_Data:
@@ -31,16 +32,6 @@ class Loaded_DLC_Data:
         if pred_data_array is not None:
             data["pred_data_array"] = pred_data_array.copy()
         return cls(**data)
-
-@dataclass
-class Export_Settings:
-    video_filepath: str
-    video_name: str
-    save_path: str
-    export_mode: Literal["Append", "Merge", "CSV"]
-
-    def copy(self, **kwargs):
-        return replace(self, **kwargs)
 
 @dataclass
 class Swap_Calculation_Config:

@@ -1,28 +1,44 @@
 import numpy as np
+import pandas as pd
+
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QTransform
+from PySide6.QtWidgets import QDialog
 
-from core.runtime import Data_Manager, Video_Manager, Keypoint_Edit_Manager
-from core.tool import Outlier_Finder, Canvas, Prediction_Plotter
-from ui import Menu_Widget, Video_Player_Widget, Pose_Rotation_Dialog, Status_Bar, Shortcut_Manager
-from utils.helper import frame_to_pixmap, calculate_snapping_zoom_level
+from typing import Optional
+
+from core.runtime import Data_Manager, Video_Manager
+from core.tool import Outlier_Finder, Canvas, Prediction_Plotter, Uno_Stack, Parallel_Review_Dialog
+from ui import (
+    Menu_Widget, Video_Player_Widget, Pose_Rotation_Dialog, Status_Bar,
+    Progress_Indicator_Dialog, Shortcut_Manager, Track_Fix_Dialog)
+from utils.pose import (
+    rotate_selected_inst, generate_missing_inst, generate_missing_kp_for_inst,
+    calculate_pose_centroids, calculate_pose_rotations
+)
+from utils.track import (
+    Track_Fixer, interpolate_track_all, delete_track, swap_track, interpolate_track,
+    )
+from utils.helper import (
+    frame_to_pixmap, calculate_snapping_zoom_level, get_instances_on_current_frame, get_instance_count_per_frame)
 from utils.dataclass import Plot_Config, Plotter_Callbacks
-from utils.logger import Loggerbox
+from utils.logger import Loggerbox, QMessageBox
+
 
 class Frame_Label:
-    def __init__(self,
-                 data_manager: Data_Manager,
-                 video_manager: Video_Manager,
-                 keypoint_manager: Keypoint_Edit_Manager,
-                 video_play_widget: Video_Player_Widget,
-                 status_bar: Status_Bar,
-                 menu_slot_callback: callable,
-                 plot_config_callback: callable,
-                 parent: QtWidgets.QWidget):
+    def __init__(
+            self,
+            data_manager: Data_Manager,
+            video_manager: Video_Manager,
+            video_play_widget: Video_Player_Widget,
+            status_bar: Status_Bar,
+            menu_slot_callback: callable,
+            plot_config_callback: callable,
+            parent: QtWidgets.QWidget
+            ):
         self.dm = data_manager
         self.vm = video_manager
-        self.kem = keypoint_manager
         self.vid_play = video_play_widget
         self.status_bar = status_bar
         self.menu_slot_callback = menu_slot_callback
@@ -30,7 +46,7 @@ class Frame_Label:
         self.main = parent
 
         self.labeler_menu_config = {
-            "View":{
+            "Zoom":{
                 "buttons": [
                     ("Toggle Zoom Mode (Z)", self._toggle_zoom_mode, {"checkable": True, "checked": False}),
                     ("Reset Zoom", self.reset_zoom),
@@ -75,12 +91,6 @@ class Frame_Label:
                     ("Redo Changes (Ctrl+Y)", self._redo_changes),
                 ]
             },
-            "Save":{
-                "buttons": [
-                    ("Save Prediction", self.save_prediction),
-                    ("Save Prediction Into CSV", self.save_prediction_as_csv),
-                ]
-            },
         }
 
         self._init_gview()
@@ -102,13 +112,14 @@ class Frame_Label:
         self.vid_play.swap_display_for_graphics_view(self.gview)
         self._setup_shortcuts()
         
+        self.pred_data_array = self.dm.dlc_data.pred_data_array
         if not self.gview.is_kp_edit:
             self._direct_keypoint_edit()
 
     def deactivate(self, menu_widget:Menu_Widget):
         self._remove_menu(menu_widget)
         self.sc_label.clear()
-        self.dm.dlc_data.pred_data_array = self.kem.pred_data_array.copy() if self.kem.pred_data_array is not None else None
+        self.pred_data_array = None
 
     def _remove_menu(self, menu_widget:Menu_Widget):
         for menu in self.labeler_menu_config.keys():
@@ -132,6 +143,9 @@ class Frame_Label:
         })
 
     def reset_state(self):
+        self.uno = Uno_Stack()
+        self.last_selected_idx = None
+        self.pred_data_array = None
         self.open_outlier = False
         self.skip_outlier_clean= False
         self.reset_zoom()
@@ -149,6 +163,7 @@ class Frame_Label:
 
     def display_current_frame(self):
         self.gview.sbox = None
+        self.last_selected_idx = None
 
         if self.dm.dlc_data is not None and not hasattr(self, "plotter"):
             self.plotter = Prediction_Plotter(
@@ -163,14 +178,15 @@ class Frame_Label:
         self._plot_current_frame(frame)
 
     def _plot_current_frame(self, frame):
-        pixmap, w, h = frame_to_pixmap(frame)
+        pixmap, w, h = frame_to_pixmap(frame, request_dim=True)
         pixmap_item = self.gview.gscene.addPixmap(pixmap)
         pixmap_item.setZValue(-1)
         self.gview.gscene.setSceneRect(0, 0, w, h)
         
+        current_frame_data = self.pred_data_array[self.dm.current_frame_idx]
+        
         if self.dm.plot_config.auto_snapping:
             view_width, view_height = self.gview.get_graphic_scene_dim()
-            current_frame_data = self.kem.get_current_frame_data(self.dm.current_frame_idx)
             if not np.all(np.isnan(current_frame_data)):
                 self.gview.zoom_factor, center_x, center_y = \
                     calculate_snapping_zoom_level(current_frame_data, view_width, view_height)
@@ -180,9 +196,9 @@ class Frame_Label:
         new_transform.scale(self.gview.zoom_factor, self.gview.zoom_factor)
         self.gview.setTransform(new_transform)
 
-        if self.kem.pred_data_array is not None:
+        if self.pred_data_array is not None:
             self.plotter.plot_config = self.dm.plot_config
-            self.plotter.plot_predictions(self.gview.gscene, self.kem.get_current_frame_data(self.dm.current_frame_idx))
+            self.plotter.plot_predictions(self.gview.gscene, current_frame_data)
 
         self.gview.update() # Force update of the graphics view
         self.vid_play.set_current_frame(self.dm.current_frame_idx) # Update slider handle's position
@@ -219,7 +235,7 @@ class Frame_Label:
             self.vid_play.sld.set_frame_category(*self.dm.get_cat_metadata("outlier"))
         elif self.dm.plot_config.navigate_roi:
             self.vid_play.sld.set_frame_category(*self.dm.get_cat_metadata("roi_change"))
-            self.dm.handle_cat_update("roi_change", self.kem.update_roi())
+            self.dm.handle_cat_update("roi_change", self._update_roi())
         else:
             self.vid_play.sld.set_frame_category(*self.dm.get_cat_metadata("marked"))
             self.vid_play.sld.set_frame_category(*self.dm.get_cat_metadata("refined"))
@@ -262,7 +278,7 @@ class Frame_Label:
     def _call_outlier_finder(self):
         if not self.vm.check_status_msg():
             return
-        if not self.kem.check_pred_data():
+        if self.pred_data_array is None:
             return
         
         self.open_outlier = not self.open_outlier
@@ -271,7 +287,7 @@ class Frame_Label:
         if self.open_outlier:
             self.menu_slot_callback()
             self.outlier_finder = Outlier_Finder(
-                self.kem.pred_data_array,
+                self.pred_data_array,
                 canon_pose=self.dm.canon_pose, 
                 angle_map_data=self.dm.angle_map_data,
                 parent=self.main)
@@ -282,7 +298,7 @@ class Frame_Label:
             self.vid_play.set_right_panel_widget(None)
 
     def _track_edit_blocker(self):
-        if not self.kem.check_pred_data():
+        if self.pred_data_array is None:
             return
         if self.open_outlier:
             Loggerbox.warning(self.main, "Outlier Cleaning Pending", "An outlier cleaning operation is pending. Please dismiss the outlier widget first.")
@@ -294,7 +310,7 @@ class Frame_Label:
     ###################################################################################################################################################
 
     def _direct_keypoint_edit(self):
-        if not self.kem.check_pred_data():
+        if self.pred_data_array is None:
             return
 
         self.gview.toggle_kp_edit()
@@ -316,54 +332,157 @@ class Frame_Label:
             return
         self.gview.setCursor(Qt.CrossCursor)
         self.gview.is_drawing_zone = True
-        self.kem._save_state_for_undo()
+        self._save_state_for_undo()
         Loggerbox.info(self.main, "Designate No Mice Zone", "Click and drag on the video to select a zone. Release to apply.")
 
     def _temporal_track_correct(self):
         if not self._track_edit_blocker():
             return
-        self.dm.dlc_data.pred_data_array = self.kem.pred_data_array.copy()
-        self.kem.correct_track_using_temporal(self.dm.dlc_data, self.vm.extractor, self.dm.canon_pose, self.dm.angle_map_data)
+        self._correct_track_using_temporal(self.dm.dlc_data, self.vm.extractor, self.dm.canon_pose, self.dm.angle_map_data)
 
     def _delete_track(self):
-        self.kem.del_trk(self.dm.current_frame_idx, self.gview.sbox)
+        if self.pred_data_array is None:
+            return
+        selected_instance_idx = self._instance_multi_select()
+        if selected_instance_idx is None:
+            return
+        self._save_state_for_undo()
+        try:
+            self.pred_data_array = delete_track(self.pred_data_array, self.dm.current_frame_idx, selected_instance_idx)
+        except ValueError as e:
+            Loggerbox.error(self.main, "Deletion Error", str(e), exc=e)
+        else:
+            self.display_current_frame()
 
     def _swap_track_single(self):
-        if self._tri_swap_not_implemented:
-            self.kem.swp_trk(self.dm.current_frame_idx)
+        if self.pred_data_array is None:
+            return
+        self._save_state_for_undo()
+        try:
+            self.pred_data_array = swap_track(self.pred_data_array, self.dm.current_frame_idx)
+        except ValueError as e:
+            Loggerbox.error(self.main, "Swap Error", str(e), exc=e)
+            return
+        self.display_current_frame()
 
     def _swap_track_continous(self):
-        if self._tri_swap_not_implemented:
-            self.kem.swp_trk(self.dm.current_frame_idx, [-1])
+        if self.pred_data_array is None:
+            return
+        self._save_state_for_undo()
+        try:
+            self.pred_data_array = swap_track(self.pred_data_array, self.dm.current_frame_idx, swap_range=[-1])
+        except ValueError as e:
+            Loggerbox.error(self.main, "Swap Error", str(e), exc=e)
+            return
+        self.display_current_frame()
 
     def _tri_swap_not_implemented(self):
         if self.dm.dlc_data.instance_count > 2:
             Loggerbox.info(self.main, "Not Implemented",
                 "Swapping while instance count is larger than 2 has not been implemented.")
             return False
-        return True
+        else:
+            return True
 
     def _interpolate_track(self):
-        self.kem.intp_trk(self.dm.current_frame_idx, self.gview.sbox)
+        frame_idx = self.dm.current_frame_idx
+        if self.pred_data_array is None:
+            return
+        selected_instance_idx = self._instance_multi_select()
+        if selected_instance_idx is None:
+            return
+        self._save_state_for_undo()
+        iter_frame_idx = frame_idx + 1
+        frames_to_interpolate = []
+        while np.all(np.isnan(self.pred_data_array[iter_frame_idx, selected_instance_idx, :])):
+            frames_to_interpolate.append(iter_frame_idx)
+            iter_frame_idx += 1
+            if iter_frame_idx >= self.dm.total_frames:
+                Loggerbox.info(self.main, "Interpolation Failed", "No valid subsequent keypoint data found for this instance to interpolate to.")
+                return
+
+        if not frames_to_interpolate:
+            Loggerbox.info(self.main, "Interpolation Info", "No gaps found to interpolate for the selected instance.")
+            return
+        
+        frames_to_interpolate.sort()
+        self.pred_data_array = interpolate_track(self.pred_data_array, frames_to_interpolate, selected_instance_idx)
+        self.display_current_frame()
 
     def _interpolate_all(self):
         if not self._track_edit_blocker():
             return
-        if self.kem.interpolate_all_for_inst(self.gview.sbox):
-            self.reset_zoom()
+
+        if self.gview.sbox is None:
+            Loggerbox.info(self.main, "No Instance Selected", "Please select a track to interpolate all frames for one instance.")
+            return False
+        
+        max_gap_allowed, ok = QtWidgets.QInputDialog.getInt(
+            self.main,"Set Max Gap For Interpolation","Will not interpolate gap beyond this limit, set to 0 to ignore the limit.",
+            value=10, minValue=0, maxValue=1000
+        )
+        if not ok:
+            Loggerbox.info(self.main, "Input Cancelled", "Max Gap input cancelled.")
+            return
+
+        self._save_state_for_undo()
+        self.pred_data_array = interpolate_track_all(self.pred_data_array, self.gview.sbox.instance_id, max_gap_allowed)
+        self.display_current_frame()
+        self.reset_zoom()
 
     def _interpolate_missing_kp(self):
-        self.kem.intp_ms_kp(self.dm.current_frame_idx, self.gview.sbox,
-                            self.dm.angle_map_data, self.dm.canon_pose)
+        if self.pred_data_array is None:
+            return
+        
+        selected_instance_idx = self._instance_multi_select()
+        if selected_instance_idx is None:
+            return
+        self._save_state_for_undo()
+        self.pred_data_array = generate_missing_kp_for_inst(
+            pred_data_array=self.pred_data_array,
+            current_frame_idx=self.dm.current_frame_idx,
+            selected_instance_idx=selected_instance_idx,
+            angle_map_data=self.dm.angle_map_data,
+            canon_pose=self.dm.canon_pose)
+        self.display_current_frame()
         
     def _generate_inst(self):
-        self.kem.gen_inst(self.dm.current_frame_idx, self.dm.dlc_data.instance_count, self.dm.angle_map_data, self.dm.canon_pose)
+        if self.pred_data_array is None:
+            return
+        self._save_state_for_undo()
+
+        current_frame_inst = get_instances_on_current_frame(self.pred_data_array, self.dm.current_frame_idx)
+        missing_instances = [inst for inst in range(self.dm.dlc_data.instance_count) if inst not in current_frame_inst]
+        if missing_instances is None:
+            Loggerbox.info(self.main, "No Missing Instances", "No missing instances found in the current frame to fill.")
+            return
+
+        self.pred_data_array = generate_missing_inst(
+            pred_data_array=self.pred_data_array,
+            current_frame_idx=self.dm.current_frame_idx,
+            missing_instances=missing_instances,
+            angle_map_data=self.dm.angle_map_data,
+            canon_pose=self.dm.canon_pose)
+        self.display_current_frame()
 
     def _rotate_inst(self):
-        if not self.kem.check_pred_data():
+        if self.pred_data_array is None:
             return
-        selected_instance_idx, current_rotation = self.kem.rot_inst_prep(
-            self.dm.current_frame_idx, self.gview.sbox, self.dm.angle_map_data)
+        
+        selected_instance_idx = self._instance_multi_select()
+        if selected_instance_idx is None:
+            return None, None
+        _, local_coords = calculate_pose_centroids(self.pred_data_array, self.dm.current_frame_idx)
+        local_x = local_coords[selected_instance_idx, 0::2]
+        local_y = local_coords[selected_instance_idx, 1::2]
+        current_rotation = np.degrees(calculate_pose_rotations(local_x, local_y, self.dm.angle_map_data))
+
+        if np.isnan(current_rotation) or np.isinf(current_rotation):
+            current_rotation = 0.0
+        else:
+            current_rotation = current_rotation % 360.0 
+        self._save_state_for_undo()
+        
         if selected_instance_idx is not None:
             self.rotation_dialog = Pose_Rotation_Dialog(selected_instance_idx, current_rotation, parent=self.main)
             self.rotation_dialog.rotation_changed.connect(self._on_rotation_changed)
@@ -380,14 +499,19 @@ class Frame_Label:
             self._mark_refined()
             instance_id = self.gview.drag_kp.instance_id
             keypoint_id = self.gview.drag_kp.keypoint_id
-            self.kem.del_kp(self.dm.current_frame_idx, instance_id, keypoint_id)
+
+            self._save_state_for_undo()
+            self.pred_data_array[self.dm.current_frame_idx, instance_id, keypoint_id*3:keypoint_id*3+3] = np.nan
+
             self.status_bar.show_message(f"{self.dm.dlc_data.keypoints[keypoint_id]} of instance {instance_id} deleted.")
             self.gview.drag_kp = None
             self.refresh_and_display()
 
     def _on_rotation_changed(self, instance_idx, angle_delta: float):
         angle_delta = np.radians(angle_delta)
-        self.kem.rot_inst(self.dm.current_frame_idx, instance_idx, angle_delta)
+        self._save_state_for_undo()
+        self.pred_data_array = rotate_selected_inst(self.pred_data_array, self.dm.current_frame_idx, instance_idx, angle_delta)
+        self.display_current_frame()
 
     def _handle_frame_list_from_comp(self, frame_list):
         self.dm.handle_cat_update("outlier", frame_list)
@@ -396,7 +520,9 @@ class Frame_Label:
         self.refresh_and_display()
 
     def _handle_outlier_mask_from_comp(self, outlier_mask:np.ndarray):
-        self.kem.del_outlier(outlier_mask)
+        self._save_state_for_undo()
+        self.pred_data_array[outlier_mask] = np.nan
+        self.display_current_frame()
         self.dm.handle_cat_update("outlier", [])
 
     def _handle_config_from_config(self, new_config:Plot_Config):
@@ -404,51 +530,122 @@ class Frame_Label:
         self.display_current_frame()
 
     def _update_last_selected_inst(self, instance_id):
-        self.kem.last_selected_idx = instance_id
+        self.last_selected_idx = instance_id
 
     def _update_keypoint_position(self, instance_id, keypoint_id, new_x, new_y):
         self._mark_refined()
-        self.kem.update_kp_pos(
-            self.dm.current_frame_idx, instance_id, keypoint_id, new_x, new_y)
+
+        self._save_state_for_undo()
+        frame_idx = self.dm.current_frame_idx
+        current_conf = self.pred_data_array[frame_idx, instance_id, keypoint_id*3+2]
+        self.pred_data_array[frame_idx, instance_id, keypoint_id*3] += new_x
+        self.pred_data_array[frame_idx, instance_id, keypoint_id*3+1] += new_y
+        if pd.isna(current_conf) and not (pd.isna(new_x) or pd.isna(new_y)):
+            self.pred_data_array[frame_idx, instance_id, keypoint_id*3+2] = 1.0
+
         self.status_bar.show_message(f"{self.dm.dlc_data.keypoints[keypoint_id]} of instance {instance_id} moved by ({new_x}, {new_y})")
         self.refresh_ui()
         QTimer.singleShot(0, self.display_current_frame)
 
     def _update_instance_position(self, instance_id, dx, dy):
         self._mark_refined()
-        self.kem.update_inst_pos(self.dm.current_frame_idx, instance_id, dx, dy)
+
+        self._save_state_for_undo()
+        frame_idx = self.dm.current_frame_idx
+        
+        for kp_idx in range(self.pred_data_array.shape[2]//3): # Update all keypoints for the given instance in the current frame
+            x_coord_idx, y_coord_idx = kp_idx * 3, kp_idx * 3 + 1
+            current_x = self.pred_data_array[frame_idx, instance_id, x_coord_idx]
+            current_y = self.pred_data_array[frame_idx, instance_id, y_coord_idx]
+
+            if not pd.isna(current_x) and not pd.isna(current_y):
+                self.pred_data_array[frame_idx, instance_id, x_coord_idx] = current_x + dx
+                self.pred_data_array[frame_idx, instance_id, y_coord_idx] = current_y + dy
+    
         self.status_bar.show_message(f"Instance {instance_id} moved by ({dx}, {dy})")
         self.refresh_ui()
         QTimer.singleShot(0, self.display_current_frame)
 
     ###################################################################################################################################################
 
-    def save_prediction(self):
-        self.kem.check_pred_data()
-        is_label_file = True if self.vm.image_mode else False
-        try:
-            save_path = self.dm.save_pred(self.kem.pred_data_array, is_label_file)
-            self._reload_prediction(save_path)
-        except Exception as e:
-            Loggerbox.error(self.main, "Saving Error", f"An error occurred during saving: {e}", exc=e)
-            return
-        Loggerbox.info(self.main, "Save Successful", f"Prediction saved in {save_path}.")
-
-    def save_prediction_as_csv(self):
-        self.dm.save_pred_to_csv()
-
     def _undo_changes(self):
-        self.kem.undo()
+        data_array = self.uno.undo(self.pred_data_array)
+        if data_array is not None:
+            self.pred_data_array = data_array
         self.refresh_and_display()
 
     def _redo_changes(self):
-        self.kem.redo()
+        data_array = self.uno.redo(self.pred_data_array)
+        if data_array is not None:
+            self.pred_data_array = data_array
         self.refresh_and_display()
 
-    def _reload_prediction(self, prediction_path):
-        self.dm.reload_pred_to_dm(prediction_path)
-        self.refresh_and_display()
-        self.status_bar.show_message("Prediction successfully reloaded")
-        self.kem.set_pred_data(self.dm.dlc_data.pred_data_array)
-        if hasattr(self, 'plotter'):
-            delattr(self, 'plotter')
+    def _save_state_for_undo(self):
+        self.uno.save_state_for_undo(self.pred_data_array)
+
+    ###################################################################################################################################################
+
+    def _update_roi(self) -> list:
+        self.inst_count_per_frame_pred = get_instance_count_per_frame(self.pred_data_array)
+        return list(np.where(np.diff(self.inst_count_per_frame_pred)!=0)[0]+1)
+
+    def _instance_multi_select(self) -> Optional[int]:
+        frame_idx = self.dm.current_frame_idx
+        current_frame_inst = get_instances_on_current_frame(self.pred_data_array, frame_idx)
+        if current_frame_inst is None:
+            return
+        if len(current_frame_inst) == 1:
+            return current_frame_inst[0]
+        if self.gview.sbox is None:
+            if self.last_selected_idx is None:
+                Loggerbox.info(self.main, "No Instance Seleted",
+                    "When there are more than one instance present, "
+                    "you need to click one of the instance bounding box to specify which to delete.")
+                return
+            else:
+                return self.last_selected_idx
+        return self.gview.sbox.instance_id
+
+    ##############################################################################################
+
+    def _correct_track_using_temporal(self, dlc_data, extractor, canon_pose, angle_map_data):
+        centroids, _ = calculate_pose_centroids(self.pred_data_array)   
+        speeds_px_frame = np.linalg.norm(np.diff(centroids, axis=0), axis=2).flatten()
+        speeds_px_frame = speeds_px_frame[~np.isnan(speeds_px_frame)]
+
+        dialog = Track_Fix_Dialog(self.main)
+        dialog.set_histogram(speeds_px_frame, max_dist_px_frame=25.0)
+        if dialog.exec() == QDialog.Accepted:
+            max_dist, lookback = dialog.get_values()
+        else:
+            return
+
+        self._save_state_for_undo()
+
+        progress = Progress_Indicator_Dialog(
+            0, self.total_frames, "Temporal Track Fixing", "Fixing track using temporal consistency...", self.main)
+
+        tf = Track_Fixer(self.pred_data_array, canon_pose, angle_map_data, progress)
+        self.pred_data_array, changed_frames, amongus_frames = tf.track_correction(max_dist, lookback)
+
+        if not changed_frames:
+            Loggerbox.info(self.main, "No Changes Applied", "No changes were applied.")
+            return
+
+        label = f"Applied {len(changed_frames)} changes to track. Review the changes now?"
+        if amongus_frames:
+            label = f"{len(amongus_frames)} frames are ambiguous, start manual correction now?"
+        
+        reply = Loggerbox.question(self.main, f"Manual Review", label, QMessageBox.Yes | QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            dialog = Parallel_Review_Dialog(dlc_data, extractor,  self.pred_data_array, [], (changed_frames, amongus_frames), True, parent=self.main)
+            dialog.pred_data_exported.connect(self._get_pred_data_from_manual_review)
+            dialog.exec()
+            return
+
+        self.display_current_frame()
+
+    def _get_pred_data_from_manual_review(self, pred_data_array):
+        self._save_state_for_undo()
+        self.pred_data_array = pred_data_array
+        self.display_current_frame()

@@ -4,10 +4,10 @@ from PySide6.QtCore import Qt
 
 from core.runtime import Data_Manager, Video_Manager
 from core.tool import Mark_Generator, Blob_Counter, Prediction_Plotter
-from ui import (
-    Menu_Widget, Video_Player_Widget, Frame_List_Dialog, Status_Bar, Inference_interval_Dialog, Shortcut_Manager, Frame_Display_Dialog)
-from utils.helper import frame_to_pixmap, frame_to_qimage, get_roi_cv2, plot_roi, calculate_blob_inference_intervals
+from ui import Menu_Widget, Video_Player_Widget, Frame_List_Dialog, Status_Bar, Inference_interval_Dialog, Shortcut_Manager
+from utils.helper import frame_to_pixmap, calculate_blob_inference_intervals
 from utils.logger import Loggerbox, QMessageBox
+
 
 class Frame_View:
     def __init__(self,
@@ -16,39 +16,34 @@ class Frame_View:
                  video_play_widget: Video_Player_Widget,
                  status_bar: Status_Bar,
                  menu_slot_callback: callable,
+                 request_config_callback: callable,
                  parent: QtWidgets.QWidget):
         self.dm = data_manager
         self.vm = video_manager
         self.vid_play = video_play_widget
         self.status_bar = status_bar
         self.menu_slot_callback = menu_slot_callback
+        self.request_config_callback = request_config_callback
         self.main = parent
 
         self.viewer_menu_config = {
-            "View":{
+            "Animal Counter":{
                 "buttons": [
                     ("Toggle Animal Counting", self._toggle_animal_counting),
                     ("Select Counter List to Navigate", self._select_counter_list),
-                    ("Check Current ROI Region", self._check_roi)
                 ]
             },
-            "Mark": {
+            "Mark Generator": {
                 "buttons": [
+                    ("Automatic Mark Generation", self.toggle_mark_gen_menu),
                     ("Mark / Unmark Current Frame (X)", self._toggle_frame_status),
                     ("Clear Frame Marks of Category", self.show_clear_mark_dialog),
-                    ("Automatic Mark Generation", self.toggle_mark_gen_menu),
                 ]
             },
-            "Inference": {
+            "DLC Inference": {
                 "buttons": [
                     ("Call DeepLabCut - Run Predictions of Marked Frames", self.dlc_inference_marked),
                     ("Call DeepLabCut - Run Predictions on Entire Video", self.dlc_inference_all),
-                ]
-            },
-            "Save":{
-                "buttons": [
-                    ("Export to DeepLabCut", self.save_to_dlc),
-                    ("Merge with Existing Label in DeepLabCut", self.merge_data),
                 ]
             },
         }
@@ -132,7 +127,7 @@ class Frame_View:
                 frame = self.plotter.plot_predictions(frame, self.dm.label_data_array[self.dm.current_frame_idx,:,:])
                 self.plotter.color = old_colors
 
-        pixmap, _, _ = frame_to_pixmap(frame)
+        pixmap = frame_to_pixmap(frame)
 
         # Scale pixmap to fit label
         scaled_pixmap = pixmap.scaled(self.vid_play.display.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
@@ -233,21 +228,6 @@ class Frame_View:
             list_select_dialog.frame_indices_acquired.connect(self._counter_list_selected)
             list_select_dialog.exec()
 
-    def _check_roi(self):
-        if not self.vm.check_status_msg():
-            return
-        frame = self.vm.get_frame(self.dm.current_frame_idx)
-        if self.dm.roi is None:
-            roi = get_roi_cv2(frame)
-            if roi is None:
-                return
-            self.dm.roi = roi
-        
-        frame = plot_roi(frame, self.dm.roi)
-        qimage, _, _ = frame_to_qimage(frame)
-        dialog = Frame_Display_Dialog(title=f"Crop Region", image=qimage)
-        dialog.exec()
-
     ###################################################################################################################################################
 
     def _handle_rerun_frames_exported(self, frame_tuple):
@@ -275,15 +255,6 @@ class Frame_View:
 
     ###################################################################################################################################################
 
-    def pre_saving_sanity_check(self):
-        if not self.vm.check_status_msg():
-            return False
-        if not self.dm.frames_in_any({"marked", "refined", "rejected", "approved"}):
-            Loggerbox.info(self.main, "No Marked Frames", "No frames have been marked for export.")
-            return False
-        self.dm.save_workspace()
-        return True
-
     def dlc_inference_marked(self):
         inference_list = self.dm.get_inference_list()
         if not inference_list:
@@ -308,8 +279,7 @@ class Frame_View:
             self.call_inference(inference_list)
     
     def call_inference(self, inference_list:list):
-        if not self.dm.video_file:
-            Loggerbox.warning(self.main, "Video Not Loaded", "No video is loaded, load a video first!")
+        if not self.vm.check_status_msg():
             return
         fm_list = self.dm.get_frames("marked")
         if not fm_list and not inference_list:
@@ -319,14 +289,12 @@ class Frame_View:
             self._toggle_animal_counting()
         if self.dm.dlc_data is None:
             Loggerbox.info(self.main, "Load DLC Config", "You need to load DLC config to inference with DLC models.")
-
-            dlc_config = self.dm.config_file_dialog()
-            if not dlc_config:
+            self.request_config_callback()
+            if self.dm.dlc_data is None:
                 return
 
-            self.dm.load_metadata_to_dm(dlc_config)
-            if not inference_list: # Use marked frames if inference_list is not provided
-                inference_list = fm_list
+        if not inference_list:
+            inference_list = fm_list
 
         from core.tool import DLC_Inference
         try:
@@ -336,12 +304,12 @@ class Frame_View:
                 video_filepath=self.dm.video_file,
                 roi=self.dm.roi,
                 parent=self.main)
+        except Exception as e:
+            Loggerbox.error(self.main, "Inference Failed", f"Inference Process failed to initialize. Exception: {e}", exc=e)
+        else:
             self.inference_window.show()
             self.inference_window.frames_exported.connect(self._handle_rerun_frames_exported)
             self.inference_window.prediction_saved.connect(self._reload_prediction)
-        except Exception as e:
-            Loggerbox.error(self.main, "Inference Failed", f"Inference Process failed to initialize. Exception: {e}", exc=e)
-            return
 
     def _suggest_animal_counting(self):
         if self.dm.blob_array is None and not self.skip_counting and not self.is_counting:
@@ -375,44 +343,3 @@ class Frame_View:
             self.inference_window = None
         if hasattr(self, 'plotter'):
             delattr(self, 'plotter')
-
-    def save_to_dlc(self):
-        if not self.pre_saving_sanity_check():
-            return
-        try:
-            crop_status = self.ask_crop_before_export()
-            self.dm.save_to_dlc(crop_status)
-            self.refresh_and_display()
-        except Exception as e:
-            Loggerbox.error(self, "Crop Region Not Set", e, exc=e)
-
-    def merge_data(self):
-        if self.vm.image_mode:
-            Loggerbox.info(self.main, "Not Complatible",
-                "Loaded DLC Data can only be saved in labeling mode (in place update), or saved as a new one (cropped) with 'Export to DeepLabCut'.")
-            return
-        if not self.pre_saving_sanity_check():
-            return
-        try:
-            crop_status = self.ask_crop_before_export()
-            self.dm.merge_data(crop_status)
-            self.refresh_and_display()
-        except Exception as e:
-            Loggerbox.error(self, "Crop Region Not Set", e, exc=e)
-
-    def ask_crop_before_export(self) -> bool:
-        reply = Loggerbox.question(
-            self.main, "Crop Frame For Export?", "Crop the frames before exporting to DLC?")
-        if reply == QMessageBox.Yes:
-            if self.dm.roi is None:
-                frame = self.vm.get_frame(self.dm.current_frame_idx)
-                roi = get_roi_cv2(frame)
-                if roi is not None:
-                    self.dm.roi = roi
-                    return True
-                else:
-                    raise RuntimeError("User cancel the ROI selection.")
-            else:
-                return True
-        else:
-            return False

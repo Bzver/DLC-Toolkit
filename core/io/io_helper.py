@@ -2,9 +2,16 @@ import os
 import shutil
 import yaml
 import numpy as np
+from datetime import datetime
 from typing import List, Tuple, Dict
 
 from utils.logger import logger
+
+
+def timestamp_new_prediction(save_filepath:str) -> str:
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    path, ext = os.path.splitext(save_filepath)
+    return f"{path}_inference_{timestamp}{ext}"
 
 def backup_existing_prediction(save_filepath:str):
     if not os.path.isfile(save_filepath):
@@ -13,14 +20,10 @@ def backup_existing_prediction(save_filepath:str):
     filename = os.path.basename(save_filepath)
     path = os.path.dirname(save_filepath)
     file, ext = filename.split(".")
-    backup_idx = 0
     backup_dir = os.path.join(path, "backup")
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     os.makedirs(backup_dir, exist_ok=True)
-    backup_filepath = os.path.join(backup_dir, f"{file}_backup{backup_idx}.{ext}")
-
-    while os.path.isfile(backup_filepath):
-        backup_idx += 1
-        backup_filepath = os.path.join(backup_dir, f"{file}_backup{backup_idx}.{ext}")
+    backup_filepath = os.path.join(backup_dir, f"{file}_{timestamp}.{ext}")
 
     shutil.copy(save_filepath, backup_filepath)
 
@@ -138,10 +141,11 @@ def convert_prediction_array_to_save_format(pred_data_array: np.ndarray) -> List
     return new_data
 
 def generate_crop_coord_notations(
-        crop_coord:np.ndarray | Tuple[int, int, int, int],
+        label_offset:Tuple[int, int],
         project_dir:str,
-        frame_list:List[int]):
-    x, y, _, _ = crop_coord
+        frame_list:List[int]
+        ):
+    x, y = label_offset
     data = {
         "crop_regions": [
             {
@@ -162,3 +166,26 @@ def load_crop_notations(crop_notation_filepath:str) -> Dict[Tuple[int, int], Lis
     regions = data["crop_regions"]
     notadict = {(region["x"], region["y"]): region["frames"] for region in regions}
     return notadict
+
+def get_existing_projects(config_path:str) -> List[str]:
+    if not os.path.isfile(config_path):
+        return
+    project_root = os.path.join(os.path.dirname(config_path), "labeled-data")
+
+    with open(config_path, "r") as conf:
+        cfg = yaml.safe_load(conf)
+    project_dict = cfg["video_sets"]
+    scorer = cfg["scorer"]
+
+    projects = []
+    for k in project_dict.keys():
+        project, _ = os.path.splitext(os.path.basename(k))
+        proj_folder = os.path.join(project_root, project)
+        proj_file = os.path.join(proj_folder, f"CollectedData_{scorer}.h5")
+
+        valid = os.path.isfile(proj_file)
+        logger.info(f"[IO] Found project folder: {proj_folder} | Valid: {valid}")
+        if valid:
+            projects.append(proj_folder)
+
+    return projects

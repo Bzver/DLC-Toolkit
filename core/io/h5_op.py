@@ -6,7 +6,8 @@ from typing import Tuple
 from .io_helper import convert_prediction_array_to_save_format, remove_confidence_score
 from .csv_op import prediction_to_csv, csv_to_h5
 from utils.logger import logger
-from utils.dataclass import Loaded_DLC_Data, Export_Settings
+from utils.dataclass import Loaded_DLC_Data
+
 
 def save_prediction_to_existing_h5(
         prediction_filepath:str,
@@ -42,23 +43,24 @@ def save_prediction_to_existing_h5(
     logger.debug(f"[H5OP] Successfully saved prediction to existing H5: {prediction_filepath}")
     return True, ""
     
-def save_predictions_to_new_h5(dlc_data:Loaded_DLC_Data, pred_data_array:np.ndarray, export_settings:Export_Settings):
-    logger.debug(f"[H5OP] Attempting to save predictions to new H5. Save path: {export_settings.save_path}")
-    export_settings.export_mode = "CSV"
-    csv_name = prediction_to_csv(
+def save_predictions_to_new_h5(
+        dlc_data:Loaded_DLC_Data,
+        pred_data_array:np.ndarray,
+        save_path:str,
+        ):
+    logger.debug(f"[H5OP] Attempting to save predictions to new H5. Save path: {save_path}")
+    prediction_to_csv(
         dlc_data=dlc_data,
         pred_data_array=pred_data_array,
-        export_settings=export_settings,
+        save_path=save_path.replace(".h5", ".csv"),
         keep_conf=True,
         )
-    logger.debug(f"[H5OP] Predictions converted to CSV: {csv_name}")
     csv_to_h5(
-        project_dir=export_settings.save_path,
+        csv_path=save_path.replace(".h5", ".csv"),
         multi_animal=dlc_data.multi_animal,
-        scorer=dlc_data.scorer,
-        csv_name=csv_name
+        scorer=dlc_data.scorer
         )
-    logger.debug(f"[H5OP] CSV converted to new H5 file at {export_settings.save_path}")
+    logger.debug(f"[H5OP] CSV converted to new H5 file at {save_path}")
     
 def validate_h5_keys(pred_file:dict) -> Tuple[str, str]:
     logger.debug("[H5OP] Validating H5 keys.")
