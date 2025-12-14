@@ -21,6 +21,7 @@ from core.io import Frame_Extractor
 from utils.logger import Loggerbox, QMessageBox, logger
 from utils.dataclass import Blob_Config
 
+
 class Blob_Counter(QGroupBox):
     Frame_CV2 = np.ndarray
     parameters_changed = Signal()
@@ -456,7 +457,6 @@ class Blob_Counter(QGroupBox):
             if reply == QMessageBox.No:
                 return
 
-        logger.info("[BCOUNT] Restting blob array.")
         self.blob_array = np.zeros((self.total_frames, 6), dtype=np.uint16)
             
 
@@ -588,7 +588,7 @@ class Blob_Background(QtWidgets.QWidget):
     def display_background_roi_dialog(self, roi:np.ndarray):
         frame = self.background_frames.get(self.bg_removal_method)
         frame = plot_roi(frame, roi)
-        qimage, _, _ = frame_to_qimage(frame)
+        qimage = frame_to_qimage(frame)
         dialog = Frame_Display_Dialog(title=f"Background Image — {self.bg_removal_method}", image=qimage)
         dialog.exec()
 

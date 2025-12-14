@@ -12,10 +12,11 @@ from .undo_redo import Uno_Stack
 from .mark_nav import navigate_to_marked_frame
 from core.io import Frame_Extractor, Frame_Extractor_Img
 from ui import Clickable_Video_Label, Video_Slider_Widget, Shortcut_Manager
-from utils.helper import frame_to_pixmap, handle_unsaved_changes_on_close, crop_coord_to_array
+from utils.helper import frame_to_pixmap, handle_unsaved_changes_on_close, crop_coord_to_array, validate_crop_coord
 from utils.track import swap_track
 from utils.dataclass import Loaded_DLC_Data
 from utils.logger import Loggerbox, QMessageBox
+
 
 class Parallel_Review_Dialog(QDialog):
     pred_data_exported = Signal(object, tuple)
@@ -44,11 +45,10 @@ class Parallel_Review_Dialog(QDialog):
         self.frame_list = list(range(self.total_frames)) if tc_mode else frame_list
         self.total_marked_frames = len(self.frame_list)
 
-        try:
-            x1, y1, x2, y2 = crop_coord
-            crop_coord_proc = x1, y1, x2, y2
-            self.crop_array = crop_coord_to_array(crop_coord_proc, new_data_array.shape)
-        except:
+        crop_coord_good = validate_crop_coord(crop_coord)
+        if crop_coord_good is not None:
+            self.crop_array = crop_coord_to_array(crop_coord_good, new_data_array.shape)
+        else:
             self.crop_array = None
 
         if self.crop_array is not None:
@@ -237,7 +237,7 @@ class Parallel_Review_Dialog(QDialog):
 
             h, w = self.video_labels[i].height(), self.video_labels[i].width()
             resized = cv2.resize(view, (w, h), interpolation=cv2.INTER_AREA)
-            pixmap, _, _ = frame_to_pixmap(resized)
+            pixmap = frame_to_pixmap(resized)
             self.video_labels[i].setPixmap(pixmap)
             self.video_labels[i].setText("")
 

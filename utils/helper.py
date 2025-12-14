@@ -5,6 +5,7 @@ from typing import List, Tuple, Callable, Union, Iterable, Optional, Dict
 
 from utils.logger import logger, Loggerbox, QMessageBox
 
+
 def get_instances_on_current_frame(pred_data_array:np.ndarray, current_frame_idx:int) -> List[int]:
     """
     Identifies which instances are present in a given frame based on non-NaN keypoint data.
@@ -373,17 +374,23 @@ def calculate_snapping_zoom_level(
 
 ###########################################################################################
 
-def frame_to_qimage(frame):
+def frame_to_qimage(frame, request_dim=False) -> QtGui.QImage | Tuple[QtGui.QImage, int, int]:
     rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     h, w, ch = rgb_image.shape
     bytes_per_line = ch * w
     qt_image = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
-    return qt_image, w, h
+    if request_dim:
+        return qt_image, w, h
+    else:
+        return qt_image
 
-def frame_to_pixmap(frame):
-    qt_image, w, h = frame_to_qimage(frame)
+def frame_to_pixmap(frame, request_dim=False) -> QtGui.QPixmap | Tuple[QtGui.QPixmap, int, int]:
+    qt_image, w, h = frame_to_qimage(frame, request_dim=True)
     pixmap = QtGui.QPixmap.fromImage(qt_image)
-    return pixmap, w, h
+    if request_dim:
+        return pixmap, w, h
+    else:
+        return pixmap
 
 ###########################################################################################
 
@@ -406,12 +413,22 @@ def plot_roi(frame, roi) -> np.ndarray:
     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
     return frame
 
-def crop_coord_to_array(crop_coord:np.ndarray, arr_shape:Tuple[int, int, int]):
+def crop_coord_to_array(crop_coord:np.ndarray|Tuple[int, int, int, int], arr_shape:Tuple[int, int, int]):
     coord_array = np.zeros(arr_shape)
     x, y = crop_coord[0], crop_coord[1]
     coord_array[:, :, 0::3] = x
     coord_array[:, :, 1::3] = y
     return coord_array
+
+def validate_crop_coord(crop_coord:np.ndarray|Tuple[int, int, int, int]|None) -> Optional[Tuple[int, int, int, int]]:
+    if crop_coord is None:
+        return None
+    try:
+        x1, y1, x2, y2 = crop_coord
+    except Exception:
+        return None
+    else:
+        return (x1, y1, x2, y2)
 
 #########################################################################################################################################################1
 

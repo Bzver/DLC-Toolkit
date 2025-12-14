@@ -7,6 +7,7 @@ from typing import Optional, Tuple
 
 from utils.logger import logger
 
+
 class Frame_Extractor:
     def __init__(self, video_path: str):
         logger.info(f"[FLOADER] Initializing Frame_Extractor for video: {video_path}")
@@ -167,7 +168,6 @@ class Frame_Extractor_Img:
         else:
             logger.warning(f"[FLOADER] OpenCV failed to read image frame {frame_index}.")
             return None
-        logger.debug(f"[FLOADER] Successfully retrieved image frame {frame_index}.")
 
     def get_largest_dim(self) -> Tuple[int, int]:
         logger.info("[FLOADER] Calculating largest image dimensions.")

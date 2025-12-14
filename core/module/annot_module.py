@@ -15,6 +15,7 @@ from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Status_Bar, F
 from utils.helper import frame_to_pixmap
 from utils.logger import Loggerbox
 
+
 class Frame_Annotator:
     BEHAVIORS_MAP = {
         "other": "o",
@@ -90,6 +91,7 @@ class Frame_Annotator:
         if self.vid_play.sld.is_zoom_slider_shown:
             self.vid_play.sld.toggle_zoom_slider()
         self.open_annot = False
+        self.annot_conf = None
         self.sc_annot.clear()
 
     def reset_state(self, hardcore=False):
@@ -98,7 +100,7 @@ class Frame_Annotator:
             self.behav_map.clear()
         else:
             self.behav_map = self.BEHAVIORS_MAP
-        if hasattr(self, "annot_conf"):
+        if hasattr(self, "annot_conf") and self.annot_conf is not None:
             self.annot_conf.sync_behaviors_map(self.behav_map)
         self.annot_array = None
         self.nav_list = []
@@ -183,7 +185,7 @@ class Frame_Annotator:
             self.vid_play.display.setText("Failed to load current frame.")
             return
 
-        pixmap, _, _ = frame_to_pixmap(frame)
+        pixmap = frame_to_pixmap(frame)
         scaled_pixmap = pixmap.scaled(self.vid_play.display.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self.vid_play.display.setPixmap(scaled_pixmap)
         self.vid_play.display.setText("")
@@ -390,9 +392,10 @@ class Frame_Annotator:
             self.refresh_ui()
 
     def _auto_load(self):
+        if self.dm.video_file is None:
+            return
         if self.annot_array is not None: # No load when already loaded
             return
-        
         vid_path, _ = os.path.splitext(self.dm.video_file)
         annot_path = f"{vid_path}_annot_backup.txt"
         if os.path.isfile(annot_path):
