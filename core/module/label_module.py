@@ -6,13 +6,13 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QTransform
 from PySide6.QtWidgets import QDialog
 
-from typing import Optional
+from typing import Optional, Tuple
 
 from core.runtime import Data_Manager, Video_Manager
 from core.tool import Outlier_Finder, Canvas, Prediction_Plotter, Uno_Stack, Parallel_Review_Dialog
 from ui import (
-    Menu_Widget, Video_Player_Widget, Pose_Rotation_Dialog, Status_Bar,
-    Progress_Indicator_Dialog, Shortcut_Manager, Track_Fix_Dialog)
+    Menu_Widget, Video_Player_Widget, Pose_Rotation_Dialog, Status_Bar, Shortcut_Manager,
+    Progress_Indicator_Dialog, Frame_Range_Dialog, Track_Fix_Dialog)
 from utils.pose import (
     rotate_selected_inst, generate_missing_inst, generate_missing_kp_for_inst,
     calculate_pose_centroids, calculate_pose_rotations
@@ -65,7 +65,8 @@ class Frame_Label:
                     {
                         "submenu": "Delete",
                         "items": [
-                            ("Delete Selected Instance On Current Frame (X)", self._delete_track),
+                            ("Delete Selected Instance On Current Frame (X)", self._delete_inst),
+                            ("Delete Selected Instance On Frames Between Seleted Range", self._delete_track),
                             ("Delete All Prediction Inside Selected Area", self._designate_no_mice_zone),
                         ]
                     },
@@ -73,7 +74,15 @@ class Frame_Label:
                         "submenu": "Swap",
                         "items": [
                             ("Swap Instances On Current Frame (W)", self._swap_track_single),
-                            ("Swap Until The End (Shift + W)", self._swap_track_continous)
+                            ("Swap Instances On Frames Between Selecte Range", self._swap_track_free),
+                            ("Swap Until The End (Shift + W)", self._swap_track_continous),
+                        ]
+                    },
+                    {
+                        "submenu": "Duplicate",
+                        "items": [
+                            ("Copy Selected Instance On Current Frame (Ctrl + C)", self._copy_inst),
+                            ("Paste Inst On Current Frame (Ctrl + V)", self._paste_inst),
                         ]
                     },
                     ("Correct Track Using Temporal Consistency", self._temporal_track_correct),
@@ -85,7 +94,7 @@ class Frame_Label:
                 "buttons": [
                     ("Direct Keypoint Edit (Q)", self._direct_keypoint_edit),
                     ("Open Outlier Cleaning Menu", self._call_outlier_finder),
-                    ("Remove Current Frame From Refine Task", self.toggle_frame_status),
+                    ("Remove Current Frame From Refine Task", self._toggle_frame_status),
                     ("Mark All As Refined", self._mark_all_as_refined),
                     ("Undo Changes (Ctrl+Z)", self._undo_changes),
                     ("Redo Changes (Ctrl+Y)", self._redo_changes),
@@ -129,13 +138,15 @@ class Frame_Label:
         self.sc_label.add_shortcuts_from_config({
             "swp_trk_sg": {"key": "W", "callback": self._swap_track_single},
             "swp_trk_ct": {"key": "Shift+W", "callback": self._swap_track_continous},
-            "del_trk": {"key": "X", "callback": self._delete_track},
+            "del_trk": {"key": "X", "callback": self._delete_inst},
             "intp_trk": {"key": "T", "callback": self._interpolate_track},
             "intp_ms_kp": {"key": "Shift+T", "callback": self._interpolate_missing_kp},
             "gen_inst": {"key": "G", "callback": self._generate_inst},
             "rot_inst": {"key": "R", "callback": self._rotate_inst},
             "kp_edit": {"key": "Q", "callback": self._direct_keypoint_edit},
             "del_kp": {"key": "Backspace", "callback": self._on_keypoint_delete},
+            "copy": {"key": "Ctrl+C", "callback": self._copy_inst},
+            "paste": {"key": "Ctrl+V", "callback": self._paste_inst},
             "undo": {"key": "Ctrl+Z", "callback": self._undo_changes},
             "redo": {"key": "Ctrl+Y", "callback": self._redo_changes},
             "zoom": {"key": "Z", "callback": self._toggle_zoom_mode},
@@ -145,6 +156,7 @@ class Frame_Label:
     def reset_state(self):
         self.uno = Uno_Stack()
         self.last_selected_idx = None
+        self.inst_pastebin = None
         self.pred_data_array = None
         self.open_outlier = False
         self.skip_outlier_clean= False
@@ -154,7 +166,7 @@ class Frame_Label:
         self.reset_zoom()
 
     def _init_gview(self):
-        self.gview = Canvas(track_edit_callback=self.on_track_data_changed, parent=self.main)
+        self.gview = Canvas(track_edit_callback=self._on_track_data_changed, parent=self.main)
         self.gview.instance_selected.connect(self._update_last_selected_inst)
         self.vid_play.nav.set_marked_list_name("ROI")
         self.vid_play.swap_display_for_graphics_view(self.gview)
@@ -249,7 +261,7 @@ class Frame_Label:
         else:
             return self.dm.determine_list_to_nav_flabel()
 
-    def toggle_frame_status(self):
+    def _toggle_frame_status(self):
         self.dm.toggle_frame_status_flabel()
         self.refresh_ui()
 
@@ -335,12 +347,7 @@ class Frame_Label:
         self._save_state_for_undo()
         Loggerbox.info(self.main, "Designate No Mice Zone", "Click and drag on the video to select a zone. Release to apply.")
 
-    def _temporal_track_correct(self):
-        if not self._track_edit_blocker():
-            return
-        self._correct_track_using_temporal(self.dm.dlc_data, self.vm.extractor, self.dm.canon_pose, self.dm.angle_map_data)
-
-    def _delete_track(self):
+    def _delete_inst(self):
         if self.pred_data_array is None:
             return
         selected_instance_idx = self._instance_multi_select()
@@ -354,6 +361,29 @@ class Frame_Label:
         else:
             self.display_current_frame()
 
+    def _delete_track(self, selected_range:Optional[Tuple[int,int]]):
+        if self.pred_data_array is None:
+            return
+        selected_instance_idx = self._instance_multi_select()
+        if selected_instance_idx is None:
+            return
+
+        if selected_range is None or selected_range is False:
+            fm_dialog = Frame_Range_Dialog(self.dm.total_frames, parent=self.main)
+            fm_dialog.range_selected.connect(self._delete_track) # Recursive black magic
+            fm_dialog.exec()
+        else:
+            start, end = selected_range
+            self._save_state_for_undo()
+            try:
+                self.pred_data_array = delete_track(
+                    self.pred_data_array, self.dm.current_frame_idx, selected_instance_idx, deletion_range=range(start, end+1))
+            except ValueError as e:
+                Loggerbox.error(self.main, "Deletion Error", str(e), exc=e)
+            else:
+                self.status_bar.show_message(f"Deleted inst {selected_instance_idx} between frame {start} to {end}.")
+                self.display_current_frame()
+
     def _swap_track_single(self):
         if self.pred_data_array is None:
             return
@@ -364,6 +394,25 @@ class Frame_Label:
             Loggerbox.error(self.main, "Swap Error", str(e), exc=e)
             return
         self.display_current_frame()
+
+    def _swap_track_free(self, selected_range:Optional[Tuple[int,int]]):
+        if self.pred_data_array is None:
+            return
+        
+        if selected_range is None or selected_range is False:
+            fm_dialog = Frame_Range_Dialog(self.dm.total_frames, parent=self.main)
+            fm_dialog.range_selected.connect(self._swap_track_free)
+            fm_dialog.exec()
+        else:
+            start, end = selected_range
+            self._save_state_for_undo()
+            try:
+                self.pred_data_array = swap_track(self.pred_data_array, self.dm.current_frame_idx, swap_range=range(start, end+1))
+            except ValueError as e:
+                Loggerbox.error(self.main, "Deletion Error", str(e), exc=e)
+            else:
+                self.status_bar.show_message(f"Swap insts between frame {start} to {end}.")
+                self.display_current_frame()
 
     def _swap_track_continous(self):
         if self.pred_data_array is None:
@@ -376,13 +425,29 @@ class Frame_Label:
             return
         self.display_current_frame()
 
-    def _tri_swap_not_implemented(self):
-        if self.dm.dlc_data.instance_count > 2:
-            Loggerbox.info(self.main, "Not Implemented",
-                "Swapping while instance count is larger than 2 has not been implemented.")
-            return False
-        else:
-            return True
+    def _copy_inst(self):
+        frame_idx = self.dm.current_frame_idx
+        if self.pred_data_array is None:
+            return
+        selected_instance_idx = self._instance_multi_select()
+        if selected_instance_idx is None:
+            return
+        self.inst_pastebin = self.pred_data_array[frame_idx, selected_instance_idx, :].copy()
+        self.status_bar.show_message(f"Inst {selected_instance_idx} on frame {frame_idx} has been copied into the pastebin.")
+
+    def _paste_inst(self):
+        frame_idx = self.dm.current_frame_idx
+        if self.pred_data_array is None:
+            return
+        if self.inst_pastebin is None:
+            Loggerbox.warning("Pose pastebin is still empty, no pose to paste.")
+            return
+        selected_instance_idx = self._instance_select_inverted()
+        if selected_instance_idx is None:
+            return
+        self.pred_data_array[frame_idx, selected_instance_idx, :] = self.inst_pastebin.copy()
+        self.display_current_frame()
+        self.status_bar.show_message(f"Inst {selected_instance_idx} on frame {frame_idx} has been replaced by the pastebin pose.")
 
     def _interpolate_track(self):
         frame_idx = self.dm.current_frame_idx
@@ -490,7 +555,7 @@ class Frame_Label:
 
     ###################################################################################################################################################
 
-    def on_track_data_changed(self):
+    def _on_track_data_changed(self):
         self.gview.sbox = None
         self.refresh_and_display()
 
@@ -590,17 +655,31 @@ class Frame_Label:
         return list(np.where(np.diff(self.inst_count_per_frame_pred)!=0)[0]+1)
 
     def _instance_multi_select(self) -> Optional[int]:
-        frame_idx = self.dm.current_frame_idx
-        current_frame_inst = get_instances_on_current_frame(self.pred_data_array, frame_idx)
+        current_frame_inst = get_instances_on_current_frame(self.pred_data_array, self.dm.current_frame_idx)
         if current_frame_inst is None:
             return
         if len(current_frame_inst) == 1:
             return current_frame_inst[0]
         if self.gview.sbox is None:
             if self.last_selected_idx is None:
-                Loggerbox.info(self.main, "No Instance Seleted",
+                Loggerbox.info(self.main, "No Instance Selected",
                     "When there are more than one instance present, "
                     "you need to click one of the instance bounding box to specify which to delete.")
+                return
+            else:
+                return self.last_selected_idx
+        return self.gview.sbox.instance_id
+    
+    def _instance_select_inverted(self) -> Optional[int]:
+        current_frame_inst = get_instances_on_current_frame(self.pred_data_array, self.dm.current_frame_idx)
+        if not current_frame_inst:
+            return 0
+        if len(current_frame_inst) < self.dm.dlc_data.individuals:
+            return max(current_frame_inst) + 1
+        if self.gview.sbox is None:
+            if self.last_selected_idx is None:
+                Loggerbox.info(self.main, "No Instance Selected",
+                    "Click the instance you wish to overwrite with the pasted pose.")
                 return
             else:
                 return self.last_selected_idx
@@ -608,7 +687,10 @@ class Frame_Label:
 
     ##############################################################################################
 
-    def _correct_track_using_temporal(self, dlc_data, extractor, canon_pose, angle_map_data):
+    def _temporal_track_correct(self):
+        if not self._track_edit_blocker():
+            return
+        
         centroids, _ = calculate_pose_centroids(self.pred_data_array)   
         speeds_px_frame = np.linalg.norm(np.diff(centroids, axis=0), axis=2).flatten()
         speeds_px_frame = speeds_px_frame[~np.isnan(speeds_px_frame)]
@@ -623,9 +705,9 @@ class Frame_Label:
         self._save_state_for_undo()
 
         progress = Progress_Indicator_Dialog(
-            0, self.total_frames, "Temporal Track Fixing", "Fixing track using temporal consistency...", self.main)
+            0, self.dm.total_frames, "Temporal Track Fixing", "Fixing track using temporal consistency...", self.main)
 
-        tf = Track_Fixer(self.pred_data_array, canon_pose, angle_map_data, progress)
+        tf = Track_Fixer(self.pred_data_array, self.dm.canon_pose, self.dm.angle_map_data, progress)
         self.pred_data_array, changed_frames, amongus_frames = tf.track_correction(max_dist, lookback)
 
         if not changed_frames:
@@ -638,7 +720,7 @@ class Frame_Label:
         
         reply = Loggerbox.question(self.main, f"Manual Review", label, QMessageBox.Yes | QMessageBox.No)
         if reply == QMessageBox.Yes:
-            dialog = Parallel_Review_Dialog(dlc_data, extractor,  self.pred_data_array, [], (changed_frames, amongus_frames), True, parent=self.main)
+            dialog = Parallel_Review_Dialog(self.dm.dlc_data, self.vm.extractor, self.pred_data_array, [], (changed_frames, amongus_frames), True, parent=self.main)
             dialog.pred_data_exported.connect(self._get_pred_data_from_manual_review)
             dialog.exec()
             return
