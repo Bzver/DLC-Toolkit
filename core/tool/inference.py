@@ -372,7 +372,16 @@ class DLC_Inference(QDialog):
             coords_array = crop_coord_to_array(self.crop_coord, temp_data_array.shape)
             temp_data_array = temp_data_array + coords_array
 
+        expected_length = len(self.frame_list)
+        actual_length = temp_data_array.shape[0]
+        if actual_length < expected_length:
+            logger.warning(f"[INFER] Inferenced data is shorter than expected ( {actual_length} < {expected_length} ),"
+                           "appending with nans. Predictions might be misaligned.")
+            temp_data_array = np.pad(
+                temp_data_array, pad_width=((0, expected_length - actual_length), (0, 0), (0, 0)), mode='constant', constant_values=np.nan)
+
         new_data_array[self.frame_list, :, :] = temp_data_array
+
         self.new_data_array = new_data_array
         return h5_files[-1]
 
@@ -393,7 +402,7 @@ class DLC_Inference(QDialog):
             self._save_pred_to_file(pred_data_array, list_tuple)
         else:
             self.hide()
-            QtWidgets.QApplication.ProcessEvents()
+            QtWidgets.QApplication.processEvents()
             self.reviewer = Parallel_Review_Dialog(self.dlc_data, self.extractor_reviewer, self.new_data_array, self.frame_list, crop_coord=self.crop_coord, parent=self)
             self.reviewer.pred_data_exported.connect(self._save_pred_to_file)
             self.reviewer.exec()

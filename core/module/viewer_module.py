@@ -121,7 +121,7 @@ class Frame_View:
             if self.dm.plot_config.plot_pred:
                 frame = self.plotter.plot_predictions(frame, self.dm.dlc_data.pred_data_array[self.dm.current_frame_idx,:,:])
 
-            if self.dm.has_current_frame_cat("labeled") and self.dm.plot_config.plot_labeled:
+            if self.dm.has_current_frame_cat("labeled") and self.dm.plot_config.plot_labeled and self.dm.label_data_array is not None:
                 old_colors = self.plotter.color.copy()
                 self.plotter.color = [(200, 130, 0), (40, 200, 40), (40, 120, 200), (200, 40, 40), (200, 200, 80)]
                 frame = self.plotter.plot_predictions(frame, self.dm.label_data_array[self.dm.current_frame_idx,:,:])

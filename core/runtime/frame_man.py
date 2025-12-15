@@ -170,7 +170,7 @@ class Frame_Manager:
     def to_dict(self) -> Dict[str, Any]:
         all_cat = set(self.metadata.keys())
         return {
-            "frames": {cat: sorted(self.frames[cat]) for cat in all_cat},
+            "frames": {cat: sorted(self.frames[cat]) for cat in all_cat if cat != "labeled"},
             "metadata": self.metadata.copy()
         }
 

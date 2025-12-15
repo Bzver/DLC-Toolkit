@@ -148,14 +148,16 @@ class Frame_App(QMainWindow):
         self.mode_toggle_fannot.set_checked(False)
 
     def _switch_to_flabel(self):
-        if self.dm.dlc_data is None:
+        if self.dm.dlc_data is None or self.dm.dlc_data.pred_data_array is None:
             self._switch_to_fview()
-            raise Exception("DLC data not loaded, you need to load it before labeling.")
+            Loggerbox.warning(self, "Prediction Not Loaded", "You need to load prediction before labeling.")
+            return False
         self.fview.deactivate(self.menu_widget)
         self.flabel.activate(self.menu_widget)
         self.at = self.flabel
         self.dm.handle_mode_switch_fview_to_flabel()
         self.mode_toggle_flabel.set_checked(True)
+        return True
 
     def _switch_to_fannot(self):
         self.fview.deactivate(self.menu_widget)
@@ -166,9 +168,8 @@ class Frame_App(QMainWindow):
     def _on_mode_toggle_flabel(self, is_checked:bool):
         self._reset_ui_during_mode_switch()
         if is_checked:
-            try:
-                self._switch_to_flabel()
-            except:
+            status = self._switch_to_flabel()
+            if not status:
                 return
             self.mode_toggle_fannot.set_locked(True)
         else:
@@ -228,11 +229,11 @@ class Frame_App(QMainWindow):
 
             if self.dm.dlc_data is None:
                 Loggerbox.info(self, "Prediction Selected", "Prediction selected, now loading DLC config.")
-                dlc_config = self.config_file_dialog()
-                if dlc_config:
-                    self.dm.load_pred_to_dm(dlc_config, prediction_path)
-            else:
-                self.dm.load_pred_to_dm(self.dm.dlc_data.dlc_config_filepath, prediction_path)
+                self._load_dlc_config()
+                if self.dm.dlc_data is None:
+                    return
+
+            self.dm.load_pred_to_dm(self.dm.dlc_data.dlc_config_filepath, prediction_path)
         except Exception as e:
             Loggerbox.error(self, "Error Loading Prediction", f"Unexpected error during prediction loading: {e}.", exc=e)
         
