@@ -23,10 +23,11 @@ def outlier_removal(pred_data_array:np.ndarray, outlier_mask:np.ndarray) -> Tupl
             - Number of frames that contained at least one outlier.
             - Total number of instance outliers removed.
     """
+    data_array = pred_data_array.copy()
     removed_frames_count = np.sum(np.any(outlier_mask, axis=1))
     removed_instances_count = np.sum(outlier_mask)
-    pred_data_array[outlier_mask] = np.nan
-    return pred_data_array, removed_frames_count, removed_instances_count
+    data_array[outlier_mask] = np.nan
+    return data_array, removed_frames_count, removed_instances_count
 
 ########################################################################################################
 
