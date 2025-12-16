@@ -3,13 +3,14 @@ import numpy as np
 from PySide6.QtWidgets import QProgressDialog
 from typing import List, Dict, Any, Tuple, Optional
 
-from .hungarian import Hungarian, Transylvanian
+from .hungarian import Hungarian
 from utils.pose import (
-    calculate_pose_centroids, outlier_removal, outlier_confidence, outlier_pose, 
-    outlier_bodypart, outlier_duplicate, outlier_size, outlier_enveloped,
+    calculate_pose_centroids, outlier_removal, outlier_confidence, 
+    outlier_bodypart, outlier_duplicate, outlier_size, outlier_pose,
     )
-from utils.helper import build_weighted_pose_vectors
+from utils.helper import get_instance_count_per_frame
 from utils.logger import logger
+
 
 class Track_Fixer:
     def __init__(self,
@@ -22,7 +23,7 @@ class Track_Fixer:
         self.angle_map = angle_map
         self.progress = progress
 
-        self.corrected_pred_data = self._pose_clean(pred_data_array, duplicate_only=True)
+        self.corrected_pred_data = self._pose_clean(pred_data_array, conservative=False)
 
         self.total_frames, self.instance_count = self.corrected_pred_data.shape[:2]
         if self.progress:
@@ -33,7 +34,6 @@ class Track_Fixer:
 
         self.new_order_array = -np.ones((self.total_frames, self.instance_count), dtype=np.int8)
         self.current_frame_data = np.full_like(self.corrected_pred_data[0], np.nan)
-
 
     def track_correction(self, max_dist:float=10.0, lookback_window=10) -> Tuple[np.ndarray, int, List[int]]:
         try:
@@ -65,6 +65,8 @@ class Track_Fixer:
         ref_last_updated = np.full((self.instance_count,), -2 * lookback_window, np.int32)
         valid_ref_mask = np.zeros_like(ref_last_updated, dtype=bool)
 
+        inst_count_per_frame = get_instance_count_per_frame(self.corrected_pred_data)
+
         for frame_idx in range(self.total_frames):
             if self.progress:
                 self.progress.setValue(frame_idx)
@@ -80,21 +82,6 @@ class Track_Fixer:
                 logger.debug("[TMOD] Skipping due to no prediction on current frame.")
                 continue
 
-            full_seek_window = min(frame_idx, 5, lookback_window) # Only look for very recent match
-            offset = 0
-            found_full_ref = False
-            while offset <= full_seek_window: # Seek frames with all the ID if possible
-                offset += 1
-                cand = frame_idx - offset
-                cand_centroids, _ = calculate_pose_centroids(self.corrected_pred_data, cand)
-                if np.all(~np.isnan(cand_centroids)):
-                    ref_centroids_full = cand_centroids
-                    valid_ref_mask_full = np.ones((cand_centroids.shape[0],), dtype=bool)
-                    ref_last_updated_full = np.full_like(valid_ref_mask_full, cand, dtype=np.int32)
-                    found_full_ref = True
-                    logger.debug(f"[TMOD] Found full-reference frame: {cand}")
-                    break
-
             valid_ref_mask = (ref_last_updated > frame_idx - lookback_window)
 
             if not np.any(valid_ref_mask):
@@ -108,78 +95,40 @@ class Track_Fixer:
                 last_order = self.inst_list
                 continue
 
-            new_order = None
-            hun_full = None
-            if not found_full_ref:
-                logger.debug("[TMOD] No full-reference frame found. Falling back to partial reference window.")
-            elif np.any(ref_last_updated != ref_last_updated_full):
-                hun_full = Hungarian(pred_centroids, ref_centroids_full, valid_pred_mask, valid_ref_mask_full,
-                    max_dist=max_dist, ref_frame_gap=frame_idx-ref_last_updated_full)
-            else:
-                logger.debug("[TMOD] Already using full frame reference for Hungarian matching.")
-
             for i in range(self.instance_count):
                 logger.debug(f"x,y in pred: inst {i}: ({pred_centroids[i,0]:.1f}, {pred_centroids[i,1]:.1f})")
             for i in range(self.instance_count):
                 logger.debug(f"x,y in ref: inst {i}: ({ref_centroids[i,0]:.1f}, {ref_centroids[i,1]:.1f}) | "
                             f"last updated: {ref_last_updated[i]} | valid: {valid_ref_mask[i]}")
 
-            if hun_full:
-                for i in range(self.instance_count):
-                    logger.debug(f"x,y in ref (full): inst {i}: ({ref_centroids_full[i,0]:.1f}, {ref_centroids_full[i,1]:.1f}) | "
-                                f"last full frame: {cand} | valid: {valid_ref_mask_full[i]}")
-
+            new_order = None
             hun = Hungarian(pred_centroids, ref_centroids, valid_pred_mask, valid_ref_mask,
                             max_dist=max_dist, ref_frame_gap=frame_idx-ref_last_updated)
 
-            skip_matching = False
-            if last_order != self.inst_list and hun.full_set: # Try last order first if possible
-                improved, avg_improv = hun.compare_distance_improvement(last_order, 0.2)
-                if improved:
-                    logger.debug(f"[TMOD] Last order improves overall distance by {avg_improv*100:.2f}% | Threshold: 20%")
-                    new_order = last_order
-                    self.new_order_array[frame_idx] = np.array(last_order)
-                    logger.debug(f"[TMOD] SWAP, Applying the last order: {last_order}")
-                    skip_matching = True
-                else:
-                    logger.debug(f"[TMOD] Last order fails to sufficiently improve overall distance: {avg_improv*100:.2f}% | Threshold: 20%")
+            skip_matching, new_order = self._hungarian_skip_check(hun, frame_idx, last_order, inst_count_per_frame, max_dist)
 
             if not skip_matching:
-                logger.debug("[HUN] Trying to do Hungarian matching.")
-                hun_order = hun.hungarian_matching()
-                if hun_order and hun_full:
-                    logger.debug("[HUN] Trying to do Hungarian matching with full frame reference.")
-                    hun_f_order = hun_full.hungarian_matching()
-                    if hun_f_order != hun_order:
-                        logger.debug("[HUN] Mismatch: Hungarian ≠ Full Frame Hungarian, rejecting assignment.")
-                        hun_order = None
-                    
-                if hun_order and hun_order != self.inst_list:
-                    improved, avg_improv = hun.compare_distance_improvement(hun_order)
+                new_order = hun.hungarian_matching()
+
+                if new_order and new_order != self.inst_list:
+                    improved, avg_improv = hun.compare_distance_improvement(new_order)
                     if improved:
                         logger.debug(f"[TMOD] Hungarian order improves overall distance by {avg_improv*100:.2f}% | Threshold: 10%")
                     else:
                         logger.debug(f"[TMOD] Hungarian order fails to sufficiently improve overall distance: {avg_improv*100:.2f}% | Threshold: 10%")
-                        vec_order = self._vector_doublecheck(frame_idx, ref_last_updated, max_dist, lookback_window)
-                        logger.debug(f"[HUN(VEC)] Vector double-check result: {vec_order}")
-                        if hun_order != vec_order:
-                            hun_order = None
-                            logger.debug("[HUN(VEC)] Mismatch: Hungarian ≠ Vector, rejecting assignment.")
-
-                if hun_order:
-                    new_order = hun_order
+                        new_order = None
 
                 if new_order is None:
                     logger.debug("[TMOD] Failed to build new order.")
                     self.new_order_array[frame_idx] = -1 # Ambiguous
                 else:
-                    self.new_order_array[frame_idx] = np.array(new_order)
                     if new_order == self.inst_list:
                         logger.debug("[TMOD] NO SWAP, already the best solution.")
                     else:
                         logger.debug(f"[TMOD] SWAP, new_order: {new_order}.")
 
             if new_order:
+                self.new_order_array[frame_idx] = np.array(new_order)
                 self.corrected_pred_data[frame_idx, :, :] = self.corrected_pred_data[frame_idx, new_order, :]
                 last_order = new_order
 
@@ -188,48 +137,56 @@ class Track_Fixer:
             
             ref_centroids[fixed_pred_mask] = fixed_pred_centroids[fixed_pred_mask]
             ref_last_updated[fixed_pred_mask] = frame_idx
-                    
-    def _vector_doublecheck(self, frame_idx, ref_last_updated, max_dist, lookback_window) -> Optional[list]:
-        if self.angle_map is None:
-            logger.debug("[VEC] Skipping — no angle_map provided.")
-            return
 
-        pose_vectors = build_weighted_pose_vectors(self.corrected_pred_data, self.angle_map)
-        ref_vector = np.full_like(pose_vectors[0], np.nan)
+    def _hungarian_skip_check(self, hun:Hungarian, frame_idx:int, last_order:List[int], inst_count_per_frame:np.ndarray, max_dist:float)-> Tuple[bool, List[int]]:
+        skip_matching, new_order = False, None
 
-        for inst in self.inst_list:
-            ref_idx = ref_last_updated[inst]
-            if ref_idx >= frame_idx - lookback_window:
-                ref_vector[inst, :] = pose_vectors[ref_idx, inst, :]
+        if last_order != self.inst_list and hun.full_set: # Try last order first if possible
+            improved, avg_improv = hun.compare_distance_improvement(last_order, 0.2)
+            if improved:
+                logger.debug(f"[TMOD] Last order improves overall distance by {avg_improv*100:.2f}% | Threshold: 20%")
+                new_order = last_order
+                self.new_order_array[frame_idx] = np.array(last_order)
+                logger.debug(f"[TMOD] SWAP, Applying the last order: {last_order}")
+                skip_matching = True
+            else:
+                logger.debug(f"[TMOD] Last order fails to sufficiently improve overall distance: {avg_improv*100:.2f}% | Threshold: 20%")
+        else:
+            if frame_idx > 0 and inst_count_per_frame[frame_idx] != inst_count_per_frame[frame_idx - 1]:
+                if inst_count_per_frame[frame_idx] >= 2 or inst_count_per_frame[frame_idx - 1] >= 2:
+                    pred_centroids, _ = calculate_pose_centroids(self.corrected_pred_data, frame_idx)
+                    prev_centroids, _ = calculate_pose_centroids(self.corrected_pred_data, frame_idx - 1)
+                    if hun.danger_close(
+                        pred_centroids[np.any(~np.isnan(pred_centroids), axis=1)],
+                        prev_centroids[np.any(~np.isnan(prev_centroids), axis=1)],
+                        max_dist=max_dist
+                        ):
+                        return True, None
 
-        cur_vector = pose_vectors[frame_idx]
+            skip_matching, new_order = hun.hungarian_skipper()
 
-        valid_pred = np.any(~np.isnan(cur_vector), axis=1)
-        valid_ref  = np.any(~np.isnan(ref_vector), axis=1)
-        frame_gap = frame_idx - ref_last_updated
+        return skip_matching, new_order
 
-        hunvec = Transylvanian(
-            cur_vector, ref_vector, valid_pred, valid_ref, max_dist=max_dist, ref_frame_gap=frame_gap)
-        
-        new_order = hunvec.vector_hun_match()
-        return new_order
+    def _pose_clean(self, pred_data_array:np.ndarray, conservative:bool=True) -> np.ndarray:
+        num_keypoint = pred_data_array.shape[2] // 3
 
-    def _pose_clean(self, pred_data_array:np.ndarray, duplicate_only:bool=False) -> np.ndarray:
         dp_mask = outlier_duplicate(pred_data_array)
-        if duplicate_only:
-            corrected_data_array, _, _ = outlier_removal(pred_data_array, dp_mask)
+        if conservative:
+            conf_mask = outlier_confidence(pred_data_array, 0.4)
+            bp_mask = outlier_bodypart(pred_data_array, 3)
+            combined_mask = conf_mask | bp_mask | dp_mask
+            corrected_data_array, _, _ = outlier_removal(pred_data_array, combined_mask)
             return corrected_data_array
 
         no_mask = np.zeros((pred_data_array.shape[0], pred_data_array.shape[1]), dtype=bool)
-        conf_mask = outlier_confidence(pred_data_array, 0.4)
-        bp_mask = outlier_bodypart(pred_data_array, 2)
-        env_mask = outlier_enveloped(pred_data_array)
+        conf_mask = outlier_confidence(pred_data_array, 0.6)
+        bp_mask = outlier_bodypart(pred_data_array, num_keypoint//2)
         if self.canon_pose is None or self.angle_map is None:
             size_mask = pose_mask = no_mask
         else:
-            size_mask = outlier_size(pred_data_array, self.canon_pose, 0.3, 2.5)
-            pose_mask = outlier_pose(pred_data_array, self.angle_map, 1.25, 2)
-        combined_mask = conf_mask | bp_mask | dp_mask | size_mask | pose_mask | env_mask
+            size_mask = outlier_size(pred_data_array, self.canon_pose, 0.3, 2)
+            pose_mask = outlier_pose(pred_data_array, self.angle_map, 1.5, 2)
+        combined_mask = conf_mask | bp_mask | dp_mask | size_mask | pose_mask
         corrected_data_array, _, _ = outlier_removal(pred_data_array, combined_mask)
 
         return corrected_data_array

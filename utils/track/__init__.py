@@ -6,12 +6,11 @@ from .track_op import (
 )
 
 from .track_fix import Track_Fixer
-from .hungarian import Hungarian, Transylvanian
+from .hungarian import Hungarian
 
 __all__ = (
     Track_Fixer,
     Hungarian,
-    Transylvanian,
     delete_track,
     swap_track,
     interpolate_track,

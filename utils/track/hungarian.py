@@ -1,8 +1,10 @@
 import numpy as np
 from scipy.optimize import linear_sum_assignment
+from itertools import combinations
 from typing import Optional, Literal, Tuple
 
 from utils.logger import logger
+
 
 class Hungarian:
     def __init__(self,
@@ -21,6 +23,8 @@ class Hungarian:
         self.max_dist = max_dist
         self.frame_gap = ref_frame_gap[valid_ref_mask]
 
+        self.ref_centroids_full = ref_centroids
+        self.frame_gap_full = ref_frame_gap
         self.motion_model = motion_model
 
         self.instance_count = valid_pred_mask.shape[0]
@@ -41,10 +45,6 @@ class Hungarian:
                 new_order[target_identity] = source_instance_index_in_current_frame
                 i.e., "Identity j comes from current instance new_order[j]"
         """
-        skip, new_order = self._hun_early_return()
-        if skip:
-            return new_order
-
         cost_matrix = np.linalg.norm(self.pred_centroids[:, np.newaxis] - self.ref_centroids[np.newaxis, :], axis=2)
 
         try:
@@ -74,63 +74,106 @@ class Hungarian:
  
         return (avg_improv>improvement_threshold), avg_improv
 
-    def _hun_early_return(self) -> Tuple[bool, Optional[list]]:
+    def hungarian_skipper(self) -> Tuple[bool, Optional[list]]:
         K, M = len(self.pred_centroids), len(self.ref_centroids)
 
         if K == 0 or M == 0:
             logger.debug(f"[HUN] No valid data for Hungarian matching (K={K}, M={M}).")
             return (K != 0), None
 
-        if K == 1:
-            if M == 1:
-                dist = np.linalg.norm(self.pred_centroids[0] - self.ref_centroids[0])
-                max_dist = self.dym_dist[0]
-                
-                logger.debug(f"[HUN] Single pair matching. Distance: {dist:.2f}, Max_dist: {max_dist:.2f}")
-                if dist < max_dist:
+        if self.danger_close(self.pred_centroids, self.ref_centroids, np.nanmax(self.dym_dist)):
+            return True, None
+
+        if K == 1 and M == 1:
+            dist = np.linalg.norm(self.pred_centroids[0] - self.ref_centroids[0])
+            max_dist = self.dym_dist[0]
+            
+            logger.debug(f"[HUN] Single pair matching. Distance: {dist:.2f}, Max_dist: {max_dist:.2f}")
+            if dist < max_dist:
+                new_order = self._build_new_order_simple(self.pred_indices[0], self.ref_indices[0])
+                logger.debug(f"[HUN] Single pair matched. New order: {new_order}")
+                return True, new_order
+            elif dist < max_dist * 2:
+                logger.debug(f"[HUN] Single pair semi matched (Dist: {max_dist:.2f} <= {dist:.2f} < {2*max_dist:.2f}).")
+                alt_idx_found = -1
+                dist_alt_found = 0
+                for alt_idx in self.inst_list:
+                    if alt_idx == self.pred_indices[0]:
+                        continue
+                    if alt_idx in self.ref_indices:
+                        continue
+                    ref_centroids_ancient = self.ref_centroids_full[alt_idx]
+                    if np.any(np.isnan(ref_centroids_ancient)):
+                        continue
+                    dist_alt = np.linalg.norm(self.pred_centroids[0] - ref_centroids_ancient)
+                    if dist_alt > max_dist * 2:
+                        continue
+                    alt_idx_found = alt_idx
+                    dist_alt_found = dist_alt
+
+                if alt_idx_found != -1:
+                    f"[HUN] Single pair ambiguous (Inst {alt_idx_found} from {self.frame_gap_full[alt_idx_found]} frames away, dist: {dist_alt_found:.2f} <= {2*max_dist:.2f})."
+                    return True, None
+                else:
                     new_order = self._build_new_order_simple(self.pred_indices[0], self.ref_indices[0])
                     logger.debug(f"[HUN] Single pair matched. New order: {new_order}")
                     return True, new_order
-                else:
-                    logger.debug(f"[HUN] Single pair not matched (Dist: {dist:.2f} >= {max_dist:.2f}).")
-                    return True, None
             else:
-                dist = np.linalg.norm(self.pred_centroids[0] - self.ref_centroids, axis=1)
-                ref_dg_array = np.column_stack((dist, self.dym_dist, self.frame_gap))
-                valid = ref_dg_array[:, 1] > ref_dg_array[:, 0]
-                if np.sum(valid) == 0:
-                    logger.debug("[HUN] No singe pair matched.")
-                    for i in range(M):
-                        logger.debug(f"Inst {i} | Distances: {dist[i]:.2f}, Max_dist: {self.dym_dist[i]:.2f}")
-                    ref_idx = self.ref_indices[np.argmin(dist)]
-                    new_order = self._build_new_order_simple(self.pred_indices[0], ref_idx)
-                    logger.debug(f"[HUN] Choose the pair with minimal dist. New order: {new_order}")
-                    return True, new_order
-                elif np.sum(valid) == 1:
-                    valid_idx_global = self.ref_indices[valid][0]
-                    new_order = self._build_new_order_simple(self.pred_indices[0], valid_idx_global)
+                logger.debug(f"[HUN] Single pair not matched (Dist: {dist:.2f} >= {2*max_dist:.2f}).")
+                return True, None
+        
+        if K == 1 and M != 1:
+            dist = np.linalg.norm(self.pred_centroids[0] - self.ref_centroids, axis=1)
+            ref_dg_array = np.column_stack((dist, self.dym_dist, self.frame_gap))
+            valid = ref_dg_array[:, 1] > ref_dg_array[:, 0]
+            if np.sum(valid) == 0:
+                logger.debug("[HUN] No singe pair matched.")
+                for i in range(M):
+                    logger.debug(f"Inst {i} | Distances: {dist[i]:.2f}, Max_dist: {self.dym_dist[i]:.2f}")
+                return True, None
+            elif np.sum(valid) == 1:
+                valid_idx_global = self.ref_indices[valid][0]
+                new_order = self._build_new_order_simple(self.pred_indices[0], valid_idx_global)
+                logger.debug(f"[HUN] Single pair matched. New order: {new_order}")
+                return True, new_order
+            else:
+                dist_best = np.argmin(ref_dg_array[:, 0])
+                time_best = np.where(ref_dg_array[:, 2]==np.min(ref_dg_array[:,2]))[0]
+                if len(time_best) > 1:
+                    logger.debug(f"[HUN] Multiple Time Best candidates. Reroute to Hungarian.")
+                    return False, None
+                time_best = time_best[0]
+                if dist_best == time_best:
+                    best_idx_global = self.ref_indices[dist_best]
+                    new_order = self._build_new_order_simple(self.pred_indices[0], best_idx_global)
                     logger.debug(f"[HUN] Single pair matched. New order: {new_order}")
                     return True, new_order
                 else:
-                    dist_best = np.argmin(ref_dg_array[:, 0])
-                    time_best = np.where(ref_dg_array[:, 2]==np.min(ref_dg_array[:,2]))[0]
-                    if len(time_best) > 1:
-                        logger.debug(f"[HUN] Multiple Time Best candidates. Reroute to Hungarian.")
-                        return False, None
-                    time_best = time_best[0]
-                    if dist_best == time_best:
-                        best_idx_global = self.ref_indices[dist_best]
-                        new_order = self._build_new_order_simple(self.pred_indices[0], best_idx_global)
-                        logger.debug(f"[HUN] Single pair matched. New order: {new_order}")
-                        return True, new_order
-                    else:
-                        logger.debug("[HUN] Distance-wise best instance is not the same as time-wise. Mark as ambiguous.\n"
-                                    f"Inst {dist_best} (Dist Best) | Distances: {dist[dist_best]:.2f}, Gap: {ref_dg_array[dist_best, 2]}\n"
-                                    f"Inst {time_best} (Time Best) | Distances: {dist[time_best]:.2f}, Gap: {ref_dg_array[time_best, 2]}")
-                        new_order = self._build_new_order_simple(self.pred_indices[0], dist_best)
-                        return True, None
+                    logger.debug("[HUN] Distance-wise best instance is not the same as time-wise. Mark as ambiguous.\n"
+                                f"Inst {dist_best} (Dist Best) | Distances: {dist[dist_best]:.2f}, Gap: {ref_dg_array[dist_best, 2]}\n"
+                                f"Inst {time_best} (Time Best) | Distances: {dist[time_best]:.2f}, Gap: {ref_dg_array[time_best, 2]}")
+                    new_order = self._build_new_order_simple(self.pred_indices[0], dist_best)
+                    return True, None
 
         return False, None
+
+    def danger_close(self, pred_centroids, ref_centroids, max_dist:float) -> bool:
+        K, M = len(pred_centroids), len(ref_centroids)
+        if K >= 2:
+            for i, j in combinations(range(K), 2):
+                d = np.linalg.norm(pred_centroids[i] - pred_centroids[j])
+                if d < max_dist:
+                    logger.debug(f"[HUN] Ambiguous pred layout (pred {i}–{j}: {d:.1f} < {max_dist}).")
+                    return True
+
+        if M >= 2:
+            for i, j in combinations(range(M), 2):
+                d = np.linalg.norm(ref_centroids[i] - ref_centroids[j])
+                if d < max_dist:
+                    logger.debug(f"[HUN] Ambiguous ref layout (ref {i}–{j}: {d:.1f} < {max_dist}).")
+                    return True
+        
+        return False
 
     def _dynamic_max_dist(self):
         gap_arr = self.frame_gap.copy()
@@ -236,31 +279,3 @@ class Hungarian:
             count += 1
 
         return total_improvement / count if count > 0 else 0.0
-
-class Transylvanian(Hungarian):
-    def __init__(self,
-                pred_vectors:np.ndarray,
-                ref_vectors:np.ndarray,
-                valid_pred_mask:np.ndarray,
-                valid_ref_mask:np.ndarray,
-                max_dist:float,
-                ref_frame_gap:np.ndarray,
-                ):
-        super().__init__(pred_vectors, ref_vectors, valid_pred_mask, valid_ref_mask, max_dist, ref_frame_gap)
-        self.pred_vec = pred_vectors[valid_pred_mask]
-        self.ref_vec = ref_vectors[valid_ref_mask]
-
-    def vector_hun_match(self):
-        cost_matrix = np.linalg.norm(self.pred_vec[:, np.newaxis] - self.ref_vec[np.newaxis, :], axis=2)
-        weight_cost_matrix = cost_matrix * np.sqrt(self.frame_gap)
-        
-        try:
-            row_ind, col_ind = linear_sum_assignment(weight_cost_matrix)
-            logger.debug(f"[HUN(VEC)] Hungarian assignment: row_ind={row_ind}, col_ind={col_ind}")
-        except Exception as e:
-            logger.debug(f"[HUN(VEC)] Hungarian failed: {e}. Returning None.")
-            return None
-
-        new_order = self._build_new_order(row_ind, col_ind)
-        logger.debug(f"[HUN(VEC)] Final new_order: {new_order}")
-        return new_order
