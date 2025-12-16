@@ -710,13 +710,16 @@ class Frame_Label:
         tf = Track_Fixer(self.pred_data_array, self.dm.canon_pose, self.dm.angle_map_data, progress)
         self.pred_data_array, changed_frames, amongus_frames = tf.track_correction(max_dist, lookback)
 
-        if not changed_frames:
-            Loggerbox.info(self.main, "No Changes Applied", "No changes were applied.")
+        cf_text = f"Applied {len(changed_frames)} changes to track." if changed_frames else "No changes were applied."
+        ag_text = f"{len(amongus_frames)} frames are ambiguous." if amongus_frames else ""
+
+        Loggerbox.info(self.main, "Track Fix Result", f"{cf_text}{ag_text}")
+        if not changed_frames and not amongus_frames:
             return
 
-        label = f"Applied {len(changed_frames)} changes to track. Review the changes now?"
+        label = f"{cf_text}. Review the changes now?"
         if amongus_frames:
-            label = f"{len(amongus_frames)} frames are ambiguous, start manual correction now?"
+            label = f"{ag_text}, start manual correction now?"
         
         reply = Loggerbox.question(self.main, f"Manual Review", label, QMessageBox.Yes | QMessageBox.No)
         if reply == QMessageBox.Yes:
