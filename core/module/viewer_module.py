@@ -324,8 +324,18 @@ class Frame_View:
             else:
                 self.skip_counting = True
 
-    def _handle_inference_intervals(self, intervals: dict):
-        inference_list= calculate_blob_inference_intervals(self.dm.blob_array, intervals)
+    def _handle_inference_intervals(self, intervals:dict, skip_existing:bool):
+        existing_frames = []
+
+        if skip_existing and self.dm.dlc_data.pred_data_array is not None:
+            existing_frames = np.where(np.any(~np.isnan(self.dm.dlc_data.pred_data_array), axis=(1,2)))[0].tolist()
+
+        inference_list= calculate_blob_inference_intervals(self.dm.blob_array, intervals, existing_frames)
+
+        if not inference_list:
+            Loggerbox.info(self, "Inference List Empty", "No additional frames are to be inferenced, skipping...")
+            return
+
         reply = Loggerbox.question(
             self.main, "Inference List Calculated",
             f"A total of {len(inference_list)} frames out of {self.dm.total_frames} will be inferenced, confirm?"

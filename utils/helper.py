@@ -214,7 +214,8 @@ def clean_inconsistent_nans(pred_data_array:np.ndarray):
     logger.info("NaN keypoint confidence cleaned.")
     return pred_data_array
 
-def calculate_blob_inference_intervals(blob_array:np.ndarray, intervals:Dict[str, int]) -> List[int]:
+def calculate_blob_inference_intervals(blob_array:np.ndarray, intervals:Dict[str, int], existing_frames:Optional[List[int]]=None) -> List[int]:
+    existing_set = set(existing_frames)
     total_frames = blob_array.shape[0]
 
     inference_list = []
@@ -226,6 +227,10 @@ def calculate_blob_inference_intervals(blob_array:np.ndarray, intervals:Dict[str
     for frame_idx in range(total_frames):
         animal_count = animal_count_array[frame_idx]
         merge_status = merge_array[frame_idx]
+
+        if existing_set and frame_idx in existing_set:
+            last_inferenced_frame = frame_idx
+            continue
 
         if animal_count == 0:
             current_interval = intervals["interval_0_animal"]

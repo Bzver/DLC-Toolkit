@@ -159,8 +159,14 @@ class Head_Tail_Dialog(QDialog):
     
 
 class Inference_interval_Dialog(QDialog):
-    intervals_selected = Signal(dict)
-
+    intervals_selected = Signal(dict, bool)
+    CATEGORIES = {
+        "No Animals (0)": "interval_0_animal",
+        "One Animal (1)": "interval_1_animal",
+        "Multiple Animals (2+)": "interval_n_animals",
+        "Animal Close Together": "interval_merged"
+    }
+    
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Set Inference Intervals")
@@ -169,19 +175,16 @@ class Inference_interval_Dialog(QDialog):
         main_layout = QVBoxLayout(self)
 
         self.interval_widgets = {}
-        categories = {
-            "No Animals (0)": "interval_0_animal",
-            "One Animal (1)": "interval_1_animal",
-            "Multiple Animals (2+)": "interval_n_animals",
-            "Animal Close Together": "interval_merged"
-        }
 
-        for label_text, key in categories.items():
+        for label_text, key in self.CATEGORIES.items():
             spin_box = Spinbox_With_Label(label_text, (1,1000), 1)
             main_layout.addWidget(spin_box)
             self.interval_widgets[key] = spin_box
 
-        # Buttons
+
+        self.skip_existing = QCheckBox("Skip Inferenced Frames")
+        self.skip_existing.setChecked(False)
+
         button_layout = QHBoxLayout()
         ok_button = QPushButton("OK")
         cancel_button = QPushButton("Cancel")
@@ -190,13 +193,14 @@ class Inference_interval_Dialog(QDialog):
         cancel_button.clicked.connect(self.reject)
 
         button_layout.addStretch()
+        button_layout.addWidget(self.skip_existing)
         button_layout.addWidget(ok_button)
         button_layout.addWidget(cancel_button)
         main_layout.addLayout(button_layout)
 
     def _accept_input(self):
         intervals = {key: widget.value() for key, widget in self.interval_widgets.items()}
-        self.intervals_selected.emit(intervals)
+        self.intervals_selected.emit(intervals, self.skip_existing.isChecked())
         self.accept()
 
 
@@ -233,6 +237,7 @@ class Frame_Range_Dialog(QDialog):
         start_idx = self.start_spin.value()
         end_idx = self.end_spin.value()
         if end_idx >= start_idx:
+            self.hide()
             self.range_selected.emit((start_idx, end_idx))
             self.accept()
         else:
