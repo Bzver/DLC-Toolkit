@@ -1,11 +1,11 @@
 import numpy as np
 from itertools import combinations
-
 from typing import Tuple, Dict
 
-from utils.helper import get_instances_on_current_frame
 from .pose_analysis import calculate_pose_centroids, calculate_pose_bbox, calculate_pose_rotations
 from .pose_worker import pose_alignment_worker
+from utils.helper import get_instances_on_current_frame, bye_bye_runtime_warning
+
 
 def outlier_removal(pred_data_array:np.ndarray, outlier_mask:np.ndarray) -> Tuple[np.ndarray, int, int]:
     """
@@ -41,13 +41,9 @@ def outlier_confidence(pred_data_array:np.ndarray, threshold:float=0.5) -> np.nd
     Returns:
         np.ndarray: Boolean mask of shape (num_frames, num_instances) where True indicates low confidence.
     """
-    T, I, _ = pred_data_array.shape
     confidence_scores = pred_data_array[:, :, 2::3]
-
-    inst_conf = np.full((T, I), np.nan)
-    valid_mask = np.any(~np.isnan(confidence_scores), axis=2)
-
-    inst_conf[valid_mask] = np.nanmean(confidence_scores[valid_mask], axis=2)
+    with bye_bye_runtime_warning():
+        inst_conf = np.nanmean(confidence_scores, axis=2)
     low_conf_mask = inst_conf < threshold
     return low_conf_mask
 
@@ -105,9 +101,10 @@ def outlier_duplicate(
 
         if np.all(np.isnan(inst_1_x)) or np.all(np.isnan(inst_2_x)):
             continue
-        
-        inst_1_conf = np.nanmean(pred_data_array[:, inst_1_idx, 2::3], axis=1)
-        inst_2_conf = np.nanmean(pred_data_array[:, inst_2_idx, 2::3], axis=1)
+
+        with bye_bye_runtime_warning():
+            inst_1_conf = np.nanmean(pred_data_array[:, inst_1_idx, 2::3], axis=1)
+            inst_2_conf = np.nanmean(pred_data_array[:, inst_2_idx, 2::3], axis=1)
         inst_1_valid_kp = np.sum(~np.isnan(inst_1_x), axis=1)
         inst_2_valid_kp = np.sum(~np.isnan(inst_2_x), axis=1)
 
@@ -154,8 +151,10 @@ def outlier_size(
     _, local_coords = calculate_pose_centroids(pred_data_array)
     inst_radius = np.full((total_frames, instance_count), np.nan)
     for inst_idx in range(instance_count):
-        inst_radius[:, inst_idx] = np.nanmean(
-            np.sqrt(local_coords[:, inst_idx, 0::2]**2 + local_coords[:, inst_idx, 1::2]**2), axis=1)
+        
+        with bye_bye_runtime_warning():
+            inst_radius[:, inst_idx] = np.nanmean(
+                np.sqrt(local_coords[:, inst_idx, 0::2]**2 + local_coords[:, inst_idx, 1::2]**2), axis=1)
         
     small_mask = inst_radius < canon_radius * min_ratio
     large_mask = inst_radius >= canon_radius * max_ratio

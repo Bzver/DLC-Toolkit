@@ -2,6 +2,7 @@ import numpy as np
 from typing import Tuple, Union, Dict
 
 from .pose_worker import pose_alignment_worker
+from utils.helper import bye_bye_runtime_warning
 
 def calculate_pose_centroids(
         pred_data_array:np.ndarray,
@@ -151,8 +152,9 @@ def calculate_pose_bbox(
     - If input is 1D: returns (min_x, min_y, max_x, max_y) as scalars.
     - If input is ND (N>=2): returns arrays of shape (...,) for each bound.
     """
-    min_x, min_y = np.nanmin(coords_x, axis=-1) - padding, np.nanmin(coords_y, axis=-1) - padding
-    max_x, max_y = np.nanmax(coords_x, axis=-1) + padding, np.nanmax(coords_y, axis=-1) + padding
+    with bye_bye_runtime_warning():
+        min_x, min_y = np.nanmin(coords_x, axis=-1) - padding, np.nanmin(coords_y, axis=-1) - padding
+        max_x, max_y = np.nanmax(coords_x, axis=-1) + padding, np.nanmax(coords_y, axis=-1) + padding
     return min_x, min_y, max_x, max_y
 
 def calculate_canonical_pose(

@@ -1,6 +1,8 @@
 import numpy as np
 import cv2
 from PySide6 import QtGui
+from contextlib import contextmanager
+import warnings
 from typing import List, Tuple, Callable, Union, Iterable, Optional, Dict
 
 from utils.logger import logger, Loggerbox, QMessageBox
@@ -474,3 +476,12 @@ def array_to_iterable_runs(arr:np.ndarray) -> Iterable[Tuple[int, int, np.ndarra
     ends = np.concatenate((change_points - 1, [len(arr) - 1]))
     values = arr[starts]
     return zip(starts, ends, values)
+
+
+#########################################################################################################################################################1
+
+@contextmanager
+def bye_bye_runtime_warning():
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=RuntimeWarning)
+        yield
