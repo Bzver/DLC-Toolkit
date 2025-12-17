@@ -239,7 +239,7 @@ class DLC_Inference(QDialog):
     def _determine_det_spinbox_vis(self, text:str):
         self.detector_batchsize_label_spinbox.setVisible("Detector" in text)
 
-    def _inference_pipe(self):
+    def _inference_pipe(self, headless:bool=False):
         if self.batch_size_changed:
             self._update_config()
 
@@ -289,7 +289,7 @@ class DLC_Inference(QDialog):
         
         self.on_hold_dialog.accept()
         self.show()
-        self._process_new_pred()
+        self._process_new_pred(headless)
 
     def _update_config(self):
         config_path = self.dlc_data.dlc_config_filepath
@@ -385,7 +385,7 @@ class DLC_Inference(QDialog):
         self.new_data_array = new_data_array
         return h5_files[-1]
 
-    def _process_new_pred(self):
+    def _process_new_pred(self, headless:bool=False):
         temp_pred_filename = self._load_and_remap_new_prediction()
         video_path = os.path.dirname(self.video_filepath)
         if "image_predictions_" in temp_pred_filename:
@@ -400,6 +400,11 @@ class DLC_Inference(QDialog):
             pred_data_array=self.new_data_array
             list_tuple = (self.frame_list, [])
             self._save_pred_to_file(pred_data_array, list_tuple)
+        elif headless:
+            old_data_array = self.dlc_data.pred_data_array
+            old_data_array[self.frame_list, ...] = self.new_data_array[self.frame_list, ...]
+            list_tuple = (self.frame_list, [])
+            self._save_pred_to_file(old_data_array, list_tuple)
         else:
             self.hide()
             QtWidgets.QApplication.processEvents()
