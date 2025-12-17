@@ -24,6 +24,7 @@ class Track_Fixer:
         self.progress = progress
 
         self.corrected_pred_data = self._pose_clean(pred_data_array, conservative=False)
+        self.inst_count_per_frame = get_instance_count_per_frame(self.corrected_pred_data)
 
         self.total_frames, self.instance_count = self.corrected_pred_data.shape[:2]
         if self.progress:
@@ -38,12 +39,13 @@ class Track_Fixer:
     def track_correction(self, max_dist:float=10.0, lookback_window=10) -> Tuple[np.ndarray, int, List[int]]:
         try:
             gap_mask = np.all(np.isnan(self.corrected_pred_data), axis=(1,2))
-            self._centroids_tf_pass(max_dist, lookback_window)
+            self._first_pass_centroids(max_dist, lookback_window)
             self.new_order_array[gap_mask] = self.inst_array
             if np.any(self.new_order_array == -1):
                 amogus_frames = np.where(self.new_order_array[:,0]==-1)[0]
                 self.new_order_array[amogus_frames] = self.inst_array
                 amogus_frames = amogus_frames.tolist()
+                amogus_frames = self._second_pass_disambiguation(amogus_frames, max_dist, lookback_window)
             else:
                 amogus_frames = []
         except Exception as e:
@@ -59,13 +61,11 @@ class Track_Fixer:
 
         return fixed_data_array, changed_frames, amogus_frames
 
-    def _centroids_tf_pass(self, max_dist:float, lookback_window):
+    def _first_pass_centroids(self, max_dist:float, lookback_window):
         last_order = self.inst_list
         ref_centroids = np.full((self.instance_count, 2), np.nan)
         ref_last_updated = np.full((self.instance_count,), -2 * lookback_window, np.int32)
         valid_ref_mask = np.zeros_like(ref_last_updated, dtype=bool)
-
-        inst_count_per_frame = get_instance_count_per_frame(self.corrected_pred_data)
 
         for frame_idx in range(self.total_frames):
             if self.progress:
@@ -105,7 +105,7 @@ class Track_Fixer:
             hun = Hungarian(pred_centroids, ref_centroids, valid_pred_mask, valid_ref_mask,
                             max_dist=max_dist, ref_frame_gap=frame_idx-ref_last_updated)
 
-            skip_matching, new_order = self._hungarian_skip_check(hun, frame_idx, last_order, inst_count_per_frame, max_dist)
+            skip_matching, new_order = self._hungarian_skip_check(hun, frame_idx, last_order, max_dist)
 
             if not skip_matching:
                 new_order = hun.hungarian_matching()
@@ -138,7 +138,49 @@ class Track_Fixer:
             ref_centroids[fixed_pred_mask] = fixed_pred_centroids[fixed_pred_mask]
             ref_last_updated[fixed_pred_mask] = frame_idx
 
-    def _hungarian_skip_check(self, hun:Hungarian, frame_idx:int, last_order:List[int], inst_count_per_frame:np.ndarray, max_dist:float)-> Tuple[bool, List[int]]:
+    def _second_pass_disambiguation(self, ambiguous_frames:List[int], max_dist:float, lookback_window:int):
+        final_ambi_frames = ambiguous_frames.copy()
+        for i, amb_idx in enumerate(ambiguous_frames):
+            if i == 0:
+                continue
+            last_amb_idx = ambiguous_frames[i-1]
+            if amb_idx - last_amb_idx >= lookback_window:
+                logger.debug(
+                    f"[DAM] Frame {amb_idx}: gap from prev ambig ({last_amb_idx}) = {amb_idx - last_amb_idx} ≥ {lookback_window} → new segment.")
+                continue
+            if self.inst_count_per_frame[amb_idx] != self.inst_count_per_frame[last_amb_idx]:
+                logger.debug(
+                    f"[DAM] Frame {amb_idx}: inst count changed ({self.inst_count_per_frame[last_amb_idx]} → {self.inst_count_per_frame[amb_idx]}) → preserved.")
+                continue
+
+            cur_centroids, _ = calculate_pose_centroids(self.corrected_pred_data, amb_idx)
+            last_centroids, _ = calculate_pose_centroids(self.corrected_pred_data, last_amb_idx)
+            cur_indices = sorted(np.where(np.all(~np.isnan(cur_centroids), axis=1))[0])
+            last_indices = sorted(np.where(np.all(~np.isnan(last_centroids), axis=1))[0])
+
+            if cur_indices != last_indices:
+                logger.debug(
+                    f"[DAM] Frame {amb_idx}: valid instances changed ({last_indices} → {cur_indices}) → preserved.")
+                continue
+            
+            pair_dist_max = 0.0
+            for inst_idx in cur_indices:
+                pair_dist = np.linalg.norm(cur_centroids[inst_idx]-last_centroids[inst_idx])
+                pair_dist_max = max(pair_dist_max, pair_dist)
+
+            if pair_dist_max > max_dist:
+                logger.debug(
+                    f"[DAM] Frame {amb_idx}: max inst displacement = {pair_dist_max:.1f} > {max_dist} (from {last_amb_idx}) → preserved.")
+                continue
+
+            final_ambi_frames.remove(amb_idx)
+            logger.debug(
+                f"[DAM] Frame {amb_idx}: collapsed into segment (prev ambig {last_amb_idx}, max Δ = {pair_dist_max:.1f} ≤ {max_dist}).")
+
+        logger.debug(f"[DAM] Second pass: {len(ambiguous_frames)} -> {len(final_ambi_frames)} ambiguous frames.")
+        return final_ambi_frames
+
+    def _hungarian_skip_check(self, hun:Hungarian, frame_idx:int, last_order:List[int], max_dist:float)-> Tuple[bool, List[int]]:
         skip_matching, new_order = False, None
 
         if last_order != self.inst_list and hun.full_set: # Try last order first if possible
@@ -152,8 +194,8 @@ class Track_Fixer:
             else:
                 logger.debug(f"[TMOD] Last order fails to sufficiently improve overall distance: {avg_improv*100:.2f}% | Threshold: 20%")
         else:
-            if frame_idx > 0 and inst_count_per_frame[frame_idx] != inst_count_per_frame[frame_idx - 1]:
-                if inst_count_per_frame[frame_idx] >= 2 or inst_count_per_frame[frame_idx - 1] >= 2:
+            if frame_idx > 0 and self.inst_count_per_frame[frame_idx] != self.inst_count_per_frame[frame_idx - 1]:
+                if self.inst_count_per_frame[frame_idx] >= 2 or self.inst_count_per_frame[frame_idx - 1] >= 2:
                     pred_centroids, _ = calculate_pose_centroids(self.corrected_pred_data, frame_idx)
                     prev_centroids, _ = calculate_pose_centroids(self.corrected_pred_data, frame_idx - 1)
                     if hun.danger_close(
