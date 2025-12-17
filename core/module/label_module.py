@@ -696,7 +696,7 @@ class Frame_Label:
         speeds_px_frame = speeds_px_frame[~np.isnan(speeds_px_frame)]
 
         dialog = Track_Fix_Dialog(self.main)
-        dialog.set_histogram(speeds_px_frame, max_dist_px_frame=25.0)
+        dialog.set_histogram(speeds_px_frame, max_dist_px_frame=45.0)
         if dialog.exec() == QDialog.Accepted:
             max_dist, lookback = dialog.get_values()
         else:
