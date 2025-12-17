@@ -1,19 +1,24 @@
 import os
+import numpy as np
 from PySide6 import QtWidgets
 from typing import List, Tuple, Optional
 
 from core.runtime import Data_Manager
 from core.tool.inference import DLC_Inference
+from core.io import backup_existing_prediction
 from utils.helper import calculate_blob_inference_intervals
 from utils.logger import logger, set_headless_mode
 
+
 def inference_workspace_vid(
         workspace_file:str,
+        data_manager:Data_Manager,
         dlc_config_path:Optional[str]=None,
         partial_infer:bool=False,
         partial_infer_indices:Optional[List[int]]=None,
         blob_based_infer:bool=False,
         infer_interval:Optional[Tuple[int,int,int,int]]=None,
+        infer_only_empty_frames:bool=False,
         crop:bool=False,
         crop_region:Optional[Tuple[int,int,int,int]]=None,
         shuffle_idx:Optional[int]=None,
@@ -23,13 +28,11 @@ def inference_workspace_vid(
     assert os.path.isfile(workspace_file), f"[BATCH] Workspace file not found: {workspace_file}"
 
     logger.info(f"[BATCH] Workspace in {workspace_file} has been loaded.")
+    dm = data_manager
 
-    dialog = QtWidgets.QDialog()
-    dm = Data_Manager(init_vid_callback=_pseudo_callback, refresh_callback=_pseudo_callback, parent=dialog)
+    dm.load_workspace(workspace_file)
     
-    dm._load_workspace(workspace_file)
-    
-    if dlc_config_path is not None and os.path.isfile(dlc_config_path):
+    if dlc_config_path is not None and os.path.isfile(dlc_config_path) and dm.dlc_data is None:
         dm.load_metadata_to_dm(dlc_config_path)
     else:
         assert dm.dlc_data is not None and dm.dlc_data.dlc_config_filepath is not None, "[BATCH] DLC configuration not found in workspace. Ensure the workspace includes a valid DLC project."
@@ -58,7 +61,11 @@ def inference_workspace_vid(
                 "interval_n_animals": infer_interval[2],
                 "interval_merged": infer_interval[3],
             }
-            inference_list = calculate_blob_inference_intervals(dm.blob_array, intervals)
+            if infer_only_empty_frames and dm.dlc_data.pred_data_array is not None:
+                existing_frames = np.where(np.any(~np.isnan(dm.dlc_data.pred_data_array), axis=(1,2)))[0].tolist()
+                inference_list = calculate_blob_inference_intervals(dm.blob_array, intervals, existing_frames)
+            else:
+                inference_list = calculate_blob_inference_intervals(dm.blob_array, intervals)
         else:
             raise RuntimeError("[BATCH] Blob array has not been initialized in the workspace file!")
     else:
@@ -88,14 +95,15 @@ def inference_workspace_vid(
 
     inference_window.fresh_pred = True
     logger.info("[BATCH] Inference process initiated.")
-    inference_window._inference_pipe()
+    inference_window._inference_pipe(headless=True)
 
 def _pseudo_callback(*arg, **kwargs):
     pass
 
 if __name__ == "__main__":
     set_headless_mode(True)
-    rootdir = "D:/Data/Videos/20251012 Marathon/"
+    rootdir = "D:/Data/Videos/20250918 Marathon"
+    dlc_config_path = "D:/Project/DLC-Models/NTD/config.yaml"
     pkl_list = []
     for root, dirs, files in os.walk(rootdir):
         for file in files:
@@ -107,24 +115,40 @@ if __name__ == "__main__":
         logger.info(f"[{i}]:{path}")
 
     app = QtWidgets.QApplication([])
+    dialog = QtWidgets.QDialog()
     success_count = 0
     for i, f in enumerate(pkl_list, 1):
-        logger.info(f"\n[Batch {i}/{len(pkl_list)}] Starting: {os.path.basename(f)}")
+        filename = os.path.basename(f)
+        filefolder = os.path.dirname(f)
+        logger.info(f"\n[Batch {i}/{len(pkl_list)}] Starting: {filename}")
+        dm = Data_Manager(init_vid_callback=_pseudo_callback, refresh_callback=_pseudo_callback, parent=dialog)
         try:
             inference_workspace_vid(
                 workspace_file=f,
-                dlc_config_path="D:/Project/DLC-Models/NTD/config.yaml",
+                data_manager=dm,
+                dlc_config_path=dlc_config_path,
                 crop=True,
                 blob_based_infer=True,
-                infer_interval=(1,10,3,1),
+                infer_interval=(100,4,2,1),
+                infer_only_empty_frames=True,
                 batch_size=128,
                 detector_batch_size=32,
             )
-            success_count += 1
-            logger.info(f"[Batch {i}/{len(pkl_list)}] Completed: {os.path.basename(f)}")
         except Exception as e:
-            logger.error(f"[Batch {i}/{len(pkl_list)}] FAILED: {os.path.basename(f)} — {e}")
+            logger.error(f"[Batch {i}/{len(pkl_list)}] FAILED: {filename} — {e}")
             logger.exception(f"[Batch {i}/{len(pkl_list)}]")
             continue # Gliding over all
+        else:
+            success_count += 1
+            logger.info(f"[Batch {i}/{len(pkl_list)}] Completed: {filename}")
+            backup_existing_prediction(f)
+            prediction_path = None
+            for file in os.listdir(os.path.dirname(f)):
+                if file.endswith(".h5") and filename.replace(".pkl", "") in file:
+                    prediction_path = os.path.join(filefolder, file)
+            if prediction_path:
+                dm.load_pred_to_dm(dlc_config_path=dlc_config_path, prediction_path=prediction_path)
+                dm.save_workspace()
+            continue
 
     logger.info(f"[BATCH] Batch finished: {success_count}/{len(pkl_list)} succeeded.")
