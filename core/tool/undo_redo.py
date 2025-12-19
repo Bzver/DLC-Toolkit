@@ -10,10 +10,6 @@ class Uno_Stack:
         logger.info(f"[UNO] Initialized Uno_Stack with max_undo_stack_size={max_undo_stack_size}")
 
     def save_state_for_undo(self, data_array):
-        shape_info = getattr(data_array, 'shape', 'unknown')
-        dtype_info = getattr(data_array, 'dtype', 'unknown')
-        logger.info(f"[UNO] Saving state for undo: shape={shape_info}, dtype={dtype_info}")
-
         self.redo_stack = []
         logger.debug("[UNO] Redo stack cleared due to new state save.")
         
