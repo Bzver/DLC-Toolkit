@@ -268,7 +268,7 @@ class Track_Fix_Dialog(QDialog):
         self.max_dist_spinbox = QDoubleSpinBox()
         self.max_dist_spinbox.setRange(1.0, 100.0)
         self.max_dist_spinbox.setSingleStep(0.1)
-        self.max_dist_spinbox.setValue(45.0)
+        self.max_dist_spinbox.setValue(40.0)
         self.max_dist_spinbox.valueChanged.connect(self._max_dist_changed)
         max_dist_layout.addWidget(max_dist_label)
         max_dist_layout.addWidget(self.max_dist_spinbox)
@@ -277,7 +277,7 @@ class Track_Fix_Dialog(QDialog):
         lookback_label = QLabel("Lookback Window:")
         self.lookback_spinbox = QSpinBox()
         self.lookback_spinbox.setRange(2, 1000)
-        self.lookback_spinbox.setValue(11)
+        self.lookback_spinbox.setValue(5)
         lookback_layout.addWidget(lookback_label)
         lookback_layout.addWidget(self.lookback_spinbox)
         

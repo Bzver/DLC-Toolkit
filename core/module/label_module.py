@@ -696,7 +696,7 @@ class Frame_Label:
         speeds_px_frame = speeds_px_frame[~np.isnan(speeds_px_frame)]
 
         dialog = Track_Fix_Dialog(self.main)
-        dialog.set_histogram(speeds_px_frame, max_dist_px_frame=45.0)
+        dialog.set_histogram(speeds_px_frame, max_dist_px_frame=40.0)
         if dialog.exec() == QDialog.Accepted:
             max_dist, lookback = dialog.get_values()
         else:
@@ -732,5 +732,7 @@ class Frame_Label:
 
     def _get_pred_data_from_manual_review(self, pred_data_array):
         self._save_state_for_undo()
-        self.pred_data_array = pred_data_array
+        self.status_bar.show_message("Prediction received from manual reviewer.")
+        self.dm.dlc_data.pred_data_array = pred_data_array
+        self.pred_data_array = self.dm.dlc_data.pred_data_array
         self.display_current_frame()
