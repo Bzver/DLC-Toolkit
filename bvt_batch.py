@@ -38,6 +38,9 @@ def inference_workspace_vid(
         assert dm.dlc_data is not None and dm.dlc_data.dlc_config_filepath is not None, "[BATCH] DLC configuration not found in workspace. Ensure the workspace includes a valid DLC project."
     assert dm.video_file is not None and os.path.isfile(dm.video_file), f"[BATCH] Video file missing or invalid: {dm.video_file}"
 
+    if dm.dlc_data.pred_data_array is None:
+        autoload_pred(workspace_file, dm, dlc_config_path)
+
     if crop:
         assert crop_region is not None or dm.roi is not None, "[BATCH] Cropping enabled, but no crop region or ROI defined. Provide crop_region or ensure ROI is set in the workspace."
         if crop_region is None:
@@ -63,7 +66,12 @@ def inference_workspace_vid(
             }
             if infer_only_empty_frames and dm.dlc_data.pred_data_array is not None:
                 existing_frames = np.where(np.any(~np.isnan(dm.dlc_data.pred_data_array), axis=(1,2)))[0].tolist()
-                inference_list = calculate_blob_inference_intervals(dm.blob_array, intervals, existing_frames)
+                if existing_frames:
+                    logger.info(f"[BATCH] Loaded {len(existing_frames)} inferenced frames.")
+                    inference_list = calculate_blob_inference_intervals(dm.blob_array, intervals, existing_frames)
+                else:
+                    logger.info("[BATCH] No existing frames found.")
+                    inference_list = calculate_blob_inference_intervals(dm.blob_array, intervals)
             else:
                 inference_list = calculate_blob_inference_intervals(dm.blob_array, intervals)
         else:
@@ -100,14 +108,47 @@ def inference_workspace_vid(
 def _pseudo_callback(*arg, **kwargs):
     pass
 
+def autoload_pred(workspace_file:str, dm:Data_Manager, dlc_config_path:Optional[str]=None):
+    workspace_dir = os.path.dirname(workspace_file)
+    workspace_base = os.path.splitext(os.path.basename(workspace_file))[0].replace("_workspace","")
+
+    assert dlc_config_path or (dm.dlc_data and dm.dlc_data.pred_data_array is not None), "DLC Config Missing!"
+
+    candidate_preds = [
+        os.path.join(workspace_dir, f) for f in os.listdir(workspace_dir) if f.endswith('.h5') and workspace_base in f
+    ]
+
+    if candidate_preds:
+        candidate_preds.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+        newest_pred = candidate_preds[0]
+
+        logger.info(f"[AUTOLOAD] No prediction in workspace; loading newest prediction: {newest_pred}")
+        try:
+            if dm.dlc_data and dm.dlc_data.dlc_config_filepath:
+                dm.load_pred_to_dm(
+                    dlc_config_path=dm.dlc_data.dlc_config_filepath,
+                    prediction_path=newest_pred
+                )
+            elif dlc_config_path:
+                dm.load_pred_to_dm(
+                    dlc_config_path=dlc_config_path,
+                    prediction_path=newest_pred
+                )
+        except Exception as e:
+            logger.error(f"[AUTOLOAD] Failed to auto-load prediction {newest_pred}: {e}")
+        else:
+            logger.info(f"[AUTOLOAD] Loaded newest pred {newest_pred}.")
+    else:
+        logger.info("[AUTOLOAD] No matching .h5 prediction found for auto-load.")
+
 if __name__ == "__main__":
     set_headless_mode(True)
-    rootdir = "D:/Data/Videos/20250918 Marathon"
+    rootdir = "D:/Data/Videos/20251117 Marathon"
     dlc_config_path = "D:/Project/DLC-Models/NTD/config.yaml"
     pkl_list = []
     for root, dirs, files in os.walk(rootdir):
         for file in files:
-            if file.endswith(".pkl") and "_batchcop_" not in file:
+            if file.endswith(".pkl") and "backup" not in root:
                 pkl_list.append(os.path.join(root, file))
 
     logger.info("[BATCH] About to batch process following workspace file.")
@@ -143,12 +184,8 @@ if __name__ == "__main__":
             logger.info(f"[Batch {i}/{len(pkl_list)}] Completed: {filename}")
             backup_existing_prediction(f)
             prediction_path = None
-            for file in os.listdir(os.path.dirname(f)):
-                if file.endswith(".h5") and filename.replace(".pkl", "") in file:
-                    prediction_path = os.path.join(filefolder, file)
-            if prediction_path:
-                dm.load_pred_to_dm(dlc_config_path=dlc_config_path, prediction_path=prediction_path)
-                dm.save_workspace()
+            autoload_pred(f, dm, dlc_config_path)
+            dm.save_workspace()
             continue
 
     logger.info(f"[BATCH] Batch finished: {success_count}/{len(pkl_list)} succeeded.")
