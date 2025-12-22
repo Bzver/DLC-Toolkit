@@ -1,12 +1,12 @@
 import numpy as np
-
+from collections import defaultdict
 from PySide6.QtWidgets import QProgressDialog
 from typing import List, Dict, Any, Tuple, Optional
 
 from .hungarian import Hungarian
 from utils.pose import (
     calculate_pose_centroids, outlier_removal, outlier_confidence, 
-    outlier_bodypart, outlier_duplicate, outlier_size, outlier_pose,
+    outlier_bodypart, outlier_enveloped, outlier_size, outlier_pose,
     )
 from utils.helper import get_instance_count_per_frame
 from utils.logger import logger
@@ -23,6 +23,7 @@ class Track_Fixer:
         self.angle_map = angle_map
         self.progress = progress
 
+        self.pred_data_cleaned = self._pose_clean(pred_data_array, conservative=True)
         self.corrected_pred_data = self._pose_clean(pred_data_array, conservative=False)
         self.inst_count_per_frame = get_instance_count_per_frame(self.corrected_pred_data)
 
@@ -31,39 +32,40 @@ class Track_Fixer:
             self.progress.setRange(0, self.total_frames)
 
         self.inst_list = list(range(self.instance_count))
-        self.inst_array = np.array(self.inst_list)
 
-        self.new_order_array = -np.ones((self.total_frames, self.instance_count), dtype=np.int8)
+        self.new_order_dict: Dict[Tuple[int, ...], List[int]] = defaultdict(list)
+        self.ambiguous_frames = []
         self.current_frame_data = np.full_like(self.corrected_pred_data[0], np.nan)
 
     def track_correction(self, max_dist:float=10.0, lookback_window=10) -> Tuple[np.ndarray, int, List[int]]:
         try:
-            gap_mask = np.all(np.isnan(self.corrected_pred_data), axis=(1,2))
             self._first_pass_centroids(max_dist, lookback_window)
-            self.new_order_array[gap_mask] = self.inst_array
-            if np.any(self.new_order_array == -1):
-                amogus_frames = np.where(self.new_order_array[:,0]==-1)[0]
-                self.new_order_array[amogus_frames] = self.inst_array
-                amogus_frames = amogus_frames.tolist()
-                amogus_frames = self._second_pass_disambiguation(amogus_frames, max_dist, lookback_window)
+            if self.ambiguous_frames:
+                amogus_frames = self._second_pass_disambiguation(max_dist, lookback_window)
             else:
                 amogus_frames = []
         except Exception as e:
             logger.exception(f"Track correction failed: {e}")
-            return self.corrected_pred_data, 0, []
+            return self.corrected_pred_data, [], []
 
         if self.progress:
             self.progress.close()
 
-        diff = self.new_order_array - np.arange(self.instance_count)
-        changed_frames = np.where(np.any(diff != 0, axis=1))[0].tolist()
-        fixed_data_array = self.corrected_pred_data
+        changed_frames = []
+        fixed_data_array = self.pred_data_cleaned.copy()
+        for new_order, frame_list in self.new_order_dict.items():
+            if new_order == tuple(self.inst_list):
+                continue
+            fixed_data_array[frame_list, :, :] = self.pred_data_cleaned[frame_list][:, new_order, :]
+            changed_frames.extend(frame_list)
 
-        return fixed_data_array, changed_frames, amogus_frames
+        return fixed_data_array, sorted(set(changed_frames)), sorted(set(amogus_frames))
 
-    def _first_pass_centroids(self, max_dist:float, lookback_window):
+    def _first_pass_centroids(self, max_dist:float, lookback_window, decay=0.8):
         last_order = self.inst_list
         ref_centroids = np.full((self.instance_count, 2), np.nan)
+        ref_centroids_projected = np.full((self.instance_count, 2), np.nan)
+        ref_velocities = np.full((self.instance_count, 2), np.nan)
         ref_last_updated = np.full((self.instance_count,), -2 * lookback_window, np.int32)
         valid_ref_mask = np.zeros_like(ref_last_updated, dtype=bool)
 
@@ -78,34 +80,43 @@ class Track_Fixer:
             pred_centroids, _ = calculate_pose_centroids(self.corrected_pred_data, frame_idx)
             valid_pred_mask = np.any(~np.isnan(pred_centroids), axis=1)
             if not np.any(valid_pred_mask):
-                self.new_order_array[frame_idx] = self.inst_array
                 logger.debug("[TMOD] Skipping due to no prediction on current frame.")
                 continue
 
             valid_ref_mask = (ref_last_updated > frame_idx - lookback_window)
+            ref_centroids_projected[:] = ref_centroids[:]
 
             if not np.any(valid_ref_mask):
-                if np.all(np.isnan(ref_centroids)): # No ref at all, i.e. beginning of the vid
-                    self.new_order_array[frame_idx] = np.array(last_order)
-                else:
-                    self.new_order_array[frame_idx] = -1 # Mark as ambiguous
+                if not np.all(np.isnan(ref_centroids)):
+                    self.ambiguous_frames.append(frame_idx)
                 logger.debug("[TMOD] No valid ref frame found. Rebasing the reference on current frame.")
                 ref_centroids[valid_pred_mask] = pred_centroids[valid_pred_mask] # Rebase the prediction on current frame
+                ref_velocities[valid_ref_mask] = 0.0
                 ref_last_updated[valid_pred_mask] = frame_idx
                 last_order = self.inst_list
                 continue
 
+            for inst_idx in range(self.instance_count):
+                age = frame_idx - ref_last_updated[inst_idx]
+                if not np.any(np.isnan(ref_velocities[inst_idx])):
+                    xy_motion = ref_velocities[inst_idx] * ((1-(decay)**age)/(1-decay))
+                    ref_centroids_projected[inst_idx] = ref_centroids[inst_idx] + xy_motion
+                    logger.debug(f"[MOTION] Inst {inst_idx}: Velocity after decay: x: {xy_motion[0]}, y: {xy_motion[1]}.")
+
             for i in range(self.instance_count):
                 logger.debug(f"x,y in pred: inst {i}: ({pred_centroids[i,0]:.1f}, {pred_centroids[i,1]:.1f})")
+            for i in range(self.instance_count):
+                proj_x, proj_y = ref_centroids_projected[i]
+                logger.debug(f"x,y in ref_proj: inst {i}: ({proj_x:.1f}, {proj_y:.1f}) ")
             for i in range(self.instance_count):
                 logger.debug(f"x,y in ref: inst {i}: ({ref_centroids[i,0]:.1f}, {ref_centroids[i,1]:.1f}) | "
                             f"last updated: {ref_last_updated[i]} | valid: {valid_ref_mask[i]}")
 
             new_order = None
-            hun = Hungarian(pred_centroids, ref_centroids, valid_pred_mask, valid_ref_mask,
-                            max_dist=max_dist, ref_frame_gap=frame_idx-ref_last_updated)
+            hun = Hungarian(pred_centroids, ref_centroids_projected, valid_pred_mask, valid_ref_mask,
+                            ref_age=frame_idx-ref_last_updated, max_dist=max_dist)
 
-            skip_matching, new_order = self._hungarian_skip_check(hun, frame_idx, last_order, max_dist)
+            skip_matching, new_order = self._hungarian_skip_check(hun, frame_idx, last_order, max_dist, lookback_window)
 
             if not skip_matching:
                 new_order = hun.hungarian_matching()
@@ -120,7 +131,6 @@ class Track_Fixer:
 
                 if new_order is None:
                     logger.debug("[TMOD] Failed to build new order.")
-                    self.new_order_array[frame_idx] = -1 # Ambiguous
                 else:
                     if new_order == self.inst_list:
                         logger.debug("[TMOD] NO SWAP, already the best solution.")
@@ -128,22 +138,26 @@ class Track_Fixer:
                         logger.debug(f"[TMOD] SWAP, new_order: {new_order}.")
 
             if new_order:
-                self.new_order_array[frame_idx] = np.array(new_order)
+                self.new_order_dict[tuple(new_order)].append(frame_idx)
                 self.corrected_pred_data[frame_idx, :, :] = self.corrected_pred_data[frame_idx, new_order, :]
                 last_order = new_order
+                fixed_pred_centroids = pred_centroids[new_order]
+                fixed_pred_mask = valid_pred_mask[new_order]
+            else:
+                fixed_pred_centroids = pred_centroids
+                fixed_pred_mask = valid_pred_mask
+                self.ambiguous_frames.append(frame_idx)
 
-            fixed_pred_centroids = pred_centroids[new_order] if new_order else pred_centroids
-            fixed_pred_mask = valid_pred_mask[new_order] if new_order else valid_pred_mask
-            
+            ref_velocities = self._get_ref_velocities(fixed_pred_centroids, ref_centroids, ref_velocities, fixed_pred_mask, frame_idx-ref_last_updated)
             ref_centroids[fixed_pred_mask] = fixed_pred_centroids[fixed_pred_mask]
             ref_last_updated[fixed_pred_mask] = frame_idx
 
-    def _second_pass_disambiguation(self, ambiguous_frames:List[int], max_dist:float, lookback_window:int):
-        final_ambi_frames = ambiguous_frames.copy()
-        for i, amb_idx in enumerate(ambiguous_frames):
+    def _second_pass_disambiguation(self, max_dist:float, lookback_window:int):
+        final_ambi_frames = self.ambiguous_frames.copy()
+        for i, amb_idx in enumerate(self.ambiguous_frames):
             if i == 0:
                 continue
-            last_amb_idx = ambiguous_frames[i-1]
+            last_amb_idx = self.ambiguous_frames[i-1]
             if amb_idx - last_amb_idx >= lookback_window:
                 logger.debug(
                     f"[DAM] Frame {amb_idx}: gap from prev ambig ({last_amb_idx}) = {amb_idx - last_amb_idx} ≥ {lookback_window} → new segment.")
@@ -177,10 +191,12 @@ class Track_Fixer:
             logger.debug(
                 f"[DAM] Frame {amb_idx}: collapsed into segment (prev ambig {last_amb_idx}, max Δ = {pair_dist_max:.1f} ≤ {max_dist}).")
 
-        logger.debug(f"[DAM] Second pass: {len(ambiguous_frames)} -> {len(final_ambi_frames)} ambiguous frames.")
+        logger.debug(f"[DAM] Second pass: {len(self.ambiguous_frames)} -> {len(final_ambi_frames)} ambiguous frames.")
         return final_ambi_frames
 
-    def _hungarian_skip_check(self, hun:Hungarian, frame_idx:int, last_order:List[int], max_dist:float)-> Tuple[bool, List[int]]:
+    def _hungarian_skip_check(
+            self, hun:Hungarian, frame_idx:int, last_order:List[int], max_dist:float, lookback_window:int
+            )-> Tuple[bool, List[int]]:
         skip_matching, new_order = False, None
 
         if last_order != self.inst_list and hun.full_set: # Try last order first if possible
@@ -188,7 +204,7 @@ class Track_Fixer:
             if improved:
                 logger.debug(f"[TMOD] Last order improves overall distance by {avg_improv*100:.2f}% | Threshold: 20%")
                 new_order = last_order
-                self.new_order_array[frame_idx] = np.array(last_order)
+                self.new_order_dict[tuple(last_order)].append(frame_idx)
                 logger.debug(f"[TMOD] SWAP, Applying the last order: {last_order}")
                 skip_matching = True
             else:
@@ -205,30 +221,44 @@ class Track_Fixer:
                         ):
                         return True, None
 
-            skip_matching, new_order = hun.hungarian_skipper()
+            skip_matching, new_order = hun.hungarian_skipper(lookback_window)
 
         return skip_matching, new_order
+
+    def _get_ref_velocities(self, fixed_pred_centroids, ref_centroids, ref_velocities, fixed_pred_mask, frame_gap) -> np.ndarray:
+        if not np.any(fixed_pred_mask):
+            return ref_velocities
+
+        for inst_id in self.inst_list:
+            if not fixed_pred_mask[inst_id]:
+                continue
+            temp_gap = frame_gap[inst_id]
+            dist_gap = fixed_pred_centroids[inst_id] - ref_centroids[inst_id]
+            ref_velocities[inst_id] = dist_gap / temp_gap
+
+        return ref_velocities
 
     def _pose_clean(self, pred_data_array:np.ndarray, conservative:bool=True) -> np.ndarray:
         num_keypoint = pred_data_array.shape[2] // 3
 
-        dp_mask = outlier_duplicate(pred_data_array)
         if conservative:
+            env_mask = outlier_enveloped(pred_data_array, 0.9)
             conf_mask = outlier_confidence(pred_data_array, 0.4)
             bp_mask = outlier_bodypart(pred_data_array, 3)
-            combined_mask = conf_mask | bp_mask | dp_mask
+            combined_mask = conf_mask | bp_mask | env_mask
             corrected_data_array, _, _ = outlier_removal(pred_data_array, combined_mask)
             return corrected_data_array
 
         no_mask = np.zeros((pred_data_array.shape[0], pred_data_array.shape[1]), dtype=bool)
-        conf_mask = outlier_confidence(pred_data_array, 0.6)
+        conf_mask = outlier_confidence(pred_data_array, 0.5)
         bp_mask = outlier_bodypart(pred_data_array, num_keypoint//2)
+        env_mask = outlier_enveloped(pred_data_array, 0.75)
         if self.canon_pose is None or self.angle_map is None:
             size_mask = pose_mask = no_mask
         else:
             size_mask = outlier_size(pred_data_array, self.canon_pose, 0.3, 2)
             pose_mask = outlier_pose(pred_data_array, self.angle_map, 1.5, 2)
-        combined_mask = conf_mask | bp_mask | dp_mask | size_mask | pose_mask
+        combined_mask = conf_mask | bp_mask | size_mask | pose_mask | env_mask
         corrected_data_array, _, _ = outlier_removal(pred_data_array, combined_mask)
 
         return corrected_data_array

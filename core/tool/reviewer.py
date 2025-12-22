@@ -14,7 +14,7 @@ from core.io import Frame_Extractor, Frame_Extractor_Img
 from ui import Clickable_Video_Label, Video_Slider_Widget, Shortcut_Manager
 from utils.helper import frame_to_pixmap, handle_unsaved_changes_on_close, crop_coord_to_array, validate_crop_coord
 from utils.track import swap_track
-from utils.dataclass import Loaded_DLC_Data
+from utils.dataclass import Loaded_DLC_Data, Plot_Config
 from utils.logger import Loggerbox, QMessageBox
 
 
@@ -68,11 +68,15 @@ class Parallel_Review_Dialog(QDialog):
             self.corrected_frames, self.ambiguous_frames = tc_frame_tuple
             self.corrected_set = set(self.corrected_frames)
             self.ambiguous_set = set(self.ambiguous_frames)
+            self.nonempty_set = set(np.where(np.any(~np.isnan(new_data_array), axis=(1,2)))[0])
         else:
             self.frame_status_array = np.zeros((self.total_marked_frames,), dtype=np.uint8)
             self.uno.save_state_for_undo(self.frame_status_array)
 
-        self.plotter = Prediction_Plotter(dlc_data=self.dlc_data)
+        plot_config = Plot_Config(
+            plot_opacity =0.7, point_size = 6.0, confidence_cutoff = 0.0, hide_text_labels = False, edit_mode = False,
+            plot_labeled = True, plot_pred = True, navigate_labeled = False, auto_snapping = False, navigate_roi = False)
+        self.plotter = Prediction_Plotter(dlc_data=self.dlc_data, plot_config=plot_config)
 
         layout = QVBoxLayout(self)
         frame_info_layout, video_label_layout = self._setup_video_display()
@@ -114,13 +118,13 @@ class Parallel_Review_Dialog(QDialog):
             self.global_frame_label.setVisible(False)
 
         video_label_layout = QHBoxLayout()
-        old_label = QLabel("Old Predictions")
+        old_label = QLabel("Old Predictions") if not self.tc_mode else QLabel("Last Frame With Prediction")
         old_label.setAlignment(Qt.AlignCenter)
         old_label.setFont(font)
         old_label.setStyleSheet("color: #4B4B4B; background: #F0F0F0; padding: 6px; border-radius: 4px;")
         old_label.setFixedHeight(30)
 
-        new_label = QLabel("New Predictions")
+        new_label = QLabel("New Predictions") if not self.tc_mode else QLabel("Current Frame")
         new_label.setAlignment(Qt.AlignCenter)
         new_label.setFont(font)
         new_label.setStyleSheet("color: #4B4B4B; background: #F0F0F0; padding: 6px; border-radius: 4px;")
@@ -130,7 +134,7 @@ class Parallel_Review_Dialog(QDialog):
         video_label_layout.addWidget(new_label)
 
         self.video_layout = QHBoxLayout()
-        self.video_labels = []
+        self.video_labels:List[Clickable_Video_Label] = []
         for col in range(2):
             label = Clickable_Video_Label(col, self)
             label.setAlignment(Qt.AlignCenter)
@@ -218,28 +222,59 @@ class Parallel_Review_Dialog(QDialog):
     def _display_current_frame(self):
         global_idx = self.frame_list[self.current_frame_idx]
         frame = self.extractor.get_frame(self.current_frame_idx)
-        if frame is None:
-            for i, label in enumerate(self.video_labels):
-                label.setText(f"Frame {global_idx} unavailable")
-                label.setPixmap(QtGui.QPixmap())
-            return
 
-        for i in range(2):
-            view = frame.copy()
-            pred_data = None
-            if i == 0 and self.pred_data_array is not None:
-                pred_data = self.pred_data_array[global_idx]
-            elif i == 1 and self.new_data_array is not None:
-                pred_data = self.new_data_array[global_idx]
+        if self.tc_mode:
+            last_frame_idx = self._back_search_nonempty_frames()
+            last_frame = self.extractor.get_frame(last_frame_idx)
+            if frame is None:
+                self.video_labels[1].setText(f"Frame {global_idx} unavailable")
+                return
+            if last_frame is None:
+                self.video_labels[0].setText(f"Frame {last_frame_idx} unavailable")
 
-            if pred_data is not None and not np.all(np.isnan(pred_data)):
-                view = self.plotter.plot_predictions(view, pred_data)
+            pred_data_now, pred_data_last = None, None
+            pred_data_now = self.new_data_array[global_idx]
+            if global_idx != 0:
+                pred_data_last = self.new_data_array[last_frame_idx]
+            
+            if pred_data_now is not None:
+                frame = self.plotter.plot_predictions(frame, pred_data_now)
+            if pred_data_last is not None:
+                last_frame = self.plotter.plot_predictions(last_frame, pred_data_last)
 
-            h, w = self.video_labels[i].height(), self.video_labels[i].width()
-            resized = cv2.resize(view, (w, h), interpolation=cv2.INTER_AREA)
-            pixmap = frame_to_pixmap(resized)
-            self.video_labels[i].setPixmap(pixmap)
-            self.video_labels[i].setText("")
+            for i in range(2):
+                view = frame if i == 1 else last_frame
+                if view is None:
+                    continue
+                h, w = self.video_labels[i].height(), self.video_labels[i].width()
+                resized = cv2.resize(view, (w, h), interpolation=cv2.INTER_AREA)
+                pixmap = frame_to_pixmap(resized)
+                self.video_labels[i].setPixmap(pixmap)
+                self.video_labels[i].setText("")
+
+        else:
+            if frame is None:
+                for i, label in enumerate(self.video_labels):
+                    label.setText(f"Frame {global_idx} unavailable")
+                    label.setPixmap(QtGui.QPixmap())
+                return
+
+            for i in range(2):
+                view = frame.copy()
+                pred_data = None
+                if i == 0 and self.pred_data_array is not None:
+                    pred_data = self.pred_data_array[global_idx]
+                elif i == 1 and self.new_data_array is not None:
+                    pred_data = self.new_data_array[global_idx]
+
+                if pred_data is not None and not np.all(np.isnan(pred_data)):
+                    view = self.plotter.plot_predictions(view, pred_data)
+
+                h, w = self.video_labels[i].height(), self.video_labels[i].width()
+                resized = cv2.resize(view, (w, h), interpolation=cv2.INTER_AREA)
+                pixmap = frame_to_pixmap(resized)
+                self.video_labels[i].setPixmap(pixmap)
+                self.video_labels[i].setText("")
 
         self.progress_slider.set_current_frame(self.current_frame_idx)
         self._update_button_states()
@@ -308,6 +343,16 @@ class Parallel_Review_Dialog(QDialog):
         self.new_data_array = swap_track(self.new_data_array, self.current_frame_idx, swap_range=[-1])
         self._display_current_frame()
         self._refresh_ui()
+
+    def _back_search_nonempty_frames(self, lookback_window:int=10) -> int:
+        frame_idx = self.current_frame_idx
+        while frame_idx > self.current_frame_idx - lookback_window:
+            frame_idx -= 1
+            if frame_idx < 0:
+                return -1
+            if frame_idx in self.nonempty_set:
+                return frame_idx
+        return self.current_frame_idx-1
 
     ###################################################################################################
 
