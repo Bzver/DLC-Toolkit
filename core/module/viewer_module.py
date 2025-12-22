@@ -327,7 +327,7 @@ class Frame_View:
     def _handle_inference_intervals(self, intervals:dict, skip_existing:bool):
         existing_frames = []
 
-        if skip_existing and self.dm.dlc_data.pred_data_array is not None:
+        if skip_existing and self.dm.dlc_data is not None and self.dm.dlc_data.pred_data_array is not None:
             existing_frames = np.where(np.any(~np.isnan(self.dm.dlc_data.pred_data_array), axis=(1,2)))[0].tolist()
 
         inference_list= calculate_blob_inference_intervals(self.dm.blob_array, intervals, existing_frames)

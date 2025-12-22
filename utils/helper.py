@@ -221,16 +221,15 @@ def calculate_blob_inference_intervals(blob_array:np.ndarray, intervals:Dict[str
     total_frames = blob_array.shape[0]
 
     inference_list = []
-    last_inferenced_frame = 0
 
     animal_count_array, merge_array = clean_blob_array_for_inference(blob_array)
 
     last_inferenced_frame = -max(intervals.values())
-    for frame_idx in range(total_frames):
+    for frame_idx in range(total_frames):   
         animal_count = animal_count_array[frame_idx]
         merge_status = merge_array[frame_idx]
 
-        if existing_set and frame_idx in existing_set:
+        if frame_idx in existing_set:
             last_inferenced_frame = frame_idx
             continue
 

@@ -4,6 +4,9 @@ import logging
 from logging.handlers import RotatingFileHandler
 from PySide6.QtWidgets import QMessageBox
 
+
+DEBUG = False
+
 def setup_logging(name='BVT', level=logging.INFO, max_bytes=10 * 1024 * 1024, backup_count=5):
     logger = logging.getLogger(name)
     logger.setLevel(level)
@@ -20,7 +23,7 @@ def setup_logging(name='BVT', level=logging.INFO, max_bytes=10 * 1024 * 1024, ba
 
         log_dir = 'logs'
         os.makedirs(log_dir, exist_ok=True)
-        log_file = os.path.join(log_dir, 'bvt.log')
+        log_file = os.path.join(log_dir, 'bvt.log') if not DEBUG else os.path.join(log_dir, 'bvt-DBG.log')
 
         file_handler = RotatingFileHandler(
             filename=log_file,
@@ -36,7 +39,10 @@ def setup_logging(name='BVT', level=logging.INFO, max_bytes=10 * 1024 * 1024, ba
 
     return logger
 
-logger = setup_logging()
+if DEBUG:
+    logger = setup_logging(level=logging.DEBUG, max_bytes=100*1024*1024)
+else:
+    logger = setup_logging()
 
 _HEADLESS_MODE = False
 _HEADLESS_RESPONSE = QMessageBox.No
