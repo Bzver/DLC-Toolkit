@@ -1,8 +1,10 @@
 import numpy as np
 from itertools import combinations
+from scipy.spatial import ConvexHull
+from matplotlib.path import Path
 from typing import Tuple, Dict
 
-from .pose_analysis import calculate_pose_centroids, calculate_pose_bbox, calculate_pose_rotations
+from .pose_analysis import calculate_pose_centroids, calculate_pose_rotations
 from .pose_worker import pose_alignment_worker
 from utils.helper import get_instances_on_current_frame, bye_bye_runtime_warning
 
@@ -69,62 +71,6 @@ def outlier_bodypart(pred_data_array:np.ndarray, threshold:int=2) -> np.ndarray:
         discovered_bodyparts > 0) # No need to include empty instances
     
     return low_bp_mask
-
-def outlier_duplicate(
-        pred_data_array:np.ndarray,
-        bp_threshold:float=0.5,
-        dist_threshold:float=10.0
-        ) -> np.ndarray:
-    """
-    Detects duplicate detections by identifying instances whose keypoints are abnormally close.
-
-    Compares all pairs of instances. An instance is flagged if a large proportion of its keypoints 
-    are within a small distance of another instance's keypoints. The lower-confidence or smaller 
-    instance is marked as the duplicate.
-
-    Args:
-        pred_data_array (np.ndarray): Prediction array of shape (num_frames, num_instances, num_keypoints * 3).
-        bp_threshold (float): Proportion of overlapping keypoints required to flag duplicates.
-        dist_threshold (float): Maximum distance (in pixels) for two keypoints to be considered overlapping.
-
-    Returns:
-        np.ndarray: Boolean mask of shape (num_frames, num_instances) where True indicates a duplicate instance.
-    """
-    total_frames, instance_count, _ = pred_data_array.shape
-    instances = list(range(instance_count))
-    duplicate_mask = np.zeros((total_frames, instance_count), dtype=bool)
-
-    for inst_1_idx, inst_2_idx in combinations(instances, 2):
-        inst_1_x = pred_data_array[:, inst_1_idx, 0::3]
-        inst_1_y = pred_data_array[:, inst_1_idx, 1::3]
-        inst_2_x = pred_data_array[:, inst_2_idx, 0::3]
-        inst_2_y = pred_data_array[:, inst_2_idx, 1::3]
-
-        if np.all(np.isnan(inst_1_x)) or np.all(np.isnan(inst_2_x)):
-            continue
-
-        with bye_bye_runtime_warning():
-            inst_1_conf = np.nanmean(pred_data_array[:, inst_1_idx, 2::3], axis=1)
-            inst_2_conf = np.nanmean(pred_data_array[:, inst_2_idx, 2::3], axis=1)
-        inst_1_valid_kp = np.sum(~np.isnan(inst_1_x), axis=1)
-        inst_2_valid_kp = np.sum(~np.isnan(inst_2_x), axis=1)
-
-        euclidean_dist = np.sqrt((inst_1_x - inst_2_x)**2 + (inst_1_y - inst_2_y)**2)
-
-        close_kp = np.sum(euclidean_dist <= dist_threshold, axis=1)
-        suspect_list = np.where(close_kp > 0)[0].tolist()
-
-        for frame_idx in suspect_list:
-            if close_kp[frame_idx] < min(inst_1_valid_kp[frame_idx],inst_2_valid_kp[frame_idx]) * bp_threshold:
-                continue
-            elif close_kp[frame_idx] > max(inst_1_valid_kp[frame_idx],inst_2_valid_kp[frame_idx]) * bp_threshold:
-                inst_to_mark = inst_2_idx if inst_1_conf[frame_idx] >= inst_2_conf[frame_idx] else inst_1_idx
-            else:
-                inst_to_mark = inst_2_idx if inst_1_valid_kp[frame_idx] > inst_2_valid_kp[frame_idx] else inst_1_idx
-            
-            duplicate_mask[frame_idx, inst_to_mark] = True
-            
-    return duplicate_mask
 
 def outlier_size(
         pred_data_array:np.ndarray,
@@ -259,28 +205,35 @@ def outlier_flicker(pred_data_array: np.ndarray) -> np.ndarray:
 
     return flicker_mask
 
-def outlier_enveloped(pred_data_array:np.ndarray, threshold:float=0.8) -> np.ndarray:
-    """
-    Flags smaller instances that are largely contained within the bounding box of a larger, nearby instance.
 
-    Used to detect potential occlusion or false positives where one animal's pose is incorrectly 
-    detected inside another's.
+def outlier_enveloped(
+    pred_data_array: np.ndarray,
+    threshold: float = 0.75,
+    use_convex_hull: bool = True,
+    padding: float = 0.1  # padding as fraction of hull size (only for AABB fallback)
+) -> np.ndarray:
+    """
+    Flags smaller instances whose keypoints are largely contained inside the *shape* (e.g., convex hull)
+    of a larger, nearby instance — instead of just its AABB.
 
     Args:
-        pred_data_array (np.ndarray): Prediction array of shape (num_frames, num_instances, num_keypoints * 3).
-        threshold (float): Proportion of a small instance's keypoints that must lie within 
-                                     the larger instance's bounding box to be flagged.
+        pred_data_array: (num_frames, num_instances, num_keypoints * 3)
+        threshold: proportion of small instance's valid points that must be inside the large instance's hull.
+        use_convex_hull: if False, falls back to padded AABB.
+        padding: only used if use_convex_hull=False (same as before: 10% bbox padding).
 
     Returns:
-        np.ndarray: Boolean mask of shape (num_frames, num_instances) where True indicates an enveloped instance.
+        Boolean mask (num_frames, num_instances): True → flagged as enveloped.
     """
     total_frames, instance_count, _ = pred_data_array.shape
 
     all_x, all_y = pred_data_array[:, :, 0::3], pred_data_array[:, :, 1::3]
-    min_x_array, min_y_array, max_x_array, max_y_array = calculate_pose_bbox(all_x, all_y)
+
+    min_x_array, max_x_array = np.nanmin(all_x, axis=2), np.nanmax(all_x, axis=2)
+    min_y_array, max_y_array = np.nanmin(all_y, axis=2), np.nanmax(all_y, axis=2)
     size_array = (max_y_array - min_y_array) * (max_x_array - min_x_array)
     valid_sizes = size_array[~np.isnan(size_array)]
-    bbox_length = np.sqrt(np.nanmax(valid_sizes)) 
+    bbox_length = np.sqrt(np.nanmax(valid_sizes)) if valid_sizes.size > 0 else 1.0
 
     enveloped_mask = np.zeros((total_frames, instance_count), dtype=bool)
 
@@ -299,40 +252,71 @@ def outlier_enveloped(pred_data_array:np.ndarray, threshold:float=0.8) -> np.nda
         if not close_pairs:
             continue
 
+        instance_points = {}
+        for inst_idx in valid_inst:
+            x = all_x[frame_idx, inst_idx]
+            y = all_y[frame_idx, inst_idx]
+            mask = ~np.isnan(x) & ~np.isnan(y)
+            pts = np.column_stack([x[mask], y[mask]])  # (K_valid, 2)
+            if pts.shape[0] >= 3:
+                instance_points[inst_idx] = pts
+
         for inst_1_idx, inst_2_idx in close_pairs:
-            inst_1_size = size_array[frame_idx, inst_1_idx]
-            inst_2_size = size_array[frame_idx, inst_2_idx]
-            if inst_1_size > inst_2_size:
-                small_inst = inst_2_idx
-                large_inst = inst_1_idx
+            if inst_1_idx not in instance_points or inst_2_idx not in instance_points:
+                continue
+
+            pts1 = instance_points[inst_1_idx]
+            pts2 = instance_points[inst_2_idx]
+
+            size1 = size_array[frame_idx, inst_1_idx]
+            size2 = size_array[frame_idx, inst_2_idx]
+
+            if size1 > size2:
+                large_idx, small_idx = inst_1_idx, inst_2_idx
+                large_pts, small_pts = pts1, pts2
             else:
-                small_inst = inst_1_idx
-                large_inst = inst_2_idx
+                large_idx, small_idx = inst_2_idx, inst_1_idx
+                large_pts, small_pts = pts2, pts1
 
-            small_x = all_x[frame_idx, small_inst]
-            small_y = all_y[frame_idx, small_inst]
+            try:
+                if use_convex_hull:
+                    hull = ConvexHull(large_pts)
+                    hull_vertices = large_pts[hull.vertices]  # (M, 2)
+                    path = Path(hull_vertices)
+                    in_hull = path.contains_points(small_pts)
+                else:
+                    min_x, max_x = min_x_array[frame_idx, large_idx], max_x_array[frame_idx, large_idx]
+                    min_y, max_y = min_y_array[frame_idx, large_idx], max_y_array[frame_idx, large_idx]
+                    w, h = max_x - min_x, max_y - min_y
+                    padded_min_x = min_x - w * padding
+                    padded_max_x = max_x + w * padding
+                    padded_min_y = min_y - h * padding
+                    padded_max_y = max_y + h * padding
+                    in_hull = (
+                        (small_pts[:, 0] >= padded_min_x) &
+                        (small_pts[:, 0] <= padded_max_x) &
+                        (small_pts[:, 1] >= padded_min_y) &
+                        (small_pts[:, 1] <= padded_max_y)
+                    )
+            except Exception as e:
+                min_x, max_x = np.nanmin(large_pts[:, 0]), np.nanmax(large_pts[:, 0])
+                min_y, max_y = np.nanmin(large_pts[:, 1]), np.nanmax(large_pts[:, 1])
+                w, h = (max_x - min_x), (max_y - min_y)
+                if w == 0 or h == 0: 
+                    continue
+                padded_min_x = min_x - w * padding
+                padded_max_x = max_x + w * padding
+                padded_min_y = min_y - h * padding
+                padded_max_y = max_y + h * padding
+                in_hull = (
+                    (small_pts[:, 0] >= padded_min_x) &
+                    (small_pts[:, 0] <= padded_max_x) &
+                    (small_pts[:, 1] >= padded_min_y) &
+                    (small_pts[:, 1] <= padded_max_y)
+                )
 
-            min_x = min_x_array[frame_idx, large_inst]
-            max_x = max_x_array[frame_idx, large_inst]
-            min_y = min_y_array[frame_idx, large_inst]
-            max_y = max_y_array[frame_idx, large_inst]
-            width = max_x - min_x
-            height = max_y - min_y
-            padded_min_x = min_x - width * 0.1
-            padded_max_x = max_x + width * 0.1
-            padded_min_y = min_y - height * 0.1
-            padded_max_y = max_y + height * 0.1
-
-            valid = np.logical_and(~np.isnan(small_x), ~np.isnan(small_y))
-            in_bbox_mask = (
-                (small_x >= padded_min_x) &
-                (small_x <= padded_max_x) &
-                (small_y >= padded_min_y) &
-                (small_y <= padded_max_y)
-            )
-
-            in_ratio = np.sum(in_bbox_mask & valid) / np.sum(valid)
+            in_ratio = np.mean(in_hull)
             if in_ratio >= threshold:
-                enveloped_mask[frame_idx, small_inst] = True
-            
+                enveloped_mask[frame_idx, small_idx] = True
+
     return enveloped_mask
