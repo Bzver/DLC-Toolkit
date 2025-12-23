@@ -121,13 +121,14 @@ class Frame_Label:
         self.vid_play.swap_display_for_graphics_view(self.gview)
         self._setup_shortcuts()
         
-        self.pred_data_array = self.dm.dlc_data.pred_data_array
+        self.pred_data_array = self.dm.dlc_data.pred_data_array.copy()
         if not self.gview.is_kp_edit:
             self._direct_keypoint_edit()
 
     def deactivate(self, menu_widget:Menu_Widget):
         self._remove_menu(menu_widget)
         self.sc_label.clear()
+        self.dm.dlc_data.pred_data_array = self.pred_data_array.copy()
         self.pred_data_array = None
 
     def _remove_menu(self, menu_widget:Menu_Widget):
