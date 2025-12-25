@@ -83,6 +83,7 @@ class Frame_App(QMainWindow):
                             ("Load DLC Label Data", self._load_dlc_label_data),
                             ("Load Prediction", self._load_prediction),
                             ("Load DLC Config", self._load_dlc_config),
+                            ("Reset", self._reset_state),
                         ]
                     },
                     {
@@ -123,6 +124,8 @@ class Frame_App(QMainWindow):
 
     def _reset_state(self):
         self._switch_to_fview()
+        self.at.display_current_frame(reset=True)
+        
         self.dm.reset_dm()
         self.vm.reset_vm()
         self.vid_play.set_total_frames(0)

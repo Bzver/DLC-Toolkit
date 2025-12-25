@@ -675,8 +675,9 @@ class Frame_Label:
         current_frame_inst = get_instances_on_current_frame(self.pred_data_array, self.dm.current_frame_idx)
         if not current_frame_inst:
             return 0
-        if len(current_frame_inst) < self.dm.dlc_data.individuals:
-            return max(current_frame_inst) + 1
+        if len(current_frame_inst) < len(self.dm.dlc_data.individuals):
+            available_inst = [inst for inst in range(self.dm.dlc_data.instance_count) if inst not in current_frame_inst]
+            return available_inst[0]
         if self.gview.sbox is None:
             if self.last_selected_idx is None:
                 Loggerbox.info(self.main, "No Instance Selected",

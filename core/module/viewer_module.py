@@ -1,6 +1,7 @@
 import numpy as np
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmap
 
 from core.runtime import Data_Manager, Video_Manager
 from core.tool import Mark_Generator, Blob_Counter, Prediction_Plotter
@@ -99,9 +100,15 @@ class Frame_View:
 
 ###################################################################################################################################################
 
-    def display_current_frame(self):
+    def display_current_frame(self, reset:bool=False):
+        if reset:
+            self.vid_play.display.setPixmap(QPixmap())
+            self.vid_play.display.setText("No video loaded")
+            return
+
         if not self.vm.check_status_msg():
             self.vid_play.display.setText("No video loaded")
+            return
 
         if self.dm.dlc_data is not None and not hasattr(self, "plotter"):
             self.plotter = Prediction_Plotter(dlc_data=self.dm.dlc_data, plot_config=self.dm.plot_config)
