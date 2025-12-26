@@ -47,8 +47,8 @@ def save_predictions_to_new_h5(
         dlc_data:Loaded_DLC_Data,
         pred_data_array:np.ndarray,
         save_path:str,
-        frame_list:list|None,
-        to_dlc:bool,
+        frame_list:list|None=None,
+        to_dlc:bool=False,
         ):
     logger.debug(f"[H5OP] Attempting to save predictions to new H5. Save path: {save_path}")
     prediction_to_csv(

@@ -186,7 +186,10 @@ class DLC_Inference(QDialog):
             shuffle_config = yaml.safe_load(scf)
 
         method = shuffle_config["method"]
-        model_name = shuffle_config["model"]["backbone"]["model_name"]
+        if shuffle_config["model"]["backbone"]["type"] == "CondPreNet":
+            model_name = "CondPreNet_" + shuffle_config["model"]["backbone"]["backbone"]["model_name"]
+        else:
+            model_name = shuffle_config["model"]["backbone"]["model_name"]
 
         config_text = f"Model Name: {model_name}"
         
