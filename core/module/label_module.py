@@ -94,7 +94,7 @@ class Frame_Label:
                 "buttons": [
                     ("Direct Keypoint Edit (Q)", self._direct_keypoint_edit),
                     ("Open Outlier Cleaning Menu", self._call_outlier_finder),
-                    ("Remove Current Frame From Refine Task", self._toggle_frame_status),
+                    ("Mark Current Frame As Unrefined", self._toggle_frame_status),
                     ("Mark All As Refined", self._mark_all_as_refined),
                     ("Undo Changes (Ctrl+Z)", self._undo_changes),
                     ("Redo Changes (Ctrl+Y)", self._redo_changes),

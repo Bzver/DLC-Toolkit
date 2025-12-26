@@ -524,7 +524,7 @@ class Frame_App(QMainWindow):
             crop_status = self.ask_crop_before_export()
             self.dm.save_to_dlc(save_folder, crop_status)
         except Exception as e:
-            Loggerbox.error(self, "Crop Region Not Set", e, exc=e)
+            Loggerbox.error(self, "Failed to Save to DLC", e, exc=e)
         else:
             self.refresh_and_display()
 

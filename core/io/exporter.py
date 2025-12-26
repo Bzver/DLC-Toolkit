@@ -52,11 +52,12 @@ class Exporter:
             logger.debug("[EXPORTER] No corrected indices returned from frame extraction.")
 
         if frame_only:
-            if frame_only:
-                return corrected_indices
-            self._extract_pred()
-            logger.info("[EXPORTER] Prediction data extracted successfully.")
             return corrected_indices
+
+        self._extract_pred()
+        logger.info("[EXPORTER] Prediction data extracted successfully.")
+        return corrected_indices
+
     def export_frame_to_video(self):
         logger.info("[EXPORTER] Starting frame export to video.")
         return self._continuous_frame_extraction(to_video=True)

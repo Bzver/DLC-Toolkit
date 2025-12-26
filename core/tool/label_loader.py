@@ -50,8 +50,10 @@ class DLC_Save_Dialog(QDialog):
         new_dd.exec()
     
     def _folder_selected(self, folder_path:str):
-        os.makedirs(folder_path, exist_ok=True)
-        self.folder_selected.emit(folder_path)
+        dlc_folder = os.path.dirname(self.dlc_data.dlc_config_filepath)
+        save_path = os.path.join(dlc_folder, "labeled-data", folder_path)
+        os.makedirs(save_path, exist_ok=True)
+        self.folder_selected.emit(save_path)
         self.accept()
 
 
