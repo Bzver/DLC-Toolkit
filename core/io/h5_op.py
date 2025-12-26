@@ -47,13 +47,17 @@ def save_predictions_to_new_h5(
         dlc_data:Loaded_DLC_Data,
         pred_data_array:np.ndarray,
         save_path:str,
+        frame_list:list|None,
+        to_dlc:bool,
         ):
     logger.debug(f"[H5OP] Attempting to save predictions to new H5. Save path: {save_path}")
     prediction_to_csv(
         dlc_data=dlc_data,
         pred_data_array=pred_data_array,
+        frame_list=frame_list,
         save_path=save_path.replace(".h5", ".csv"),
-        keep_conf=True,
+        keep_conf=not to_dlc,
+        to_dlc=to_dlc,
         )
     csv_to_h5(
         csv_path=save_path.replace(".h5", ".csv"),
@@ -187,3 +191,13 @@ def fix_h5_key_order_on_save(pred_file, key: str, multi_animal: bool, keypoints:
     pred_file[key][target_key_block][...] = label_array_block
     logger.debug("[H5OP] Finished fixing H5 key order on save.")
     return pred_file
+
+def get_frame_list_from_h5(filepath):
+    with h5py.File(filepath, "a") as pred_file:
+        key, subkey = validate_h5_keys(pred_file)
+        if not key or not subkey:
+            raise ValueError(f"No valid key found in '{filepath}'")
+        labeled_frame_list = pred_file[key]["axis1_level2"].asstr()[()]
+        labeled_frame_list = [int(f.split("img")[1].split(".")[0]) for f in labeled_frame_list]
+        labeled_frame_list.sort()
+        return labeled_frame_list

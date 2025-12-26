@@ -5,7 +5,10 @@ from PySide6.QtWidgets import QFileDialog, QDialog
 from typing import Callable, Tuple, List, Optional, Dict
 
 from .frame_man import Frame_Manager
-from core.io import Prediction_Loader, Exporter, backup_existing_prediction, save_predictions_to_new_h5, prediction_to_csv
+from core.io import (
+    Prediction_Loader, Exporter,
+    backup_existing_prediction, save_predictions_to_new_h5, get_frame_list_from_h5,
+    prediction_to_csv, remove_confidence_score)
 from ui import Head_Tail_Dialog
 from utils.helper import infer_head_tail_indices, build_angle_map
 from utils.pose import calculate_canonical_pose, calculate_pose_bbox
@@ -458,10 +461,16 @@ class Data_Manager:
 
     ###################################################################################################################################################
 
-    def save_pred(self, pred_data_array:np.ndarray, save_path:str):
+    def save_pred(self, pred_data_array:np.ndarray, save_path:str, to_dlc:bool=False):
+        frame_list = None
+        if to_dlc:
+            frame_list = get_frame_list_from_h5(save_path)
+
         if os.path.isfile(save_path):
             backup_existing_prediction(save_path)
-        save_predictions_to_new_h5(self.dlc_data, pred_data_array, save_path)
+
+        data_array = remove_confidence_score(pred_data_array) if to_dlc else pred_data_array
+        save_predictions_to_new_h5(self.dlc_data, data_array, save_path, frame_list, to_dlc)
 
     def save_pred_to_csv(self, pred_data_array:np.ndarray, save_path:str):
         if os.path.isfile(save_path):

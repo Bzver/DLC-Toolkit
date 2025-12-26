@@ -284,7 +284,7 @@ class Frame_App(QMainWindow):
         self.status_bar.show_message(f"Workspace Saved to {self.dm.video_file}")
         self.dm.save_workspace()
 
-    def _save_prediction(self):
+    def _save_prediction(self, to_dlc:bool=False):
         if not self._save_blocker():
             return
         if self.dm.dlc_label_mode:
@@ -299,7 +299,7 @@ class Frame_App(QMainWindow):
         if not save_path.lower().endswith(('.h5','.hdf5')):
             save_path += '.h5'
         try:
-            self.dm.save_pred(self.dm.dlc_data.pred_data_array, save_path)
+            self.dm.save_pred(self.dm.dlc_data.pred_data_array, save_path, to_dlc)
         except Exception as e:
             Loggerbox.error(self, "Saving Error", f"An error occurred during saving: {e}", exc=e)
         else:
@@ -336,7 +336,7 @@ class Frame_App(QMainWindow):
         self.dm.save_workspace()
 
         if self.dm.dlc_label_mode:
-            self._save_prediction()
+            self._save_prediction(to_dlc=True)
         else:
             save_dialog = DLC_Save_Dialog(self.dm.dlc_data, self.dm.roi, self.dm.video_file, self)
             save_dialog.folder_selected.connect(self._on_save_folder_return)
@@ -526,7 +526,7 @@ class Frame_App(QMainWindow):
         except Exception as e:
             Loggerbox.error(self, "Failed to Save to DLC", e, exc=e)
         else:
-            self.refresh_and_display()
+            self.at.refresh_and_display()
 
     def changeEvent(self, event):
         if event.type() == QEvent.Type.WindowStateChange:
