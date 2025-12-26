@@ -32,6 +32,7 @@ class Data_Manager:
         self.total_frames, self.current_frame_idx = 0, 0
         self.video_file, self.video_name = None, None
         self.dlc_data, self.label_file, self.canon_pose = None, None, None
+        self.dlc_label_mode = False
 
         self.plot_config = Plot_Config(
             plot_opacity =1.0, point_size = 6.0, confidence_cutoff = 0.0, hide_text_labels = False, edit_mode = False,
@@ -69,6 +70,8 @@ class Data_Manager:
                 return
             prediction_path = os.path.join(image_folder, h5_candidates[0])
 
+        self.dlc_label_mode = True
+        logger.info("[MODE] Load DLC Label Mode.")
         self.dlc_data.prediction_filepath = prediction_path
         dlc_dir = os.path.dirname(os.path.dirname(image_folder))
         dlc_config = os.path.join(dlc_dir, "config.yaml")
@@ -276,6 +279,8 @@ class Data_Manager:
 
     def load_labeled_overlay(self, label_file:str=None):
         """Load labeled frames as an separate overlay to the current prediction file."""
+        if self.dlc_label_mode:
+            return
         self.label_file = label_file
         self.label_data_array = np.full_like(self.dlc_data.pred_data_array, np.nan)
         data_loader = Prediction_Loader(self.dlc_data.dlc_config_filepath, label_file)
@@ -374,6 +379,7 @@ class Data_Manager:
             'inst_count_per_frame_pred': self.inst_count_per_frame_pred,
             'blob_array': self.blob_array,
             'roi': self.roi,
+            'dlc_label_mode': self.dlc_label_mode,
         }
         try:
             with open(file_path, 'wb') as f:
@@ -386,6 +392,7 @@ class Data_Manager:
             workspace_state = pickle.load(f)
 
         # Restore all attributes
+        self.dlc_label_mode = workspace_state.get('dlc_label_mode', False)
         self.total_frames = workspace_state.get('total_frames', 0)
         self.current_frame_idx = workspace_state.get('current_frame_idx', 0)
         self.video_file = workspace_state.get('video_file')
@@ -432,7 +439,7 @@ class Data_Manager:
         if self.dlc_data is not None and self.dlc_data.pred_data_array is not None:
             self._init_loaded_data()
     
-        if not os.path.isfile(self.video_file):
+        if not self.dlc_label_mode and not os.path.isfile(self.video_file):
             Loggerbox.error(self.main, "Video File Missing", f"Cannot find video at {self.video_file}")
             self._select_missing_video()
             if not self.video_file:
@@ -473,7 +480,7 @@ class Data_Manager:
 
         crop_coord = self.roi if crop_mode else None
         refd_list = self.get_frames("refined")
-        frame_list = refd_list if refd_list else self.frames_in_any("marked", "approved")
+        frame_list = refd_list if refd_list else self.frames_in_any(["marked", "approved"])
 
         if os.path.isfile(label_file):
             backup_existing_prediction(label_file)

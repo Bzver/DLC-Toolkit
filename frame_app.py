@@ -287,10 +287,13 @@ class Frame_App(QMainWindow):
     def _save_prediction(self):
         if not self._save_blocker():
             return
-        default_path, _ = os.path.splitext(self.dm.video_file)
-        save_path, _ = QFileDialog.getSaveFileName(
-            self, "Save Prediction as H5", f"{default_path}.h5",  "HDF5 Files (*.h5)"
-        )
+        if self.dm.dlc_label_mode:
+            save_path = os.path.join(self.dm.video_file, f"CollectedData_{self.dm.dlc_data.scorer}.h5")
+        else:
+            default_path, _ = os.path.splitext(self.dm.video_file)
+            save_path, _ = QFileDialog.getSaveFileName(
+                self, "Save Prediction as H5", f"{default_path}.h5",  "HDF5 Files (*.h5)"
+            )
         if not save_path:
             return
         if not save_path.lower().endswith(('.h5','.hdf5')):
@@ -324,19 +327,20 @@ class Frame_App(QMainWindow):
     def _save_to_dlc(self):
         if not self._save_blocker():
             return
+        if self.dm.dlc_label_mode:
+            self.dm.add_frames("marked", range(self.dm.total_frames))
         if not self.dm.frames_in_any({"marked", "refined", "rejected", "approved"}):
-            reply = Loggerbox.question(
-                self, "No Marked Frames", "No frames have been marked for export. Mark all?")
-            if reply == QMessageBox.Yes:
-                self.dm.add_frames("marked", range(self.dm.total_frames))
-            else:
-                return
+            Loggerbox.warning(self, "No Marked Frames", "Mark some frames for export.")
+            return
 
         self.dm.save_workspace()
 
-        save_dialog = DLC_Save_Dialog(self.dm.dlc_data, self.dm.roi, self.dm.video_file, self)
-        save_dialog.folder_selected.connect(self._on_save_folder_return)
-        save_dialog.exec()
+        if self.dm.dlc_label_mode:
+            self._save_prediction()
+        else:
+            save_dialog = DLC_Save_Dialog(self.dm.dlc_data, self.dm.roi, self.dm.video_file, self)
+            save_dialog.folder_selected.connect(self._on_save_folder_return)
+            save_dialog.exec()
 
     def _save_blocker(self):
         if self.dm.dlc_data is not None and self.dm.dlc_data.pred_data_array is not None:
