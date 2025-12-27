@@ -184,7 +184,7 @@ def get_existing_projects(config_path:str) -> List[str]:
         proj_file = os.path.join(proj_folder, f"CollectedData_{scorer}.h5")
 
         valid = os.path.isfile(proj_file)
-        logger.info(f"[IO] Found project folder: {proj_folder} | Valid: {valid}")
+        logger.debug(f"[IO] Found project folder: {proj_folder} | Valid: {valid}")
         if valid:
             projects.append(proj_folder)
 

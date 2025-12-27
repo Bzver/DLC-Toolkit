@@ -114,7 +114,6 @@ def fix_h5_kp_order(pred_file: dict, key: str, config_data:dict) -> np.ndarray:
     logger.debug(f"[H5OP] Label array from H5 (initial): {label_array}")
 
     if n_cols % (num_keypoint * 2) != 0 or  n_cols // (num_keypoint * 2) != instance_count:
-        logger.warning(f"[H5OP] Column count {n_cols} does not match expected ({num_keypoint * 2 * instance_count}). Returning original data.")
         return data
 
     # Create mapping: new order index -> original keypoint index

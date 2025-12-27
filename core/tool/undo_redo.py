@@ -3,11 +3,12 @@ from typing import Optional
 
 from utils.logger import logger
 
+
 class Uno_Stack:
     def __init__(self, max_undo_stack_size: int = 100):
         self.undo_stack, self.redo_stack = [], []
         self.max_undo_stack_size = max_undo_stack_size
-        logger.info(f"[UNO] Initialized Uno_Stack with max_undo_stack_size={max_undo_stack_size}")
+        logger.debug(f"[UNO] Initialized Uno_Stack with max_undo_stack_size={max_undo_stack_size}")
 
     def save_state_for_undo(self, data_array):
         self.redo_stack = []
@@ -18,7 +19,7 @@ class Uno_Stack:
         
         if len(self.undo_stack) > self.max_undo_stack_size:
             self.undo_stack.pop(0)
-            logger.warning(
+            logger.debug(
                 f"[UNO] Undo stack exceeded max size ({self.max_undo_stack_size}); oldest state removed. "
                 f"New size: {len(self.undo_stack)}"
             )
@@ -30,7 +31,7 @@ class Uno_Stack:
 
         self.redo_stack.append(data_array.copy())
         data_array = self.undo_stack.pop()
-        logger.info(
+        logger.debug(
             f"[UNO] Undo performed. "
             f"Undo stack size: {len(self.undo_stack)}, Redo stack size: {len(self.redo_stack)}"
         )
@@ -43,7 +44,7 @@ class Uno_Stack:
 
         self.undo_stack.append(data_array.copy())
         data_array = self.redo_stack.pop()
-        logger.info(
+        logger.debug(
             f"[UNO] Redo performed. "
             f"Undo stack size: {len(self.undo_stack)}, Redo stack size: {len(self.redo_stack)}"
         )
