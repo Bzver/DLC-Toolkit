@@ -212,13 +212,24 @@ class Frame_App(QMainWindow):
         self._initialize_loaded_video(video_path)
 
     def _initialize_loaded_video(self, video_path:str):
-        self.vm.init_extractor(video_path)
+        if self.dm.dlc_label_mode:
+            try:
+                self.vm.load_img_from_folder(self.dm.video_file)
+            except Exception as e:
+                Loggerbox.error(self, "Error Opening DLC Label", e, exec=e)
+                return
+        else:
+            try:
+                self.vm.init_extractor(video_path)
+                self.at.init_loaded_vid()
+            except Exception as e:
+                Loggerbox.error(self, "Error Opening Video", e, exec=e)
+                return
+
         self.dm.total_frames = self.vm.get_frame_counts()
         self.vid_play.set_total_frames(self.dm.total_frames)
-        self.at.init_loaded_vid()
-
-        self.at.refresh_and_display()
         self.vid_play.nav.set_current_video_name(self.dm.video_name)
+        self.at.refresh_and_display()
         self.status_bar.show_message(f"Video loaded: {self.dm.video_file}", duration_ms=2000)
 
     def _load_prediction(self):
@@ -282,6 +293,8 @@ class Frame_App(QMainWindow):
         if not self.vm.check_status_msg():
             return
         self.status_bar.show_message(f"Workspace Saved to {self.dm.video_file}")
+        if self.flabel.pred_data_array is not None:
+            self.dm.dlc_data.pred_data_array = self.flabel.pred_data_array.copy()
         self.dm.save_workspace()
 
     def _save_prediction(self, to_dlc:bool=False):
@@ -333,6 +346,8 @@ class Frame_App(QMainWindow):
             Loggerbox.warning(self, "No Marked Frames", "Mark some frames for export.")
             return
 
+        if self.flabel.pred_data_array is not None:
+            self.dm.dlc_data.pred_data_array = self.flabel.pred_data_array.copy()
         self.dm.save_workspace()
 
         if self.dm.dlc_label_mode:
@@ -491,16 +506,12 @@ class Frame_App(QMainWindow):
     def _on_label_folder_return(self, image_folder):
         if not image_folder:
             return
-        if self.dm.dlc_data.pred_data_array is None: # No existing predictions
+        if self.dm.dlc_data.pred_data_array is None or self.dm.dlc_label_mode: # No existing predictions or loading label already
+            dlc_config_filepath = self.dm.dlc_data.dlc_config_filepath
+            self._reset_state()
+            self.dm.load_metadata_to_dm(dlc_config_filepath)
             self.vm.update_video_path(image_folder)
             self.dm.load_dlc_label(image_folder)
-            try:
-                self.vm.load_img_from_folder(image_folder)
-                self.dm.total_frames = self.vm.get_frame_counts()
-                self.vid_play.set_total_frames(self.dm.total_frames)
-            except Exception as e:
-                Loggerbox.error(self, "Error Opening DLC Label", e, exec=e)
-                return
         else:
             label_file = os.path.join(image_folder, f"CollectedData_{self.dm.dlc_data.scorer}.h5")
             if not os.path.isfile(label_file):

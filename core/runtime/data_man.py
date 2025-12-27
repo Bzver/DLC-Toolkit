@@ -76,22 +76,19 @@ class Data_Manager:
         self.dlc_label_mode = True
         logger.info("[MODE] Load DLC Label Mode.")
         self.dlc_data.prediction_filepath = prediction_path
-        dlc_dir = os.path.dirname(os.path.dirname(image_folder))
-        dlc_config = os.path.join(dlc_dir, "config.yaml")
 
-        # Set video file to folder path (for naming)
         self.video_file = image_folder
         self.video_name = os.path.basename(image_folder)
 
-        data_loader = Prediction_Loader(dlc_config, prediction_path)
+        data_loader = Prediction_Loader(self.dlc_data.dlc_config_filepath, prediction_path)
         try:
             self.dlc_data = data_loader.load_data(force_load_pred=True)
         except Exception as e:
             Loggerbox.error(self.main, "Error Loading Prediction", f"Failed to load prediction: {e}", exc=e)
             return
-      
+        
+        self.init_vid_callback(self.video_file)
         self._init_loaded_data()
-        self.refresh_callback()
 
     def _init_loaded_data(self):
         if self.label_file:
@@ -442,14 +439,17 @@ class Data_Manager:
         if self.dlc_data is not None and self.dlc_data.pred_data_array is not None:
             self._init_loaded_data()
     
-        if not self.dlc_label_mode and not os.path.isfile(self.video_file):
+        if self.dlc_label_mode:
+            self.load_dlc_label(self.video_file)
+            return
+
+        if not os.path.isfile(self.video_file):
             Loggerbox.error(self.main, "Video File Missing", f"Cannot find video at {self.video_file}")
             self._select_missing_video()
             if not self.video_file:
                 return
 
         self.init_vid_callback(self.video_file)
-        self.refresh_callback()
 
         if update_needed:
             self.save_workspace()
