@@ -412,6 +412,7 @@ def get_roi_cv2(frame) -> Tuple[int, int, int, int] | None:
         return None
 
 def plot_roi(frame, roi) -> np.ndarray:
+    roi = validate_crop_coord(roi)
     if roi is None:
         return frame
     frame = frame.copy()

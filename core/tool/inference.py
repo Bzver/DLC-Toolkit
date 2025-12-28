@@ -187,11 +187,11 @@ class DLC_Inference(QDialog):
 
         method = shuffle_config["method"]
         if shuffle_config["model"]["backbone"]["type"] == "CondPreNet":
-            model_name = "CondPreNet_" + shuffle_config["model"]["backbone"]["backbone"]["model_name"]
+            self.model_name = "CondPreNet_" + shuffle_config["model"]["backbone"]["backbone"]["model_name"]
         else:
-            model_name = shuffle_config["model"]["backbone"]["model_name"]
+            self.model_name = shuffle_config["model"]["backbone"]["model_name"]
 
-        config_text = f"Model Name: {model_name}"
+        config_text = f"Model Name: {self.model_name}"
         
         if not available_models:
             return "This shuffle does not seem to have trained models!", False
@@ -260,16 +260,16 @@ class DLC_Inference(QDialog):
 
         inference_video_path = None
         try:
-            if len(self.frame_list)  > 0.9 * self.total_frames and self.crop_coord is None:
+            if len(self.frame_list)  > int(0.9 * self.total_frames) and not self.cropping:
                 inference_video_path = self.video_filepath
                 self.extractor_reviewer = Frame_Extractor(inference_video_path)
-            elif len(self.frame_list) > 5000:
+            elif len(self.frame_list) < 500 and not self.model_name.startswith("CondPreNet_"):
+                self._extract_marked_frame_images(self.crop_coord)
+                self.extractor_reviewer = Frame_Extractor_Img(self.temp_dir)
+            else:
                 inference_video_path = os.path.join(self.temp_dir, "temp_extract.mp4")
                 self._extract_marked_frame_as_video(self.crop_coord)
                 self.extractor_reviewer = Frame_Extractor(inference_video_path)
-            else:
-                self._extract_marked_frame_images(self.crop_coord)
-                self.extractor_reviewer = Frame_Extractor_Img(self.temp_dir)
         except Exception as e:
             self._panic_exit(reason=f"Error during frame image extraction. Error:{e}", exception=e)
             return
@@ -281,7 +281,7 @@ class DLC_Inference(QDialog):
             self.on_hold_dialog.show()
             self.hide()
             QtWidgets.QApplication.processEvents() 
-            sys.setrecursionlimit(10000) # To avoid track stitching failure
+            sys.setrecursionlimit(2000)
             if inference_video_path:
                 self._analyze_frame_videos(inference_video_path)
             else:

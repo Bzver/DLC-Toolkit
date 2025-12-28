@@ -60,7 +60,14 @@ class Exporter:
 
     def export_frame_to_video(self):
         logger.info("[EXPORTER] Starting frame export to video.")
-        return self._continuous_frame_extraction(to_video=True)
+        total_frames = self.extractor.get_total_frames()
+
+        if len(self.frame_list) <  total_frames // 100 :
+            logger.info("[EXPORTER] Using sparse extraction for video export.")
+            return self._sparse_frame_extraction(to_video=True)
+        else:
+            logger.info("[EXPORTER] Using continuous extraction for video export.")
+            return self._continuous_frame_extraction(to_video=True)
 
     def _extract_frame(self) -> Optional[List[int]]:
         logger.debug(f"[EXPORTER] Entering _extract_frame. Video filepath: {self.video_filepath}")
@@ -165,23 +172,27 @@ class Exporter:
         append_new_video_to_dlc_config(self.dlc_data.dlc_config_filepath, os.path.basename(self.save_folder))
         logger.info(f"[EXPORTER] Appended video '{os.path.basename(self.save_folder)}' to DLC config after DLC label extraction.")
 
-    def _sparse_frame_extraction(self):
-        logger.debug(f"[EXPORTER] Entering _sparse_frame_extraction for {len(self.frame_list)} frames.")
+    def _sparse_frame_extraction(self, to_video: bool = False):
+        logger.debug(f"[EXPORTER] Entering _sparse_frame_extraction for {len(self.frame_list)} frames. to_video={to_video}")
         if self.progress_callback:
             self.progress_callback.setMaximum(len(self.frame_list))
             logger.debug(f"[EXPORTER] Progress callback maximum set to {len(self.frame_list)} for sparse extraction.")
 
         extracted_indices = []
+        writer = None
+        video_output_path = None
 
         for i, frame_idx in enumerate(self.frame_list):
             if self.progress_callback:
                 self.progress_callback.setValue(i)
                 if self.progress_callback.wasCanceled():
                     logger.warning("[EXPORTER] Sparse frame extraction canceled by user.")
+                    if writer:
+                        writer.release()
+                        logger.debug("[EXPORTER] VideoWriter released due to cancellation.")
                     self.progress_callback.close()
                     raise Exception("Frame extraction canceled by user.")
 
-            image_output_path = os.path.join(self.save_folder, f"img{str(int(frame_idx)).zfill(8)}.png")
             logger.debug(f"[EXPORTER] Attempting to extract sparse frame {frame_idx}.")
             frame = self.extractor.get_frame(frame_idx)
             if frame is None:
@@ -189,12 +200,33 @@ class Exporter:
                 continue
 
             frame = self._apply_crop(frame)
-            cv2.imwrite(image_output_path, frame)
-            logger.debug(f"[EXPORTER] Wrote sparse frame {frame_idx} to {image_output_path}.")
+
+            if to_video:
+                if writer is None:
+                    video_output_path = os.path.join(self.save_folder, "temp_extract.mp4")
+                    h, w = frame.shape[:2]
+                    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                    writer = cv2.VideoWriter(video_output_path, fourcc, fps=10.0, frameSize=(w, h))
+                    if not writer.isOpened():
+                        logger.critical(f"[EXPORTER] Failed to open VideoWriter for {video_output_path}.")
+                        raise RuntimeError(f"Failed to open VideoWriter for {video_output_path}")
+                    logger.info(f"[EXPORTER] VideoWriter opened for {video_output_path} (size: {w}x{h}).")
+
+                writer.write(frame)
+                logger.debug(f"[EXPORTER] Wrote frame {frame_idx} to video.")
+            else:
+                image_output_path = os.path.join(self.save_folder, f"img{str(int(frame_idx)).zfill(8)}.png")
+                cv2.imwrite(image_output_path, frame)
+                logger.debug(f"[EXPORTER] Wrote sparse frame {frame_idx} to {image_output_path}.")
+
             extracted_indices.append(frame_idx)
-        
+
+        if writer:
+            writer.release()
+            logger.info(f"[EXPORTER] Video saved to {video_output_path}")
+
         extracted_set = set(extracted_indices)
-        frame_set =set(self.frame_list)
+        frame_set = set(self.frame_list)
         missing = sorted(frame_set - extracted_set)
 
         if self.progress_callback:

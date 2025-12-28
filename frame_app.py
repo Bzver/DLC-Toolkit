@@ -7,7 +7,7 @@ from core.runtime import Data_Manager, Video_Manager
 from core.module import Frame_View, Frame_Label, Frame_Annotator
 from core.tool import Canonical_Pose_Dialog, Plot_Config_Menu, DLC_Save_Dialog, Load_Label_Dialog, navigate_to_marked_frame
 from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Toggle_Switch, Status_Bar, Frame_List_Dialog, Frame_Display_Dialog
-from utils.helper import frame_to_qimage, get_roi_cv2, plot_roi
+from utils.helper import frame_to_qimage, get_roi_cv2, plot_roi, validate_crop_coord
 from utils.logger import Loggerbox, QMessageBox
 from utils.dataclass import Nav_Callback, Plot_Config
 
@@ -444,7 +444,9 @@ class Frame_App(QMainWindow):
         if not self.vm.check_status_msg():
             return
         frame = self.vm.get_frame(self.dm.current_frame_idx)
-        if self.dm.roi is None:
+
+        roi = validate_crop_coord(self.dm.roi)
+        if roi is None:
             roi = get_roi_cv2(frame)
             if roi is None:
                 return
