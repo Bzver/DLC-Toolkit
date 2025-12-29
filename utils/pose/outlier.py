@@ -229,8 +229,10 @@ def outlier_enveloped(
 
     all_x, all_y = pred_data_array[:, :, 0::3], pred_data_array[:, :, 1::3]
 
-    min_x_array, max_x_array = np.nanmin(all_x, axis=2), np.nanmax(all_x, axis=2)
-    min_y_array, max_y_array = np.nanmin(all_y, axis=2), np.nanmax(all_y, axis=2)
+    with bye_bye_runtime_warning():
+        min_x_array, max_x_array = np.nanmin(all_x, axis=2), np.nanmax(all_x, axis=2)
+        min_y_array, max_y_array = np.nanmin(all_y, axis=2), np.nanmax(all_y, axis=2)
+
     size_array = (max_y_array - min_y_array) * (max_x_array - min_x_array)
     valid_sizes = size_array[~np.isnan(size_array)]
     bbox_length = np.sqrt(np.nanmax(valid_sizes)) if valid_sizes.size > 0 else 1.0
