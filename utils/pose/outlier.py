@@ -110,7 +110,7 @@ def outlier_size(
 
 def outlier_pose(
     pred_data_array: np.ndarray,
-    angle_map_data: Dict[str, any],
+    angle_map_data: Dict[str, int],
     quant_step: float = 1.0,
     min_samples: int = 3
 ) -> np.ndarray:

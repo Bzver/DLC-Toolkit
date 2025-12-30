@@ -25,7 +25,7 @@ def generate_missing_inst(
         pred_data_array:np.ndarray,
         current_frame_idx:int,
         missing_instances:List[int],
-        angle_map_data:Dict[str, Any],
+        angle_map_data:Dict[str, int],
         canon_pose:Optional[np.ndarray]=None
         ) -> np.ndarray:
     
@@ -48,7 +48,7 @@ def generate_missing_kp_for_inst(
         pred_data_array:np.ndarray,
         current_frame_idx:int,
         selected_instance_idx:int,
-        angle_map_data:Dict[str, Any],
+        angle_map_data:Dict[str, int],
         canon_pose:Optional[np.ndarray]=None,
         ) -> np.ndarray:
     

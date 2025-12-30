@@ -124,55 +124,10 @@ def infer_head_tail_indices(keypoint_names:List[str]) -> Tuple[int,int]:
 
     return head_idx, tail_idx
 
-def build_angle_map(canon_pose:np.ndarray, all_frame_poses:np.ndarray , head_idx:int, tail_idx:int) -> dict:
-    canonical_vec = canon_pose[head_idx] - canon_pose[tail_idx]
-    num_keypoint = canon_pose.shape[0]
-    if np.linalg.norm(canonical_vec) < 1e-6:
-        canonical_body_angle = 0.0
-    else:
-        canonical_body_angle = np.arctan2(canonical_vec[1], canonical_vec[0])
-
-    # Build angle map for every possible connection
-    angle_map = []
-    all_angles = np.arctan2(all_frame_poses[:, 1::2], all_frame_poses[:, 0::2]) 
-
-    for i in range(num_keypoint):
-        for j in range(num_keypoint):
-            if i == j:
-                continue
-
-            vec = canon_pose[j] - canon_pose[i]
-            if np.linalg.norm(vec) < 1e-6:
-                continue
-
-            raw_angle = np.arctan2(vec[1], vec[0])
-
-            # Offset relative to canonical body angle
-            offset = np.arctan2(
-                np.sin(raw_angle - canonical_body_angle),
-                np.cos(raw_angle - canonical_body_angle)
-            )  # Wrap to [-π, π]
-
-            # Measure angular variation (in radians)
-            ij_angles = all_angles[:, j] - all_angles[:, i]  # (N,)
-            ij_angles = np.arctan2(np.sin(ij_angles), np.cos(ij_angles))  # Unwrap
-            var = np.nanvar(ij_angles)
-
-            # Weight: high if stable and aligned with body
-            length = np.linalg.norm(vec)
-            stability = 1.0 / (1.0 + var) if var > 0 else 1.0
-            alignment = abs(np.dot(vec / np.linalg.norm(vec), canonical_vec / np.linalg.norm(canonical_vec)))
-
-            weight = length * stability * alignment
-
-            angle_map.append({"i": i, "j": j,"offset": offset,"weight": weight})
-
-    # Sort by weight (most reliable first)
-    angle_map.sort(key=lambda x: x["weight"], reverse=True)
-    
-    angle_map_data = {"head_idx": head_idx, "tail_idx": tail_idx, "angle_map": angle_map}
-
-    return angle_map_data
+def build_angle_map(canon_pose:np.ndarray, head_idx:int, tail_idx:int) -> dict:
+    sq_dist = np.sum(canon_pose**2, axis=1)
+    center_kp = np.argmin(sq_dist)
+    return {"head_idx": head_idx, "tail_idx": tail_idx, "center_idx": center_kp}
 
 def build_weighted_pose_vectors(pred_data_array:np.ndarray, angle_map_data:dict, max_connections:int=6, min_weight: float = 0.1) -> Optional[np.ndarray]:
     angle_map = angle_map_data["angle_map"]

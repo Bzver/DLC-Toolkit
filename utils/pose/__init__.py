@@ -3,6 +3,7 @@ from .pose_analysis import (
     calculate_pose_bbox,
     calculate_canonical_pose,
     calculate_pose_rotations,
+    calculate_aligned_local,
 )
 
 from .pose_average import get_average_pose
@@ -31,6 +32,7 @@ __all__ = (
     generate_missing_inst,
     generate_missing_kp_for_inst,
     calculate_pose_centroids,
+    calculate_aligned_local,
     calculate_pose_bbox,
     calculate_canonical_pose,
     calculate_pose_rotations,

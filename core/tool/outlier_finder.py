@@ -23,7 +23,7 @@ class Outlier_Finder(QGroupBox):
     def __init__(self,
                 pred_data_array:np.ndarray,
                 canon_pose:Optional[np.ndarray]=None,
-                angle_map_data:Optional[Dict[str, Any]]=None,
+                angle_map_data:Optional[Dict[str, int]]=None,
                 parent=None):
         super().__init__(parent)
         self.setTitle("Outlier Finder")
@@ -76,7 +76,7 @@ class Outlier_Container(QtWidgets.QWidget):
     def __init__(self,
                 pred_data_array:np.ndarray,
                 canon_pose:Optional[np.ndarray]=None,
-                angle_map_data:Optional[Dict[str, Any]]=None,
+                angle_map_data:Optional[Dict[str, int]]=None,
                 parent=None):
         super().__init__(parent)
         self.pred_data_array = pred_data_array

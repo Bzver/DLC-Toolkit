@@ -48,91 +48,58 @@ def calculate_pose_centroids(
     return pose_centroids, local_coords
 
 def calculate_pose_rotations(
-        local_x: np.ndarray,
-        local_y: np.ndarray,
-        angle_map_data:Dict[str, any]
-        ) -> Union[np.ndarray, float]:
+    local_x: np.ndarray,
+    local_y: np.ndarray,
+    angle_map_data: Dict[str, int]
+) -> Union[np.ndarray, float]:
     """
-    Calculate the rotation angles for poses based on relative keypoint positions.
-    Uses the vector from the most-central keypoint (lowest spread) to the most-peripheral 
-    keypoint (highest spread) as the reference direction to compute orientation.
-
+    Compute rotation angle (in radians) representing the orientation of a pose.
+    
     Args:
-        local_x : Relative x-coordinates of keypoints, shape (K,) or (N, K).
-        local_y : Relative y-coordinates of keypoints, shape (K,) or (N, K).
-        angle_map_data : Dict with 'head_idx', 'tail_idx', 'angle_map'.
-            - angle map: list of (i, j, offset, weight) of each connection
+        local_x, local_y: (K,) or (N, K)
+        angle_map_data: dict with 'head_idx', 'tail_idx', 'center_idx'
 
     Returns:
-        Union[np.ndarray, float]: Rotation angle(s) in radians.
-                                  - If input is (K,), returns float.
-                                  - If input is (N, K), returns (N,) array.
+        float if input 1D, (N,) array if 2D.
     """
-    n_dim = local_x.ndim
-    if n_dim == 1:
-        local_x = local_x[np.newaxis, :]  # (1, K)
-        local_y = local_y[np.newaxis, :]  # (1, K)
+    orig_ndim = local_x.ndim
+    if orig_ndim == 1:
+        local_x = local_x[None, :]  # (1, K)
+        local_y = local_y[None, :]
 
-    N, K = local_x.shape    
-    angles = np.full(N, np.nan)
+    N= local_x.shape[0]
+    angles = np.full(N, np.nan, dtype=np.float64)
 
     head_idx = angle_map_data['head_idx']
     tail_idx = angle_map_data['tail_idx']
+    center_idx = angle_map_data['center_idx']
 
-    # Use head-tail first
     xh, yh = local_x[:, head_idx], local_y[:, head_idx]
+    xc, yc = local_x[:, center_idx], local_y[:, center_idx]
     xt, yt = local_x[:, tail_idx], local_y[:, tail_idx]
 
-    valid = np.isfinite(xh) & np.isfinite(yh) & np.isfinite(xt) & np.isfinite(yt)
-    if np.any(valid): # Compute angle from tail to head (anterior direction)
-        dx = xh[valid] - xt[valid]
-        dy = yh[valid] - yt[valid]
-        head_tail_angles = np.arctan2(dy, dx)
-        angles[valid] = head_tail_angles
+    def angle_from_to(x1, y1, x2, y2):
+        dx = x2 - x1
+        dy = y2 - y1
+        return np.arctan2(dy, dx)
 
-    # Fill gaps using angle map with weight voting
-    total_weights = np.zeros(N)
-    weighted_sum = np.zeros(N)
+    valid_ch = np.isfinite(xc) & np.isfinite(yc) & np.isfinite(xh) & np.isfinite(yh)
+    if np.any(valid_ch):
+        angles[valid_ch] = angle_from_to(xc[valid_ch], yc[valid_ch], xh[valid_ch], yh[valid_ch])
 
-    for entry in angle_map_data.get('angle_map', []):
-        i, j = entry['i'], entry['j']
-        offset = entry['offset']
-        weight = entry['weight']
+    still_nan = np.isnan(angles)
+    valid_ct = still_nan & np.isfinite(xc) & np.isfinite(yc) & np.isfinite(xt) & np.isfinite(yt)
+    if np.any(valid_ct):
+        angles[valid_ct] = angle_from_to(xt[valid_ct], yt[valid_ct], xc[valid_ct], yc[valid_ct])
 
-        if not (0 <= i < K and 0 <= j < K):
-            continue
+    still_nan = np.isnan(angles)
+    valid_ht = still_nan & np.isfinite(xh) & np.isfinite(yh) & np.isfinite(xt) & np.isfinite(yt)
+    if np.any(valid_ht):
+        angles[valid_ht] = angle_from_to(xt[valid_ht], yt[valid_ht], xh[valid_ht], yh[valid_ht])
 
-        xi, yi = local_x[:, i], local_y[:, i]
-        xj, yj = local_y[:, j], local_y[:, j]
-        connection_valid_mask = np.isfinite(xi) & np.isfinite(yi) & np.isfinite(xj) & np.isfinite(yj)
-        if not np.any(connection_valid_mask):
-            continue
+    angles[np.isnan(angles)] = 0.0
 
-        # Compute observed vector angle (from i to j) for valid connections
-        obs_angle_subset = np.arctan2(yj[connection_valid_mask] - yi[connection_valid_mask],
-                                      xj[connection_valid_mask] - xi[connection_valid_mask])
-        inferred_angle_subset = obs_angle_subset - offset
-        inferred_angle_subset = np.arctan2(np.sin(inferred_angle_subset), np.cos(inferred_angle_subset))
-
-        # Use weighted averaging in complex space to avoid angle wrapping issues
-        inferred_angle_complex_subset = np.exp(1j * inferred_angle_subset)
-        temp_inferred_complex_full = np.full(N, np.nan + 0j, dtype=complex)
-        temp_inferred_complex_full[connection_valid_mask] = inferred_angle_complex_subset
-
-        global_target_mask = connection_valid_mask & np.isnan(angles)
-
-        if np.any(global_target_mask):
-            weighted_sum[global_target_mask] += weight * np.angle(temp_inferred_complex_full[global_target_mask])
-            total_weights[global_target_mask] += weight
-
-    # Apply weighted average for frames that were filled via consensus
-    final_mask = (total_weights > 0) & np.isnan(angles)
-    angles[final_mask] = np.arctan2(
-        np.sin(weighted_sum[final_mask] / total_weights[final_mask]),
-        np.cos(weighted_sum[final_mask] / total_weights[final_mask])
-    )
-
-    return angles[0].item() if n_dim == 1 else angles
+    return float(angles[0]) if orig_ndim == 1 else angles
 
 def calculate_pose_bbox(
         coords_x:np.ndarray,
@@ -194,3 +161,48 @@ def calculate_canonical_pose(
     canon_pose = average_pose.reshape(XYCONF//3, 2) # (kp,2)
     
     return canon_pose, aligned_frame_poses
+
+def calculate_aligned_local(
+        pred_data_array: np.ndarray,
+        angle_map_data: Dict[str, int]
+        ) -> np.ndarray:
+    """
+    Compute centroid-centered and rotation-normalized (canonical) pose coordinates 
+    for all frames and instances in a single vectorized pass.
+    Args:
+        pred_data_array (np.ndarray): (frames, instances, keypoints * 3), 
+        angle_map_data (Dict[str, int]): 
+            Dictionary containing at least:
+              - 'head_idx': int, keypoint index for head
+              - 'tail_idx': int, keypoint index for tail
+              - 'angle_map': list of connection dicts (optional, for fallback angle estimation)
+    Returns:
+        np.ndarray: 
+            Aligned local coordinates of shape (frames, instances, keypoints * 2), 
+    """
+    F, I, XYCONF = pred_data_array.shape
+    K = XYCONF // 3
+
+    local_poses = np.full((F, I, K*2), np.nan)
+
+    center_idx = angle_map_data["center_idx"]
+
+    pose_centroids = pred_data_array[:, :, center_idx*3:center_idx*3+2]
+    math_centroids, _ = calculate_pose_centroids(pred_data_array)
+
+    nan_mask = np.isnan(pose_centroids)
+    pose_centroids[nan_mask] = math_centroids[nan_mask]
+    
+    local_poses[..., 0::2] = pred_data_array[:, :, 0::3] - pose_centroids[..., 0, np.newaxis]
+    local_poses[..., 1::2] = pred_data_array[:, :, 1::3] - pose_centroids[..., 1, np.newaxis]
+
+    flat_local = local_poses.reshape(F*I, 2*K)
+    flat_x = flat_local[:, 0::2]
+    flat_y = flat_local[:, 1::2]
+
+    angles_flat = calculate_pose_rotations(flat_x, flat_y, angle_map_data)
+    aligned_flat = pose_alignment_worker(flat_local, angles_flat)
+
+    aligned_local_coords = aligned_flat.reshape(F, I, 2*K)
+
+    return aligned_local_coords

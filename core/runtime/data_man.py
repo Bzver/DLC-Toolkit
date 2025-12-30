@@ -309,8 +309,8 @@ class Data_Manager:
                 self.angle_map_data = None
                 return
 
-        self.canon_pose, all_frame_pose = calculate_canonical_pose(self.dlc_data.pred_data_array, head_idx, tail_idx)
-        self.angle_map_data = build_angle_map(self.canon_pose, all_frame_pose, head_idx, tail_idx)
+        self.canon_pose, _ = calculate_canonical_pose(self.dlc_data.pred_data_array, head_idx, tail_idx)
+        self.angle_map_data = build_angle_map(self.canon_pose, head_idx, tail_idx)
 
     def get_crop_coords_from_pred(self, frame_list:List[int], max_x:int, max_y:int) -> np.ndarray:
         coords_x = self.dlc_data.pred_data_array[frame_list, :, 0::3]

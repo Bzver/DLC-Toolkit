@@ -6,7 +6,7 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QPushButton, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit
 from PySide6.QtGui import QIntValidator
 
-from typing import Optional, Dict, Any
+from typing import Optional, Dict
 
 from .outlier_finder import Outlier_Container
 from utils.logger import Loggerbox
@@ -20,7 +20,7 @@ class Mark_Generator(QtWidgets.QGroupBox):
             total_frames:int,
             dlc_data:Optional[Loaded_DLC_Data]=None,
             canon_pose:Optional[np.ndarray]=None,
-            angle_map_data:Optional[Dict[str, Any]]=None,
+            angle_map_data:Optional[Dict[str, int]]=None,
             parent=None
             ):
         super().__init__(parent)

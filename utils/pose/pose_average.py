@@ -1,6 +1,6 @@
 import numpy as np
 
-from typing import Optional, Dict, Any
+from typing import Optional, Dict
 
 from .pose_analysis import calculate_pose_centroids, calculate_pose_rotations
 from .pose_worker import pose_alignment_worker, pose_rotation_worker
@@ -10,7 +10,7 @@ def get_average_pose(
         pred_data_array:np.ndarray,
         selected_instance_idx:int,
         frame_idx:int, 
-        angle_map_data:Dict[str, Any],
+        angle_map_data:Dict[str, int],
         initial_pose_range:int = 30,
         confidence_threshold:float = 0.5,
         bodypart_threshold:int = 3,
@@ -66,7 +66,7 @@ def get_average_pose(
     inst_data = pred_data_truncated[:, selected_instance_idx, :]
     conf_scores = inst_data[:, 2::3]
 
-    centroids, local_coords = calculate_pose_centroids(inst_data[:, np.newaxis, :]) # inst data is already sliced, no need to slice again
+    centroids, local_coords = calculate_pose_centroids(inst_data[:, np.newaxis, :])
 
     centroids = np.squeeze(centroids, axis=1)
     local_coords = np.squeeze(local_coords, axis=1)
