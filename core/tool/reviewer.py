@@ -421,7 +421,7 @@ class Parallel_Review_Dialog(QDialog):
 
     def _redo_changes(self):
         data_array = self.new_data_array if self.tc_mode else self.frame_status_array
-        data_array = self.uno.redo()
+        data_array = self.uno.redo(data_array)
         self._undo_redo_worker(data_array)
 
     def _undo_redo_worker(self, data_array):
