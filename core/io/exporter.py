@@ -136,7 +136,6 @@ class Exporter:
         try:
             x1, y1, x2, y2 = self.crop_coord
             cropped_frame = frame[y1:y2, x1:x2]
-            logger.debug(f"[EXPORTER] Applied crop {self.crop_coord} to frame. New shape: {cropped_frame.shape}")
             return cropped_frame
         except Exception as e:
             logger.error(f"[EXPORTER] Error applying crop {self.crop_coord} to frame. Returning original frame. Error: {e}")

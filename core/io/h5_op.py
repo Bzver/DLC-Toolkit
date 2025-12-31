@@ -110,13 +110,11 @@ def fix_h5_kp_order(pred_file: dict, key: str, config_data:dict) -> np.ndarray:
             return data
 
     label_key = "axis0_label2" if multi_animal else "axis0_label1"
-    label_array = np.array(pred_file[key][label_key])  # shape: (n_cols,), int indices
-    logger.debug(f"[H5OP] Label array from H5 (initial): {label_array}")
+    label_array = np.array(pred_file[key][label_key])
 
     if n_cols % (num_keypoint * 2) != 0 or  n_cols // (num_keypoint * 2) != instance_count:
         return data
 
-    # Create mapping: new order index -> original keypoint index
     try:
         remap_kp_indices = [ref_list.index(kp) for kp in keypoints]  # len = n_keypoints
         logger.debug(f"[H5OP] Remapped keypoint indices: {remap_kp_indices}")

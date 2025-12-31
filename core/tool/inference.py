@@ -52,11 +52,6 @@ class DLC_Inference(QDialog):
         self.temp_dir = self.temp_directory.name
         self.extractor = Frame_Extractor(self.video_filepath)
 
-        if self.dlc_data.pred_data_array is None:
-            self.fresh_pred = True
-        else:
-            self.fresh_pred = False
-
         layout = QVBoxLayout(self)
         setup_container = self._build_setup_container()
         if setup_container is None:
@@ -399,7 +394,7 @@ class DLC_Inference(QDialog):
         pred_filepath = os.path.join(video_path, pred_filename)
         self.save_path = timestamp_new_prediction(pred_filepath)
 
-        if self.fresh_pred:
+        if self.dlc_data.pred_data_array is None:
             pred_data_array=self.new_data_array
             list_tuple = (self.frame_list, [])
             self._save_pred_to_file(pred_data_array, list_tuple)
