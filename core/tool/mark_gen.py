@@ -34,7 +34,7 @@ class Mark_Generator(QtWidgets.QGroupBox):
         mode_label = QLabel("Mark Generation Mode:")
         self.mode_frame.addWidget(mode_label)
 
-        self.mode_option = QtWidgets.QComboBox()  # Make it an instance attribute
+        self.mode_option = QtWidgets.QComboBox() 
         self.mode_option.addItems(["Random", "Stride"])
 
         if self.dlc_data is not None:
@@ -47,7 +47,6 @@ class Mark_Generator(QtWidgets.QGroupBox):
         self.mode_frame.addWidget(self.mode_option)
         layout.addLayout(self.mode_frame)
 
-        # Frame range input
         range_frame = QHBoxLayout()
         range_start_label = QLabel("Enter Frame Range: ")
         range_symbol_label = QLabel(" ~ ")
@@ -67,7 +66,6 @@ class Mark_Generator(QtWidgets.QGroupBox):
         range_frame.addWidget(self.end_frame_textbox)
         layout.addLayout(range_frame)
 
-        # Build all containers
         self.random_container = self._build_random_container()
         self.stride_container = self._build_stride_container()
 
@@ -75,9 +73,8 @@ class Mark_Generator(QtWidgets.QGroupBox):
             self.outlier_container = Outlier_Container(
                 self.dlc_data.pred_data_array, canon_pose=canon_pose, angle_map_data=angle_map_data)
         else:
-            self.outlier_container = QtWidgets.QWidget() # Dummy container
+            self.outlier_container = QtWidgets.QWidget()
         
-        # Add all to layout
         self.random_container.setVisible(True)
         layout.addWidget(self.random_container)
         self.stride_container.setVisible(False)
@@ -85,7 +82,6 @@ class Mark_Generator(QtWidgets.QGroupBox):
         self.outlier_container.setVisible(False)
         layout.addWidget(self.outlier_container)
 
-        # Confirmation buttons
         confirm_frame = QVBoxLayout()
         self.keep_old_checkbox = QtWidgets.QCheckBox("Keep Existing Marks")
         self.keep_old_checkbox.setChecked(True)
@@ -162,27 +158,21 @@ class Mark_Generator(QtWidgets.QGroupBox):
 
             outlier_mask = self.outlier_container.get_combined_mask()
             if outlier_mask is None or not np.any(outlier_mask):
-                Loggerbox.info(self, "No Outliers Found",
-                                        "No frames matched the selected outlier criteria in the given range.")
+                Loggerbox.info(self, "No Outliers Found", "No frames matched the selected outlier criteria in the given range.")
                 return
 
-            frame_count_in_data = self.dlc_data.pred_data_array.shape[0]
+            data_length = self.dlc_data.pred_data_array.shape[0]
             mask_range = np.zeros(self.total_frames, dtype=bool)
-            mask_range[frame_range] = True
 
-            # Trucate or pad mask_range in case frame counts are different
-            if self.total_frames >= frame_count_in_data:
-                mask_range_processed = mask_range[range(frame_count_in_data)]
-            else:
-                mask_range_processed = np.zeros(self.total_frames, dtype=bool)
-                mask_range_processed[frame_range] = True
+            clipped_range = np.clip(frame_range, 0, data_length - 1)
+            mask_range[clipped_range] = True
 
-            combined_mask = np.any(outlier_mask, axis=1) & mask_range_processed
+            combined_mask = np.any(outlier_mask, axis=1) & mask_range
             if not np.any(combined_mask):
                 Loggerbox.info(self, "No Outliers in Range", "No outliers found within the selected frame range.")
                 return
 
-            selected_frames = np.where(outlier_mask)[0].tolist()
+            selected_frames = np.where(combined_mask)[0].tolist()
 
         else:
             Loggerbox.error(self, "Invalid Mode", "Unknown mode selected.")
