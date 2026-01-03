@@ -115,10 +115,22 @@ def calculate_pose_rotations(
 
             try:
                 _, _, Vt = np.linalg.svd(centered, full_matrices=False)
-                direction = Vt[0]
-                angles[i] = np.arctan2(direction[1], direction[0])
+                d = Vt[0]
             except np.linalg.LinAlgError:
                 angles[i] = 0.0
+
+            if np.isfinite(xh[i]) and np.isfinite(yh[i]):
+                p = np.array([xh[i], yh[i]])
+                proj = np.dot(p - mean, d)
+                if proj < 0:
+                    d = -d
+            elif np.isfinite(xt[i]) and np.isfinite(yt[i]):
+                p = np.array([xt[i], yt[i]])
+                proj = np.dot(p - mean, d)
+                if proj > 0:
+                    d = -d
+
+            angles[i] = np.arctan2(d[1], d[0])
 
     angles[np.isnan(angles)] = 0.0
 
