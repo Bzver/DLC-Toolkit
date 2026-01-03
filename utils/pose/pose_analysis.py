@@ -97,6 +97,29 @@ def calculate_pose_rotations(
     if np.any(valid_ht):
         angles[valid_ht] = angle_from_to(xt[valid_ht], yt[valid_ht], xh[valid_ht], yh[valid_ht])
 
+    still_nan = np.isnan(angles)
+    if np.any(still_nan):
+        points = np.stack([local_x, local_y], axis=-1)
+
+        for i in np.where(still_nan)[0]:
+            pts = points[i]
+            mask = np.isfinite(pts).all(axis=1)
+            valid_pts = pts[mask]
+
+            if len(valid_pts) < 2:
+                angles[i] = 0.0
+                continue
+
+            mean = valid_pts.mean(axis=0)
+            centered = valid_pts - mean
+
+            try:
+                _, _, Vt = np.linalg.svd(centered, full_matrices=False)
+                direction = Vt[0]
+                angles[i] = np.arctan2(direction[1], direction[0])
+            except np.linalg.LinAlgError:
+                angles[i] = 0.0
+
     angles[np.isnan(angles)] = 0.0
 
     return float(angles[0]) if orig_ndim == 1 else angles
