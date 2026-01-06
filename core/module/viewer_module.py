@@ -6,7 +6,7 @@ from PySide6.QtGui import QPixmap
 from core.runtime import Data_Manager, Video_Manager
 from core.tool import Mark_Generator, Blob_Counter, Prediction_Plotter
 from ui import Menu_Widget, Video_Player_Widget, Frame_List_Dialog, Status_Bar, Inference_interval_Dialog, Shortcut_Manager
-from utils.helper import frame_to_pixmap, calculate_blob_inference_intervals
+from utils.helper import frame_to_pixmap, calculate_blob_inference_intervals, suppress_fake_mice_bg
 from utils.logger import Loggerbox, QMessageBox
 
 
@@ -117,6 +117,9 @@ class Frame_View:
         if frame is None:
             self.vid_play.display.setText("Failed to load current frame.")
             return
+        
+        if self.dm.background_removal:
+            frame = suppress_fake_mice_bg(frame, self.dm.background, self.dm.blob_config.threshold)
 
         if self.is_counting:
             self.blob_counter.set_current_frame(frame, self.dm.current_frame_idx)

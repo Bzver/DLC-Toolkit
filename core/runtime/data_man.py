@@ -40,6 +40,9 @@ class Data_Manager:
         self.plot_config = Plot_Config(
             plot_opacity =1.0, point_size = 6.0, confidence_cutoff = 0.0, hide_text_labels = False, edit_mode = False,
             plot_labeled = True, plot_pred = True, navigate_labeled = False, auto_snapping = False, navigate_roi = False)
+        
+        self.background = None
+        self.background_removal = False
 
         # fview only
         self.blob_config:Blob_Config = None
@@ -350,8 +353,7 @@ class Data_Manager:
         self.save_workspace()
 
         for frame_list in [blob_merged_list, animal_n_list, animal_1_list, animal_0_list]:
-            if frame_list:
-                return frame_list
+            return frame_list if frame_list else []
 
     def handle_cat_update(self, category:str, frame_list:List[int]):
         self.fm.clear_category(category)

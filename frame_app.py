@@ -91,6 +91,7 @@ class Frame_App(QMainWindow):
                         "items": [
                             ("Canonical Pose", self._view_canonical_pose),
                             ("Config Menu", self._open_plot_config_menu),
+                            ("Toggle Smart Masking", self._toggle_bg_subtract),
                             ("ROI Region", self._check_roi),
                         ]
                     },
@@ -216,19 +217,19 @@ class Frame_App(QMainWindow):
             try:
                 self.vm.load_img_from_folder(self.dm.video_file)
             except Exception as e:
-                Loggerbox.error(self, "Error Opening DLC Label", e, exec=e)
+                Loggerbox.error(self, "Error Opening DLC Label", e, exc=e)
                 return
         else:
             try:
                 self.vm.init_extractor(video_path)
-                self.at.init_loaded_vid()
             except Exception as e:
-                Loggerbox.error(self, "Error Opening Video", e, exec=e)
+                Loggerbox.error(self, "Error Opening Video", e, exc=e)
                 return
 
         self.dm.total_frames = self.vm.get_frame_counts()
         self.vid_play.set_total_frames(self.dm.total_frames)
         self.vid_play.nav.set_current_video_name(self.dm.video_name)
+        self.at.init_loaded_vid()
         self.at.refresh_and_display()
         self.status_bar.show_message(f"Video loaded: {self.dm.video_file}", duration_ms=2000)
 
@@ -440,6 +441,19 @@ class Frame_App(QMainWindow):
         dialog = Canonical_Pose_Dialog(self.dm.dlc_data, self.dm.canon_pose)
         dialog.exec()
 
+    def _toggle_bg_subtract(self):
+        if not self.vm.check_status_msg():
+            return
+        self.dm.background_removal = not self.dm.background_removal
+        if self.dm.blob_config is None:
+            return
+
+        method = self.dm.blob_config.bg_removal_method
+        bg = self.dm.blob_config.background_frames[method]
+        self.dm.background = bg
+
+        self.at.display_current_frame()
+
     def _check_roi(self):
         if not self.vm.check_status_msg():
             return
@@ -522,7 +536,7 @@ class Frame_App(QMainWindow):
             try:
                 self.dm.load_labeled_overlay(label_file)
             except Exception as e:
-                Loggerbox.error(self, "Error Opening DLC Label", e, exec=e)
+                Loggerbox.error(self, "Error Opening DLC Label", e, exc=e)
                 return
             self.dm.plot_config.plot_labeled = True
             self.dm.plot_config.navigate_labeled = True

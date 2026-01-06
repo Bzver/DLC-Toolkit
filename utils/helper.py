@@ -3,7 +3,7 @@ import cv2
 from PySide6 import QtGui
 from contextlib import contextmanager
 import warnings
-from typing import List, Tuple, Callable, Union, Iterable, Optional, Dict
+from typing import List, Tuple, Callable, Union, Iterable, Optional, Dict, Literal
 
 from utils.logger import logger, Loggerbox, QMessageBox
 
@@ -353,6 +353,89 @@ def frame_to_pixmap(frame, request_dim=False) -> QtGui.QPixmap | Tuple[QtGui.QPi
     else:
         return pixmap
 
+def suppress_fake_mice_bg(
+    frame: np.ndarray,
+    background: np.ndarray,
+    threshold: int = 25,
+    intensity_margin: float = 0.3,
+    min_fg_pixels: int = 100,
+    polarity: Literal["Dark", "Bright"] = "Dark",
+    debug: bool = False,
+    alpha_fg: float = 0.4,
+    alpha_safe_bg: float = 0.3,
+    alpha_artifact: float = 0.6
+) -> np.ndarray:
+    H, W = frame.shape[:2]
+
+    frame_f = frame.astype(np.float32)
+    output = frame_f.copy()
+
+    f = frame.astype(np.int16)
+    b = background.astype(np.int16)
+    diff_bg = np.max(np.abs(f - b), axis=2)
+    bg_mask = diff_bg < threshold
+    fg_mask = ~bg_mask
+
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32)
+
+    artifact_mask = np.zeros((H, W), dtype=bool)
+
+    if np.sum(fg_mask) >= min_fg_pixels:
+        fg_vals = gray[fg_mask]
+        match polarity:
+            case "Dark":
+                polarity_info = "dark_animal"
+                mask_value = 255
+                mouse_intensity = np.percentile(fg_vals, 20)
+                low, high = 0, mouse_intensity * (1 + intensity_margin)
+            case "Bright":
+                polarity_info = "bright_animal"
+                mask_value = 0
+                mouse_intensity = np.percentile(fg_vals, 80)
+                low, high = mouse_intensity * (1 - intensity_margin), 255
+            case _:
+                polarity_info = "unknown"
+                mask_value = 255
+                mouse_intensity = np.median(fg_vals)
+                low = mouse_intensity * (1 - intensity_margin)
+                high = mouse_intensity * (1 + intensity_margin)
+
+        artifact_mask = bg_mask & (gray >= low) & (gray <= high)
+
+    if debug:
+        overlay = frame_f.copy()
+
+        if polarity_info == "dark_animal":
+            fg_color = np.array([180, 80, 80], dtype=np.float32)
+        elif polarity_info == "bright_animal":
+            fg_color = np.array([80, 180, 255], dtype=np.float32)
+        else:
+            fg_color = np.array([100, 100, 255], dtype=np.float32)
+
+        overlay[fg_mask] = (1 - alpha_fg) * overlay[fg_mask] + alpha_fg * fg_color
+
+        safe_bg_mask = bg_mask & (~artifact_mask)
+        overlay[safe_bg_mask] = (1 - alpha_safe_bg) * overlay[safe_bg_mask] + \
+                                alpha_safe_bg * np.array([100, 255, 100], dtype=np.float32)
+
+        if mask_value == 0:
+            art_color = np.array([0, 0, 0], dtype=np.float32)
+        elif mask_value == 255:
+            art_color = np.array([255, 255, 255], dtype=np.float32)
+        else:
+            art_color = np.full(3, mask_value, dtype=np.float32)
+
+        overlay[artifact_mask] = (1 - alpha_artifact) * overlay[artifact_mask] + \
+                                 alpha_artifact * art_color
+
+        cv2.putText(overlay, f"Polarity: {polarity_info} | Mask: {mask_value}", 
+                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+        return np.clip(overlay, 0, 255).astype(np.uint8)
+
+    output[artifact_mask] = [mask_value, mask_value, mask_value]
+    return np.clip(output, 0, 255).astype(np.uint8)
+
 ###########################################################################################
 
 def get_roi_cv2(frame) -> Tuple[int, int, int, int] | None:
@@ -431,7 +514,6 @@ def array_to_iterable_runs(arr:np.ndarray) -> Iterable[Tuple[int, int, np.ndarra
     ends = np.concatenate((change_points - 1, [len(arr) - 1]))
     values = arr[starts]
     return zip(starts, ends, values)
-
 
 #########################################################################################################################################################1
 
