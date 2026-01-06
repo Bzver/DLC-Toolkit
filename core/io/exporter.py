@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QProgressDialog
 from .csv_op import prediction_to_csv, csv_to_h5
 from .io_helper import append_new_video_to_dlc_config, generate_crop_coord_notations, remove_confidence_score
 from .frame_loader import Frame_Extractor
-from utils.helper import crop_coord_to_array, validate_crop_coord
+from utils.helper import crop_coord_to_array, validate_crop_coord, suppress_fake_mice_bg
 from utils.logger import logger
 from utils.dataclass import Loaded_DLC_Data
 
@@ -26,6 +26,8 @@ class Exporter:
             pred_data_array:Optional[np.ndarray]=None,
             progress_callback:Optional[QProgressDialog]=None,
             crop_coord:Optional[np.ndarray]=None,
+            bg:Optional[np.ndarray]=None,
+            bg_thresh:int=25,
             ):
         logger.info(f"[EXPORTER] Initializing Exporter for save path: {save_folder}")
         self.dlc_data = dlc_data
@@ -38,6 +40,8 @@ class Exporter:
 
         self.video_name, _ = os.path.splitext(os.path.basename(self.video_filepath))
 
+        self.background = bg
+        self.bg_thresh = bg_thresh
         self.crop_coord = validate_crop_coord(crop_coord)
         self.extractor = Frame_Extractor(self.video_filepath)
 
@@ -129,9 +133,17 @@ class Exporter:
         csv_to_h5(save_path, self.dlc_data.multi_animal, self.dlc_data.scorer)
         logger.info("[EXPORTER] Converted CSV to H5 format.")
         
+    def _apply_mask(self, frame:Frame_CV2):
+        if self.background is None:
+            return frame
+        try:
+            return suppress_fake_mice_bg(frame, self.background, self.bg_thresh)
+        except Exception as e:
+            logger.error(f"[EXPORTER] Error applying masking to frame. Returning original frame. Error: {e}")
+            return frame
+
     def _apply_crop(self, frame:Frame_CV2):
         if self.crop_coord is None:
-            logger.debug("[EXPORTER] No crop coordinates, returning original frame.")
             return frame
         try:
             x1, y1, x2, y2 = self.crop_coord
@@ -198,6 +210,7 @@ class Exporter:
                 logger.warning(f"[EXPORTER] Frame {frame_idx} not found during sparse extraction. Skipping.")
                 continue
 
+            frame = self._apply_mask(frame)
             frame = self._apply_crop(frame)
 
             if to_video:
@@ -271,6 +284,7 @@ class Exporter:
                 logger.warning(f"[EXPORTER] Frame {current_frame_idx} is empty during continuous extraction. Substituted with placeholder.")
 
             if current_frame_idx in frame_set:
+                frame = self._apply_mask(frame)
                 frame = self._apply_crop(frame)
 
                 if to_video and not writer:

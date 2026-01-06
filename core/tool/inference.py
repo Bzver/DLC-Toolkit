@@ -33,6 +33,8 @@ class DLC_Inference(QDialog):
         frame_list:List[int],
         video_filepath:str,
         roi:Optional[np.ndarray]=None,
+        bg:Optional[np.ndarray]=None,
+        bg_thresh:int=25,
         parent=None
         ):
         super().__init__(parent)
@@ -44,8 +46,11 @@ class DLC_Inference(QDialog):
 
         self.frame_list.sort()
         self.cropping = False
+        self.masking = False
 
         self.crop_coord = validate_crop_coord(roi)
+        self.background = bg
+        self.bg_thresh = bg_thresh
         self.video_name, _ = os.path.splitext(os.path.basename(self.video_filepath))
 
         self.temp_directory = tempfile.TemporaryDirectory()
@@ -108,6 +113,10 @@ class DLC_Inference(QDialog):
         self.cropping_checkbox.setChecked(self.cropping)
         self.cropping_checkbox.toggled.connect(self._cropping_changed)
 
+        self.masking_checkbox = QtWidgets.QCheckBox("Mask")
+        self.masking_checkbox.setChecked(self.masking)
+        self.masking_checkbox.toggled.connect(self._masking_changed)
+
         button_frame = QHBoxLayout()
 
         self.batch_size_changed = False
@@ -125,6 +134,7 @@ class DLC_Inference(QDialog):
         self.start_button = QPushButton("Run Inference")
         self.start_button.clicked.connect(self._inference_pipe)
         button_frame.addWidget(self.cropping_checkbox)
+        button_frame.addWidget(self.masking_checkbox)
         button_frame.addWidget(self.batchsize_label_spinbox)
         button_frame.addWidget(self.detector_batchsize_label_spinbox)
         button_frame.addWidget(self.start_button)
@@ -231,6 +241,9 @@ class DLC_Inference(QDialog):
         self.detector_batch_size = value
         self.batch_size_changed = True
 
+    def _masking_changed(self, checked:bool):
+        self.masking = checked
+
     def _cropping_changed(self, checked:bool):
         self.cropping = checked
 
@@ -242,6 +255,10 @@ class DLC_Inference(QDialog):
             self._update_config()
 
         self.total_frames = self.extractor.get_total_frames()
+
+        if self.masking and self.background is None:
+            Loggerbox.info(self, "Background Not Calculated", "Use Counter to get background first.")
+            return
 
         if self.cropping and self.crop_coord is None:
             frame = self.extractor.get_frame(0)
@@ -255,15 +272,15 @@ class DLC_Inference(QDialog):
 
         inference_video_path = None
         try:
-            if len(self.frame_list)  > int(0.9 * self.total_frames) and not self.cropping:
+            if len(self.frame_list)  > int(0.9 * self.total_frames) and not (self.cropping or self.masking):
                 inference_video_path = self.video_filepath
                 self.extractor_reviewer = Frame_Extractor(inference_video_path)
             elif len(self.frame_list) < 500 and not self.model_name.startswith("CondPreNet_"):
-                self._extract_marked_frame_images(self.crop_coord)
+                self._extract_marked_frame_images()
                 self.extractor_reviewer = Frame_Extractor_Img(self.temp_dir)
             else:
                 inference_video_path = os.path.join(self.temp_dir, "temp_extract.mp4")
-                self._extract_marked_frame_as_video(self.crop_coord)
+                self._extract_marked_frame_as_video()
                 self.extractor_reviewer = Frame_Extractor(inference_video_path)
         except Exception as e:
             self._panic_exit(reason=f"Error during frame image extraction. Error:{e}", exception=e)
@@ -272,8 +289,9 @@ class DLC_Inference(QDialog):
         QtWidgets.QApplication.processEvents()
 
         try:
-            self.on_hold_dialog = On_Hold_Dialog(self)
-            self.on_hold_dialog.show()
+            if not headless:
+                self.on_hold_dialog = On_Hold_Dialog(self)
+                self.on_hold_dialog.show()
             self.hide()
             QtWidgets.QApplication.processEvents() 
             sys.setrecursionlimit(2000)
@@ -285,7 +303,9 @@ class DLC_Inference(QDialog):
             self._panic_exit(reason=f"Error during frame analysis. Error:{e}", exception=e)
             return
         
-        self.on_hold_dialog.accept()
+        if not headless:
+            self.on_hold_dialog.accept()
+
         self.show()
         self._process_new_pred(headless)
 
@@ -309,7 +329,7 @@ class DLC_Inference(QDialog):
             yaml.dump(config_org, file, default_flow_style=False, sort_keys=False)
             logger.info(f"[INFER] DeepLabCut config in {config_path} has been updated.")
 
-    def _extract_marked_frame_images(self, crop_coord=None):
+    def _extract_marked_frame_images(self):
         progress = Progress_Indicator_Dialog(0, 100, "Frame Extraction", "Extracting frames from video", parent=self)
         exporter = Exporter(
             dlc_data=self.dlc_data,
@@ -317,13 +337,15 @@ class DLC_Inference(QDialog):
             video_filepath=self.video_filepath,
             frame_list=self.frame_list,
             progress_callback=progress,
-            crop_coord=crop_coord
+            crop_coord=self.crop_coord if self.cropping else None,
+            bg=self.background if self.masking else None,
+            bg_thresh=self.bg_thresh
             )
         corrected_indices = exporter.export_data_to_DLC(frame_only=True)
         if corrected_indices:
             self.frame_list = corrected_indices
 
-    def _extract_marked_frame_as_video(self, crop_coord=None):
+    def _extract_marked_frame_as_video(self):
         progress = Progress_Indicator_Dialog(0, 100, "Frame Extraction", "Extracting frames from video", parent=self)
         exporter = Exporter(
             dlc_data=self.dlc_data,
@@ -331,7 +353,9 @@ class DLC_Inference(QDialog):
             video_filepath=self.video_filepath,
             frame_list=self.frame_list,
             progress_callback=progress,
-            crop_coord=crop_coord
+            crop_coord=self.crop_coord if self.cropping else None,
+            bg=self.background if self.masking else None,
+            bg_thresh=self.bg_thresh
             )
         corrected_indices = exporter.export_frame_to_video()
         if corrected_indices:
@@ -425,6 +449,8 @@ class DLC_Inference(QDialog):
 
     def _panic_exit(self, reason:str="Check terminal for reason.", exception:Optional[Exception]=None):
         Loggerbox.error(self, "Rerun Failed", reason, exception)
+        if hasattr(self, "on_hold_dialog"):
+            self.on_hold_dialog.accept()
         self.reject()
 
     def closeEvent(self, event):

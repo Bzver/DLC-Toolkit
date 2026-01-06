@@ -119,7 +119,10 @@ class Frame_View:
             return
         
         if self.dm.background_removal:
-            frame = suppress_fake_mice_bg(frame, self.dm.background, self.dm.blob_config.threshold)
+            try:
+                frame = suppress_fake_mice_bg(frame, self.dm.background, self.dm.blob_config.threshold)
+            except Exception as e:
+                Loggerbox.info(self.main, "Background Masking Failed", f"Unable to acquire background info from blob counter: {e}")
 
         if self.is_counting:
             self.blob_counter.set_current_frame(frame, self.dm.current_frame_idx)
@@ -306,6 +309,14 @@ class Frame_View:
         if not inference_list:
             inference_list = fm_list
 
+        try:
+            bg = self.dm.background
+            if bg is None:
+                bg = self.dm.blob_config.background_frames[self.dm.blob_config.bg_removal_method]
+            bg_thresh = self.dm.blob_config.threshold
+        except Exception as e:
+            Loggerbox.info(self.main, "Background Masking Failed", f"Unable to acquire background info from blob counter: {e}")
+
         from core.tool import DLC_Inference
         try:
             self.inference_window = DLC_Inference(
@@ -313,6 +324,8 @@ class Frame_View:
                 frame_list=inference_list,
                 video_filepath=self.dm.video_file,
                 roi=self.dm.roi,
+                bg=bg,
+                bg_thresh=bg_thresh,
                 parent=self.main)
         except Exception as e:
             Loggerbox.error(self.main, "Inference Failed", f"Inference Process failed to initialize. Exception: {e}", exc=e)
