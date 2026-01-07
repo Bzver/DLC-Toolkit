@@ -41,7 +41,6 @@ class Blob_Counter(QGroupBox):
         self.frame_extractor = frame_extractor
         self.current_frame = None
         self.total_frames, self.frame_idx = 0, 0
-        self.sample_frame_count = 100
         self.vid_h, self.vid_w = self.frame_extractor.get_frame_dim()
         self.roi = roi
 
@@ -164,7 +163,6 @@ class Blob_Counter(QGroupBox):
 
     def get_config(self) -> Blob_Config:
         config = Blob_Config(
-            sample_frame_count = self.sample_frame_count,
             threshold = self.threshold,
             double_blob_area_threshold = self.blb_hist.double_blob_area_threshold,
             min_blob_area = self.min_blob_area,
@@ -176,7 +174,6 @@ class Blob_Counter(QGroupBox):
         return config
 
     def _apply_config(self, config: Blob_Config):
-        self.sample_frame_count = config.sample_frame_count
         self.threshold = config.threshold
         self.min_blob_area = config.min_blob_area
         self.bg_removal_method = config.bg_removal_method
@@ -527,7 +524,7 @@ class Blob_Background(QtWidgets.QWidget):
         if method == "None":
             return None
 
-        frame_array = np.array(all_frames)  # Shape: (N, H, W, C) or (N, H, W)
+        frame_array = np.array(all_frames)
         if method == "Mean":
             bg = np.mean(np.array(all_frames), axis=0).astype(np.uint8)
         elif method == "Min":
@@ -605,7 +602,6 @@ class Blob_Histogram(QVBoxLayout):
         self.histogram_label = QLabel("Blob Size Distribution (computing...)")
         self.addWidget(self.histogram_label)
 
-        # Matplotlib figure
         self.fig = Figure(figsize=(6, 3), dpi=100)
         self.canvas = FigureCanvas(self.fig)
         self.canvas.setMinimumHeight(100)
@@ -637,7 +633,6 @@ class Blob_Histogram(QVBoxLayout):
         if self.double_blob_area_threshold > xlim_max:
             self.double_blob_area_threshold = xlim_max * 0.95   # Clamp the threshold line to prevent it falling out of plot range
 
-        # Add draggable threshold line
         if self.threshold_line:
             self.threshold_line.remove()
 
