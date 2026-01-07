@@ -353,88 +353,48 @@ def frame_to_pixmap(frame, request_dim=False) -> QtGui.QPixmap | Tuple[QtGui.QPi
     else:
         return pixmap
 
-def suppress_fake_mice_bg(
-    frame: np.ndarray,
+def get_smart_bg_masking(
+    frame_batched: np.ndarray,
     background: np.ndarray,
     threshold: int = 25,
     intensity_margin: float = 0.3,
     min_fg_pixels: int = 100,
-    polarity: Literal["Dark", "Bright"] = "Dark",
-    debug: bool = False,
-    alpha_fg: float = 0.4,
-    alpha_safe_bg: float = 0.3,
-    alpha_artifact: float = 0.6
+    polarity: Literal["Dark Blobs", "Light Blobs"] = "Dark Blobs",
 ) -> np.ndarray:
-    H, W = frame.shape[:2]
 
-    frame_f = frame.astype(np.float32)
-    output = frame_f.copy()
+    H, W = frame_batched.shape[1:3]
 
-    f = frame.astype(np.int16)
+    f = frame_batched.astype(np.int16)
     b = background.astype(np.int16)
-    diff_bg = np.max(np.abs(f - b), axis=2)
-    bg_mask = diff_bg < threshold
-    fg_mask = ~bg_mask
+    diff_bg = np.max(np.abs(f - b), axis=3)
+    fg_mask = diff_bg >= threshold
 
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    fg_pixel_count = np.sum(fg_mask)
 
-    artifact_mask = np.zeros((H, W), dtype=bool)
+    weights = np.array([0.114, 0.587, 0.299], dtype=np.float32)
+    gray = np.tensordot(frame_batched.astype(np.float32), weights, axes=([3], [0]))  # (B, H, W)
+    bg_gray = np.tensordot(background.astype(np.float32), weights, axes=([2], [0]))  # (H, W)
 
-    if np.sum(fg_mask) >= min_fg_pixels:
+    artifact_mask = np.zeros((H, W), dtype=np.int16)
+
+    if fg_pixel_count >= min_fg_pixels:
         fg_vals = gray[fg_mask]
         match polarity:
-            case "Dark":
-                polarity_info = "dark_animal"
+            case "Dark Blobs":
                 mask_value = 255
-                mouse_intensity = np.percentile(fg_vals, 20)
+                mouse_intensity = np.percentile(fg_vals, 20) if len(fg_vals) > 0 else 0.0
                 low, high = 0, mouse_intensity * (1 + intensity_margin)
-            case "Bright":
-                polarity_info = "bright_animal"
-                mask_value = 0
-                mouse_intensity = np.percentile(fg_vals, 80)
+            case "Light Blobs":
+                mask_value = -255
+                mouse_intensity = np.percentile(fg_vals, 80) if len(fg_vals) > 0 else 255.0
                 low, high = mouse_intensity * (1 - intensity_margin), 255
-            case _:
-                polarity_info = "unknown"
-                mask_value = 255
-                mouse_intensity = np.median(fg_vals)
-                low = mouse_intensity * (1 - intensity_margin)
-                high = mouse_intensity * (1 + intensity_margin)
 
-        artifact_mask = bg_mask & (gray >= low) & (gray <= high)
+        intensity_condition = (bg_gray >= low) & (bg_gray <= high)
+        artifact_mask[intensity_condition] = mask_value
 
-    if debug:
-        overlay = frame_f.copy()
+        artifact_mask = np.repeat(artifact_mask[..., np.newaxis], 3, axis=2)
 
-        if polarity_info == "dark_animal":
-            fg_color = np.array([180, 80, 80], dtype=np.float32)
-        elif polarity_info == "bright_animal":
-            fg_color = np.array([80, 180, 255], dtype=np.float32)
-        else:
-            fg_color = np.array([100, 100, 255], dtype=np.float32)
-
-        overlay[fg_mask] = (1 - alpha_fg) * overlay[fg_mask] + alpha_fg * fg_color
-
-        safe_bg_mask = bg_mask & (~artifact_mask)
-        overlay[safe_bg_mask] = (1 - alpha_safe_bg) * overlay[safe_bg_mask] + \
-                                alpha_safe_bg * np.array([100, 255, 100], dtype=np.float32)
-
-        if mask_value == 0:
-            art_color = np.array([0, 0, 0], dtype=np.float32)
-        elif mask_value == 255:
-            art_color = np.array([255, 255, 255], dtype=np.float32)
-        else:
-            art_color = np.full(3, mask_value, dtype=np.float32)
-
-        overlay[artifact_mask] = (1 - alpha_artifact) * overlay[artifact_mask] + \
-                                 alpha_artifact * art_color
-
-        cv2.putText(overlay, f"Polarity: {polarity_info} | Mask: {mask_value}", 
-                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-
-        return np.clip(overlay, 0, 255).astype(np.uint8)
-
-    output[artifact_mask] = [mask_value, mask_value, mask_value]
-    return np.clip(output, 0, 255).astype(np.uint8)
+    return artifact_mask
 
 ###########################################################################################
 

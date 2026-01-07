@@ -41,8 +41,8 @@ class Data_Manager:
             plot_opacity =1.0, point_size = 6.0, confidence_cutoff = 0.0, hide_text_labels = False, edit_mode = False,
             plot_labeled = True, plot_pred = True, navigate_labeled = False, auto_snapping = False, navigate_roi = False)
         
-        self.background = None
-        self.background_removal = False
+        self.background_masking = False
+        self.background_mask = None
 
         # fview only
         self.blob_config:Blob_Config = None

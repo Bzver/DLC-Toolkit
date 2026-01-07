@@ -33,8 +33,7 @@ class DLC_Inference(QDialog):
         frame_list:List[int],
         video_filepath:str,
         roi:Optional[np.ndarray]=None,
-        bg:Optional[np.ndarray]=None,
-        bg_thresh:int=25,
+        mask:Optional[np.ndarray]=None,
         parent=None
         ):
         super().__init__(parent)
@@ -49,8 +48,7 @@ class DLC_Inference(QDialog):
         self.masking = False
 
         self.crop_coord = validate_crop_coord(roi)
-        self.background = bg
-        self.bg_thresh = bg_thresh
+        self.mask_region = mask
         self.video_name, _ = os.path.splitext(os.path.basename(self.video_filepath))
 
         self.temp_directory = tempfile.TemporaryDirectory()
@@ -256,8 +254,8 @@ class DLC_Inference(QDialog):
 
         self.total_frames = self.extractor.get_total_frames()
 
-        if self.masking and self.background is None:
-            Loggerbox.info(self, "Background Not Calculated", "Use Counter to get background first.")
+        if self.masking and self.mask_region is None:
+            Loggerbox.info(self, "Mask Region Not Calculated", "Use Counter to get background first.")
             return
 
         if self.cropping and self.crop_coord is None:
@@ -338,8 +336,7 @@ class DLC_Inference(QDialog):
             frame_list=self.frame_list,
             progress_callback=progress,
             crop_coord=self.crop_coord if self.cropping else None,
-            bg=self.background if self.masking else None,
-            bg_thresh=self.bg_thresh
+            mask=self.mask_region
             )
         corrected_indices = exporter.export_data_to_DLC(frame_only=True)
         if corrected_indices:
@@ -354,8 +351,7 @@ class DLC_Inference(QDialog):
             frame_list=self.frame_list,
             progress_callback=progress,
             crop_coord=self.crop_coord if self.cropping else None,
-            bg=self.background if self.masking else None,
-            bg_thresh=self.bg_thresh
+            mask=self.mask_region
             )
         corrected_indices = exporter.export_frame_to_video()
         if corrected_indices:

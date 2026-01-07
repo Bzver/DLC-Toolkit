@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QProgressDialog
 from .csv_op import prediction_to_csv, csv_to_h5
 from .io_helper import append_new_video_to_dlc_config, generate_crop_coord_notations, remove_confidence_score
 from .frame_loader import Frame_Extractor
-from utils.helper import crop_coord_to_array, validate_crop_coord, suppress_fake_mice_bg
+from utils.helper import crop_coord_to_array, validate_crop_coord
 from utils.logger import logger
 from utils.dataclass import Loaded_DLC_Data
 
@@ -26,8 +26,7 @@ class Exporter:
             pred_data_array:Optional[np.ndarray]=None,
             progress_callback:Optional[QProgressDialog]=None,
             crop_coord:Optional[np.ndarray]=None,
-            bg:Optional[np.ndarray]=None,
-            bg_thresh:int=25,
+            mask:Optional[np.ndarray]=None,
             ):
         logger.info(f"[EXPORTER] Initializing Exporter for save path: {save_folder}")
         self.dlc_data = dlc_data
@@ -40,8 +39,7 @@ class Exporter:
 
         self.video_name, _ = os.path.splitext(os.path.basename(self.video_filepath))
 
-        self.background = bg
-        self.bg_thresh = bg_thresh
+        self.mask = mask
         self.crop_coord = validate_crop_coord(crop_coord)
         self.extractor = Frame_Extractor(self.video_filepath)
 
@@ -134,13 +132,14 @@ class Exporter:
         logger.info("[EXPORTER] Converted CSV to H5 format.")
         
     def _apply_mask(self, frame:Frame_CV2):
-        if self.background is None:
+        if self.mask is None:
             return frame
         try:
-            return suppress_fake_mice_bg(frame, self.background, self.bg_thresh)
+            masked_frame = frame.astype(np.int16) + self.mask
         except Exception as e:
             logger.error(f"[EXPORTER] Error applying masking to frame. Returning original frame. Error: {e}")
             return frame
+        return np.clip(masked_frame, 0, 255).astype(np.uint8)
 
     def _apply_crop(self, frame:Frame_CV2):
         if self.crop_coord is None:

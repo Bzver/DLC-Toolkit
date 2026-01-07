@@ -1,5 +1,6 @@
 import os
 import numpy as np
+import random
 import cv2
 from PIL import Image
 from collections import OrderedDict
@@ -62,6 +63,33 @@ class Frame_Extractor:
         else:
             logger.warning(f"[FLOADER] OpenCV failed to read frame {frame_index}.")
             return None
+        
+    def sample_frames(self, frame_count:int=100):
+        logger.info(f"[FLOADER] Randomly sampling {frame_count} frames from video.")
+        if self.total_frames < frame_count:
+            frame_count = self.total_frames        
+        
+        frames_to_sample = set(random.sample(range(self.total_frames), frame_count)) # Convert to set for efficient seeking
+        frame_batched_array = np.zeros((frame_count, self.height, self.width, 3), dtype=np.uint8)
+
+        if frame_count < 1000:
+            for i, frame_idx in enumerate(frames_to_sample):
+                frame = self.get_frame(frame_idx)
+                if frame is not None:
+                    frame_batched_array[i] = frame
+            
+            return frame_batched_array
+        else:
+            frame_idx = 0
+            i = 0
+            self.start_sequential_read()
+            while frame_idx < self.total_frames:
+                _, frame = self.read_next_frame()
+                if frame_idx in frames_to_sample:
+                    frame_batched_array[i] = frame
+                    i += 1
+                frame_idx += 1
+            return frame_batched_array
 
     def start_sequential_read(self, start: int = 0, end: Optional[int] = None):
         logger.info(f"[FLOADER] Starting sequential read from frame {start} to {end}.")

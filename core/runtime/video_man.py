@@ -49,3 +49,6 @@ class Video_Manager:
 
     def get_frame_counts(self) -> int:
         return self.extractor.get_total_frames()
+
+    def get_random_frame_samples(self, sample_count:int):
+        return self.extractor.sample_frames(sample_count)

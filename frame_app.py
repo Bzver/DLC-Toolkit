@@ -91,7 +91,7 @@ class Frame_App(QMainWindow):
                         "items": [
                             ("Canonical Pose", self._view_canonical_pose),
                             ("Config Menu", self._open_plot_config_menu),
-                            ("Toggle Smart Masking", self._toggle_bg_subtract),
+                            ("Toggle Smart Masking", self._toggle_bg_masking),
                             ("ROI Region", self._check_roi),
                         ]
                     },
@@ -441,16 +441,16 @@ class Frame_App(QMainWindow):
         dialog = Canonical_Pose_Dialog(self.dm.dlc_data, self.dm.canon_pose)
         dialog.exec()
 
-    def _toggle_bg_subtract(self):
+    def _toggle_bg_masking(self):
         if not self.vm.check_status_msg():
             return
-        self.dm.background_removal = not self.dm.background_removal
         if self.dm.blob_config is None:
+            Loggerbox.warning("Smart masking requires background and threshold from Animal Counter.")
             return
+        self.dm.background_masking = not self.dm.background_masking
 
-        method = self.dm.blob_config.bg_removal_method
-        bg = self.dm.blob_config.background_frames[method]
-        self.dm.background = bg
+        if self.dm.background_mask is None:
+            self.fview.get_mask_from_blob_config()        
 
         self.at.display_current_frame()
 
