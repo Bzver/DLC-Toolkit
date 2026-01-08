@@ -26,16 +26,10 @@ def calculate_pose_centroids(
 
     x_vals = pred_data_array[frame_slice, :, 0::3]
     y_vals = pred_data_array[frame_slice, :, 1::3]
+    frame_count = x_vals.shape[0]
 
-    if isinstance(frame_slice, (int, np.integer)): # Determine output shape
-        output_shape_pose = (instance_count, 2)
-        output_shape_rltv = (instance_count, num_keypoint * 2)
-    else:
-        output_shape_pose = (x_vals.shape[0], instance_count, 2)
-        output_shape_rltv = (x_vals.shape[0], instance_count, num_keypoint * 2)
-
-    pose_centroids = np.full(output_shape_pose, np.nan, dtype=np.float64)
-    local_coords = np.full(output_shape_rltv, np.nan, dtype=np.float64)
+    pose_centroids = np.full((frame_count, instance_count, 2), np.nan, dtype=np.float64)
+    local_coords = np.full((frame_count, instance_count, num_keypoint*2), np.nan, dtype=np.float64)
     
     valid_mask = np.any(~np.isnan(x_vals), axis=-1)
 
@@ -44,7 +38,11 @@ def calculate_pose_centroids(
 
     local_coords[..., 0::2] = x_vals - pose_centroids[..., 0, np.newaxis]
     local_coords[..., 1::2] = y_vals - pose_centroids[..., 1, np.newaxis]
-        
+    
+    if isinstance(frame_slice, (int, np.integer)):
+        centroids = np.squeeze(centroids, axis=0)
+        local_coords = np.squeeze(local_coords, axis=0)
+
     return pose_centroids, local_coords
 
 def calculate_pose_rotations(
@@ -56,27 +54,37 @@ def calculate_pose_rotations(
     Compute rotation angle (in radians) representing the orientation of a pose.
     
     Args:
-        local_x, local_y: (K,) or (N, K)
+        local_x, local_y: (K,) or (N, K) or (F, N, K)
         angle_map_data: dict with 'head_idx', 'tail_idx', 'center_idx'
 
     Returns:
-        float if input 1D, (N,) array if 2D.
+        float if input 1D, (N,) or (F, N,) if otherwise
     """
+    assert local_x.shape == local_y.shape, f"local_x and local_y shape does not match! local_x: {local_x.shape}, local_y: {local_y.shape}"
+
     orig_ndim = local_x.ndim
     if orig_ndim == 1:
-        local_x = local_x[None, :]  # (1, K)
-        local_y = local_y[None, :]
+        lcx = local_x[None, :]  # (1, K)
+        lcy = local_y[None, :]
+    elif orig_ndim == 3:
+        F, I = local_x.shape[:2]
+        N = F * I
+        lcx = local_x.reshape((F*I, -1))
+        lcy = local_y.reshape((F*I, -1))
+    else:
+        N = local_x.shape[0]
+        lcx = local_x
+        lcy = local_y
 
-    N= local_x.shape[0]
     angles = np.full(N, np.nan, dtype=np.float64)
 
     head_idx = angle_map_data['head_idx']
     tail_idx = angle_map_data['tail_idx']
     center_idx = angle_map_data['center_idx']
 
-    xh, yh = local_x[:, head_idx], local_y[:, head_idx]
-    xc, yc = local_x[:, center_idx], local_y[:, center_idx]
-    xt, yt = local_x[:, tail_idx], local_y[:, tail_idx]
+    xh, yh = lcx[..., head_idx], lcy[..., head_idx]
+    xc, yc = lcx[..., center_idx], lcy[..., center_idx]
+    xt, yt = lcx[..., tail_idx], lcy[..., tail_idx]
 
     def angle_from_to(x1, y1, x2, y2):
         dx = x2 - x1
@@ -88,18 +96,18 @@ def calculate_pose_rotations(
         angles[valid_ch] = angle_from_to(xc[valid_ch], yc[valid_ch], xh[valid_ch], yh[valid_ch])
 
     still_nan = np.isnan(angles)
-    valid_ct = still_nan & np.isfinite(xc) & np.isfinite(yc) & np.isfinite(xt) & np.isfinite(yt)
-    if np.any(valid_ct):
-        angles[valid_ct] = angle_from_to(xt[valid_ct], yt[valid_ct], xc[valid_ct], yc[valid_ct])
-
-    still_nan = np.isnan(angles)
     valid_ht = still_nan & np.isfinite(xh) & np.isfinite(yh) & np.isfinite(xt) & np.isfinite(yt)
     if np.any(valid_ht):
         angles[valid_ht] = angle_from_to(xt[valid_ht], yt[valid_ht], xh[valid_ht], yh[valid_ht])
 
     still_nan = np.isnan(angles)
+    valid_ct = still_nan & np.isfinite(xc) & np.isfinite(yc) & np.isfinite(xt) & np.isfinite(yt)
+    if np.any(valid_ct):
+        angles[valid_ct] = angle_from_to(xt[valid_ct], yt[valid_ct], xc[valid_ct], yc[valid_ct])
+
+    still_nan = np.isnan(angles)
     if np.any(still_nan):
-        points = np.stack([local_x, local_y], axis=-1)
+        points = np.stack([lcx, lcy], axis=-1)
 
         for i in np.where(still_nan)[0]:
             pts = points[i]
@@ -118,6 +126,7 @@ def calculate_pose_rotations(
                 d = Vt[0]
             except np.linalg.LinAlgError:
                 angles[i] = 0.0
+                continue
 
             if np.isfinite(xh[i]) and np.isfinite(yh[i]):
                 p = np.array([xh[i], yh[i]])
@@ -134,7 +143,12 @@ def calculate_pose_rotations(
 
     angles[np.isnan(angles)] = 0.0
 
-    return float(angles[0]) if orig_ndim == 1 else angles
+    if orig_ndim == 1:
+        return float(angles[0])
+    elif orig_ndim == 3:
+        return angles.reshape((F, I))
+    else:
+        return angles
 
 def calculate_pose_bbox(
         coords_x:np.ndarray,
@@ -213,12 +227,12 @@ def calculate_aligned_local(
               - 'angle_map': list of connection dicts (optional, for fallback angle estimation)
     Returns:
         np.ndarray: 
-            Aligned local coordinates of shape (frames, instances, keypoints * 2), 
+            Aligned local coordinates of shape (frames, instances, keypoints * 3), 
     """
     F, I, XYCONF = pred_data_array.shape
     K = XYCONF // 3
 
-    local_poses = np.full((F, I, K*2), np.nan)
+    local_poses = np.full((F, I, K*3), np.nan)
 
     center_idx = angle_map_data["center_idx"]
 
@@ -228,16 +242,17 @@ def calculate_aligned_local(
     nan_mask = np.isnan(pose_centroids)
     pose_centroids[nan_mask] = math_centroids[nan_mask]
     
-    local_poses[..., 0::2] = pred_data_array[:, :, 0::3] - pose_centroids[..., 0, np.newaxis]
-    local_poses[..., 1::2] = pred_data_array[:, :, 1::3] - pose_centroids[..., 1, np.newaxis]
+    local_poses[..., 0::3] = pred_data_array[:, :, 0::3] - pose_centroids[..., 0, np.newaxis]
+    local_poses[..., 1::3] = pred_data_array[:, :, 1::3] - pose_centroids[..., 1, np.newaxis]
+    local_poses[..., 2::3] = pred_data_array[:, :, 2::3]
 
-    flat_local = local_poses.reshape(F*I, 2*K)
+    flat_local = local_poses.reshape(F*I, 3*K)
     flat_x = flat_local[:, 0::2]
     flat_y = flat_local[:, 1::2]
 
     angles_flat = calculate_pose_rotations(flat_x, flat_y, angle_map_data)
     aligned_flat = pose_alignment_worker(flat_local, angles_flat)
 
-    aligned_local_coords = aligned_flat.reshape(F, I, 2*K)
+    aligned_local_coords = aligned_flat.reshape(F, I, 3*K)
 
     return aligned_local_coords
