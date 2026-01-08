@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushBu
 from typing import List, Tuple, Optional
 
 from .plot import Prediction_Plotter
-from .undo_redo import Uno_Stack
+from .undo_redo import Uno_Stack, Uno_Stack_Dict
 from .mark_nav import navigate_to_marked_frame
 from core.io import Frame_Extractor, Frame_Extractor_Img
 from ui import Clickable_Video_Label, Video_Slider_Widget, Shortcut_Manager
@@ -52,7 +52,8 @@ class Parallel_Review_Dialog(QDialog):
             self.pred_data_array -= self.crop_array
             self.new_data_array -= self.crop_array
 
-        self.current_frame_idx = 0
+        self.frame_status_array = np.zeros((self.total_marked_frames,), dtype=np.uint8)
+        self.current_frame_idx = 0 # local_idx
         self.is_saved = False
 
         plot_config = Plot_Config(
@@ -149,7 +150,6 @@ class Parallel_Review_Dialog(QDialog):
 
     def _setup_uno(self):
         self.uno = Uno_Stack()
-        self.frame_status_array = np.zeros((self.total_marked_frames,), dtype=np.uint8)
         self.uno.save_state_for_undo(self.frame_status_array)
 
     def _build_shortcut(self):
@@ -251,18 +251,6 @@ class Parallel_Review_Dialog(QDialog):
         self.frame_status_array[unproc_mask] = 2
         self._refresh_ui()
 
-    def _swap_instance(self):
-        self._save_state_for_undo()
-        self.new_data_array = swap_track(self.new_data_array, self.current_frame_idx)
-        self._display_current_frame()
-        self._refresh_ui()
-
-    def _swap_track(self):
-        self._save_state_for_undo()
-        self.new_data_array = swap_track(self.new_data_array, self.current_frame_idx, swap_range=[-1])
-        self._display_current_frame()
-        self._refresh_ui()
-
     ###################################################################################################
 
     def _navigation_title_controller(self):
@@ -297,8 +285,7 @@ class Parallel_Review_Dialog(QDialog):
     def _refresh_slider(self):
         self.is_saved = False
         self.progress_slider.clear_frame_category()
-        idx_to_color = {idx:hex_color for idx, hex_color in self.RERUN_PALLETTE.items()}
-        self.progress_slider.set_frame_category_array(self.frame_status_array, idx_to_color)
+        self.progress_slider.set_frame_category_array(self.frame_status_array, self.RERUN_PALLETTE)
         self.progress_slider.commit_categories()
 
     ###################################################################################################
@@ -383,7 +370,7 @@ class Track_Correction_Dialog(Parallel_Review_Dialog):
             new_data_array:np.ndarray,
             frame_list: List[int],
             tc_frame_tuple:Optional[Tuple[List[int], List[int]]]=None,
-            crop_coord:Optional[np.ndarray]= None,
+            crop_coord:Optional[Tuple[int, int, int, int]]= None,
             parent=None
             ):
 
@@ -500,6 +487,18 @@ class Track_Correction_Dialog(Parallel_Review_Dialog):
     def _determine_list_to_nav(self):
         return self.list_to_nav
     
+    def _swap_instance(self):
+        self._save_state_for_undo()
+        self.new_data_array = swap_track(self.new_data_array, self.current_frame_idx)
+        self._display_current_frame()
+        self._refresh_ui()
+
+    def _swap_track(self):
+        self._save_state_for_undo()
+        self.new_data_array = swap_track(self.new_data_array, self.current_frame_idx, swap_range=[-1])
+        self._display_current_frame()
+        self._refresh_ui()
+
     def _back_search_nonempty_frames(self, lookback_window: int = 10) -> int:
         start_local = self.current_frame_idx
         for offset in range(1, min(lookback_window + 1, start_local + 1)):
@@ -509,10 +508,8 @@ class Track_Correction_Dialog(Parallel_Review_Dialog):
         return max(0, start_local - 1)
 
     def _navigation_title_controller(self):
+        super()._navigation_title_controller()
         global_idx = self.frame_list[self.current_frame_idx]
-        self.global_frame_label.setText(f"Global: {global_idx} / {self.total_frames - 1}")
-        self.selected_frame_label.setText(f"Selected: {self.current_frame_idx} / {self.total_marked_frames - 1}")
-
         if global_idx in self.ambiguous_set_global:
             self.selected_frame_label.setStyleSheet(f"color: white; background-color: {self.TC_PALLETTE[1]};")
         elif global_idx in self.corrected_set_global:
@@ -566,3 +563,136 @@ class Track_Correction_Dialog(Parallel_Review_Dialog):
     def closeEvent(self, event):
         self.extractor.close()
         handle_unsaved_changes_on_close(self, event, self.is_saved, self._save_prediction)
+
+
+class Iteration_Review_Dialog(Track_Correction_Dialog):
+    IR_PALLETTE = {0: "#959595", 1: "#AF01A6", 2: "#CF5300", 3: "#2EDA04"}
+    label_exported = Signal(object, object)
+
+    def __init__(self, dlc_data, extractor, new_data_array, frame_list, ir_frame_tuple, crop_coord = None, parent=None):
+        super().__init__(dlc_data, extractor, new_data_array, frame_list, ir_frame_tuple, crop_coord, parent)
+
+        self.blasted_set_global = self.corrected_set_global
+        self.blasted_local = self.corrected_local
+
+        self.frame_status_array[self.blasted_local] = 3 # 0: skip, 1: approve, 2: reject(and swap), 3: blasted
+        self._refresh_slider()
+    
+    def _setup_control(self):
+        swap_box = QGroupBox("Manual Track Correction")
+        swap_layout = QHBoxLayout()
+
+        self.approve_button = QPushButton("Approve Current Frame (A)")
+        self.reject_button = QPushButton("Reject and Swap Track (Shift + W)")
+        self.blast_button = QPushButton("Mark | Unmark Faulty Frame (D)")
+        self.apply_button = QPushButton("Add to Training Data (Ctrl + S)")
+
+        self.approve_button.clicked.connect(self._mark_approved)
+        self.reject_button.clicked.connect(self._mark_rejected_swap)
+        self.blast_button.clicked.connect(self._mark_blasted)
+        self.apply_button.clicked.connect(self._export_label)
+
+        for btn in [self.approve_button, self.reject_button, self.blast_button, self.apply_button]:
+            swap_layout.addWidget(btn)
+        swap_box.setLayout(swap_layout)
+
+        return swap_box
+
+    def _build_shortcut(self):
+        self.shortcut_man = Shortcut_Manager(self)
+        self.shortcut_man.add_shortcuts_from_config({
+            "prev_frame":{"key": "Left", "callback": lambda: self._change_frame(-1)},
+            "next_frame":{"key": "Right", "callback": lambda: self._change_frame(1)},
+            "prev_fast":{"key": "Shift+Left", "callback": lambda: self._change_frame(-10)},
+            "next_fast":{"key": "Shift+Right", "callback": lambda: self._change_frame(10)},
+            "prev_mark":{"key": "Up", "callback": self._navigate_prev},
+            "next_mark":{"key": "Down", "callback": self._navigate_next},
+            "playback":{"key": "Space", "callback": self._toggle_playback},
+            "undo": {"key": "Ctrl+Z", "callback": self._undo_changes},
+            "redo": {"key": "Ctrl+Y", "callback": self._redo_changes},
+            "save":{"key": "Ctrl+S", "callback": self._export_label},
+            "approve":{"key": "A", "callback": self._mark_approved},
+            "big_swap":{"key": "Shift+W", "callback": self._mark_rejected_swap},
+            "blast":{"key": "D", "callback": self._mark_blasted},
+        })
+
+    def _mark_approved(self):
+        self._save_state_for_undo()
+        if self.frame_status_array[self.current_frame_idx] == 2:
+            self._swap_track()
+        self.frame_status_array[self.current_frame_idx] = 1
+        self._refresh_ui()
+
+    def _mark_rejected_swap(self):
+        self._save_state_for_undo()
+        self.frame_status_array[self.current_frame_idx] = 2
+        self._refresh_ui()
+        self._swap_track()
+
+    def _mark_blasted(self):
+        self._save_state_for_undo()
+        if self.frame_status_array[self.current_frame_idx] == 3:
+            self.frame_status_array[self.current_frame_idx] = 1
+        else:
+            self.frame_status_array[self.current_frame_idx] = 3
+        self._refresh_slider()
+
+    def _refresh_ui(self):
+        super()._refresh_ui()
+        self._navigation_title_controller()
+
+    def _navigation_title_controller(self):
+        super()._navigation_title_controller()
+        match self.frame_status_array[self.current_frame_idx]:
+            case 1: self.selected_frame_label.setStyleSheet(f"color: white; background-color: {self.IR_PALLETTE[1]};")
+            case 2: self.selected_frame_label.setStyleSheet(f"color: white; background-color: {self.IR_PALLETTE[2]};")
+            case 3: self.selected_frame_label.setStyleSheet(f"color: white; background-color: {self.IR_PALLETTE[3]};")
+            case _: self.selected_frame_label.setStyleSheet(f"color: #1E90FF; background-color: transparent;")
+
+    def _refresh_slider(self):
+        self.is_saved = False
+        self.progress_slider.clear_frame_category()
+        status_arr = self.frame_status_array  # local indices, length = N
+        palette = self.IR_PALLETTE
+        self.progress_slider.set_frame_category_array(status_arr, palette)
+        self.progress_slider.commit_categories()
+
+    def _determine_list_to_nav(self):
+        return list(set(self.ambiguous_local) | set(self.blasted_local))
+
+    def _setup_uno(self):
+        self.uno = Uno_Stack_Dict()
+        self.uno.save_state_for_undo(self._compose_dict_for_uno())
+
+    def _update_button_states(self):
+        current_status = self.frame_status_array[self.current_frame_idx]
+        self.approve_button.setEnabled(current_status != 1)
+        self.reject_button.setEnabled(current_status != 2)
+
+    def _export_label(self):
+        self.is_saved = True
+        self.label_exported.emit(self.new_data_array, self.frame_status_array)
+        self.accept()
+
+    def _save_state_for_undo(self):
+        self._compose_dict_for_uno()
+        self.uno.save_state_for_undo(self._compose_dict_for_uno())
+
+    def _compose_dict_for_uno(self):
+        return {"pred": self.new_data_array, "status": self.frame_status_array}
+
+    def _undo_changes(self):
+        self._compose_dict_for_uno()
+        uno_dict = self.uno.undo(self._compose_dict_for_uno())
+        self.new_data_array = uno_dict["pred"]
+        self.frame_status_array = uno_dict["status"]
+        self._display_current_frame()
+        self._refresh_ui()
+
+    def _redo_changes(self):
+        self._compose_dict_for_uno()
+        uno_dict = self.uno.redo(self._compose_dict_for_uno())
+        self.new_data_array = uno_dict["pred"]
+        self.frame_status_array = uno_dict["status"]
+        self._display_current_frame()
+        self._refresh_ui()

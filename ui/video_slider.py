@@ -105,7 +105,7 @@ class Video_Slider_Widget(QtWidgets.QWidget):
 
     def set_frame_category_array(self, category_array:np.ndarray, idx_to_color:Dict[int, HexColor]):
         self.category_array = category_array
-        self.idx_to_color = idx_to_color
+        self.idx_to_color = idx_to_color.copy()
 
     def commit_categories(self):
         self.progress_slider.set_frame_category(self.category_array, self.idx_to_color)

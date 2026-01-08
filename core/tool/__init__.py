@@ -12,9 +12,9 @@ from .plot_config import (
     Plot_Config_Menu,
 )
 from .label_loader import DLC_Save_Dialog, Load_Label_Dialog
-from .reviewer import Parallel_Review_Dialog, Track_Correction_Dialog
+from .reviewer import Parallel_Review_Dialog, Track_Correction_Dialog, Iteration_Review_Dialog
 from .annot_config import Annotation_Config, Annotation_Summary_Table
-from .undo_redo import Uno_Stack
+from .undo_redo import Uno_Stack, Uno_Stack_Dict
 
 __all__ = (
     Canonical_Pose_Dialog,
@@ -29,9 +29,11 @@ __all__ = (
     Plot_Config_Menu,
     Parallel_Review_Dialog,
     Track_Correction_Dialog,
+    Iteration_Review_Dialog,
     Annotation_Config,
     Annotation_Summary_Table,
     Uno_Stack,
+    Uno_Stack_Dict,
     DLC_Save_Dialog,
     Load_Label_Dialog,
     navigate_to_marked_frame,

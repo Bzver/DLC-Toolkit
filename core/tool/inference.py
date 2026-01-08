@@ -414,7 +414,7 @@ class DLC_Inference(QDialog):
         pred_filepath = os.path.join(video_path, pred_filename)
         self.save_path = timestamp_new_prediction(pred_filepath)
 
-        if self.dlc_data.pred_data_array is None:
+        if self.dlc_data.pred_data_array is None or not np.any(~np.isnan(self.dlc_data.pred_data_array)):
             pred_data_array=self.new_data_array
             list_tuple = (self.frame_list, [])
             self._save_pred_to_file(pred_data_array, list_tuple)
