@@ -21,28 +21,24 @@ from utils.logger import Loggerbox, QMessageBox
 class Parallel_Review_Dialog(QDialog):
     pred_data_exported = Signal(object, tuple)
     RERUN_PALLETTE = {0: "#959595", 1: "#68b3ff", 2: "#F749C6"}
-    TC_PALLETTE    = {0: "#009353", 1: "#FF0040"}
 
     def __init__(self,
                  dlc_data:Loaded_DLC_Data,
                  extractor:Frame_Extractor|Frame_Extractor_Img,
                  new_data_array:np.ndarray,
-                 frame_list:List[int], # Used to map local idx to global idx, irrelevant if tc_mode
-                 tc_frame_tuple:Optional[Tuple[List[int], List[int]]]=None,
-                 tc_mode:bool=False,
+                 frame_list:List[int],
                  crop_coord:Optional[Tuple[int,int,int,int]]=None,
                  parent=None):
         super().__init__(parent)
         self.dlc_data = dlc_data
         self.extractor = extractor
         self.new_data_array = new_data_array
-        self.tc_mode = tc_mode
 
         self.backup_data_array = dlc_data.pred_data_array.copy()
         self.pred_data_array = dlc_data.pred_data_array.copy()
 
         self.total_frames = self.pred_data_array.shape[0]
-        self.frame_list = list(range(self.total_frames)) if tc_mode else frame_list
+        self.frame_list = frame_list
         self.total_marked_frames = len(self.frame_list)
 
         crop_coord_good = validate_crop_coord(crop_coord)
@@ -58,45 +54,31 @@ class Parallel_Review_Dialog(QDialog):
 
         self.current_frame_idx = 0
         self.is_saved = False
-        self.uno = Uno_Stack()
-
-        if self.tc_mode:
-            if tc_frame_tuple is None:
-                raise TypeError("Missing 1 required positional argument: 'tc_frame_tuple")
-            self.inst_array = np.array(range(self.dlc_data.pred_data_array.shape[1]))
-            self.uno.save_state_for_undo(self.new_data_array)
-            self.corrected_frames, self.ambiguous_frames = tc_frame_tuple
-            self.corrected_set = set(self.corrected_frames)
-            self.ambiguous_set = set(self.ambiguous_frames)
-            self.nonempty_set = set(np.where(np.any(~np.isnan(new_data_array), axis=(1,2)))[0])
-        else:
-            self.frame_status_array = np.zeros((self.total_marked_frames,), dtype=np.uint8)
-            self.uno.save_state_for_undo(self.frame_status_array)
 
         plot_config = Plot_Config(
             plot_opacity =0.7, point_size = 6.0, confidence_cutoff = 0.0, hide_text_labels = False, edit_mode = False,
             plot_labeled = True, plot_pred = True, navigate_labeled = False, auto_snapping = False, navigate_roi = False)
         self.plotter = Prediction_Plotter(dlc_data=self.dlc_data, plot_config=plot_config)
 
-        layout = QVBoxLayout(self)
+        self.layout_reviewer = QVBoxLayout(self)
         frame_info_layout, video_label_layout = self._setup_video_display()
-        layout.addLayout(frame_info_layout)
-        layout.addLayout(video_label_layout)
-        layout.addLayout(self.video_layout)
+        self.layout_reviewer.addLayout(frame_info_layout)
+        self.layout_reviewer.addLayout(video_label_layout)
+        self.layout_reviewer.addLayout(self.video_layout)
 
         self.progress_slider = Video_Slider_Widget()
         self.progress_slider.set_total_frames(self.total_marked_frames)
         self.progress_slider.set_current_frame(0)
         self.progress_slider.frame_changed.connect(self._handle_frame_change_from_comp)
-        layout.addWidget(self.progress_slider)
+        self.layout_reviewer.addWidget(self.progress_slider)
 
-        approval_box = self._setup_control_tc() if self.tc_mode else self._setup_control()
-
-        layout.addWidget(approval_box)
+        self.approval_box = self._setup_control()
+        self.layout_reviewer.addWidget(self.approval_box)
         
         self._build_shortcut()
         self._navigation_title_controller()
         self._update_button_states()
+        self._setup_uno()
 
         self._display_current_frame()
         self._refresh_ui()
@@ -114,24 +96,21 @@ class Parallel_Review_Dialog(QDialog):
         frame_info_layout.addWidget(self.selected_frame_label)
         frame_info_layout.addStretch()
 
-        if self.tc_mode:
-            self.global_frame_label.setVisible(False)
-
         video_label_layout = QHBoxLayout()
-        old_label = QLabel("Old Predictions") if not self.tc_mode else QLabel("Last Frame With Prediction")
-        old_label.setAlignment(Qt.AlignCenter)
-        old_label.setFont(font)
-        old_label.setStyleSheet("color: #4B4B4B; background: #F0F0F0; padding: 6px; border-radius: 4px;")
-        old_label.setFixedHeight(30)
+        self.old_label = QLabel("Old Predictions")
+        self.old_label.setAlignment(Qt.AlignCenter)
+        self.old_label.setFont(font)
+        self.old_label.setStyleSheet("color: #4B4B4B; background: #F0F0F0; padding: 6px; border-radius: 4px;")
+        self.old_label.setFixedHeight(30)
 
-        new_label = QLabel("New Predictions") if not self.tc_mode else QLabel("Current Frame")
-        new_label.setAlignment(Qt.AlignCenter)
-        new_label.setFont(font)
-        new_label.setStyleSheet("color: #4B4B4B; background: #F0F0F0; padding: 6px; border-radius: 4px;")
-        new_label.setFixedHeight(30)
+        self.new_label = QLabel("New Predictions")
+        self.new_label.setAlignment(Qt.AlignCenter)
+        self.new_label.setFont(font)
+        self.new_label.setStyleSheet("color: #4B4B4B; background: #F0F0F0; padding: 6px; border-radius: 4px;")
+        self.new_label.setFixedHeight(30)
 
-        video_label_layout.addWidget(old_label)
-        video_label_layout.addWidget(new_label)
+        video_label_layout.addWidget(self.old_label)
+        video_label_layout.addWidget(self.new_label)
 
         self.video_layout = QHBoxLayout()
         self.video_labels:List[Clickable_Video_Label] = []
@@ -168,31 +147,14 @@ class Parallel_Review_Dialog(QDialog):
 
         return approval_box
 
-    def _setup_control_tc(self):
-        swap_box = QGroupBox("Manual Track Correction")
-        swap_layout = QHBoxLayout()
-
-        self.swap_button = QPushButton("Swap Instance (W)")
-        self.big_swap_button = QPushButton("Swap Track (Shift + W)")
-        self.apply_button = QPushButton("Apply Changes (Ctrl + S)")
-
-        self.swap_button.clicked.connect(self._swap_instance)
-        self.big_swap_button.clicked.connect(self._swap_track)
-        self.apply_button.clicked.connect(self._save_prediction)
-
-        self.swap_button.setToolTip("Swap current frame instance only.")
-        self.big_swap_button.setToolTip("Swap current frame + all preceding frames.")
-
-        swap_layout.addWidget(self.swap_button)
-        swap_layout.addWidget(self.big_swap_button)
-        swap_layout.addWidget(self.apply_button)
-        swap_box.setLayout(swap_layout)
-
-        return swap_box
+    def _setup_uno(self):
+        self.uno = Uno_Stack()
+        self.frame_status_array = np.zeros((self.total_marked_frames,), dtype=np.uint8)
+        self.uno.save_state_for_undo(self.frame_status_array)
 
     def _build_shortcut(self):
         self.shortcut_man = Shortcut_Manager(self)
-        common_sc={
+        self.shortcut_man.add_shortcuts_from_config({
             "prev_frame":{"key": "Left", "callback": lambda: self._change_frame(-1)},
             "next_frame":{"key": "Right", "callback": lambda: self._change_frame(1)},
             "prev_fast":{"key": "Shift+Left", "callback": lambda: self._change_frame(-10)},
@@ -203,19 +165,9 @@ class Parallel_Review_Dialog(QDialog):
             "undo": {"key": "Ctrl+Z", "callback": self._undo_changes},
             "redo": {"key": "Ctrl+Y", "callback": self._redo_changes},
             "save":{"key": "Ctrl+S", "callback": self._save_prediction},
-        }
-        ntc_sc={
-            **common_sc,
             "approve":{"key": "A", "callback": lambda: self._mark_frame_status(True)},
             "reject":{"key": "R", "callback": lambda: self._mark_frame_status(False)},
-        }
-        tc_sc={
-            **common_sc,
-            "swap":{"key": "W", "callback": self._swap_instance},
-            "big_swap":{"key": "Shift+W", "callback": self._swap_track},
-        }
-        shortcuts = tc_sc if self.tc_mode else ntc_sc
-        self.shortcut_man.add_shortcuts_from_config(shortcuts)
+        })
 
     ###################################################################################################
 
@@ -223,58 +175,28 @@ class Parallel_Review_Dialog(QDialog):
         global_idx = self.frame_list[self.current_frame_idx]
         frame = self.extractor.get_frame(self.current_frame_idx)
 
-        if self.tc_mode:
-            last_frame_idx = self._back_search_nonempty_frames()
-            last_frame = self.extractor.get_frame(last_frame_idx)
-            if frame is None:
-                self.video_labels[1].setText(f"Frame {global_idx} unavailable")
-                return
-            if last_frame is None:
-                self.video_labels[0].setText(f"Frame {last_frame_idx} unavailable")
+        if frame is None:
+            for i, label in enumerate(self.video_labels):
+                label.setText(f"Frame {global_idx} unavailable")
+                label.setPixmap(QtGui.QPixmap())
+            return
 
-            pred_data_now, pred_data_last = None, None
-            pred_data_now = self.new_data_array[global_idx]
-            if global_idx != 0:
-                pred_data_last = self.new_data_array[last_frame_idx]
-            
-            if pred_data_now is not None:
-                frame = self.plotter.plot_predictions(frame, pred_data_now)
-            if pred_data_last is not None:
-                last_frame = self.plotter.plot_predictions(last_frame, pred_data_last)
+        for i in range(2):
+            view = frame.copy()
+            pred_data = None
+            if i == 0 and self.pred_data_array is not None:
+                pred_data = self.pred_data_array[global_idx]
+            elif i == 1 and self.new_data_array is not None:
+                pred_data = self.new_data_array[global_idx]
 
-            for i in range(2):
-                view = frame if i == 1 else last_frame
-                if view is None:
-                    continue
-                h, w = self.video_labels[i].height(), self.video_labels[i].width()
-                resized = cv2.resize(view, (w, h), interpolation=cv2.INTER_AREA)
-                pixmap = frame_to_pixmap(resized)
-                self.video_labels[i].setPixmap(pixmap)
-                self.video_labels[i].setText("")
+            if pred_data is not None and not np.all(np.isnan(pred_data)):
+                view = self.plotter.plot_predictions(view, pred_data)
 
-        else:
-            if frame is None:
-                for i, label in enumerate(self.video_labels):
-                    label.setText(f"Frame {global_idx} unavailable")
-                    label.setPixmap(QtGui.QPixmap())
-                return
-
-            for i in range(2):
-                view = frame.copy()
-                pred_data = None
-                if i == 0 and self.pred_data_array is not None:
-                    pred_data = self.pred_data_array[global_idx]
-                elif i == 1 and self.new_data_array is not None:
-                    pred_data = self.new_data_array[global_idx]
-
-                if pred_data is not None and not np.all(np.isnan(pred_data)):
-                    view = self.plotter.plot_predictions(view, pred_data)
-
-                h, w = self.video_labels[i].height(), self.video_labels[i].width()
-                resized = cv2.resize(view, (w, h), interpolation=cv2.INTER_AREA)
-                pixmap = frame_to_pixmap(resized)
-                self.video_labels[i].setPixmap(pixmap)
-                self.video_labels[i].setText("")
+            h, w = self.video_labels[i].height(), self.video_labels[i].width()
+            resized = cv2.resize(view, (w, h), interpolation=cv2.INTER_AREA)
+            pixmap = frame_to_pixmap(resized)
+            self.video_labels[i].setPixmap(pixmap)
+            self.video_labels[i].setText("")
 
         self.progress_slider.set_current_frame(self.current_frame_idx)
         self._update_button_states()
@@ -298,10 +220,7 @@ class Parallel_Review_Dialog(QDialog):
             self, list_to_nav, self.current_frame_idx, self._handle_frame_change_from_comp, "next")
 
     def _determine_list_to_nav(self):
-        if self.tc_mode:
-            return self.ambiguous_frames if self.ambiguous_frames else self.corrected_frames
-        else:
-            return np.where(self.frame_status_array==1)[0]
+        return np.where(self.frame_status_array==1)[0]
 
     def _toggle_playback(self):
         self.progress_slider.toggle_playback()
@@ -344,16 +263,6 @@ class Parallel_Review_Dialog(QDialog):
         self._display_current_frame()
         self._refresh_ui()
 
-    def _back_search_nonempty_frames(self, lookback_window:int=10) -> int:
-        frame_idx = self.current_frame_idx
-        while frame_idx > self.current_frame_idx - lookback_window:
-            frame_idx -= 1
-            if frame_idx < 0:
-                return -1
-            if frame_idx in self.nonempty_set:
-                return frame_idx
-        return self.current_frame_idx-1
-
     ###################################################################################################
 
     def _navigation_title_controller(self):
@@ -361,19 +270,7 @@ class Parallel_Review_Dialog(QDialog):
         self.global_frame_label.setText(f"Global: {global_idx} / {self.total_frames - 1}")
         self.selected_frame_label.setText(f"Selected: {self.current_frame_idx} / {self.total_marked_frames - 1}")
 
-        if self.tc_mode:
-            if self.current_frame_idx in self.ambiguous_set:
-                self.selected_frame_label.setStyleSheet(f"color: white; background-color: {self.TC_PALLETTE[1]};") 
-            elif self.current_frame_idx in self.corrected_set:
-                self.selected_frame_label.setStyleSheet(f"color: white; background-color: {self.TC_PALLETTE[0]};")
-            else:
-                self.selected_frame_label.setStyleSheet(f"color: #1E90FF; background-color: transparent;")
-
     def _update_button_states(self):
-        if self.tc_mode:
-            self.apply_button.setEnabled(True)
-            return
-        
         current_status = self.frame_status_array[self.current_frame_idx]
         self.approve_button.setEnabled(current_status != 1)
         self.reject_button.setEnabled(current_status != 2)
@@ -400,27 +297,23 @@ class Parallel_Review_Dialog(QDialog):
     def _refresh_slider(self):
         self.is_saved = False
         self.progress_slider.clear_frame_category()
-        if self.tc_mode:
-            self.progress_slider.set_frame_category("ambiguous", self.ambiguous_frames, self.TC_PALLETTE[1], priority=5)
-            self.progress_slider.set_frame_category("changed", self.corrected_frames, self.TC_PALLETTE[0])
-        else:
-            idx_to_color = {idx:hex_color for idx, hex_color in self.RERUN_PALLETTE.items()}
-            self.progress_slider.set_frame_category_array(self.frame_status_array, idx_to_color)
+        idx_to_color = {idx:hex_color for idx, hex_color in self.RERUN_PALLETTE.items()}
+        self.progress_slider.set_frame_category_array(self.frame_status_array, idx_to_color)
         self.progress_slider.commit_categories()
 
     ###################################################################################################
     
     def _save_state_for_undo(self):
-        data_array = self.new_data_array if self.tc_mode else self.frame_status_array
+        data_array = self.frame_status_array
         self.uno.save_state_for_undo(data_array)
 
     def _undo_changes(self):
-        data_array = self.new_data_array if self.tc_mode else self.frame_status_array
+        data_array = self.frame_status_array
         data_array = self.uno.undo(data_array)
         self._undo_redo_worker(data_array)
 
     def _redo_changes(self):
-        data_array = self.new_data_array if self.tc_mode else self.frame_status_array
+        data_array = self.frame_status_array
         data_array = self.uno.redo(data_array)
         self._undo_redo_worker(data_array)
 
@@ -428,9 +321,7 @@ class Parallel_Review_Dialog(QDialog):
         if data_array is None:
             return
 
-        if self.tc_mode:
-            self.new_data_array = data_array.copy()
-        elif np.any(self.frame_status_array!=data_array):
+        if np.any(self.frame_status_array!=data_array):
             for frame_idx in np.where(self.frame_status_array!=data_array)[0]:
                 global_idx = self.frame_list[frame_idx]
                 status = data_array[frame_idx]
@@ -447,7 +338,7 @@ class Parallel_Review_Dialog(QDialog):
     def _save_prediction(self):
         self._refresh_slider()
 
-        if not self.tc_mode and np.any(self.frame_status_array==0):
+        if np.any(self.frame_status_array==0):
             unprocessed_count = np.sum(self.frame_status_array==0)
             reply = Loggerbox.question(
                 parent=self,
@@ -472,16 +363,206 @@ class Parallel_Review_Dialog(QDialog):
             self.pred_data_array += self.crop_array
             self.backup_data_array += self.crop_array
 
-        if self.tc_mode:
-            self.pred_data_exported.emit(self.new_data_array, ())
-        else:
-            approve_list_global = np.array(self.frame_list)[self.frame_status_array==1].tolist()
-            rejected_list_global = np.array(self.frame_list)[self.frame_status_array==2].tolist()
-            list_tuple = (approve_list_global, rejected_list_global)
-            self.pred_data_exported.emit(self.pred_data_array, list_tuple)
+        approve_list_global = np.array(self.frame_list)[self.frame_status_array==1].tolist()
+        rejected_list_global = np.array(self.frame_list)[self.frame_status_array==2].tolist()
+        list_tuple = (approve_list_global, rejected_list_global)
+        self.pred_data_exported.emit(self.pred_data_array, list_tuple)
         self.accept()
 
     def closeEvent(self, event):
-        if not self.tc_mode:
-            self.extractor.close()
+        handle_unsaved_changes_on_close(self, event, self.is_saved, self._save_prediction)
+
+
+class Track_Correction_Dialog(Parallel_Review_Dialog):
+    TC_PALLETTE    = {0: "#009353", 1: "#FF0040"}
+
+    def __init__(
+            self,
+            dlc_data:Loaded_DLC_Data,
+            extractor:Frame_Extractor,
+            new_data_array:np.ndarray,
+            frame_list: List[int],
+            tc_frame_tuple:Optional[Tuple[List[int], List[int]]]=None,
+            crop_coord:Optional[np.ndarray]= None,
+            parent=None
+            ):
+
+        self.frame_list = frame_list
+
+        if tc_frame_tuple is None:
+            corrected_frames_global, ambiguous_frames_global = [], []
+        else:
+            corrected_frames_global, ambiguous_frames_global = tc_frame_tuple
+
+        corrected_set_global = set(corrected_frames_global)
+        ambiguous_set_global = set(ambiguous_frames_global)
+        frame_set = set(frame_list)
+
+        if not corrected_set_global.issubset(frame_set) or not ambiguous_set_global.issubset(frame_set):
+            corrected_frames_global = [f for f in corrected_frames_global if f in frame_set]
+            ambiguous_frames_global = [f for f in ambiguous_frames_global if f in frame_set]
+
+        self.corrected_set_global = set(corrected_frames_global)
+        self.ambiguous_set_global = set(ambiguous_frames_global)
+        
+        self.global_to_local = {g: i for i, g in enumerate(self.frame_list)}
+        self.corrected_local = [self.global_to_local[g] for g in self.corrected_set_global if g in self.global_to_local]
+        self.ambiguous_local = [self.global_to_local[g] for g in self.ambiguous_set_global if g in self.global_to_local]
+        self.list_to_nav = self.ambiguous_local if self.ambiguous_local else self.corrected_local
+
+        super().__init__(dlc_data, extractor, new_data_array, frame_list=frame_list, crop_coord=crop_coord, parent=parent)
+
+        self.nonempty_local = set(np.where(np.any(~np.isnan(new_data_array[self.frame_list]), axis=(1, 2)))[0].tolist())
+
+        self.old_label.setText("Last Frame With Prediction")
+        self.new_label.setText("Current Frame")
+
+    def _setup_control(self):
+        swap_box = QGroupBox("Manual Track Correction")
+        swap_layout = QHBoxLayout()
+
+        self.swap_button = QPushButton("Swap Instance (W)")
+        self.big_swap_button = QPushButton("Swap Track (Shift + W)")
+        self.apply_button = QPushButton("Apply Changes (Ctrl + S)")
+
+        self.swap_button.clicked.connect(self._swap_instance)
+        self.big_swap_button.clicked.connect(self._swap_track)
+        self.apply_button.clicked.connect(self._save_prediction)
+
+        self.swap_button.setToolTip("Swap current frame instance only.")
+        self.big_swap_button.setToolTip("Swap current frame + all preceding frames.")
+
+        for btn in [self.swap_button, self.big_swap_button, self.apply_button]:
+            swap_layout.addWidget(btn)
+        swap_box.setLayout(swap_layout)
+
+        return swap_box
+
+    def _build_shortcut(self):
+        self.shortcut_man = Shortcut_Manager(self)
+        self.shortcut_man.add_shortcuts_from_config({
+            "prev_frame":{"key": "Left", "callback": lambda: self._change_frame(-1)},
+            "next_frame":{"key": "Right", "callback": lambda: self._change_frame(1)},
+            "prev_fast":{"key": "Shift+Left", "callback": lambda: self._change_frame(-10)},
+            "next_fast":{"key": "Shift+Right", "callback": lambda: self._change_frame(10)},
+            "prev_mark":{"key": "Up", "callback": self._navigate_prev},
+            "next_mark":{"key": "Down", "callback": self._navigate_next},
+            "playback":{"key": "Space", "callback": self._toggle_playback},
+            "undo": {"key": "Ctrl+Z", "callback": self._undo_changes},
+            "redo": {"key": "Ctrl+Y", "callback": self._redo_changes},
+            "save":{"key": "Ctrl+S", "callback": self._save_prediction},
+            "swap":{"key": "W", "callback": self._swap_instance},
+            "big_swap":{"key": "Shift+W", "callback": self._swap_track},
+        })
+
+    def _setup_uno(self):
+        self.uno = Uno_Stack()
+        self.inst_array = np.array(range(self.dlc_data.pred_data_array.shape[1]))
+        self.uno.save_state_for_undo(self.new_data_array)
+
+    def _display_current_frame(self):
+        global_idx = self.frame_list[self.current_frame_idx]
+        frame = self.extractor.get_frame(global_idx)
+
+        last_frame_local = self._back_search_nonempty_frames()
+        last_frame_global = self.frame_list[last_frame_local]
+
+        last_frame = self.extractor.get_frame(last_frame_global)
+        if frame is None:
+            self.video_labels[1].setText(f"Frame {global_idx} unavailable")
+            return
+        if last_frame is None:
+            self.video_labels[0].setText(f"Frame {last_frame_global} unavailable")
+
+        pred_data_now, pred_data_last = None, None
+        pred_data_now = self.new_data_array[global_idx]
+        if global_idx != 0:
+            pred_data_last = self.new_data_array[last_frame_global]
+        
+        if pred_data_now is not None:
+            frame = self.plotter.plot_predictions(frame, pred_data_now)
+        if pred_data_last is not None:
+            last_frame = self.plotter.plot_predictions(last_frame, pred_data_last)
+
+        for i in range(2):
+            view = frame if i == 1 else last_frame
+            if view is None:
+                continue
+            h, w = self.video_labels[i].height(), self.video_labels[i].width()
+            resized = cv2.resize(view, (w, h), interpolation=cv2.INTER_AREA)
+            pixmap = frame_to_pixmap(resized)
+            self.video_labels[i].setPixmap(pixmap)
+            self.video_labels[i].setText("")
+
+        self.progress_slider.set_current_frame(self.current_frame_idx)
+        self.apply_button.setEnabled(True)
+
+    def _determine_list_to_nav(self):
+        return self.list_to_nav
+    
+    def _back_search_nonempty_frames(self, lookback_window: int = 10) -> int:
+        start_local = self.current_frame_idx
+        for offset in range(1, min(lookback_window + 1, start_local + 1)):
+            candidate_local = start_local - offset
+            if candidate_local in self.nonempty_local:
+                return candidate_local
+        return max(0, start_local - 1)
+
+    def _navigation_title_controller(self):
+        global_idx = self.frame_list[self.current_frame_idx]
+        self.global_frame_label.setText(f"Global: {global_idx} / {self.total_frames - 1}")
+        self.selected_frame_label.setText(f"Selected: {self.current_frame_idx} / {self.total_marked_frames - 1}")
+
+        if global_idx in self.ambiguous_set_global:
+            self.selected_frame_label.setStyleSheet(f"color: white; background-color: {self.TC_PALLETTE[1]};")
+        elif global_idx in self.corrected_set_global:
+            self.selected_frame_label.setStyleSheet(f"color: white; background-color: {self.TC_PALLETTE[0]};")
+        else:
+            self.selected_frame_label.setStyleSheet(f"color: #1E90FF; background-color: transparent;")
+
+    def _update_button_states(self):
+        pass
+    
+    def _refresh_slider(self):
+        self.is_saved = False
+        self.progress_slider.clear_frame_category()
+        self.progress_slider.set_frame_category("ambiguous", self.ambiguous_local, self.TC_PALLETTE[1], priority=5)
+        self.progress_slider.set_frame_category("changed", self.corrected_local, self.TC_PALLETTE[0])
+        self.progress_slider.commit_categories()
+
+    def _save_state_for_undo(self):
+        data_array = self.new_data_array
+        self.uno.save_state_for_undo(data_array)
+
+    def _undo_changes(self):
+        data_array = self.new_data_array
+        data_array = self.uno.undo(data_array)
+        self._undo_redo_worker(data_array)
+
+    def _redo_changes(self):
+        data_array = self.new_data_array
+        data_array = self.uno.redo(data_array)
+        self._undo_redo_worker(data_array)
+
+    def _undo_redo_worker(self, data_array):
+        if data_array is None:
+            return
+        self.new_data_array = data_array.copy()
+        self._display_current_frame()
+        self._refresh_ui()
+
+    def _save_prediction(self):
+        self._refresh_slider()
+
+        self.is_saved = True
+        if self.crop_array is not None:
+            self.new_data_array += self.crop_array
+            self.pred_data_array += self.crop_array
+            self.backup_data_array += self.crop_array
+
+        self.pred_data_exported.emit(self.new_data_array, ())
+        self.accept()
+
+    def closeEvent(self, event):
+        self.extractor.close()
         handle_unsaved_changes_on_close(self, event, self.is_saved, self._save_prediction)

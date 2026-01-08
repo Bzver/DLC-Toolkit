@@ -11,12 +11,8 @@ from .plot_config import (
     Adjust_Property_Box,
     Plot_Config_Menu,
 )
-from .label_loader import (
-    DLC_Save_Dialog,
-    Load_Label_Dialog,
-)
-
-from .reviewer import Parallel_Review_Dialog
+from .label_loader import DLC_Save_Dialog, Load_Label_Dialog
+from .reviewer import Parallel_Review_Dialog, Track_Correction_Dialog
 from .annot_config import Annotation_Config, Annotation_Summary_Table
 from .undo_redo import Uno_Stack
 
@@ -32,6 +28,7 @@ __all__ = (
     Adjust_Property_Box,
     Plot_Config_Menu,
     Parallel_Review_Dialog,
+    Track_Correction_Dialog,
     Annotation_Config,
     Annotation_Summary_Table,
     Uno_Stack,
