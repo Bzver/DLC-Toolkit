@@ -12,7 +12,9 @@ from .undo_redo import Uno_Stack, Uno_Stack_Dict
 from .mark_nav import navigate_to_marked_frame
 from core.io import Frame_Extractor, Frame_Extractor_Img
 from ui import Clickable_Video_Label, Video_Slider_Widget, Shortcut_Manager
-from utils.helper import frame_to_pixmap, handle_unsaved_changes_on_close, crop_coord_to_array, validate_crop_coord
+from utils.helper import (
+    frame_to_pixmap, handle_unsaved_changes_on_close, crop_coord_to_array, validate_crop_coord, indices_to_spans
+    )
 from utils.track import swap_track
 from utils.dataclass import Loaded_DLC_Data, Plot_Config
 from utils.logger import Loggerbox, QMessageBox
@@ -350,8 +352,21 @@ class Parallel_Review_Dialog(QDialog):
             self.pred_data_array += self.crop_array
             self.backup_data_array += self.crop_array
 
-        approve_list_global = np.array(self.frame_list)[self.frame_status_array==1].tolist()
-        rejected_list_global = np.array(self.frame_list)[self.frame_status_array==2].tolist()
+        if self.total_marked_frames < 1000:
+            frame_arr = np.array(self.frame_list)
+            approve_list_global = frame_arr[self.frame_status_array==1].tolist()
+            rejected_list_global = frame_arr[self.frame_status_array==2].tolist()
+        else:
+            approved_slices = [slice(start, end + 1) for (start,end) in indices_to_spans(np.where(self.frame_status_array==1)[0])]
+            rejected_slices = [slice(start, end + 1) for (start,end) in indices_to_spans(np.where(self.frame_status_array==2)[0])]
+
+            approve_list_global, rejected_list_global = [], []
+
+            for sl in approved_slices:
+                approve_list_global.extend(self.frame_list[sl])
+            for sl in rejected_slices:
+                rejected_list_global.extend(self.frame_list[sl]) 
+    
         list_tuple = (approve_list_global, rejected_list_global)
         self.pred_data_exported.emit(self.pred_data_array, list_tuple)
         self.accept()
