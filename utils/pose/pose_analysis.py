@@ -232,7 +232,7 @@ def calculate_aligned_local(
     F, I, XYCONF = pred_data_array.shape
     K = XYCONF // 3
 
-    local_poses = np.full((F, I, K*3), np.nan)
+    local_poses = np.full((F, I, K*2), np.nan)
 
     center_idx = angle_map_data["center_idx"]
 
@@ -242,17 +242,20 @@ def calculate_aligned_local(
     nan_mask = np.isnan(pose_centroids)
     pose_centroids[nan_mask] = math_centroids[nan_mask]
     
-    local_poses[..., 0::3] = pred_data_array[:, :, 0::3] - pose_centroids[..., 0, np.newaxis]
-    local_poses[..., 1::3] = pred_data_array[:, :, 1::3] - pose_centroids[..., 1, np.newaxis]
-    local_poses[..., 2::3] = pred_data_array[:, :, 2::3]
-
-    flat_local = local_poses.reshape(F*I, 3*K)
+    local_poses[..., 0::2] = pred_data_array[:, :, 0::3] - pose_centroids[..., 0, np.newaxis]
+    local_poses[..., 1::2] = pred_data_array[:, :, 1::3] - pose_centroids[..., 1, np.newaxis]
+    flat_local = local_poses.reshape(F*I, 2*K)
     flat_x = flat_local[:, 0::2]
     flat_y = flat_local[:, 1::2]
 
     angles_flat = calculate_pose_rotations(flat_x, flat_y, angle_map_data)
     aligned_flat = pose_alignment_worker(flat_local, angles_flat)
 
-    aligned_local_coords = aligned_flat.reshape(F, I, 3*K)
+    aligned_local_coords = aligned_flat.reshape(F, I, K*2)
 
-    return aligned_local_coords
+    ouput_array = np.full((F, I, K*3), np.nan)
+    ouput_array[..., 0::3] = aligned_local_coords[..., 0::2]
+    ouput_array[..., 1::3] = aligned_local_coords[..., 1::2]
+    ouput_array[..., 2::3] = pred_data_array[:, :, 2::3]
+    
+    return ouput_array

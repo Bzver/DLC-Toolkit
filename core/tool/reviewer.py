@@ -222,7 +222,7 @@ class Parallel_Review_Dialog(QDialog):
             self, list_to_nav, self.current_frame_idx, self._handle_frame_change_from_comp, "next")
 
     def _determine_list_to_nav(self):
-        return np.where(self.frame_status_array==1)[0]
+        return np.where(self.frame_status_array==1)[0].tolist()
 
     def _toggle_playback(self):
         self.progress_slider.toggle_playback()
@@ -376,7 +376,7 @@ class Parallel_Review_Dialog(QDialog):
 
 
 class Track_Correction_Dialog(Parallel_Review_Dialog):
-    TC_PALLETTE    = {0: "#009353", 1: "#FF0040"}
+    TC_PALLETTE    = {0: "#D81687", 1: "#CF5300"}
 
     def __init__(
             self,
@@ -392,25 +392,25 @@ class Track_Correction_Dialog(Parallel_Review_Dialog):
         self.frame_list = frame_list
 
         if tc_frame_tuple is None:
-            corrected_frames_global, ambiguous_frames_global = [], []
+            blasted_frames_global, ambiguous_frames_global = [], []
         else:
-            corrected_frames_global, ambiguous_frames_global = tc_frame_tuple
+            blasted_frames_global, ambiguous_frames_global = tc_frame_tuple
 
-        corrected_set_global = set(corrected_frames_global)
+        blasted_set_global = set(blasted_frames_global)
         ambiguous_set_global = set(ambiguous_frames_global)
         frame_set = set(frame_list)
 
-        if not corrected_set_global.issubset(frame_set) or not ambiguous_set_global.issubset(frame_set):
-            corrected_frames_global = [f for f in corrected_frames_global if f in frame_set]
+        if not blasted_set_global.issubset(frame_set) or not ambiguous_set_global.issubset(frame_set):
+            blasted_frames_global = [f for f in blasted_frames_global if f in frame_set]
             ambiguous_frames_global = [f for f in ambiguous_frames_global if f in frame_set]
 
-        self.corrected_set_global = set(corrected_frames_global)
+        self.blasted_set_global = set(blasted_frames_global)
         self.ambiguous_set_global = set(ambiguous_frames_global)
         
         self.global_to_local = {g: i for i, g in enumerate(self.frame_list)}
-        self.corrected_local = [self.global_to_local[g] for g in self.corrected_set_global if g in self.global_to_local]
+        self.blasted_local = [self.global_to_local[g] for g in self.blasted_set_global if g in self.global_to_local]
         self.ambiguous_local = [self.global_to_local[g] for g in self.ambiguous_set_global if g in self.global_to_local]
-        self.list_to_nav = self.ambiguous_local if self.ambiguous_local else self.corrected_local
+        self.list_to_nav = self.ambiguous_local if self.ambiguous_local else self.blasted_local
 
         super().__init__(dlc_data, extractor, new_data_array, frame_list=frame_list, crop_coord=crop_coord, parent=parent)
 
@@ -504,13 +504,13 @@ class Track_Correction_Dialog(Parallel_Review_Dialog):
     
     def _swap_instance(self):
         self._save_state_for_undo()
-        self.new_data_array = swap_track(self.new_data_array, self.current_frame_idx)
+        self.new_data_array = swap_track(self.new_data_array, self.frame_list[self.current_frame_idx])
         self._display_current_frame()
         self._refresh_ui()
 
     def _swap_track(self):
         self._save_state_for_undo()
-        self.new_data_array = swap_track(self.new_data_array, self.current_frame_idx, swap_range=[-1])
+        self.new_data_array = swap_track(self.new_data_array, self.frame_list[self.current_frame_idx], swap_range=[-1])
         self._display_current_frame()
         self._refresh_ui()
 
@@ -527,7 +527,7 @@ class Track_Correction_Dialog(Parallel_Review_Dialog):
         global_idx = self.frame_list[self.current_frame_idx]
         if global_idx in self.ambiguous_set_global:
             self.selected_frame_label.setStyleSheet(f"color: white; background-color: {self.TC_PALLETTE[1]};")
-        elif global_idx in self.corrected_set_global:
+        elif global_idx in self.blasted_set_global:
             self.selected_frame_label.setStyleSheet(f"color: white; background-color: {self.TC_PALLETTE[0]};")
         else:
             self.selected_frame_label.setStyleSheet(f"color: #1E90FF; background-color: transparent;")
@@ -539,7 +539,7 @@ class Track_Correction_Dialog(Parallel_Review_Dialog):
         self.is_saved = False
         self.progress_slider.clear_frame_category()
         self.progress_slider.set_frame_category("ambiguous", self.ambiguous_local, self.TC_PALLETTE[1], priority=5)
-        self.progress_slider.set_frame_category("changed", self.corrected_local, self.TC_PALLETTE[0])
+        self.progress_slider.set_frame_category("changed", self.blasted_local, self.TC_PALLETTE[0])
         self.progress_slider.commit_categories()
 
     def _save_state_for_undo(self):
@@ -581,33 +581,42 @@ class Track_Correction_Dialog(Parallel_Review_Dialog):
 
 
 class Iteration_Review_Dialog(Track_Correction_Dialog):
-    IR_PALLETTE = {0: "#959595", 1: "#AF01A6", 2: "#CF5300", 3: "#2EDA04"}
-    label_exported = Signal(object, object)
+    IR_PALLETTE = {0: "#959595", 1: "#2EDA04", 2: "#CF5300", 3: "#AF01A6", 4: "#4938E4"}
 
     def __init__(self, dlc_data, extractor, new_data_array, frame_list, ir_frame_tuple, crop_coord = None, parent=None):
         super().__init__(dlc_data, extractor, new_data_array, frame_list, ir_frame_tuple, crop_coord, parent)
 
-        self.blasted_set_global = self.corrected_set_global
-        self.blasted_local = self.corrected_local
+        self.blasted_set_global = self.blasted_set_global
+        self.blasted_local = self.blasted_local
 
-        self.frame_status_array[self.blasted_local] = 3 # 0: skip, 1: approve, 2: reject(and swap), 3: blasted
+        self.was_cancelled = False 
+        self.is_entertained = False
+
+         # 0: skip (default approved), 1: approve, 2: reject(and swap), 3: blasted, 4: ambiguous
+        self.frame_status_array[self.blasted_local] = 3
+        self.frame_status_array[self.ambiguous_local] = 4
         self._refresh_slider()
-    
+
+    def get_result(self):
+        return self.new_data_array[self.frame_list], self.frame_status_array, self.is_entertained
+
     def _setup_control(self):
         swap_box = QGroupBox("Manual Track Correction")
         swap_layout = QHBoxLayout()
 
         self.approve_button = QPushButton("Approve Current Frame (A)")
-        self.reject_button = QPushButton("Reject and Swap Track (Shift + W)")
+        self.reject_button = QPushButton("Reject and Swap Track (R)")
         self.blast_button = QPushButton("Mark | Unmark Faulty Frame (D)")
-        self.apply_button = QPushButton("Add to Training Data (Ctrl + S)")
+        self.apply_button = QPushButton("Continue Training (Ctrl + S)")
+        self.finish_button = QPushButton("Accept Current Weight and Fit the Whole Video")
 
         self.approve_button.clicked.connect(self._mark_approved)
         self.reject_button.clicked.connect(self._mark_rejected_swap)
         self.blast_button.clicked.connect(self._mark_blasted)
         self.apply_button.clicked.connect(self._export_label)
+        self.finish_button.clicked.connect(self._i_am_entertained)
 
-        for btn in [self.approve_button, self.reject_button, self.blast_button, self.apply_button]:
+        for btn in [self.approve_button, self.reject_button, self.blast_button, self.apply_button, self.finish_button]:
             swap_layout.addWidget(btn)
         swap_box.setLayout(swap_layout)
 
@@ -627,7 +636,7 @@ class Iteration_Review_Dialog(Track_Correction_Dialog):
             "redo": {"key": "Ctrl+Y", "callback": self._redo_changes},
             "save":{"key": "Ctrl+S", "callback": self._export_label},
             "approve":{"key": "A", "callback": self._mark_approved},
-            "big_swap":{"key": "Shift+W", "callback": self._mark_rejected_swap},
+            "big_swap":{"key": "R", "callback": self._mark_rejected_swap},
             "blast":{"key": "D", "callback": self._mark_blasted},
         })
 
@@ -639,6 +648,8 @@ class Iteration_Review_Dialog(Track_Correction_Dialog):
         self._refresh_ui()
 
     def _mark_rejected_swap(self):
+        if self.frame_status_array[self.current_frame_idx] == 2:
+            return
         self._save_state_for_undo()
         self.frame_status_array[self.current_frame_idx] = 2
         self._refresh_ui()
@@ -650,7 +661,7 @@ class Iteration_Review_Dialog(Track_Correction_Dialog):
             self.frame_status_array[self.current_frame_idx] = 1
         else:
             self.frame_status_array[self.current_frame_idx] = 3
-        self._refresh_slider()
+        self._refresh_ui()
 
     def _refresh_ui(self):
         super()._refresh_ui()
@@ -662,18 +673,19 @@ class Iteration_Review_Dialog(Track_Correction_Dialog):
             case 1: self.selected_frame_label.setStyleSheet(f"color: white; background-color: {self.IR_PALLETTE[1]};")
             case 2: self.selected_frame_label.setStyleSheet(f"color: white; background-color: {self.IR_PALLETTE[2]};")
             case 3: self.selected_frame_label.setStyleSheet(f"color: white; background-color: {self.IR_PALLETTE[3]};")
+            case 4: self.selected_frame_label.setStyleSheet(f"color: white; background-color: {self.IR_PALLETTE[4]};")
             case _: self.selected_frame_label.setStyleSheet(f"color: #1E90FF; background-color: transparent;")
 
     def _refresh_slider(self):
         self.is_saved = False
         self.progress_slider.clear_frame_category()
-        status_arr = self.frame_status_array  # local indices, length = N
+        status_arr = self.frame_status_array
         palette = self.IR_PALLETTE
         self.progress_slider.set_frame_category_array(status_arr, palette)
         self.progress_slider.commit_categories()
 
     def _determine_list_to_nav(self):
-        return list(set(self.ambiguous_local) | set(self.blasted_local))
+        return np.where(self.frame_status_array != 0)[0].tolist()
 
     def _setup_uno(self):
         self.uno = Uno_Stack_Dict()
@@ -686,8 +698,11 @@ class Iteration_Review_Dialog(Track_Correction_Dialog):
 
     def _export_label(self):
         self.is_saved = True
-        self.label_exported.emit(self.new_data_array, self.frame_status_array)
         self.accept()
+
+    def _i_am_entertained(self):
+        self.is_entertained = True
+        self._export_label()
 
     def _save_state_for_undo(self):
         self._compose_dict_for_uno()
@@ -711,3 +726,10 @@ class Iteration_Review_Dialog(Track_Correction_Dialog):
         self.frame_status_array = uno_dict["status"]
         self._display_current_frame()
         self._refresh_ui()
+
+    def reject(self):
+        self.was_cancelled = True
+        super().reject()
+
+    def closeEvent(self, event):
+        self.reject()

@@ -79,13 +79,13 @@ class Nav_Callback:
 
 @dataclass
 class Blob_Config:
-    sample_frame_count: int
     threshold: int
     double_blob_area_threshold: int
     min_blob_area: int
     bg_removal_method: str
     blob_type: str
     background_frames: Dict[str, NDArray]
+    sample_frame_count: int = 0 # Deprecated
     roi: Optional[Tuple[int, int, int, int]] = None
 
     def to_dict(self) -> dict:
@@ -95,3 +95,10 @@ class Blob_Config:
     @classmethod
     def from_dict(cls, data) -> "Blob_Config":
         return cls(**data)
+    
+@dataclass
+class Track_Properties:
+    centroids: NDArray
+    rotations: NDArray
+    poses: NDArray
+    last_updated: NDArray

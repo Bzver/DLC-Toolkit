@@ -4,15 +4,14 @@ import pandas as pd
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QTransform
-from PySide6.QtWidgets import QDialog
 
 from typing import Optional, Tuple
 
 from core.runtime import Data_Manager, Video_Manager
-from core.tool import Outlier_Finder, Canvas, Prediction_Plotter, Uno_Stack, Parallel_Review_Dialog
-from ui import (
-    Menu_Widget, Video_Player_Widget, Pose_Rotation_Dialog, Status_Bar, Shortcut_Manager,
-    Progress_Indicator_Dialog, Frame_Range_Dialog, Track_Fix_Dialog)
+from core.tool import (Outlier_Finder, Canvas, Prediction_Plotter, Uno_Stack,
+                       Track_Correction_Dialog, Iteration_Review_Dialog)
+from ui import (Menu_Widget, Video_Player_Widget, Pose_Rotation_Dialog, Status_Bar,
+                Shortcut_Manager, Progress_Indicator_Dialog, Frame_Range_Dialog)
 from utils.pose import (
     rotate_selected_inst, generate_missing_inst, generate_missing_kp_for_inst,
     calculate_pose_centroids, calculate_pose_rotations
@@ -23,7 +22,7 @@ from utils.track import (
 from utils.helper import (
     frame_to_pixmap, calculate_snapping_zoom_level, get_instances_on_current_frame, get_instance_count_per_frame)
 from utils.dataclass import Plot_Config, Plotter_Callbacks
-from utils.logger import Loggerbox, QMessageBox
+from utils.logger import Loggerbox
 
 
 class Frame_Label:
@@ -54,6 +53,7 @@ class Frame_Label:
             },
             "Refine": {
                 "buttons": [
+                    ("Open Outlier Cleaning Menu", self._call_outlier_finder),
                     {
                         "submenu": "Interpolate",
                         "items": [
@@ -85,7 +85,7 @@ class Frame_Label:
                             ("Paste Inst On Current Frame (Ctrl + V)", self._paste_inst),
                         ]
                     },
-                    ("Correct Track Using Temporal Consistency", self._temporal_track_correct),
+                    ("Supervised Track Correction", self._temporal_track_correct),
                     ("Generate Instance (G)", self._generate_inst),
                     ("Rotate Selected Instance (R)", self._rotate_inst),
                 ]
@@ -93,7 +93,6 @@ class Frame_Label:
             "Edit": {
                 "buttons": [
                     ("Direct Keypoint Edit (Q)", self._direct_keypoint_edit),
-                    ("Open Outlier Cleaning Menu", self._call_outlier_finder),
                     ("Mark Current Frame As Unrefined", self._toggle_frame_status),
                     ("Mark All As Refined", self._mark_all_as_refined),
                     ("Undo Changes (Ctrl+Z)", self._undo_changes),
@@ -186,6 +185,13 @@ class Frame_Label:
         if frame is None:
             self.gview.clear_graphic_scene()
             return
+
+        if self.dm.background_masking:
+            mask = self.dm.background_mask
+            if mask is None:
+                mask = self.get_mask_from_blob_config()
+        
+            frame =  np.clip(frame.astype(np.int16) + mask, 0, 255).astype(np.uint8)
 
         self.gview.clear_graphic_scene()
         self._plot_current_frame(frame)
@@ -692,49 +698,53 @@ class Frame_Label:
     def _temporal_track_correct(self):
         if not self._track_edit_blocker():
             return
-        
-        centroids, _ = calculate_pose_centroids(self.pred_data_array)   
-        speeds_px_frame = np.linalg.norm(np.diff(centroids, axis=0), axis=2).flatten()
-        speeds_px_frame = speeds_px_frame[~np.isnan(speeds_px_frame)]
-
-        dialog = Track_Fix_Dialog(self.main)
-        dialog.set_histogram(speeds_px_frame, max_dist_px_frame=40.0)
-        if dialog.exec() == QDialog.Accepted:
-            max_dist, lookback = dialog.get_values()
-        else:
-            return
 
         self._save_state_for_undo()
 
-        progress = Progress_Indicator_Dialog(
-            0, self.dm.total_frames, "Temporal Track Fixing", "Fixing track using temporal consistency...", self.main)
+        is_satisfied = False
+        review_round = 0
 
-        tf = Track_Fixer(self.pred_data_array, self.dm.canon_pose, self.dm.angle_map_data, progress)
-        self.pred_data_array, changed_frames, amongus_frames = tf.track_correction(max_dist, lookback)
+        current_crp_weight = (0.7, 0.15, 0.15)
+        current_blast_weight = (0.4, 0.3, 0.3)
+        blast_threshold, sigma, kappa = None, None, None
 
-        cf_text = f"Applied {len(changed_frames)} changes to track." if changed_frames else "No changes were applied."
-        ag_text = f"{len(amongus_frames)} frames are ambiguous." if amongus_frames else ""
+        while not is_satisfied:
+            review_round += 1
+            self.status_bar.show_message(f"Review round {review_round}...")
 
-        Loggerbox.info(self.main, "Track Fix Result", f"{cf_text}{ag_text}")
-        if not changed_frames and not amongus_frames:
-            return
+            progress = Progress_Indicator_Dialog(
+                0, self.dm.total_frames, "Supervised Track Fixing", f"Running with weights: CRP={current_crp_weight}, BLAST_W={current_blast_weight}",
+                self.main)
 
-        label = f"{cf_text}. Review the changes now?"
-        if amongus_frames:
-            label = f"{ag_text}, start manual correction now?"
-        
-        reply = Loggerbox.question(self.main, f"Manual Review", label, QMessageBox.Yes | QMessageBox.No)
-        if reply == QMessageBox.Yes:
-            dialog = Parallel_Review_Dialog(self.dm.dlc_data, self.vm.extractor, self.pred_data_array, [], (changed_frames, amongus_frames), True, parent=self.main)
-            dialog.pred_data_exported.connect(self._get_pred_data_from_manual_review)
+            self.tf = Track_Fixer(self.pred_data_array, self.dm.angle_map_data, progress,
+                                  crp_weight=current_crp_weight,
+                                  blast_weight=current_blast_weight,
+                                  blast_threshold=blast_threshold,
+                                  cr_sigma=sigma, kappa=kappa, lookback_window=5)
+            
+            pred_data_array, amongus_frames, blasted_frame, frame_list = self.tf.iter_orchestrator()
+            dialog = Iteration_Review_Dialog(self.dm.dlc_data, self.vm.extractor, pred_data_array, frame_list, (blasted_frame, amongus_frames), parent=self.main)
             dialog.exec()
-            return
 
-        self.display_current_frame()
+            if dialog.was_cancelled:
+                return
+            
+            corrected_pred, status_array, is_entertained = dialog.get_result()
 
-    def _get_pred_data_from_manual_review(self, pred_data_array):
+            if not is_entertained:
+                # ARE YOU NOT ENTERTAINED?!
+                self.tf.process_labels(corrected_pred, status_array)
+                current_crp_weight, current_blast_weight, blast_threshold = self.tf.get_weights()
+                sigma, kappa = self.tf.get_sk_vals()
+            else:
+                pred_data_array, blasted_frame, amongus_frames = self.tf.fit_full_video()
+                dialog = Track_Correction_Dialog(self.dm.dlc_data, self.vm.extractor, pred_data_array, list(range(self.dm.total_frames)), (blasted_frame, amongus_frames), parent=self.main)
+                dialog.pred_data_exported.connect(self._get_pred_data_from_manual_correction)
+                dialog.exec()
+                break
+
+    def _get_pred_data_from_manual_correction(self, pred_data_array, frame_tuple):
         self._save_state_for_undo()
-        self.status_bar.show_message("Prediction received from manual reviewer.")
         self.dm.dlc_data.pred_data_array = pred_data_array
         self.pred_data_array = self.dm.dlc_data.pred_data_array
         self.display_current_frame()

@@ -1,42 +1,26 @@
 import numpy as np
+from scipy.spatial.distance import cdist
 from scipy.optimize import linear_sum_assignment
-from itertools import combinations
-from typing import Optional, Literal, Tuple
-
+from typing import Optional, Tuple, List
+from utils.dataclass import Track_Properties
 from utils.logger import logger
 
 
 class Hungarian:
     def __init__(self,
-                pred_centroids:np.ndarray,
-                ref_centroids:np.ndarray,
+                pred:Track_Properties,
+                ref:Track_Properties,
                 valid_pred_mask:np.ndarray,
                 valid_ref_mask:np.ndarray,
-                max_dist:float,
                 ref_frame_gap:np.ndarray,
-                motion_model:Literal["Diffusion", "Ballistic"]="Diffusion",
+                oks_kappa:np.ndarray,
+                sigma:Tuple[float, float],
+                weight:Tuple[float, float, float] = (0.8, 0.1, 0.1)
                 ):
-        self.pred_centroids = pred_centroids[valid_pred_mask]
-        self.ref_centroids = ref_centroids[valid_ref_mask]
-        self.pred_mask = valid_pred_mask
-        self.ref_mask = valid_ref_mask
-        self.max_dist = max_dist
-        self.frame_gap = ref_frame_gap[valid_ref_mask]
+        self.update_predictions(pred, ref, valid_pred_mask, valid_ref_mask, ref_frame_gap)
+        self.update_ksw(oks_kappa, sigma, weight)
 
-        self.ref_centroids_full = ref_centroids
-        self.frame_gap_full = ref_frame_gap
-        self.motion_model = motion_model
-
-        self.instance_count = valid_pred_mask.shape[0]
-        self.inst_list = list(range(self.instance_count))
-        self.full_set = np.all(self.pred_mask) and np.all(self.ref_mask)
-        
-        self.dym_dist = self._dynamic_max_dist()
-
-        self.pred_indices = np.where(self.pred_mask)[0]
-        self.ref_indices  = np.where(self.ref_mask)[0]
-        
-    def hungarian_matching(self) -> Optional[list]:
+    def hungarian_matching(self, gap_threshold = 0.05) -> Optional[List[int]]:
         """
         Perform identity correction using Hungarian algorithm.
 
@@ -45,7 +29,22 @@ class Hungarian:
                 new_order[target_identity] = source_instance_index_in_current_frame
                 i.e., "Identity j comes from current instance new_order[j]"
         """
-        cost_matrix = np.linalg.norm(self.pred_centroids[:, np.newaxis] - self.ref_centroids[np.newaxis, :], axis=2)
+        ref_centroids, ref_rotations, ref_poses= self.mask_prop(prop=self.ref, mask=self.ref_mask)
+        pred_centroids, pred_rotations, pred_poses = self.mask_prop(prop=self.pred, mask=self.pred_mask)
+
+        cent_matrix = cdist(pred_centroids, ref_centroids, metric='euclidean')
+        rota_matrix = self.angular_distance(pred_rotations[:, np.newaxis], ref_rotations[np.newaxis, :])
+
+        w1, w2, w3 = self.weight
+        s1, s2 = self.sigma
+        
+        sim_c = np.exp(-cent_matrix**2 / s1**2)
+        sim_r = np.exp(-rota_matrix**2 / s2**2)
+        sim_p = self._object_keypoint_similarity(pred_poses, ref_poses)
+
+        sim_matrix = w1 * sim_c + w2 * sim_r + w3 * sim_p
+        cost_matrix = 1 - sim_matrix
+        assert np.all(np.isfinite(cost_matrix)), "pose_matrix contains NaN/inf — check pose validity masking"
 
         try:
             row_ind, col_ind = linear_sum_assignment(cost_matrix)
@@ -54,137 +53,122 @@ class Hungarian:
             logger.debug(f"[HUN] Hungarian failed: {e}. Returning None.")
             return None
 
-        new_order = self._build_new_order(row_ind, col_ind)
+        gaps = self._compute_assignment_gaps(cost_matrix, row_ind, col_ind)
+        confident_mask = gaps >= gap_threshold
+        row_ind_conf = row_ind[confident_mask]
+        col_ind_conf = col_ind[confident_mask]
+
+        if len(row_ind_conf) == 0:
+            logger.debug("[HUN] No confident matches.")
+            return None
+
+        logger.debug(f"[HUN] Kept {len(row_ind_conf)}/{len(row_ind)} matches with gap ≥ {gap_threshold}")
+
+        new_order = self._build_new_order(row_ind_conf, col_ind_conf)
         logger.debug(f"[HUN] Final new_order: {new_order}")
         return new_order
 
-    def compare_distance_improvement(self, new_order:list, improvement_threshold:float=0.1) -> Tuple[bool, float]:
-        """Wrapper for distance improvement comparison of a given new_order"""
-        row_ind, col_ind = [], []
+    def update_predictions(
+        self,
+        pred:Track_Properties,
+        ref:Track_Properties,
+        valid_pred_mask:np.ndarray,
+        valid_ref_mask:np.ndarray,
+        ref_frame_gap:np.ndarray
+        ):
+        self.pred = pred
+        self.ref = ref
 
-        for i, j in enumerate(new_order):
-            if j in self.pred_indices:
-                row_ind.append(j)
-                col_ind.append(i)
+        self.pred_mask = valid_pred_mask
+        self.ref_mask = valid_ref_mask
+        self.frame_gap = ref_frame_gap[valid_ref_mask]
 
-        row_ind = np.array(row_ind, dtype=int)
-        col_ind = np.array(col_ind, dtype=int)
-  
-        avg_improv = self._dist_improv_comp(row_ind, col_ind)
- 
-        return (avg_improv>improvement_threshold), avg_improv
+        self.ref_centroids_full = ref.centroids
+        self.frame_gap_full = ref_frame_gap
 
-    def hungarian_skipper(self) -> Tuple[bool, Optional[list]]:
-        K, M = len(self.pred_centroids), len(self.ref_centroids)
+        self.instance_count = valid_pred_mask.shape[0]
+        self.inst_list = list(range(self.instance_count))
+        self.full_set = np.all(self.pred_mask) and np.all(self.ref_mask)
 
-        if K == 0 or M == 0:
-            logger.debug(f"[HUN] No valid data for Hungarian matching (K={K}, M={M}).")
-            return (K != 0), None
+        self.pred_indices = np.where(self.pred_mask)[0]
+        self.ref_indices  = np.where(self.ref_mask)[0]
 
-        if self.danger_close(self.pred_centroids, self.ref_centroids, np.nanmax(self.dym_dist)):
-            return True, None
+    def update_ksw(
+            self,
+            kappa:np.ndarray,
+            sigma:Tuple[float, float],
+            weight:Tuple[float, float, float] = (0.8, 0.1, 0.1),
+            ):
+        self.kappa = kappa
+        self.sigma = sigma
+        self.weight = weight
 
-        if K == 1 and M == 1:
-            dist = np.linalg.norm(self.pred_centroids[0] - self.ref_centroids[0])
-            max_dist = self.dym_dist[0]
-            
-            logger.debug(f"[HUN] Single pair matching. Distance: {dist:.2f}, Max_dist: {max_dist:.2f}")
-            if dist < max_dist:
-                new_order = self._build_new_order_simple(self.pred_indices[0], self.ref_indices[0])
-                logger.debug(f"[HUN] Single pair matched. New order: {new_order}")
-                return True, new_order
-            elif dist < max_dist * 2:
-                logger.debug(f"[HUN] Single pair semi matched (Dist: {max_dist:.2f} <= {dist:.2f} < {2*max_dist:.2f}).")
-                alt_idx_found = -1
-                dist_alt_found = 0
-                for alt_idx in self.inst_list:
-                    if alt_idx == self.pred_indices[0]:
-                        continue
-                    if alt_idx in self.ref_indices:
-                        continue
-                    ref_centroids_ancient = self.ref_centroids_full[alt_idx]
-                    if np.any(np.isnan(ref_centroids_ancient)):
-                        continue
-                    dist_alt = np.linalg.norm(self.pred_centroids[0] - ref_centroids_ancient)
-                    if dist_alt > max_dist * 2:
-                        continue
-                    alt_idx_found = alt_idx
-                    dist_alt_found = dist_alt
+        assert len(self.weight) == 3, f"weight must be length 3, got {len(self.weight)}"
+        assert len(self.sigma) == 2, f"sigma must be length 2, got {len(self.sigma)}"
+        assert all(w >= 0 for w in self.weight), "weights must be non-negative"
+        assert all(s > 0 for s in self.sigma), "sigma values must be positive"
+        assert np.isclose(sum(self.weight), 1.0), f"weights sum to {sum(self.weight):.6f}, not 1"
 
-                if alt_idx_found != -1:
-                    f"[HUN] Single pair ambiguous (Inst {alt_idx_found} from {self.frame_gap_full[alt_idx_found]} frames away, dist: {dist_alt_found:.2f} <= {2*max_dist:.2f})."
-                    return True, None
-                else:
-                    new_order = self._build_new_order_simple(self.pred_indices[0], self.ref_indices[0])
-                    logger.debug(f"[HUN] Single pair matched. New order: {new_order}")
-                    return True, new_order
-            else:
-                logger.debug(f"[HUN] Single pair not matched (Dist: {dist:.2f} >= {2*max_dist:.2f}).")
-                return True, None
+    def _object_keypoint_similarity(
+        self,
+        pred_poses:np.ndarray,
+        ref_poses:np.ndarray,
+        visibility_thresh:float=0.3,
+        min_shared = 3,
+    ) -> np.ndarray:
+        x1, y1, p1 = pred_poses[:, 0::3], pred_poses[:, 1::3], pred_poses[:, 2::3]
+        x2, y2, p2 = ref_poses[:, 0::3], ref_poses[:, 1::3], ref_poses[:, 2::3]
+
+        x1_b = x1[:, None, :]
+        y1_b = y1[:, None, :]
+        p1_b = p1[:, None, :]
+        x2_b = x2[None, :, :]
+        y2_b = y2[None, :, :]
+        p2_b = p2[None, :, :]
+
+        x1_b = np.where(np.isfinite(x1_b), x1_b, 0.0)
+        y1_b = np.where(np.isfinite(y1_b), y1_b, 0.0)
+        p1_b = np.where(np.isfinite(p1_b), p1_b, 0.0)
+        x2_b = np.where(np.isfinite(x2_b), x2_b, 0.0)
+        y2_b = np.where(np.isfinite(y2_b), y2_b, 0.0)
+        p2_b = np.where(np.isfinite(p2_b), p2_b, 0.0)
+
+        d2 = (x1_b - x2_b)**2 + (y1_b - y2_b)**2
+
+        visible = (p1_b > visibility_thresh) & (p2_b > visibility_thresh)
+        shared_count = np.sum(visible, axis=2)
+        logger.debug(f"[OKS] shared kps per pair: {shared_count.flatten()}")
+
+        exp_term = np.exp(-d2 / (2 * (self.kappa)**2 + 1e-9))
+        conf_weight = np.minimum(p1_b, p2_b)
         
-        if K == 1 and M != 1:
-            dist = np.linalg.norm(self.pred_centroids[0] - self.ref_centroids, axis=1)
-            ref_dg_array = np.column_stack((dist, self.dym_dist, self.frame_gap))
-            valid = ref_dg_array[:, 1] > ref_dg_array[:, 0]
-            if np.sum(valid) == 0:
-                logger.debug("[HUN] No singe pair matched.")
-                for i in range(M):
-                    logger.debug(f"Inst {i} | Distances: {dist[i]:.2f}, Max_dist: {self.dym_dist[i]:.2f}")
-                return True, None
-            elif np.sum(valid) == 1:
-                valid_idx_global = self.ref_indices[valid][0]
-                new_order = self._build_new_order_simple(self.pred_indices[0], valid_idx_global)
-                logger.debug(f"[HUN] Single pair matched. New order: {new_order}")
-                return True, new_order
-            else:
-                dist_best = np.argmin(ref_dg_array[:, 0])
-                time_best = np.where(ref_dg_array[:, 2]==np.min(ref_dg_array[:,2]))[0]
-                if len(time_best) > 1:
-                    logger.debug(f"[HUN] Multiple Time Best candidates. Reroute to Hungarian.")
-                    return False, None
-                time_best = time_best[0]
-                if dist_best == time_best:
-                    best_idx_global = self.ref_indices[dist_best]
-                    new_order = self._build_new_order_simple(self.pred_indices[0], best_idx_global)
-                    logger.debug(f"[HUN] Single pair matched. New order: {new_order}")
-                    return True, new_order
-                else:
-                    logger.debug("[HUN] Distance-wise best instance is not the same as time-wise. Mark as ambiguous.\n"
-                                f"Inst {dist_best} (Dist Best) | Distances: {dist[dist_best]:.2f}, Gap: {ref_dg_array[dist_best, 2]}\n"
-                                f"Inst {time_best} (Time Best) | Distances: {dist[time_best]:.2f}, Gap: {ref_dg_array[time_best, 2]}")
-                    new_order = self._build_new_order_simple(self.pred_indices[0], dist_best)
-                    return True, None
+        weighted = exp_term * conf_weight * visible
+        numerator = np.sum(weighted, axis=2)
+        denominator = np.sum(conf_weight * visible, axis=2) + 1e-9
+        oks = numerator / denominator
+        oks = np.where(shared_count >= min_shared, oks, 0.0)
+        logger.debug(f"[OKS] clamped {np.sum(shared_count < min_shared)} pairs with <{min_shared} shared kps")
 
-        return False, None
+        return oks
 
-    def danger_close(self, pred_centroids, ref_centroids, max_dist:float) -> bool:
-        K, M = len(pred_centroids), len(ref_centroids)
-        if K >= 2:
-            for i, j in combinations(range(K), 2):
-                d = np.linalg.norm(pred_centroids[i] - pred_centroids[j])
-                if d < max_dist:
-                    logger.debug(f"[HUN] Ambiguous pred layout (pred {i}–{j}: {d:.1f} < {max_dist}).")
-                    return True
+    def _compute_assignment_gaps(self, cost_matrix: np.ndarray, row_ind: np.ndarray, col_ind: np.ndarray) -> np.ndarray:
+        gaps = []
+        for r, c in zip(row_ind, col_ind):
+            best = cost_matrix[r, c]
 
-        if M >= 2:
-            for i, j in combinations(range(M), 2):
-                d = np.linalg.norm(ref_centroids[i] - ref_centroids[j])
-                if d < max_dist:
-                    logger.debug(f"[HUN] Ambiguous ref layout (ref {i}–{j}: {d:.1f} < {max_dist}).")
-                    return True
+            row_costs = cost_matrix[r].copy()
+            row_costs[c] = np.inf  
+            second_best_row = np.min(row_costs)
+            col_costs = cost_matrix[:, c].copy()
+            col_costs[r] = np.inf  
+            second_best_col = np.min(col_costs)
+
+            gap = min(second_best_row - best, second_best_col - best)
+            gaps.append(gap)
         
-        return False
+        return np.array(gaps)
 
-    def _dynamic_max_dist(self):
-        gap_arr = self.frame_gap.copy()
-        gap_arr[gap_arr<1] = 1
-        match self.motion_model:
-            case "Ballistic":
-                return self.max_dist * gap_arr
-            case "Diffusion":
-                return self.max_dist * np.sqrt(gap_arr)
-
-    def _build_new_order(self, row_ind:np.ndarray, col_ind:np.ndarray) -> list:
+    def _build_new_order(self, row_ind:np.ndarray, col_ind:np.ndarray) -> List[int]:
         all_inst = range(self.instance_count)
 
         processed = {}
@@ -213,69 +197,12 @@ class Hungarian:
         new_order = list(sorted_processed.values())
 
         return new_order
-    
-    def _build_new_order_simple(self, pred_idx, ref_idx):
-        new_order = self.inst_list.copy()
-        new_order[pred_idx], new_order[ref_idx] = self.inst_list[ref_idx], self.inst_list[pred_idx]
-        return new_order
 
-    def _dist_improv_comp(
-            self, new_row_ind:np.ndarray, new_col_ind:np.ndarray) -> float:
-        """
-        Compare assignments by sorting all assignment distances and comparing element-wise.
+    @staticmethod
+    def angular_distance(a, b):
+        d = np.abs(a - b)
+        return np.minimum(d, 2*np.pi - d)
 
-        Ignores which identity is assigned to which instance — only compares the overall
-        distribution of match quality.
-
-        Accepts new assignment if, on average, sorted distances are improved by threshold.
-        """
-        K = self.pred_centroids.shape[0]
-        M = self.ref_centroids.shape[0]
-        N = min(K, M)
-
-        # Compute current assignment distances
-        current_dists = []
-        for j in range(len(self.inst_list)):
-            if j >= M:
-                continue
-            i_old = self.inst_list[j]
-            if i_old >= K:
-                continue
-            dist = np.linalg.norm(self.pred_centroids[i_old] - self.ref_centroids[j])
-            current_dists.append(dist)
-
-        if len(current_dists) == 1: # No other choice
-            return float('inf')
-
-        # Compute new assignment distances
-        new_dists = []
-        for r, c in zip(new_row_ind, new_col_ind):
-            if c >= M or r >= K:
-                continue
-            dist = np.linalg.norm(self.pred_centroids[r] - self.ref_centroids[c])
-            new_dists.append(dist)
-
-        # Sort both to get identity-agnostic score
-        current_dists = np.sort(current_dists)[:N]
-        new_dists = np.sort(new_dists)[:N]
-
-        if len(current_dists) == 0 or len(new_dists) == 0:
-            return False
-
-        # Compute relative improvement per sorted position
-        total_improvement = 0.0
-        count = 0
-
-        for i in range(len(current_dists)):
-            old_d = current_dists[i]
-            new_d = new_dists[i] if i < len(new_dists) else old_d
-
-            if old_d < 1e-9:
-                improvement = 1.0 if new_d < old_d else 0.0
-            else:
-                improvement = (old_d - new_d) / old_d
-
-            total_improvement += improvement
-            count += 1
-
-        return total_improvement / count if count > 0 else 0.0
+    @staticmethod
+    def mask_prop(prop:Track_Properties, mask:np.ndarray):
+        return prop.centroids[mask], prop.rotations[mask], prop.poses[mask]
