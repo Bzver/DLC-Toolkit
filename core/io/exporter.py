@@ -40,6 +40,10 @@ class Exporter:
         self.video_name, _ = os.path.splitext(os.path.basename(self.video_filepath))
 
         self.mask = mask
+        if self.mask is not None:
+            self.mask_pos = (self.mask == 255)
+            self.mask_neg = (self.mask == -255)
+    
         self.crop_coord = validate_crop_coord(crop_coord)
         self.extractor = Frame_Extractor(self.video_filepath)
 
@@ -134,12 +138,11 @@ class Exporter:
     def _apply_mask(self, frame:Frame_CV2):
         if self.mask is None:
             return frame
-        try:
-            masked_frame = frame.astype(np.int16) + self.mask
-        except Exception as e:
-            logger.error(f"[EXPORTER] Error applying masking to frame. Returning original frame. Error: {e}")
-            return frame
-        return np.clip(masked_frame, 0, 255).astype(np.uint8)
+        
+        frame[self.mask_pos] = 255
+        frame[self.mask_neg] = 0
+
+        return frame
 
     def _apply_crop(self, frame:Frame_CV2):
         if self.crop_coord is None:
