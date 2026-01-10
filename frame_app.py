@@ -449,8 +449,8 @@ class Frame_App(QMainWindow):
             return
         self.dm.background_masking = not self.dm.background_masking
 
-        if self.dm.background_mask is None:
-            self.fview.get_mask_from_blob_config()        
+        if self.dm.background_masking:
+            self.fview.get_mask_from_blob_config()
 
         self.at.display_current_frame()
 

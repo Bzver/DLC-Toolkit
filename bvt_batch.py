@@ -101,7 +101,6 @@ def inference_workspace_vid(
         else:
             inference_window._shuffle_spinbox_changed(shuffle_idx)
 
-    inference_window.fresh_pred = True
     logger.info("[BATCH] Inference process initiated.")
     inference_window._inference_pipe(headless=True)
 
@@ -143,7 +142,7 @@ def autoload_pred(workspace_file:str, dm:Data_Manager, dlc_config_path:Optional[
 
 if __name__ == "__main__":
     set_headless_mode(True)
-    rootdir = "D:/Data/Videos/20251117 Marathon"
+    rootdir = "D:/Data/Videos/20251018 Marathon/1019"
     dlc_config_path = "D:/Project/DLC-Models/NTD/config.yaml"
     pkl_list = []
     for root, dirs, files in os.walk(rootdir):
@@ -158,6 +157,8 @@ if __name__ == "__main__":
     app = QtWidgets.QApplication([])
     dialog = QtWidgets.QDialog()
     success_count = 0
+    failed = []
+
     for i, f in enumerate(pkl_list, 1):
         filename = os.path.basename(f)
         filefolder = os.path.dirname(f)
@@ -170,14 +171,15 @@ if __name__ == "__main__":
                 dlc_config_path=dlc_config_path,
                 crop=True,
                 blob_based_infer=True,
-                infer_interval=(100,4,2,1),
-                infer_only_empty_frames=True,
-                batch_size=128,
+                infer_interval=(2,2,1,1),
+                infer_only_empty_frames=False,
+                batch_size=32,
                 detector_batch_size=32,
             )
         except Exception as e:
-            logger.error(f"[Batch {i}/{len(pkl_list)}] FAILED: {filename} — {e}")
+            logger.error(f"[Batch {i}/{len(pkl_list)}] FAILED: {filename} — {e} | ")
             logger.exception(f"[Batch {i}/{len(pkl_list)}]")
+            failed.append(f)
             continue # Gliding over all
         else:
             success_count += 1
@@ -189,3 +191,7 @@ if __name__ == "__main__":
             continue
 
     logger.info(f"[BATCH] Batch finished: {success_count}/{len(pkl_list)} succeeded.")
+    if failed:
+        logger.info(f"[BATCH] Failed videos:")
+        for f in failed:
+            logger.info(f)
