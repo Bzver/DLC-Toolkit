@@ -66,6 +66,10 @@ class Prediction_Plotter:
         self.current_frame_data = current_frame_data
         return self._plot_worker()
 
+    def get_current_color_map(self):
+        color_hex = ['#{:02x}{:02x}{:02x}'.format(*color) for color in self.color]
+        return color_hex
+
     def _plot_worker(self) -> Optional[np.ndarray]:
         for inst in range(self.dlc_data.instance_count):
             self.keypoint_coords = {} # Cleanup the keypoint coords of other insts
