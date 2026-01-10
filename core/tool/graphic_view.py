@@ -1,23 +1,19 @@
-import numpy as np
-
 from PySide6 import QtWidgets, QtCore
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QGraphicsRectItem, QGraphicsView, QGraphicsScene, QFrame
 from PySide6.QtGui import QPainter, QColor, QPen, QTransform
 
-from typing import Callable
-
 from ui import Draggable_Keypoint, Selectable_Instance
-import utils.helper as duh
 
 class Canvas(QGraphicsView):
     instance_selected = Signal(int)
+    rect_finished = Signal(int,int,int,int)
 
-    def __init__(self, track_edit_callback:Callable[[object], None], parent=None):
+    def __init__(self, parent=None):
         self.gscene = QGraphicsScene(parent)
         super().__init__(self.gscene)
-
-        self.track_edit_callback = track_edit_callback
+        self.current_rect_item = None
+        self.start_point = None
 
         self.setRenderHint(QPainter.Antialiasing)
         self.setFrameShape(QFrame.NoFrame)
@@ -42,7 +38,7 @@ class Canvas(QGraphicsView):
 
     def _handle_box_selection(self, clicked_box:Selectable_Instance):
         if self.sbox and self.sbox != clicked_box and self.sbox.scene() is not None:
-            self.sbox.toggle_selection() # Remove old box
+            self.sbox.toggle_selection()
         clicked_box.toggle_selection()
 
         if clicked_box.is_selected:
@@ -128,20 +124,8 @@ class Canvas(QGraphicsView):
                 self.start_point = None
 
                 x1, y1, x2, y2 = int(rect.left()), int(rect.top()), int(rect.right()), int(rect.bottom())
+                self.rect_finished.emit(x1, y1, x2, y2)
 
-                self.pred_data_array = duh.clean_inconsistent_nans(self.pred_data_array) # Cleanup ghost points (NaN for x,y yet non-nan in confidence)
-
-                all_x_kps = self.pred_data_array[:,:,0::3]
-                all_y_kps = self.pred_data_array[:,:,1::3]
-
-                x_in_range = (all_x_kps >= x1) & (all_x_kps <= x2)
-                y_in_range = (all_y_kps >= y1) & (all_y_kps <= y2)
-                points_in_bbox_mask = x_in_range & y_in_range
-
-                self.pred_data_array[np.repeat(points_in_bbox_mask, 3, axis=-1)] = np.nan
-
-                self.track_edit_callback()
-        
         QGraphicsView.mouseReleaseEvent(self, event)
 
     def _mouse_wheel_event(self, event):
@@ -157,7 +141,7 @@ class Canvas(QGraphicsView):
             else: # Zoom out
                 self.zoom_factor *= zoom_out_factor
             
-            self.zoom_factor = max(0.1, min(self.zoom_factor, 10.0)) # Limit zoom to prevent extreme values
+            self.zoom_factor = max(0.1, min(self.zoom_factor, 10.0))
 
             new_transform = QTransform()
             new_transform.scale(self.zoom_factor, self.zoom_factor)

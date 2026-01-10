@@ -15,12 +15,14 @@ from ui import (Menu_Widget, Video_Player_Widget, Pose_Rotation_Dialog, Status_B
 from utils.pose import (
     rotate_selected_inst, generate_missing_inst, generate_missing_kp_for_inst,
     calculate_pose_centroids, calculate_pose_rotations
-)
+    )
 from utils.track import (
     Track_Fixer, interpolate_track_all, delete_track, swap_track, interpolate_track,
     )
 from utils.helper import (
-    frame_to_pixmap, calculate_snapping_zoom_level, get_instances_on_current_frame, get_instance_count_per_frame)
+    frame_to_pixmap, calculate_snapping_zoom_level, get_instances_on_current_frame,
+    get_instance_count_per_frame, clean_inconsistent_nans
+    )
 from utils.dataclass import Plot_Config, Plotter_Callbacks
 from utils.logger import Loggerbox
 
@@ -166,8 +168,9 @@ class Frame_Label:
         self.reset_zoom()
 
     def _init_gview(self):
-        self.gview = Canvas(track_edit_callback=self._on_track_data_changed, parent=self.main)
+        self.gview = Canvas(parent=self.main)
         self.gview.instance_selected.connect(self._update_last_selected_inst)
+        self.gview.rect_finished.connect(self._on_canvas_rect_return)
         self.vid_play.nav.set_marked_list_name("ROI")
         self.vid_play.swap_display_for_graphics_view(self.gview)
 
@@ -562,8 +565,18 @@ class Frame_Label:
 
     ###################################################################################################################################################
 
-    def _on_track_data_changed(self):
+    def _on_canvas_rect_return(self, x1, y1, x2, y2):
         self.gview.sbox = None
+        self.pred_data_array = clean_inconsistent_nans(self.pred_data_array)
+
+        all_x_kps = self.pred_data_array[:,:,0::3]
+        all_y_kps = self.pred_data_array[:,:,1::3]
+
+        x_in_range = (all_x_kps >= x1) & (all_x_kps <= x2)
+        y_in_range = (all_y_kps >= y1) & (all_y_kps <= y2)
+        points_in_bbox_mask = x_in_range & y_in_range
+
+        self.pred_data_array[np.repeat(points_in_bbox_mask, 3, axis=-1)] = np.nan
         self.refresh_and_display()
 
     def _on_keypoint_delete(self):
@@ -701,14 +714,14 @@ class Frame_Label:
 
         self._save_state_for_undo()
 
-        is_satisfied = False
+        is_entertained = False
         review_round = 0
 
         current_crp_weight = (0.7, 0.15, 0.15)
         current_blast_weight = (0.4, 0.3, 0.3)
         blast_threshold, sigma, kappa = None, None, None
 
-        while not is_satisfied:
+        while not is_entertained:
             review_round += 1
             self.status_bar.show_message(f"Review round {review_round}...")
 
@@ -722,7 +735,7 @@ class Frame_Label:
                                   blast_threshold=blast_threshold,
                                   cr_sigma=sigma, kappa=kappa, lookback_window=5)
             
-            pred_data_array, amongus_frames, blasted_frame, frame_list = self.tf.iter_orchestrator()
+            pred_data_array, blasted_frame, amongus_frames, frame_list = self.tf.iter_orchestrator()
             dialog = Iteration_Review_Dialog(self.dm.dlc_data, self.vm.extractor, pred_data_array, frame_list, (blasted_frame, amongus_frames), parent=self.main)
             dialog.exec()
 
@@ -731,17 +744,14 @@ class Frame_Label:
             
             corrected_pred, status_array, is_entertained = dialog.get_result()
 
-            if not is_entertained:
-                # ARE YOU NOT ENTERTAINED?!
-                self.tf.process_labels(corrected_pred, status_array)
-                current_crp_weight, current_blast_weight, blast_threshold = self.tf.get_weights()
-                sigma, kappa = self.tf.get_sk_vals()
-            else:
-                pred_data_array, blasted_frame, amongus_frames = self.tf.fit_full_video()
-                dialog = Track_Correction_Dialog(self.dm.dlc_data, self.vm.extractor, pred_data_array, list(range(self.dm.total_frames)), (blasted_frame, amongus_frames), parent=self.main)
-                dialog.pred_data_exported.connect(self._get_pred_data_from_manual_correction)
-                dialog.exec()
-                break
+            self.tf.process_labels(corrected_pred, range(frame_list), status_array)
+            current_crp_weight, current_blast_weight, blast_threshold = self.tf.get_weights()
+            sigma, kappa = self.tf.get_sk_vals()
+
+        pred_data_array, blasted_frame, amongus_frames = self.tf.fit_full_video()
+        dialog = Track_Correction_Dialog(self.dm.dlc_data, self.vm.extractor, pred_data_array, list(range(self.dm.total_frames)), (blasted_frame, amongus_frames), parent=self.main)
+        dialog.pred_data_exported.connect(self._get_pred_data_from_manual_correction)
+        dialog.exec()
 
     def _get_pred_data_from_manual_correction(self, pred_data_array, frame_tuple):
         self._save_state_for_undo()
