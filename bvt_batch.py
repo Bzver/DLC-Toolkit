@@ -10,6 +10,9 @@ from utils.helper import calculate_blob_inference_intervals
 from utils.logger import logger, set_headless_mode
 
 
+
+MAX_FRAMES_PER_RUN = 100_000
+
 def inference_workspace_vid(
         workspace_file:str,
         data_manager:Data_Manager,
@@ -78,31 +81,43 @@ def inference_workspace_vid(
             raise RuntimeError("[BATCH] Blob array has not been initialized in the workspace file!")
     else:
         inference_list = list(range(dm.total_frames))
-    
-    logger.info(f"[BATCH] DLC_Inference instantiated with inference_list of length: {len(inference_list)}")
 
-    inference_window = DLC_Inference(
-        dlc_data=dm.dlc_data,
-        frame_list=inference_list,
-        video_filepath=dm.video_file,
-        roi=crop_region,
-        parent=dialog
-    )
-    inference_window.cropping = crop
-    if batch_size is not None:
-        inference_window._batch_size_spinbox_changed(batch_size)
-    if detector_batch_size is not None:
-        inference_window._det_batch_size_spinbox_changed(detector_batch_size)
-    if shuffle_idx is not None:
-        available_shuffles = inference_window._check_available_shuffles()
-        if shuffle_idx not in available_shuffles:
-            logger.info(
-                f"[BATCH] Supplied shuffle_idx - {shuffle_idx} not in available shuffles - {available_shuffles}, using the newest shuffle instead.")
-        else:
-            inference_window._shuffle_spinbox_changed(shuffle_idx)
+    if len(inference_list) > MAX_FRAMES_PER_RUN:
+        logger.info(f"[BATCH] Splitting {len(inference_list)} frames into chunks.")
+        chunked_lists = [
+            inference_list[i:i + MAX_FRAMES_PER_RUN]
+            for i in range(0, len(inference_list), MAX_FRAMES_PER_RUN)
+        ]
+    else:
+        chunked_lists = [inference_list]
 
-    logger.info("[BATCH] Inference process initiated.")
-    inference_window._inference_pipe(headless=True)
+    for chunk_list in chunked_lists:
+        autoload_pred(workspace_file, dm, dlc_config_path)
+
+        logger.info(f"[BATCH] DLC_Inference instantiated with inference_list of length: {len(chunk_list)}")
+
+        inference_window = DLC_Inference(
+            dlc_data=dm.dlc_data,
+            frame_list=chunk_list,
+            video_filepath=dm.video_file,
+            roi=crop_region,
+            parent=dialog
+        )
+        inference_window.cropping = crop
+        if batch_size is not None:
+            inference_window._batch_size_spinbox_changed(batch_size)
+        if detector_batch_size is not None:
+            inference_window._det_batch_size_spinbox_changed(detector_batch_size)
+        if shuffle_idx is not None:
+            available_shuffles = inference_window._check_available_shuffles()
+            if shuffle_idx not in available_shuffles:
+                logger.info(
+                    f"[BATCH] Supplied shuffle_idx - {shuffle_idx} not in available shuffles - {available_shuffles}, using the newest shuffle instead.")
+            else:
+                inference_window._shuffle_spinbox_changed(shuffle_idx)
+
+        logger.info("[BATCH] Inference process initiated.")
+        inference_window._inference_pipe(headless=True)
 
 def _pseudo_callback(*arg, **kwargs):
     pass
@@ -142,7 +157,7 @@ def autoload_pred(workspace_file:str, dm:Data_Manager, dlc_config_path:Optional[
 
 if __name__ == "__main__":
     set_headless_mode(True)
-    rootdir = "D:/Data/Videos/20251018 Marathon/1019"
+    rootdir = "D:/Data/Videos/20251117 Marathon/1117"
     dlc_config_path = "D:/Project/DLC-Models/NTD/config.yaml"
     pkl_list = []
     for root, dirs, files in os.walk(rootdir):
