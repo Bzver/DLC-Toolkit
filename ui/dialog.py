@@ -1,3 +1,4 @@
+from functools import partial
 from PySide6 import QtWidgets, QtGui
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -7,6 +8,7 @@ from PySide6.QtWidgets import (
 from typing import List, Dict, Tuple
 
 from .component import Spinbox_With_Label
+from .menu_shortcut import Shortcut_Manager
 from utils.logger import Loggerbox
 
 
@@ -258,3 +260,43 @@ class Frame_Display_Dialog(QDialog):
 
         self.dialog_layout.addWidget(scroll_area)
         self.showMaximized()
+
+
+class Instance_Selection_Dialog(QDialog):
+    inst_checked = Signal(int, bool)
+
+    def __init__(self, inst_count:int, colormap:List[str], select_status:List[bool], parent=None):
+        super().__init__(parent)
+        self.inst_count = inst_count
+        self.colormap = colormap
+
+        self.setWindowTitle("Select Instance")
+        layout = QHBoxLayout(self)
+        
+        self.buttons:List[QPushButton] = []
+        self.shortcuts = Shortcut_Manager(self)
+        sc_config = {}
+
+        for inst_idx in range(self.inst_count):
+            sc_config[inst_idx] = {"key": str(inst_idx+1), "callback": lambda idx=inst_idx: self._on_key_pressed(idx)}
+            color = colormap[inst_idx % len(colormap)]
+            status = select_status[inst_idx]
+            btn = QPushButton(f"Inst {inst_idx+1}")
+            btn.setStyleSheet(f"background-color: {color};")
+            btn.setCheckable(True)
+            btn.setChecked(status)
+            btn.clicked.connect(partial(self._on_button_clicked, inst_idx))
+            layout.addWidget(btn)
+            self.buttons.append(btn)
+
+        self.shortcuts.add_shortcuts_from_config(sc_config)
+
+    def _on_button_clicked(self, idx: int):
+        checked_status = self.buttons[idx].isChecked()
+        self.inst_checked.emit(idx, checked_status)
+        self.accept()
+
+    def _on_key_pressed(self, idx: int):
+        checked_status = self.buttons[idx].isChecked()
+        self.inst_checked.emit(idx, not checked_status)
+        self.accept()

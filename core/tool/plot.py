@@ -26,17 +26,16 @@ class Prediction_Plotter:
         self.frame_cv2 = None
         self.graphics_scene = None
 
-        self.color = [(255, 165, 0), (51, 255, 51), (51, 153, 255), (255, 51, 51), (255, 255, 102)] # RGB
+        self.color_rgb = [(255, 165, 0), (51, 255, 51), (51, 153, 255), (255, 51, 51), (255, 255, 102)] # RGB
 
-        if plot_config is None: # Defualt plot config
+        if plot_config is None:
             self.plot_config = Plot_Config(
                 plot_opacity =1.0, point_size = 6.0, confidence_cutoff = 0.0, hide_text_labels = False, edit_mode = False,
                 plot_labeled = True, plot_pred = True, navigate_labeled = False, auto_snapping = False, navigate_roi = False)
         else:
             self.plot_config = plot_config
 
-        if fast_mode:
-            self.color = [color[::-1] for color in self.color] # RGB to BGR
+        self.color = [color[::-1] for color in self.color_rgb] if fast_mode else self.color_rgb
 
         self.keypoint_coords = {}
 
@@ -67,7 +66,7 @@ class Prediction_Plotter:
         return self._plot_worker()
 
     def get_current_color_map(self):
-        color_hex = ['#{:02x}{:02x}{:02x}'.format(*color) for color in self.color]
+        color_hex = ['#{:02x}{:02x}{:02x}'.format(*color) for color in self.color_rgb]
         return color_hex
 
     def _plot_worker(self) -> Optional[np.ndarray]:
