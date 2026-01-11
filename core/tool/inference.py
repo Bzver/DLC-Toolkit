@@ -1,5 +1,4 @@
 import os
-import sys
 import shutil
 import tempfile
 import yaml
@@ -255,7 +254,7 @@ class DLC_Inference(QDialog):
         self.total_frames = self.extractor.get_total_frames()
 
         if self.masking and self.mask_region is None:
-            Loggerbox.info(self, "Mask Region Not Calculated", "Use Counter to get background first.")
+            Loggerbox.info(self, "Mask Region Not Calculated", "Click Toggle Smart Masking in the Main-View submenu first.")
             return
 
         if self.cropping and self.crop_coord is None:
@@ -291,8 +290,7 @@ class DLC_Inference(QDialog):
                 self.on_hold_dialog = On_Hold_Dialog(self)
                 self.on_hold_dialog.show()
             self.hide()
-            QtWidgets.QApplication.processEvents() 
-            sys.setrecursionlimit(2000)
+            QtWidgets.QApplication.processEvents()
             if inference_video_path:
                 self._analyze_frame_videos(inference_video_path)
             else:
@@ -418,7 +416,7 @@ class DLC_Inference(QDialog):
             pred_data_array=self.new_data_array
             list_tuple = (self.frame_list, [])
             self._save_pred_to_file(pred_data_array, list_tuple)
-        elif headless:
+        elif headless or np.all(np.isnan(self.dlc_data.pred_data_array[self.frame_list])):
             old_data_array = self.dlc_data.pred_data_array
             old_data_array[self.frame_list, ...] = self.new_data_array[self.frame_list, ...]
             list_tuple = (self.frame_list, [])
