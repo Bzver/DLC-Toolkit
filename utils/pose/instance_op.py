@@ -1,10 +1,11 @@
 import numpy as np
 
-from typing import Dict, Any, List, Optional
+from typing import Dict, List, Optional
 
 from .pose_analysis import calculate_pose_centroids, calculate_pose_rotations
 from .pose_worker import pose_rotation_worker
 from .pose_average import get_average_pose
+
 
 def rotate_selected_inst(
         pred_data_array:np.ndarray,

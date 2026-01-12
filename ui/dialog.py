@@ -19,7 +19,7 @@ class Pose_Rotation_Dialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(f"Rotate Instance {selected_instance_idx}")
         self.selected_instance_idx = selected_instance_idx
-        self.base_angle = initial_angle_deg
+        self.base_angle = initial_angle_deg - 90.0
 
         layout = QVBoxLayout(self)
 
@@ -41,7 +41,7 @@ class Pose_Rotation_Dialog(QDialog):
     def _on_dial_change(self, value:int):
         self.angle = float(value)
         angle_delta = self.angle - self.base_angle
-        if abs(angle_delta) < 1e-3:
+        if abs(angle_delta) < 1e-1:
             return  # Skip tiny changes
         self.angle_label.setText(f"Angle: {self.angle:.1f}°")
         self.rotation_changed.emit(self.selected_instance_idx, angle_delta)

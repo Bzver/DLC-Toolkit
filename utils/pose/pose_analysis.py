@@ -4,9 +4,10 @@ from typing import Tuple, Union, Dict
 from .pose_worker import pose_alignment_worker
 from utils.helper import bye_bye_runtime_warning
 
+
 def calculate_pose_centroids(
         pred_data_array:np.ndarray,
-        frame_slice:Union[slice, int]=slice(None)
+        frame_idx:int=-1,
         )-> Tuple[np.ndarray, np.ndarray]:
     """
     Calculate the centroid (mean x, mean y) of pose keypoints for each instance and frame,
@@ -14,7 +15,7 @@ def calculate_pose_centroids(
 
     Args:
         pred_data_array (np.ndarray): 3D array of shape (frames, instances, keypoints*3).
-        frame_slice (Union[slice, int]): Slice or index to select specific frames.
+        frame_idx (int): Use the entire array if not given
     
     Returns:
         Tuple[np.ndarray, np.ndarray]:
@@ -24,8 +25,10 @@ def calculate_pose_centroids(
     _, instance_count, xyconf = pred_data_array.shape
     num_keypoint = xyconf // 3
 
-    x_vals = pred_data_array[frame_slice, :, 0::3]
-    y_vals = pred_data_array[frame_slice, :, 1::3]
+    pred_data_array_sliced = pred_data_array[frame_idx:frame_idx+1] if frame_idx > 0 else pred_data_array
+
+    x_vals = pred_data_array_sliced[..., 0::3]
+    y_vals = pred_data_array_sliced[..., 1::3]
     frame_count = x_vals.shape[0]
 
     pose_centroids = np.full((frame_count, instance_count, 2), np.nan, dtype=np.float64)
@@ -39,8 +42,8 @@ def calculate_pose_centroids(
     local_coords[..., 0::2] = x_vals - pose_centroids[..., 0, np.newaxis]
     local_coords[..., 1::2] = y_vals - pose_centroids[..., 1, np.newaxis]
     
-    if isinstance(frame_slice, (int, np.integer)):
-        centroids = np.squeeze(centroids, axis=0)
+    if frame_count == 1:
+        pose_centroids = np.squeeze(pose_centroids, axis=0)
         local_coords = np.squeeze(local_coords, axis=0)
 
     return pose_centroids, local_coords
@@ -60,50 +63,67 @@ def calculate_pose_rotations(
     Returns:
         float if input 1D, (N,) or (F, N,) if otherwise
     """
-    assert local_x.shape == local_y.shape, f"local_x and local_y shape does not match! local_x: {local_x.shape}, local_y: {local_y.shape}"
+    assert local_x.shape == local_y.shape, f"Shape mismatch: {local_x.shape} vs {local_y.shape}"
 
     orig_ndim = local_x.ndim
     if orig_ndim == 1:
+        N = 1
         lcx = local_x[None, :]  # (1, K)
         lcy = local_y[None, :]
     elif orig_ndim == 3:
         F, I = local_x.shape[:2]
         N = F * I
-        lcx = local_x.reshape((F*I, -1))
-        lcy = local_y.reshape((F*I, -1))
+        lcx = local_x.reshape((N, -1))
+        lcy = local_y.reshape((N, -1))
     else:
         N = local_x.shape[0]
         lcx = local_x
         lcy = local_y
 
-    angles = np.full(N, np.nan, dtype=np.float64)
-
     head_idx = angle_map_data['head_idx']
     tail_idx = angle_map_data['tail_idx']
     center_idx = angle_map_data['center_idx']
 
-    xh, yh = lcx[..., head_idx], lcy[..., head_idx]
-    xc, yc = lcx[..., center_idx], lcy[..., center_idx]
-    xt, yt = lcx[..., tail_idx], lcy[..., tail_idx]
+    xh, yh = lcx[:, head_idx], lcy[:, head_idx]
+    xc, yc = lcx[:, center_idx], lcy[:, center_idx]
+    xt, yt = lcx[:, tail_idx], lcy[:, tail_idx]
 
     def angle_from_to(x1, y1, x2, y2):
         dx = x2 - x1
         dy = y2 - y1
         return np.arctan2(dy, dx)
 
+    cos_sum = np.zeros(N, dtype=np.float64)
+    sin_sum = np.zeros(N, dtype=np.float64)
+    count = np.zeros(N, dtype=int)
+
     valid_ch = np.isfinite(xc) & np.isfinite(yc) & np.isfinite(xh) & np.isfinite(yh)
     if np.any(valid_ch):
-        angles[valid_ch] = angle_from_to(xc[valid_ch], yc[valid_ch], xh[valid_ch], yh[valid_ch])
+        ang = angle_from_to(xc[valid_ch], yc[valid_ch], xh[valid_ch], yh[valid_ch])
+        cos_sum[valid_ch] += np.cos(ang)
+        sin_sum[valid_ch] += np.sin(ang)
+        count[valid_ch] += 1
 
-    still_nan = np.isnan(angles)
-    valid_ht = still_nan & np.isfinite(xh) & np.isfinite(yh) & np.isfinite(xt) & np.isfinite(yt)
-    if np.any(valid_ht):
-        angles[valid_ht] = angle_from_to(xt[valid_ht], yt[valid_ht], xh[valid_ht], yh[valid_ht])
+    valid_th = np.isfinite(xt) & np.isfinite(yt) & np.isfinite(xh) & np.isfinite(yh)
+    if np.any(valid_th):
+        ang = angle_from_to(xt[valid_th], yt[valid_th], xh[valid_th], yh[valid_th])
+        cos_sum[valid_th] += np.cos(ang)
+        sin_sum[valid_th] += np.sin(ang)
+        count[valid_th] += 1
 
-    still_nan = np.isnan(angles)
-    valid_ct = still_nan & np.isfinite(xc) & np.isfinite(yc) & np.isfinite(xt) & np.isfinite(yt)
-    if np.any(valid_ct):
-        angles[valid_ct] = angle_from_to(xt[valid_ct], yt[valid_ct], xc[valid_ct], yc[valid_ct])
+    valid_tc = np.isfinite(xt) & np.isfinite(yt) & np.isfinite(xc) & np.isfinite(yc)
+    if np.any(valid_tc):
+        ang = angle_from_to(xt[valid_tc], yt[valid_tc], xc[valid_tc], yc[valid_tc])
+        cos_sum[valid_tc] += np.cos(ang)
+        sin_sum[valid_tc] += np.sin(ang)
+        count[valid_tc] += 1
+
+    angles = np.full(N, np.nan, dtype=np.float64)
+    has_data = count > 0
+    if np.any(has_data):
+        mean_cos = cos_sum[has_data] / count[has_data]
+        mean_sin = sin_sum[has_data] / count[has_data]
+        angles[has_data] = np.arctan2(mean_sin, mean_cos)
 
     still_nan = np.isnan(angles)
     if np.any(still_nan):
@@ -118,8 +138,8 @@ def calculate_pose_rotations(
                 angles[i] = 0.0
                 continue
 
-            mean = valid_pts.mean(axis=0)
-            centered = valid_pts - mean
+            mean_pt = valid_pts.mean(axis=0)
+            centered = valid_pts - mean_pt
 
             try:
                 _, _, Vt = np.linalg.svd(centered, full_matrices=False)
@@ -130,18 +150,18 @@ def calculate_pose_rotations(
 
             if np.isfinite(xh[i]) and np.isfinite(yh[i]):
                 p = np.array([xh[i], yh[i]])
-                proj = np.dot(p - mean, d)
+                proj = np.dot(p - mean_pt, d)
                 if proj < 0:
                     d = -d
             elif np.isfinite(xt[i]) and np.isfinite(yt[i]):
                 p = np.array([xt[i], yt[i]])
-                proj = np.dot(p - mean, d)
+                proj = np.dot(p - mean_pt, d)
                 if proj > 0:
                     d = -d
 
             angles[i] = np.arctan2(d[1], d[0])
 
-    angles[np.isnan(angles)] = 0.0
+    angles = np.nan_to_num(angles, nan=0.0)
 
     if orig_ndim == 1:
         return float(angles[0])
