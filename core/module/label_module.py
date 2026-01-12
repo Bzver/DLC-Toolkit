@@ -178,7 +178,6 @@ class Frame_Label:
 
     def display_current_frame(self):
         self.gview.sbox = None
-        self.last_selected_idx = None
 
         if self.dm.dlc_data is not None and not hasattr(self, "plotter"):
             self.plotter = Prediction_Plotter(

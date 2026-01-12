@@ -418,15 +418,18 @@ class Frame_App(QMainWindow):
         if 0 <= new_frame_idx < self.dm.total_frames:
             self.dm.current_frame_idx = new_frame_idx
             self.at.display_current_frame()
+            self.flabel.last_selected_idx = None
             self.at.navigation_title_controller()
 
     def _navigate_prev(self):
         list_to_nav = self.at.determine_list_to_nav()
+        self.flabel.last_selected_idx = None
         navigate_to_marked_frame(
             self, list_to_nav, self.dm.current_frame_idx, self._handle_frame_change_from_comp, "prev")
 
     def _navigate_next(self):
         list_to_nav = self.at.determine_list_to_nav()
+        self.flabel.last_selected_idx = None
         navigate_to_marked_frame(
             self, list_to_nav, self.dm.current_frame_idx, self._handle_frame_change_from_comp, "next")
 

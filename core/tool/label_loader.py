@@ -101,6 +101,10 @@ class Load_Label_Dialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Load DLC Label")
         self.dlc_data = dlc_data
+        if video_file is not None:
+            self.video_name, _ = os.path.splitext(os.path.basename(video_file))
+        else:
+            self.video_name = None
 
         self._swap_time = 0
 
@@ -127,8 +131,9 @@ class Load_Label_Dialog(QDialog):
         combo_label = QLabel("Select DLC Label")
         self.combo = QComboBox()
         self.combo.addItems(self.project_dict.keys())
-        self.combo.setCurrentIndex(-1)
+        index = self.combo.findText(self.video_name)
         self.combo.currentIndexChanged.connect(self._on_selection_changed)
+        self.combo.setCurrentIndex(index)
 
         combo_frame.addWidget(combo_label)
         combo_frame.addWidget(self.combo)

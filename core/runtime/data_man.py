@@ -497,7 +497,7 @@ class Data_Manager:
             backup_existing_prediction(label_file)
             if self.label_data_array is None:
                 self.load_labeled_overlay(label_file)
-                lb_list = self.get_frames("labeled")
+            lb_list = self.get_frames("labeled")
             self.label_data_array[frame_list, ...] = self.dlc_data.pred_data_array[frame_list, ...]
             frame_list = list(set(lb_list) | set(frame_list))
 
