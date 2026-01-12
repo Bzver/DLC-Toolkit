@@ -4,7 +4,7 @@ from typing import Tuple
 from utils.logger import logger
 
 
-def sigma_estimation(crp, percentile:float = 90.0, min_samples:int = 10) -> Tuple[float, float]:
+def sigma_estimation(crp, percentile:float = 85.0, min_samples:int = 10, min_disp_px=10.0, max_disp_px=100.0) -> Tuple[float, float]:
     disp_mags = []   # list of (dx² + dy²)
     ang_diffs = []   # list of |Δθ| (wrapped)
 
@@ -23,12 +23,18 @@ def sigma_estimation(crp, percentile:float = 90.0, min_samples:int = 10) -> Tupl
 
         for i in range(len(valid_frames) - 1):
             t0, t1 = valid_frames[i], valid_frames[i+1]
-            if t1 != t0 + 1:  # skip non-consecutive frames (occlusion gap)
+            if t1 != t0 + 1:  # Skip non-consecutive frames
                 continue
 
             dx = x[t1] - x[t0]
             dy = y[t1] - y[t0]
             disp_sq = dx*dx + dy*dy
+
+            if disp_sq < min_disp_px**2: # Stationary
+                continue
+            if disp_sq > max_disp_px**2: # Implausible
+                continue
+
             disp_mags.append(disp_sq)
 
             dtheta = r[t1] - r[t0]
@@ -63,9 +69,7 @@ def sigma_estimation(crp, percentile:float = 90.0, min_samples:int = 10) -> Tupl
     sigma_r = max(0.05, sigma_r)
 
     logger.debug(
-        f"[SIGMA] Robust ({percentile}th percentile): "
-        f"s1={sigma_c:.1f}px (from {len(disp_mags)} disp), "
-        f"s2={sigma_r:.2f}rad (from {len(ang_diffs)} Δθ)"
+        f"[SIGMA] ({percentile}th percentile): s1={sigma_c:.1f}px (from {len(disp_mags)} disp), s2={sigma_r:.2f}rad (from {len(ang_diffs)} Δθ)"
     )
     return float(sigma_c), float(sigma_r)
 
