@@ -717,38 +717,38 @@ class Frame_Label:
         review_round = 0
 
         current_crp_weight = (0.7, 0.15, 0.15)
-        current_blast_weight = (0.4, 0.3, 0.3)
-        blast_threshold, sigma, kappa = None, None, None
+        sigma, kappa = None, None
+        min_sim, gap_thresh = 0.15, 0.05
+
+        blasted_mask = np.zeros((self.dm.total_frames, self.dm.dlc_data.instance_count), dtype=bool) # planned deprecation
 
         while not is_entertained:
             review_round += 1
             self.status_bar.show_message(f"Review round {review_round}...")
 
-            progress = Progress_Indicator_Dialog(
-                0, self.dm.total_frames, "Supervised Track Fixing", f"Running with weights: CRP={current_crp_weight}, BLAST_W={current_blast_weight}",
-                self.main)
+            progress = Progress_Indicator_Dialog(0, self.dm.total_frames, "Supervised Track Fixing", "", self.main)
 
             self.tf = Track_Fixer(self.pred_data_array, self.dm.angle_map_data, progress,
-                                  crp_weight=current_crp_weight,
-                                  blast_weight=current_blast_weight,
-                                  blast_threshold=blast_threshold,
-                                  cr_sigma=sigma, kappa=kappa, lookback_window=5)
-            
-            pred_data_array, blasted_frame, amongus_frames, frame_list = self.tf.iter_orchestrator()
-            dialog = Iteration_Review_Dialog(self.dm.dlc_data, self.vm.extractor, pred_data_array, frame_list, (blasted_frame, amongus_frames), parent=self.main)
+                                  crp_weight=current_crp_weight, cr_sigma=sigma, kappa=kappa, 
+                                  minimum_similarity=min_sim, gap_threshold=gap_thresh, lookback_window=5)
+
+            pred_data_array, amongus_frames, frame_list = self.tf.iter_orchestrator()
+            dialog = Iteration_Review_Dialog(self.dm.dlc_data, self.vm.extractor, pred_data_array, frame_list, blasted_mask, amongus_frames, parent=self.main)
             dialog.exec()
 
             if dialog.was_cancelled:
                 return
-            
+
             corrected_pred, status_array, is_entertained = dialog.get_result()
 
-            self.tf.process_labels(corrected_pred, range(frame_list), status_array)
-            current_crp_weight, current_blast_weight, blast_threshold = self.tf.get_weights()
-            sigma, kappa = self.tf.get_sk_vals()
+            self.tf.process_labels(corrected_pred, frame_list, status_array)
+            current_crp_weight, sigma, kappa, min_sim, gap_thresh = self.tf.get_params()
 
-        pred_data_array, blasted_frame, amongus_frames = self.tf.fit_full_video()
-        dialog = Track_Correction_Dialog(self.dm.dlc_data, self.vm.extractor, pred_data_array, list(range(self.dm.total_frames)), (blasted_frame, amongus_frames), parent=self.main)
+
+        pred_data_array, amongus_frames = self.tf.fit_full_video()
+        dialog = Track_Correction_Dialog(
+            self.dm.dlc_data, self.vm.extractor, pred_data_array, list(range(self.dm.total_frames)), blasted_mask, amongus_frames, parent=self.main)
+
         dialog.pred_data_exported.connect(self._get_pred_data_from_manual_correction)
         dialog.exec()
 

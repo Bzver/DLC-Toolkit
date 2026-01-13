@@ -102,3 +102,4 @@ class Track_Properties:
     rotations: NDArray
     poses: NDArray
     last_updated: NDArray
+    validity: NDArray
