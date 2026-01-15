@@ -5,15 +5,114 @@ from typing import List, Tuple, Optional
 
 from core.runtime import Data_Manager
 from core.tool.inference import DLC_Inference
-from core.io import backup_existing_prediction
+from core.io import backup_existing_prediction, get_existing_projects
 from utils.helper import calculate_blob_inference_intervals
 from utils.logger import logger, set_headless_mode
 
 
 
-MAX_FRAMES_PER_RUN = 100_000
+MAX_FRAMES_PER_RUN = 100000
 
-def inference_workspace_vid(
+def batch_grayscale(dlc_config_path):
+    success_count = 0
+    failed = []
+    skipped = []
+
+    projects = get_existing_projects(dlc_config_path)
+    if not projects:
+        logger.info("[BATCH] No projects found.")
+        return
+
+    logger.info("[BATCH] Found following labeled projects in DLC.")
+    for i, path in enumerate(projects):
+        logger.info(f"[{i}]: {path}")
+
+    for project in projects:
+        if project.endswith("_GR"):
+            skipped.append(project)
+            logger.info(f"[BATCH] Skipped (already grayscale): {project}")
+            continue
+
+        grayscaled_project = f"{project}_GR"
+        if os.path.isdir(grayscaled_project):
+            skipped.append(project)
+            logger.info(f"[BATCH] Skipped (grayscale version already exists): {project}")
+            continue
+
+        try:
+            dm = Data_Manager(init_vid_callback=_pseudo_callback, refresh_callback=_pseudo_callback, parent=dialog)
+            dm.load_metadata_to_dm(dlc_config_path)
+            dm.load_dlc_label(project)
+            dm.migrate_existing_project(grayscaled_project, grayscaling=True)
+        except Exception as e:
+            error_msg = f"Failed to process project at {project}: {e}"
+            logger.error(f"[BATCH] {error_msg}")
+            failed.append(project)
+        else:
+            success_count += 1
+            logger.info(f"[BATCH] Successfully grayscaled project at {project}.")
+
+    total = len(projects)
+    logger.info(f"[BATCH] Grayscale conversion finished: {success_count}/{total} succeeded.")
+    if skipped:
+        logger.info(f"[BATCH] Skipped {len(skipped)} projects:")
+        for s in skipped:
+            logger.info(f"  - {s}")
+    if failed:
+        logger.info(f"[BATCH] Failed {len(failed)} projects:")
+        for f in failed:
+            logger.info(f"  - {f}")
+
+def batch_inference(rootdir, dlc_config_path, dialog):
+    pkl_list = []
+    for root, dirs, files in os.walk(rootdir):
+        for file in files:
+            if file.endswith(".pkl") and "backup" not in root:
+                pkl_list.append(os.path.join(root, file))
+
+    logger.info("[BATCH] About to batch process following workspace file.")
+    for i, path in enumerate(pkl_list):
+        logger.info(f"[{i}]:{path}")
+
+    success_count = 0
+    failed = []
+
+    for i, f in enumerate(pkl_list, 1):
+        filename = os.path.basename(f)
+        logger.info(f"\n[Batch {i}/{len(pkl_list)}] Starting: {filename}")
+        dm = Data_Manager(init_vid_callback=_pseudo_callback, refresh_callback=_pseudo_callback, parent=dialog)
+        try:
+            _inference_workspace_vid(
+                workspace_file=f,
+                data_manager=dm,
+                dlc_config_path=dlc_config_path,
+                crop=True,
+                blob_based_infer=True,
+                infer_interval=(2,2,1,1),
+                infer_only_empty_frames=False,
+                batch_size=32,
+                detector_batch_size=32,
+            )
+        except Exception as e:
+            logger.error(f"[Batch {i}/{len(pkl_list)}] FAILED: {filename} — {e} | ")
+            logger.exception(f"[Batch {i}/{len(pkl_list)}]")
+            failed.append(f)
+            continue # Gliding over all
+        else:
+            success_count += 1
+            logger.info(f"[Batch {i}/{len(pkl_list)}] Completed: {filename}")
+            backup_existing_prediction(f)
+            _autoload_pred(f, dm, dlc_config_path)
+            dm.save_workspace()
+            continue
+
+    logger.info(f"[BATCH] Batch finished: {success_count}/{len(pkl_list)} succeeded.")
+    if failed:
+        logger.info(f"[BATCH] Failed videos:")
+        for f in failed:
+            logger.info(f)
+
+def _inference_workspace_vid(
         workspace_file:str,
         data_manager:Data_Manager,
         dlc_config_path:Optional[str]=None,
@@ -42,7 +141,7 @@ def inference_workspace_vid(
     assert dm.video_file is not None and os.path.isfile(dm.video_file), f"[BATCH] Video file missing or invalid: {dm.video_file}"
 
     if dm.dlc_data.pred_data_array is None:
-        autoload_pred(workspace_file, dm, dlc_config_path)
+        _autoload_pred(workspace_file, dm, dlc_config_path)
 
     if crop:
         assert crop_region is not None or dm.roi is not None, "[BATCH] Cropping enabled, but no crop region or ROI defined. Provide crop_region or ensure ROI is set in the workspace."
@@ -92,7 +191,7 @@ def inference_workspace_vid(
         chunked_lists = [inference_list]
 
     for chunk_list in chunked_lists:
-        autoload_pred(workspace_file, dm, dlc_config_path)
+        _autoload_pred(workspace_file, dm, dlc_config_path)
 
         logger.info(f"[BATCH] DLC_Inference instantiated with inference_list of length: {len(chunk_list)}")
 
@@ -122,7 +221,7 @@ def inference_workspace_vid(
 def _pseudo_callback(*arg, **kwargs):
     pass
 
-def autoload_pred(workspace_file:str, dm:Data_Manager, dlc_config_path:Optional[str]=None):
+def _autoload_pred(workspace_file:str, dm:Data_Manager, dlc_config_path:Optional[str]=None):
     workspace_dir = os.path.dirname(workspace_file)
     workspace_base = os.path.splitext(os.path.basename(workspace_file))[0].replace("_workspace","")
 
@@ -156,57 +255,10 @@ def autoload_pred(workspace_file:str, dm:Data_Manager, dlc_config_path:Optional[
         logger.info("[AUTOLOAD] No matching .h5 prediction found for auto-load.")
 
 if __name__ == "__main__":
-    set_headless_mode(True)
-    rootdir = "D:/Data/Videos/20251117 Marathon/1117"
-    dlc_config_path = "D:/Project/DLC-Models/NTD/config.yaml"
-    pkl_list = []
-    for root, dirs, files in os.walk(rootdir):
-        for file in files:
-            if file.endswith(".pkl") and "backup" not in root:
-                pkl_list.append(os.path.join(root, file))
-
-    logger.info("[BATCH] About to batch process following workspace file.")
-    for i, path in enumerate(pkl_list):
-        logger.info(f"[{i}]:{path}")
-
     app = QtWidgets.QApplication([])
     dialog = QtWidgets.QDialog()
-    success_count = 0
-    failed = []
-
-    for i, f in enumerate(pkl_list, 1):
-        filename = os.path.basename(f)
-        filefolder = os.path.dirname(f)
-        logger.info(f"\n[Batch {i}/{len(pkl_list)}] Starting: {filename}")
-        dm = Data_Manager(init_vid_callback=_pseudo_callback, refresh_callback=_pseudo_callback, parent=dialog)
-        try:
-            inference_workspace_vid(
-                workspace_file=f,
-                data_manager=dm,
-                dlc_config_path=dlc_config_path,
-                crop=True,
-                blob_based_infer=True,
-                infer_interval=(2,2,1,1),
-                infer_only_empty_frames=False,
-                batch_size=32,
-                detector_batch_size=32,
-            )
-        except Exception as e:
-            logger.error(f"[Batch {i}/{len(pkl_list)}] FAILED: {filename} — {e} | ")
-            logger.exception(f"[Batch {i}/{len(pkl_list)}]")
-            failed.append(f)
-            continue # Gliding over all
-        else:
-            success_count += 1
-            logger.info(f"[Batch {i}/{len(pkl_list)}] Completed: {filename}")
-            backup_existing_prediction(f)
-            prediction_path = None
-            autoload_pred(f, dm, dlc_config_path)
-            dm.save_workspace()
-            continue
-
-    logger.info(f"[BATCH] Batch finished: {success_count}/{len(pkl_list)} succeeded.")
-    if failed:
-        logger.info(f"[BATCH] Failed videos:")
-        for f in failed:
-            logger.info(f)
+    set_headless_mode(True)
+    rootdir = "D:/Data/Videos/20251101 Marathon/1102"
+    dlc_config_path = "D:/Project/DLC-Models/NTD/config.yaml"
+    # batch_inference(rootdir, dlc_config_path)
+    batch_grayscale(dlc_config_path)
