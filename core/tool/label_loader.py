@@ -57,15 +57,35 @@ class DLC_Save_Dialog(QDialog):
         self.accept()
 
 
+
+class DLC_Save_Dialog_Label(DLC_Save_Dialog):
+    save_old = Signal()
+
+    def __init__(self, dlc_data, roi, video_file, parent=None):
+        super().__init__(dlc_data, roi, video_file, parent)
+
+    def _save_old_proj(self):
+        self.save_old.emit()
+
+    def _save_new_proj(self):
+        new_dd = New_Folder_Name_Dialog(self.video_name, exclude_current=True, parent=self)
+        new_dd.folder_selected.connect(self._folder_selected)
+        new_dd.exec()
+
+
 class New_Folder_Name_Dialog(QDialog):
     folder_selected = Signal(str)
 
-    def __init__(self, video_name=None, parent=None):
+    def __init__(self, video_name=None, exclude_current=False, parent=None):
         super().__init__(parent)
+
+        self.video_name = video_name
+        self.exclude_curr = exclude_current
 
         dialog_layout = QHBoxLayout()
 
         self.input = QLineEdit()
+
         self.input.setText(video_name)
         self.okay_btn = QPushButton("Confirm")
         self.okay_btn.clicked.connect(self._on_confirm)
@@ -83,6 +103,9 @@ class New_Folder_Name_Dialog(QDialog):
             return
         if os.path.sep in name or (':' in name and os.name == 'nt'):
             Loggerbox.warning(self, "Invalid Name", "Project name cannot contain path separators.")
+            return
+        if self.exclude_curr and name == self.video_name:
+            Loggerbox.warning(self, "Invalid Name", "Project with the same name already exists.")
             return
         self.folder_selected.emit(name)
         self.accept()

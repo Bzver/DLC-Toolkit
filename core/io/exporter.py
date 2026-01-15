@@ -7,8 +7,8 @@ from PySide6.QtWidgets import QProgressDialog
 
 from .csv_op import prediction_to_csv, csv_to_h5
 from .io_helper import append_new_video_to_dlc_config, generate_crop_coord_notations, remove_confidence_score
-from .frame_loader import Frame_Extractor
-from utils.helper import crop_coord_to_array, validate_crop_coord
+from .frame_loader import Frame_Extractor, Frame_Extractor_Img
+from utils.helper import crop_coord_to_array, validate_crop_coord, frame_to_grayscale
 from utils.logger import logger
 from utils.dataclass import Loaded_DLC_Data
 
@@ -27,6 +27,7 @@ class Exporter:
             progress_callback:Optional[QProgressDialog]=None,
             crop_coord:Optional[np.ndarray]=None,
             mask:Optional[np.ndarray]=None,
+            grayscaling:bool=False,
             ):
         logger.info(f"[EXPORTER] Initializing Exporter for save path: {save_folder}")
         self.dlc_data = dlc_data
@@ -45,7 +46,14 @@ class Exporter:
             self.mask_neg = (self.mask == -255)
     
         self.crop_coord = validate_crop_coord(crop_coord)
-        self.extractor = Frame_Extractor(self.video_filepath)
+        self.grayscaling = grayscaling
+
+        if os.path.isfile(self.video_filepath):
+            self.extractor = Frame_Extractor(self.video_filepath)
+        elif os.path.isdir(self.video_filepath):
+            self.extractor = Frame_Extractor_Img(self.video_filepath)
+        else:
+            raise RuntimeError(f"Invalid video filepath: {self.video_filepath}")
 
         os.makedirs(self.save_folder, exist_ok=True)
 
@@ -80,7 +88,7 @@ class Exporter:
         if os.path.isdir(self.video_filepath): # Loading DLC labels
             logger.info("[EXPORTER] Video filepath detected as a directory. Extracting DLC labels.")
             self._extract_dlc_label()
-            return None # _extract_dlc_label handles the writing, no indices to return here
+            return None
 
         total_video_frames = self.extractor.get_total_frames()
         logger.info(f"[EXPORTER] Total frames in video: {total_video_frames}")
@@ -135,25 +143,22 @@ class Exporter:
         csv_to_h5(save_path, self.dlc_data.multi_animal, self.dlc_data.scorer)
         logger.info("[EXPORTER] Converted CSV to H5 format.")
         
-    def _apply_mask(self, frame:Frame_CV2):
-        if self.mask is None:
-            return frame
-        
-        frame[self.mask_pos] = 255
-        frame[self.mask_neg] = 0
+    def _apply_filter(self, frame:Frame_CV2):
+        if self.mask is not None:
+            frame[self.mask_pos] = 255
+            frame[self.mask_neg] = 0
+
+        if self.crop_coord is not None:
+            try:
+                x1, y1, x2, y2 = self.crop_coord
+                frame = frame[y1:y2, x1:x2]
+            except Exception as e:
+                logger.error(f"[EXPORTER] Error applying crop {self.crop_coord} to frame. Error: {e}")
+
+        if self.grayscaling:
+            frame = frame_to_grayscale(frame)
 
         return frame
-
-    def _apply_crop(self, frame:Frame_CV2):
-        if self.crop_coord is None:
-            return frame
-        try:
-            x1, y1, x2, y2 = self.crop_coord
-            cropped_frame = frame[y1:y2, x1:x2]
-            return cropped_frame
-        except Exception as e:
-            logger.error(f"[EXPORTER] Error applying crop {self.crop_coord} to frame. Returning original frame. Error: {e}")
-            return frame
     
     def _extract_dlc_label(self):
         logger.debug("[EXPORTER] Entering _extract_dlc_label.")
@@ -177,7 +182,7 @@ class Exporter:
             if frame is None:
                 logger.warning(f"[EXPORTER] Failed to read image: {image_input_path}. Skipping frame {frame_idx}.")
                 continue
-            frame = self._apply_crop(frame)
+            frame = self._apply_filter(frame)
 
             cv2.imwrite(image_output_path, frame)
             logger.debug(f"[EXPORTER] Wrote cropped DLC labeled image to {image_output_path}.")
@@ -212,8 +217,7 @@ class Exporter:
                 logger.warning(f"[EXPORTER] Frame {frame_idx} not found during sparse extraction. Skipping.")
                 continue
 
-            frame = self._apply_mask(frame)
-            frame = self._apply_crop(frame)
+            frame = self._apply_filter(frame)
 
             if to_video:
                 if writer is None:
@@ -286,8 +290,7 @@ class Exporter:
                 logger.warning(f"[EXPORTER] Frame {current_frame_idx} is empty during continuous extraction. Substituted with placeholder.")
 
             if current_frame_idx in frame_set:
-                frame = self._apply_mask(frame)
-                frame = self._apply_crop(frame)
+                frame = self._apply_filter(frame)
 
                 if to_video and not writer:
                     video_output_path = os.path.join(self.save_folder, "temp_extract.mp4")

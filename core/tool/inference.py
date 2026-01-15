@@ -45,6 +45,7 @@ class DLC_Inference(QDialog):
         self.frame_list.sort()
         self.cropping = False
         self.masking = False
+        self.grayscaling = False
 
         self.crop_coord = validate_crop_coord(roi)
         self.mask_region = mask
@@ -114,12 +115,14 @@ class DLC_Inference(QDialog):
         self.masking_checkbox.setChecked(self.masking)
         self.masking_checkbox.toggled.connect(self._masking_changed)
 
+        self.grayscaling_checkbox = QtWidgets.QCheckBox("Grayscale")
+        self.grayscaling_checkbox.setChecked(self.grayscaling)
+        self.grayscaling_checkbox.toggled.connect(self._grayscaling_changed)
+
         button_frame = QHBoxLayout()
 
         self.batch_size_changed = False
-        self.batchsize_label_spinbox = Spinbox_With_Label(
-            label_text = "Batch Size: ", spinbox_range = (1,10000), initial_val = self.batch_size, parent = self
-        )
+        self.batchsize_label_spinbox = Spinbox_With_Label(label_text = "Batch Size: ", spinbox_range = (1,10000), initial_val = self.batch_size, parent = self)
         self.batchsize_label_spinbox.value_changed.connect(self._batch_size_spinbox_changed)
 
         self.detector_batchsize_label_spinbox = Spinbox_With_Label(
@@ -132,6 +135,7 @@ class DLC_Inference(QDialog):
         self.start_button.clicked.connect(self._inference_pipe)
         button_frame.addWidget(self.cropping_checkbox)
         button_frame.addWidget(self.masking_checkbox)
+        button_frame.addWidget(self.grayscaling_checkbox)
         button_frame.addWidget(self.batchsize_label_spinbox)
         button_frame.addWidget(self.detector_batchsize_label_spinbox)
         button_frame.addWidget(self.start_button)
@@ -243,6 +247,9 @@ class DLC_Inference(QDialog):
 
     def _cropping_changed(self, checked:bool):
         self.cropping = checked
+
+    def _grayscaling_changed(self, checked:bool):
+        self.grayscaling = checked
 
     def _determine_det_spinbox_vis(self, text:str):
         self.detector_batchsize_label_spinbox.setVisible("Detector" in text)
@@ -424,7 +431,8 @@ class DLC_Inference(QDialog):
         else:
             self.hide()
             QtWidgets.QApplication.processEvents()
-            self.reviewer = Parallel_Review_Dialog(self.dlc_data, self.extractor_reviewer, self.new_data_array, self.frame_list, crop_coord=self.crop_coord, parent=self)
+            self.reviewer = Parallel_Review_Dialog(self.dlc_data, self.extractor_reviewer, self.new_data_array, self.frame_list,
+                                                   crop_coord=self.crop_coord, grayscaling=self.grayscaling_checkbox.isChecked(), parent=self)
             self.reviewer.pred_data_exported.connect(self._save_pred_to_file)
             self.reviewer.exec()
 

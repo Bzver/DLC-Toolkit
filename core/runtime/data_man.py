@@ -1,4 +1,6 @@
 import os
+import shutil
+import cv2
 import pickle
 import numpy as np
 from PySide6.QtWidgets import QFileDialog, QDialog
@@ -8,9 +10,9 @@ from .frame_man import Frame_Manager
 from core.io import (
     Prediction_Loader, Exporter,
     backup_existing_prediction, save_predictions_to_new_h5, get_frame_list_from_h5,
-    prediction_to_csv, remove_confidence_score)
+    prediction_to_csv, remove_confidence_score, append_new_video_to_dlc_config)
 from ui import Head_Tail_Dialog
-from utils.helper import infer_head_tail_indices, build_angle_map
+from utils.helper import infer_head_tail_indices, build_angle_map, crop_coord_to_array, frame_to_grayscale
 from utils.pose import calculate_canonical_pose, calculate_pose_bbox
 from utils.logger import logger, Loggerbox
 from utils.dataclass import Plot_Config, Blob_Config, Loaded_DLC_Data
@@ -42,6 +44,7 @@ class Data_Manager:
             plot_labeled = True, plot_pred = True, navigate_labeled = False, auto_snapping = False, navigate_roi = False)
         
         self.background_masking = False
+        self.use_grayscale = False
         self.background_mask = None
 
         # fview only
@@ -287,17 +290,21 @@ class Data_Manager:
         self.label_file = label_file
         self.label_data_array = np.full_like(self.dlc_data.pred_data_array, np.nan)
         data_loader = Prediction_Loader(self.dlc_data.dlc_config_filepath, label_file)
-        label_data = data_loader.load_data()
-        label_array = label_data.pred_data_array
-        self.label_data_array[range(label_array.shape[0])] = label_array
+        try:
+            label_data = data_loader.load_data()
+        except:
+            logger.warning(f"Failed to load labeled data from {label_file}.")
+        else:
+            label_array = label_data.pred_data_array
+            self.label_data_array[range(label_array.shape[0])] = label_array
 
-        labeled_frame_list = np.where(np.any(~np.isnan(self.label_data_array), axis=(1, 2)))[0].tolist()
-        self.fm.clear_category("labeled", no_refresh=True)
-        self.fm.add_frames("labeled", labeled_frame_list, no_refresh=True)
-        self.fm.remove_frames("marked", labeled_frame_list, no_refresh=True)
-        self.fm.remove_frames("rejected", labeled_frame_list, no_refresh=True)
-        self.fm.remove_frames("refined", labeled_frame_list, no_refresh=True)
-        self.fm.remove_frames("approved", labeled_frame_list, no_refresh=True)
+            labeled_frame_list = np.where(np.any(~np.isnan(self.label_data_array), axis=(1, 2)))[0].tolist()
+            self.fm.clear_category("labeled", no_refresh=True)
+            self.fm.add_frames("labeled", labeled_frame_list, no_refresh=True)
+            self.fm.remove_frames("marked", labeled_frame_list, no_refresh=True)
+            self.fm.remove_frames("rejected", labeled_frame_list, no_refresh=True)
+            self.fm.remove_frames("refined", labeled_frame_list, no_refresh=True)
+            self.fm.remove_frames("approved", labeled_frame_list, no_refresh=True)
 
     def _init_canon_pose(self):
         head_idx, tail_idx = infer_head_tail_indices(self.dlc_data.keypoints)
@@ -463,7 +470,9 @@ class Data_Manager:
 
     ###################################################################################################################################################
 
-    def save_pred(self, pred_data_array:np.ndarray, save_path:str, to_dlc:bool=False):
+    def save_pred(self, pred_data_array:np.ndarray, save_path:str, to_dlc:bool=False, cropping:bool=False):
+        data_array = pred_data_array.copy()
+
         frame_list = None
         if to_dlc:
             frame_list = get_frame_list_from_h5(save_path)
@@ -471,7 +480,13 @@ class Data_Manager:
         if os.path.isfile(save_path):
             backup_existing_prediction(save_path)
 
-        data_array = remove_confidence_score(pred_data_array) if to_dlc else pred_data_array
+        if cropping:
+            crop_array = crop_coord_to_array(self.roi, data_array.shape)
+            data_array -= crop_array
+        
+        if to_dlc:
+            data_array = remove_confidence_score(data_array)
+
         save_predictions_to_new_h5(self.dlc_data, data_array, save_path, frame_list, to_dlc)
 
     def save_pred_to_csv(self, pred_data_array:np.ndarray, save_path:str):
@@ -486,7 +501,39 @@ class Data_Manager:
 
     ###################################################################################################################################################
 
-    def save_to_dlc(self, save_folder:str, crop_mode:bool=False):
+    def migrate_existing_project(self, new_folder:str, cropping:bool=False, grayscaling:bool=False):
+        if not self.dlc_label_mode:
+            return
+        old_folder = self.video_file
+
+        old_h5 = os.path.join(old_folder, f"CollectedData_{self.dlc_data.scorer}.h5")
+        new_h5 = os.path.join(new_folder, f"CollectedData_{self.dlc_data.scorer}.h5")
+        shutil.copy(src=old_h5, dst=new_h5)
+
+        new_video_name = os.path.basename(new_folder)
+
+        for file in os.listdir(old_folder):
+            if not file.endswith((".jpg",".png")):
+                continue
+
+            img_filepath = os.path.join(old_folder, file)
+            img_dest = os.path.join(new_folder, file)
+
+            frame = cv2.imread(img_filepath)
+            
+            if cropping:
+                x1, y1, x2, y2 = self.roi
+                frame = frame[y1:y2, x1:x2]
+
+            if grayscaling:
+                frame = frame_to_grayscale(frame)
+        
+            cv2.imwrite(img_dest, frame)
+
+        self.save_pred(self.dlc_data.pred_data_array, new_h5, to_dlc=True, cropping=cropping)
+        append_new_video_to_dlc_config(self.dlc_data.dlc_config_filepath, new_video_name)
+
+    def save_to_dlc(self, save_folder:str, crop_mode:bool=False, grayscaling:bool=False):
         label_file = os.path.join(save_folder, f"CollectedData_{self.dlc_data.scorer}.h5")
 
         crop_coord = self.roi if crop_mode else None
@@ -495,17 +542,20 @@ class Data_Manager:
 
         if os.path.isfile(label_file):
             backup_existing_prediction(label_file)
-            if self.label_data_array is None:
-                self.load_labeled_overlay(label_file)
-            lb_list = self.get_frames("labeled")
-            self.label_data_array[frame_list, ...] = self.dlc_data.pred_data_array[frame_list, ...]
-            frame_list = list(set(lb_list) | set(frame_list))
+            if not self.dlc_label_mode:
+                if self.label_data_array is None:
+                    self.load_labeled_overlay(label_file)
+                lb_list = self.get_frames("labeled")
+                self.label_data_array[frame_list, ...] = self.dlc_data.pred_data_array[frame_list, ...]
+                frame_list = list(set(lb_list) | set(frame_list))
 
-        pred_data_to_use = self.dlc_data.pred_data_array if self.label_data_array is None else self.label_data_array
+            pred_data_to_use = self.dlc_data.pred_data_array if self.label_data_array is None else self.label_data_array
+        else:
+            pred_data_to_use = self.dlc_data.pred_data_array
 
         try:
             exporter = Exporter(
-                self.dlc_data, save_folder, self.video_file, frame_list, pred_data_array=pred_data_to_use, crop_coord=crop_coord)
+                self.dlc_data, save_folder, self.video_file, frame_list, pred_data_array=pred_data_to_use, crop_coord=crop_coord, grayscaling=grayscaling)
             exporter.export_data_to_DLC()
         except Exception as e:
             Loggerbox.error(self.main, "Error Save Data", f"Error saving data to DLC: {e}", exc=e)

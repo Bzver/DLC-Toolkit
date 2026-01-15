@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QMainWindow, QVBoxLayout, QHBoxLayout, QApplicatio
 
 from core.runtime import Data_Manager, Video_Manager
 from core.module import Frame_View, Frame_Label, Frame_Annotator
-from core.tool import Canonical_Pose_Dialog, Plot_Config_Menu, DLC_Save_Dialog, Load_Label_Dialog, navigate_to_marked_frame
+from core.tool import Canonical_Pose_Dialog, Plot_Config_Menu, DLC_Save_Dialog, Load_Label_Dialog, DLC_Save_Dialog_Label, navigate_to_marked_frame
 from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Toggle_Switch, Status_Bar, Frame_List_Dialog, Frame_Display_Dialog
 from utils.helper import frame_to_qimage, get_roi_cv2, plot_roi, validate_crop_coord
 from utils.logger import Loggerbox, QMessageBox
@@ -92,6 +92,7 @@ class Frame_App(QMainWindow):
                             ("Canonical Pose", self._view_canonical_pose),
                             ("Config Menu", self._open_plot_config_menu),
                             ("Toggle Smart Masking", self._toggle_bg_masking),
+                            ("Toggle Grayscale", self._toggle_grayscale),
                             ("ROI Region", self._check_roi),
                         ]
                     },
@@ -298,7 +299,7 @@ class Frame_App(QMainWindow):
             self.dm.dlc_data.pred_data_array = self.flabel.pred_data_array.copy()
         self.dm.save_workspace()
 
-    def _save_prediction(self, to_dlc:bool=False):
+    def _save_prediction(self, to_dlc:bool=False, cropping=False):
         if not self._save_blocker():
             return
         if self.dm.dlc_label_mode:
@@ -313,7 +314,7 @@ class Frame_App(QMainWindow):
         if not save_path.lower().endswith(('.h5','.hdf5')):
             save_path += '.h5'
         try:
-            self.dm.save_pred(self.dm.dlc_data.pred_data_array, save_path, to_dlc)
+            self.dm.save_pred(self.dm.dlc_data.pred_data_array, save_path, to_dlc, cropping)
         except Exception as e:
             Loggerbox.error(self, "Saving Error", f"An error occurred during saving: {e}", exc=e)
         else:
@@ -352,7 +353,10 @@ class Frame_App(QMainWindow):
         self.dm.save_workspace()
 
         if self.dm.dlc_label_mode:
-            self._save_prediction(to_dlc=True)
+            save_dialog = DLC_Save_Dialog_Label(self.dm.dlc_data, self.dm.roi, self.dm.video_file, self)
+            save_dialog.folder_selected.connect(self._on_label_save_folder_return)
+            save_dialog.save_old.connect(self._on_label_save_old_return)
+            save_dialog.exec()
         else:
             save_dialog = DLC_Save_Dialog(self.dm.dlc_data, self.dm.roi, self.dm.video_file, self)
             save_dialog.folder_selected.connect(self._on_save_folder_return)
@@ -457,6 +461,12 @@ class Frame_App(QMainWindow):
 
         self.at.display_current_frame()
 
+    def _toggle_grayscale(self):
+        if not self.vm.check_status_msg():
+            return
+        self.dm.use_grayscale = not self.dm.use_grayscale
+        self.at.display_current_frame()
+
     def _check_roi(self):
         if not self.vm.check_status_msg():
             return
@@ -546,7 +556,7 @@ class Frame_App(QMainWindow):
             if not self.open_config:
                 self._open_plot_config_menu()
 
-        self.at.display_current_frame()
+        self.at.refresh_and_display()
         self.flabel.reset_zoom()
 
     def _on_save_folder_return(self, save_folder):
@@ -557,6 +567,21 @@ class Frame_App(QMainWindow):
             Loggerbox.error(self, "Failed to Save to DLC", e, exc=e)
         else:
             self.at.refresh_and_display()
+
+    def _on_label_save_folder_return(self, save_folder):
+        try:
+            crop_status = self.ask_crop_before_export()
+            self.dm.migrate_existing_project(
+                new_folder=save_folder, cropping=crop_status, grayscaling=self.dm.use_grayscale)
+            self.dm.video_file = save_folder
+            Loggerbox.info(self, "Success", f"Successfully saved to {save_folder}.")
+        except Exception as e:
+            Loggerbox.error(self, "Failed to Save to DLC", e, exc=e)
+        else:
+            self.at.refresh_and_display()
+
+    def _on_label_save_old_return(self):
+        self._save_prediction(to_dlc=True)
 
     def changeEvent(self, event):
         if event.type() == QEvent.Type.WindowStateChange:

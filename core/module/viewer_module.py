@@ -6,7 +6,7 @@ from PySide6.QtGui import QPixmap
 from core.runtime import Data_Manager, Video_Manager
 from core.tool import Mark_Generator, Blob_Counter, Prediction_Plotter
 from ui import Menu_Widget, Video_Player_Widget, Frame_List_Dialog, Status_Bar, Inference_interval_Dialog, Shortcut_Manager
-from utils.helper import frame_to_pixmap, calculate_blob_inference_intervals, get_smart_bg_masking
+from utils.helper import frame_to_pixmap, calculate_blob_inference_intervals, get_smart_bg_masking, frame_to_grayscale
 from utils.logger import Loggerbox, QMessageBox
 
 
@@ -124,6 +124,9 @@ class Frame_View:
                 mask = self.get_mask_from_blob_config()
         
             frame =  np.clip(frame.astype(np.int16) + mask, 0, 255).astype(np.uint8)
+
+        if self.dm.use_grayscale:
+            frame = frame_to_grayscale(frame, keep_as_bgr=True)
 
         if self.is_counting:
             self.blob_counter.set_current_frame(frame, self.dm.current_frame_idx)

@@ -21,7 +21,7 @@ from utils.track import (
     )
 from utils.helper import (
     frame_to_pixmap, calculate_snapping_zoom_level, get_instances_on_current_frame,
-    get_instance_count_per_frame, clean_inconsistent_nans
+    get_instance_count_per_frame, clean_inconsistent_nans, frame_to_grayscale
     )
 from utils.dataclass import Plot_Config, Plotter_Callbacks
 from utils.logger import Loggerbox
@@ -193,7 +193,10 @@ class Frame_Label:
             if mask is None:
                 mask = self.get_mask_from_blob_config()
         
-            frame =  np.clip(frame.astype(np.int16) + mask, 0, 255).astype(np.uint8)
+            frame = np.clip(frame.astype(np.int16) + mask, 0, 255).astype(np.uint8)
+
+        if self.dm.use_grayscale:
+            frame = frame_to_grayscale(frame)
 
         self.gview.clear_graphic_scene()
         self._plot_current_frame(frame)

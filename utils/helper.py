@@ -396,6 +396,13 @@ def get_smart_bg_masking(
 
     return artifact_mask
 
+def frame_to_grayscale(frame:np.ndarray, keep_as_bgr:bool=False):
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    if keep_as_bgr:
+        return cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+    else:
+        return gray
+
 ###########################################################################################
 
 def get_roi_cv2(frame) -> Tuple[int, int, int, int] | None:
