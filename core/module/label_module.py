@@ -171,7 +171,6 @@ class Frame_Label:
         self.gview = Canvas(parent=self.main)
         self.gview.instance_selected.connect(self._update_last_selected_inst)
         self.gview.rect_finished.connect(self._on_canvas_rect_return)
-        self.vid_play.nav.set_marked_list_name("ROI")
         self.vid_play.swap_display_for_graphics_view(self.gview)
 
     ###################################################################################################################################################
@@ -224,8 +223,8 @@ class Frame_Label:
             self.plotter.plot_config = self.dm.plot_config
             self.plotter.plot_predictions(self.gview.gscene, current_frame_data)
 
-        self.gview.update() # Force update of the graphics view
-        self.vid_play.set_current_frame(self.dm.current_frame_idx) # Update slider handle's position
+        self.gview.update()
+        self.vid_play.set_current_frame(self.dm.current_frame_idx)
 
     ###################################################################################################################################################
 
@@ -519,7 +518,6 @@ class Frame_Label:
             pred_data_array=self.pred_data_array,
             current_frame_idx=self.dm.current_frame_idx,
             selected_instance_idx=selected_instance_idx,
-            angle_map_data=self.dm.angle_map_data,
             canon_pose=self.dm.canon_pose)
         self.display_current_frame()
         

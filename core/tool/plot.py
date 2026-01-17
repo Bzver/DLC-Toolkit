@@ -114,8 +114,9 @@ class Prediction_Plotter:
 
                 self.graphics_scene.addItem(keypoint_item)
                 keypoint_item.setZValue(1) # Ensure keypoints are on top of the video frame
-                keypoint_item.keypoint_moved.connect(self.plot_callback.keypoint_coords_callback)
-                keypoint_item.keypoint_drag_started.connect(self.plot_callback.keypoint_object_callback)
+                if self.plot_callback is not None:
+                    keypoint_item.keypoint_moved.connect(self.plot_callback.keypoint_coords_callback)
+                    keypoint_item.keypoint_drag_started.connect(self.plot_callback.keypoint_object_callback)
 
     def _plot_bounding_box(self, color:Color_RGB, inst_idx:int, padding:int=10):
         x_coords = [self.keypoint_coords[p][0] for p in self.keypoint_coords if self.keypoint_coords[p] is not None]
@@ -159,8 +160,9 @@ class Prediction_Plotter:
                 rect_item.setFlag(QGraphicsRectItem.ItemIsMovable, self.plot_config.edit_mode)
 
             self.graphics_scene.addItem(rect_item)
-            rect_item.bounding_box_moved.connect(self.plot_callback.box_coords_callback)
-            rect_item.bounding_box_clicked.connect(self.plot_callback.box_object_callback)
+            if self.plot_callback is not None:
+                rect_item.bounding_box_moved.connect(self.plot_callback.box_coords_callback)
+                rect_item.bounding_box_clicked.connect(self.plot_callback.box_object_callback)
 
             if not self.plot_config.hide_text_labels:
                 text_item_inst = QGraphicsTextItem(f"{bounding_box_label}")
