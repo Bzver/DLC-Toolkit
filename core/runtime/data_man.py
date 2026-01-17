@@ -502,6 +502,8 @@ class Data_Manager:
     ###################################################################################################################################################
 
     def migrate_existing_project(self, new_folder:str, cropping:bool=False, grayscaling:bool=False):
+        os.makedirs(new_folder, exist_ok=True)
+
         if not self.dlc_label_mode:
             return
         old_folder = self.video_file

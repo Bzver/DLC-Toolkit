@@ -451,6 +451,8 @@ class Frame_App(QMainWindow):
     def _toggle_bg_masking(self):
         if not self.vm.check_status_msg():
             return
+        if self.dm.dlc_label_mode:
+            return
         if self.dm.blob_config is None:
             Loggerbox.warning("Smart masking requires background and threshold from Animal Counter.")
             return
