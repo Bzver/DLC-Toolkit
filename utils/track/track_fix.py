@@ -16,19 +16,21 @@ from utils.logger import logger
 
 
 class Track_Fixer:
-    def __init__(self,
-                pred_data_array:np.ndarray,
-                angle_map:Dict[str, int],
-                progress:QProgressDialog,
-                crp_weight:Tuple[float, float, float],
-                cr_sigma:Optional[Tuple[float, float]] = None,
-                kappa:Optional[np.ndarray] = None,
-                prefit_window_size:int = 1000,
-                learning_rate:float = 0.5,
-                lookback_window:int = 5,
-                minimum_similarity: float = 0.15,
-                gap_threshold: float = 0.05
-                ):
+    def __init__(
+            self,
+            pred_data_array:np.ndarray,
+            angle_map:Dict[str, int],
+            progress:QProgressDialog,
+            crp_weight:Tuple[float, float, float],
+            cr_sigma:Optional[Tuple[float, float]] = None,
+            kappa:Optional[np.ndarray] = None,
+            prefit_window_size:int = 1000,
+            learning_rate:float = 0.5,
+            lookback_window:int = 5,
+            minimum_similarity: float = 0.15,
+            gap_threshold: float = 0.05,
+            used_starts: List[int]=[]
+            ):
         self.pred_data_array = pred_data_array.copy()
         self.angle_map = angle_map
     
@@ -58,6 +60,7 @@ class Track_Fixer:
 
         self.inst_list = list(range(self.instance_count))
         self.ambiguous_frames = []
+        self.used_starts = used_starts
         
         self._precompute_valid_windows(window_step=prefit_window_size)
 
@@ -67,24 +70,27 @@ class Track_Fixer:
     def iter_orchestrator(self):
         current_try = 0
         max_try = 5
+        blast, ambi = [], []
+        pred_data_array = self.pred_data_array.copy()
 
         while current_try < max_try:
             if not self.window_list:
                 self.window_list = self.window_list_org.copy()
+                self.used_starts.clear()
             
             window_idx = self.window_list.pop(0)
+            if self.valid_starts[window_idx] in self.used_starts:
+                continue
+
             logger.debug(f"[TMOD] Trying window {window_idx} with score {self.window_scores[window_idx]:.3f}")
             slice_window = range(self.valid_starts[window_idx], self.valid_ends[window_idx])
             
-            pred_data_array, ambi = self._weight_repeater(slice_window)
+            pred_data_array, blast, ambi = self._weight_repeater(slice_window)
 
-            changes_made = self._compare_array_diff(pred_data_array, self.pred_data_array)
-
-            if changes_made:
-                logger.debug(f"[TMOD] Window {window_idx} made changes to the track → selected for training")
-                break
             if ambi:
-                logger.debug(f"[TMOD] Window {window_idx} produced {len(ambi)} ambiguous frames → selected for training")
+                logger.info(f"[TMOD] Window {window_idx} produced {len(blast)} frames with implausible assignment, {len(ambi)} frames with ambiguious assignment"
+                             " → selected for training")
+                self.used_starts.append(self.valid_starts[window_idx])
                 break
             
             logger.debug(f"[TMOD] Window {window_idx} produced no issues → skipping to next window")
@@ -94,16 +100,10 @@ class Track_Fixer:
         if current_try == max_try:
             logger.warning("Failed to find valid window after reaching max attempts, returning the last 'clean' window.")
 
-        return pred_data_array, ambi, list(slice_window)
+        return pred_data_array, blast, ambi, list(slice_window), self.used_starts
 
-    def get_params(self) -> Dict[str, any]:
-        return {
-            "crp_weight": self.crp_weight,
-            "cr_sigma": self.cr_sigma,
-            "min_sim": self.min_sim,
-            "gap_threshold": self.gap_threshold,
-            "kappa": self.kappa
-        }
+    def get_params(self):
+        return self.crp_weight, self.cr_sigma, self.min_sim, self.gap_threshold, self.kappa
 
     def _weight_repeater(self, slice_window:range) -> Tuple[np.ndarray, np.ndarray, List[int]]:
         ref = Track_Properties(
@@ -165,21 +165,28 @@ class Track_Fixer:
             hun = Hungarian(pred, ref, oks_kappa=self.kappa, sigma=self.cr_sigma, weight=self.crp_weight,
                             min_sim=self.min_sim, gap_threshold=self.gap_threshold)
 
-            new_order = hun.hungarian_matching()
+            result = hun.hungarian_matching()
 
-            match new_order:
-                case None: logger.debug("[TMOD] Failed to build new order.")
-                case self.inst_list: logger.debug("[TMOD] NO SWAP, already the best solution.")
-                case _: logger.debug(f"[TMOD] SWAP, new_order: {new_order}.")
-                        
-            if new_order:
-                self._sync_changes(array_to_sync, frame_idx, new_order)
-                fixed_pred_mask = pred.validity[new_order]
-            else:
-                ambiguous_frames.append(frame_idx)
-                fixed_pred_mask = pred.validity
+            fixed_pred_mask = np.zeros((self.instance_count,), dtype=bool)
+            match result:
+                case "mission_failed":
+                    ambiguous_frames.append(frame_idx)
+                case "low_similarity":
+                    ambiguous_frames.append(frame_idx)
+                    fixed_pred_mask = pred.validity & (~ref.validity)
+                case "low_confidence": 
+                    ambiguous_frames.append(frame_idx)
+                    fixed_pred_mask = pred.validity
+                case "success":
+                    new_order = hun.get_new_order()
+                    match new_order:
+                        case self.inst_list: logger.debug("[TMOD] NO SWAP, already the best solution.")
+                        case _: logger.debug("[TMOD] SWAP, new_order: {new_order}.")
+                    self._sync_changes(array_to_sync, frame_idx, new_order)
+                    fixed_pred_mask = pred.validity[new_order]
 
-            ref = self._rebase_ref(ref, array_to_sync[1:], frame_idx, fixed_pred_mask)
+            if np.any(fixed_pred_mask):
+                ref = self._rebase_ref(ref, array_to_sync[1:], frame_idx, fixed_pred_mask)
 
         return array_to_sync[0], ambiguous_frames
 
@@ -191,7 +198,7 @@ class Track_Fixer:
         self._train_swap(slice_corrected, slice_window, status_array)
 
     def _train_swap(self, slice_corrected: np.ndarray, slice_window: range, status_array: np.ndarray):
-        valid_mask = np.all((status_array > 0) & (status_array < 4), axis=1)
+        valid_mask = np.all((status_array > 0) & (status_array < 3), axis=1)
         if not np.any(valid_mask):
             logger.debug("[S_TRAIN] Skipping training.")
             return
@@ -207,16 +214,17 @@ class Track_Fixer:
 
             try:
                 error = self._swap_train_assessment(
-                    slice_corrected, slice_window,
+                    slice_corrected, slice_window, status_array,
                     weights=weights,
                     sigma=sigma,
                     thresholds=(min_sim,gap_thresh)
                 )
                 return error
             except Exception as e:
-                logger.debug(f"[S_TRAIN-DE] Evaluation failed: {e}")
+                logger.warning(f"[SASS] Evaluation failed: {e}")
                 return 1e6
 
+        w1_curr, w2_curr, _ = self.crp_weight
         s1, s2 = self.cr_sigma
 
         bounds = [
@@ -228,10 +236,20 @@ class Track_Fixer:
             (0.01, 0.20),         # gap_threshold ∈ [0.01, 0.20]
         ]
 
+        x0 = [
+            w1_curr,
+            w2_curr,
+            np.log(self.cr_sigma[0]),
+            np.log(self.cr_sigma[1]),
+            self.min_sim,
+            self.gap_threshold
+        ]
+
         result = differential_evolution(
             objective,
             bounds,
-            maxiter=12,
+            x0 = x0,
+            maxiter=100,
             popsize=7,
             seed=42,
             polish=False,
@@ -249,30 +267,35 @@ class Track_Fixer:
         logger.info(f"[S_TRAIN] Final params: weights={best_weight}, sigma={best_sigma},"
                     f"min_sim={best_min_sim:.2f}, gap={best_gap_thresh:.2f}")
 
-        if best_score < 1.0:
+        if best_score < 0.1:
             self.crp_weight = tuple(
                 (1 - self.lr) * old + self.lr * new 
                 for old, new in zip(self.crp_weight, best_weight)
             )
-            self.cr_sigma = best_sigma
-            self.min_sim = best_min_sim
-            self.gap_threshold = best_gap_thresh
+            self.cr_sigma = (
+                (1 - self.lr) * self.cr_sigma[0] + self.lr * best_s1,
+                (1 - self.lr) * self.cr_sigma[1] + self.lr * best_s2
+            )
+            self.min_sim = (1 - self.lr) * self.min_sim + self.lr * best_min_sim
+            self.gap_threshold = (1 - self.lr) * self.gap_threshold + self.lr * best_gap_thresh
 
             logger.info(f"[S_TRAIN] Updated CRP weights to {self.crp_weight}. Updated CR Sigma to {self.cr_sigma} "
-                        f"Updated threshold to {(best_min_sim, best_gap_thresh)}  (error: {best_score:.3f})")
+                        f"Updated threshold to {(self.min_sim, self.gap_threshold)}  (error: {best_score:.3f})")
         else:
-            logger.warning("[S_TRAIN] DE failed to find good weights; keeping current.")
+            logger.warning(f"[S_TRAIN] DE failed to find good weights; keeping current. Best score: {best_score}")
 
     def _swap_train_assessment(
         self,
         corrected_window: np.ndarray,
         window_slice: range,
+        status_array: np.ndarray,
         weights: Tuple[float, float, float],
         sigma: Tuple[float, float],
         thresholds: Tuple[float, float]
     ) -> float:
         F = len(window_slice)
-        logger.debug(f"[S_ASSESS] Window size: {F} frames, {self.instance_count} instances, weights={weights}")
+        logger.debug(f"[SASS] Window size: {F} frames, {self.instance_count} instances, "
+                     f"weights={weights}, sigma={sigma}, thresholds: {thresholds}")
 
         raw_centroids = self.centroids[window_slice].copy()
         raw_rotations = self.rotations[window_slice].copy()
@@ -299,34 +322,42 @@ class Track_Fixer:
                 validity = np.any(~np.isnan(raw_centroids[f]), axis=1)
             )
 
+            gt_validity = np.any(~np.isnan(gt_centroids[f]), axis=1)
             if not np.any(pred.validity) or not np.any(ref.validity):
-                logger.debug(f"[S_ASSESS] Frame {f}: Skipping (no valid pred/ref)")
-                ref = self._rebase_ref(ref, [gt_centroids, gt_rotations, gt_poses], f, pred.validity) # using gt for teacher forcing
+                logger.debug(f"[SASS] Frame {f}: Skipping (no valid pred/ref)")
+                ref = self._rebase_ref(ref, [gt_centroids, gt_rotations, gt_poses], f, gt_validity)
                 continue
 
             ref.validity = (ref.last_updated > f - self.lookback_window)
 
-            try:
-                hun = Hungarian(pred, ref, oks_kappa=self.kappa,
-                                sigma=sigma, weight=weights, min_sim=thresholds[0], gap_threshold=thresholds[1])
-                new_order = hun.hungarian_matching()
-            except Exception as e:
-                logger.debug(f"[S_ASSESS] Frame {f}: Hungarian failed - {e}")
-                ref = self._rebase_ref(ref, [gt_centroids, gt_rotations, gt_poses], f, pred.validity)
-                continue
+            hun = Hungarian(pred, ref, oks_kappa=self.kappa,
+                            sigma=sigma, weight=weights, min_sim=thresholds[0], gap_threshold=thresholds[1])
+            result = hun.hungarian_matching()
+    
+            fixed_pred_mask = np.zeros((self.instance_count,), dtype=bool)
+            match result:
+                case "low_similarity":
+                    fixed_pred_mask = gt_validity & (~ref.validity)
+                case "low_confidence": 
+                    fixed_pred_mask = gt_validity
+                case "success":
+                    new_order = hun.get_new_order()
+                    match new_order:
+                        case self.inst_list: logger.debug("[TMOD] NO SWAP, already the best solution.")
+                        case _: logger.debug("[TMOD] SWAP, new_order: {new_order}.")
+                    raw_cent_corrected[f, :, :] = raw_centroids[f, new_order, :]
+                    fixed_pred_mask = gt_validity
 
-            if new_order is not None:
-                raw_cent_corrected[f, :, :] = raw_centroids[f, new_order, :]
-
-            ref = self._rebase_ref(ref, [gt_centroids, gt_rotations, gt_poses], f, pred.validity)
+            if np.any(fixed_pred_mask):
+                ref = self._rebase_ref(ref, [gt_centroids, gt_rotations, gt_poses], f, fixed_pred_mask)
 
         raw_cent_corrected = np.nan_to_num(raw_cent_corrected, nan=-1.0)
         gt_centroids = np.nan_to_num(gt_centroids, nan=-1.0)
 
         total_error = np.sum(np.any(raw_cent_corrected != gt_centroids, axis=-1))
+        final_error = total_error / (F*self.instance_count)
 
-        final_error = total_error / F * self.instance_count
-        logger.debug(f"[S_ASSESS] Final error: {final_error:.4f}.")
+        logger.debug(f"[SASS] Final error: {final_error:.4f}.")
         return final_error
 
     def _precompute_valid_windows(self, window_step: int = 100):
@@ -339,11 +370,7 @@ class Track_Fixer:
         starts, ends, lens = starts[nonzero], ends[nonzero], lens[nonzero]
 
         sums = cumsum[ends] - cumsum[starts]
-        valid = (2 * sums) >= (3 * lens)
-
-        if not np.any(valid):
-            logger.info("[TMOD] No windows satisfied strict condition (2*sum >= 3*len); relaxing to sum >= len")
-            valid = sums >= lens
+        valid = sums >= lens
 
         if not np.any(valid):
             logger.warning("[TMOD] No windows satisfied medium condition (sum >= len); relaxing to 2*sum >= len")
@@ -434,9 +461,3 @@ class Track_Fixer:
         ref.poses[mask] = poses[frame_idx][mask]
         ref.last_updated[mask] = frame_idx
         return ref
-    
-    @staticmethod
-    def _compare_array_diff(arr_1:np.ndarray, arr_2:np.ndarray) -> bool:
-        arr_1_de_nan = np.nan_to_num(arr_1, nan=-1.0)
-        arr_2_de_nan = np.nan_to_num(arr_2, nan=-1.0)
-        return np.any(arr_1_de_nan != arr_2_de_nan)

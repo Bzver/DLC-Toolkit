@@ -6,6 +6,11 @@ from utils.dataclass import Track_Properties
 from utils.logger import logger
 
 
+HUNGARIAN_SUCCESS = "success"
+HUNGARIAN_LOW_SIM = "low_similarity"
+HUNGARIAN_LOW_GAP = "low_confidence"
+HUNGARIAN_FAILED = "mission_failed"
+
 class Hungarian:
     def __init__(self,
                 pred:Track_Properties,
@@ -25,7 +30,6 @@ class Hungarian:
         self.sigma = sigma
         self.weight = weight
 
-        self.ref_age = (pred.last_updated[pred.validity][0] - ref.last_updated)[ref.validity]
         self.ref_exist = np.any(~np.isnan(ref.centroids), axis=1)
 
         self.instance_count = pred.validity.shape[0]
@@ -33,6 +37,8 @@ class Hungarian:
 
         self.pred_indices = np.where(self.pred.validity)[0]
         self.ref_indices  = np.where(self.ref.validity)[0]
+
+        self.new_order = None
 
         assert len(self.weight) == 3, f"weight must be length 3, got {len(self.weight)}"
         assert len(self.sigma) == 2, f"sigma must be length 2, got {len(self.sigma)}"
@@ -55,26 +61,17 @@ class Hungarian:
         sim_matrix = self._compute_similarity_matrix(pred_centroids, pred_rotations, pred_poses, ref_centroids, ref_rotations, ref_poses)
         cost_matrix = 1 - sim_matrix
 
-        skip_matching = False
-        if sim_matrix.size == 1:
-            total_sim = sim_matrix.item()
-            if total_sim >= self.min_sim:
-                row_ind_conf, col_ind_conf = [0], [0]
-                skip_matching = True
-                logger.debug(f"[HUN] Accepted 1v1 valid match (sim={total_sim:.4f} ≥ {self.min_sim})")
-            elif np.any(self.ref_exist[~self.ref.validity]):
-                logger.debug("[HUN] Trying fallback to invalid-but-existent refs...")
-                self.ref_age = (self.pred.last_updated[self.pred.validity][0] - self.ref.last_updated)[self.ref_exist]
-                self.ref_indices  = np.where(self.ref_exist)[0]
-                ref_centroids, ref_rotations, ref_poses = self.mask_prop(prop=self.ref, mask=self.ref_exist)
-                sim_matrix = self._compute_similarity_matrix(pred_centroids, pred_rotations, pred_poses, ref_centroids, ref_rotations, ref_poses)
-                cost_matrix = 1 - sim_matrix
-            else:
-                logger.debug("[HUN] No usable invalid refs found.")
-                row_ind_conf, col_ind_conf = [], []
-                skip_matching = True
+        if sim_matrix.size == 0 or np.any(np.isnan(sim_matrix)):
+            return HUNGARIAN_FAILED
+    
+        if np.max(sim_matrix) < self.min_sim:
+            logger.debug("")  #<- TBA
+            return HUNGARIAN_LOW_SIM
 
-        if not skip_matching:
+        if sim_matrix.size == 1:
+            row_ind_conf, col_ind_conf = [0], [0]
+            logger.debug(f"[HUN] Accepted 1v1 valid match (sim={np.max(sim_matrix):.4f} ≥ {self.min_sim})")
+        else:
             try:
                 row_ind, col_ind = linear_sum_assignment(cost_matrix)
                 gaps = self._compute_assignment_gaps(cost_matrix, row_ind, col_ind)
@@ -83,26 +80,26 @@ class Hungarian:
                 col_ind_conf = col_ind[confident_mask]
                 logger.debug(f"[HUN] Hungarian assignment: row_ind={row_ind}, col_ind={col_ind}")
             except Exception as e:
-                logger.debug(f"[HUN] Hungarian failed: {e}. Returning None.")
-                return None
+                logger.debug(f"[HUN] Hungarian failed: {e}.")
+                return HUNGARIAN_FAILED
 
         if len(row_ind_conf) == 0:
             logger.debug("[HUN] No confident matches.")
-            return None
+            return HUNGARIAN_LOW_GAP
 
-        logger.debug(f"[HUN] Kept {len(row_ind_conf)}/{len(row_ind)} matches with gap ≥ {self.gap_threshold}")
+        self._build_new_order(row_ind_conf, col_ind_conf)
+        logger.debug(f"[HUN] Final new_order: {self.new_order}")
+        return HUNGARIAN_SUCCESS
 
-        new_order = self._build_new_order(row_ind_conf, col_ind_conf)
-        logger.debug(f"[HUN] Final new_order: {new_order}")
-        return new_order
+    def get_new_order(self) -> List[int]:
+        return self.new_order
 
     def _compute_similarity_matrix(self, pred_centroids, pred_rotations, pred_poses, ref_centroids, ref_rotations, ref_poses):
         cent_matrix = cdist(pred_centroids, ref_centroids, metric='euclidean')
         rota_matrix = self.angular_distance(pred_rotations[:, np.newaxis], ref_rotations[np.newaxis, :])
 
         w1, w2, w3 = self.weight
-        s1 = self.sigma[0] * np.sqrt(self.ref_age)
-        s2 = self.sigma[1] * np.sqrt(self.ref_age)
+        s1, s2 = self.sigma
         
         sim_c = np.exp(-cent_matrix**2 / s1**2)
         sim_r = np.exp(-rota_matrix**2 / s2**2)
@@ -119,19 +116,11 @@ class Hungarian:
             dtheta = rota_matrix.item()
             logger.debug(
                 "[SIM] Single match:"
-                f"d={d:.1f}px (σ₁={s1[0]:.1f}) → sim_c={sc:.3f}, "
-                f"Δθ={dtheta:.2f}rad (σ₂={s2[0]:.2f}) → sim_r={sr:.3f}, "
+                f"d={d:.1f}px (σ₁={s1:.1f}) → sim_c={sc:.3f}, Δθ={dtheta:.2f}rad (σ₂={s2:.2f}) → sim_r={sr:.3f}, "
                 f"sim_p={sp:.3f} → total={total:.4f} (weights=({w1},{w2},{w3}))"
             )
         else:
-            logger.debug(
-                f"[SIM] Components:\n"
-                f"  sim_c =\n{sim_c}\n"
-                f"  sim_r =\n{sim_r}\n"
-                f"  sim_p =\n{sim_p}\n"
-                f"  weights = ({w1:.2f}, {w2:.2f}, {w3:.2f})\n"
-                f"[SIM] sim_matrix =\n{sim_matrix}\n"
-            )
+            logger.debug(f"[SIM] Components: | sim_c ={sim_c} | sim_r ={sim_r} | sim_p ={sim_p}")
 
         assert np.all(np.isfinite(sim_matrix)), "pose_matrix contains NaN/inf — check pose validity masking"
 
@@ -228,9 +217,7 @@ class Hungarian:
             unassigned.remove(source_instance)
             
         sorted_processed = {k: processed[k] for k in sorted(processed)}
-        new_order = list(sorted_processed.values())
-
-        return new_order
+        self.new_order = list(sorted_processed.values())
 
     @staticmethod
     def angular_distance(a, b):

@@ -11,9 +11,9 @@ from .plot import Prediction_Plotter
 from .undo_redo import Uno_Stack, Uno_Stack_Dict
 from .mark_nav import navigate_to_marked_frame
 from core.io import Frame_Extractor, Frame_Extractor_Img
-from ui import Clickable_Video_Label, Video_Slider_Widget, Shortcut_Manager, Instance_Selection_Dialog
+from ui import Clickable_Video_Label, Video_Slider_Widget, Shortcut_Manager
 from utils.helper import (
-    frame_to_pixmap, handle_unsaved_changes_on_close, crop_coord_to_array, validate_crop_coord, indices_to_spans
+    frame_to_pixmap, handle_unsaved_changes_on_close, crop_coord_to_array, validate_crop_coord, indices_to_spans, frame_to_grayscale
     )
 from utils.track import swap_track
 from utils.dataclass import Loaded_DLC_Data, Plot_Config
@@ -30,6 +30,7 @@ class Parallel_Review_Dialog(QDialog):
                  new_data_array:np.ndarray,
                  frame_list:List[int],
                  crop_coord:Optional[Tuple[int,int,int,int]]=None,
+                 grayscaling:bool=False,
                  parent=None):
         super().__init__(parent)
         self.dlc_data = dlc_data
@@ -53,6 +54,8 @@ class Parallel_Review_Dialog(QDialog):
             self.backup_data_array -= self.crop_array
             self.pred_data_array -= self.crop_array
             self.new_data_array -= self.crop_array
+
+        self.grayscaling = grayscaling
 
         self.frame_status_array = np.zeros((self.total_marked_frames,), dtype=np.uint8)
         self.current_frame_idx = 0 # local_idx
@@ -384,16 +387,16 @@ class Track_Correction_Dialog(Parallel_Review_Dialog):
             extractor:Frame_Extractor,
             new_data_array:np.ndarray,
             frame_list: List[int],
-            blasted_mask: np.ndarray,
-            ambi_frames: List[int],
+            blasted_frames: List[int],
+            ambiguous_frames: List[int],
             crop_coord:Optional[Tuple[int, int, int, int]]= None,
             parent=None
             ):
 
         self.frame_list = frame_list
 
-        blasted_frames_global = np.where(np.any(blasted_mask==3, axis=1))[0].tolist()
-        ambiguous_frames_global = ambi_frames
+        blasted_frames_global = blasted_frames
+        ambiguous_frames_global = ambiguous_frames
 
         blasted_set_global = set(blasted_frames_global)
         ambiguous_set_global = set(ambiguous_frames_global)
@@ -582,23 +585,19 @@ class Track_Correction_Dialog(Parallel_Review_Dialog):
 class Iteration_Review_Dialog(Track_Correction_Dialog):
     IR_PALLETTE = {0: "#959595", 1: "#2EDA04", 2: "#CF5300", 3: "#AF01A6", 4: "#4938E4"}
 
-    def __init__(self, dlc_data, extractor, new_data_array, frame_list, blasted_mask, ambi_frames, crop_coord = None, parent=None):
-        self.pose_status_array = np.zeros((len(frame_list), dlc_data.instance_count))
-
-        super().__init__(dlc_data, extractor, new_data_array, frame_list, blasted_mask, ambi_frames, crop_coord, parent)
+    def __init__(self, dlc_data, extractor, new_data_array, frame_list, blasted_frames, ambi_frames, crop_coord = None, parent=None):
+        super().__init__(dlc_data, extractor, new_data_array, frame_list, blasted_frames, ambi_frames, crop_coord, parent)
 
         self.was_cancelled = False 
         self.is_entertained = False
 
-        blasted_mask_local = blasted_mask[frame_list]
-
          # 0: skip (default approved), 1: approve, 2: reject(and swap), 3: blasted, 4: ambiguous
-        self.pose_status_array[blasted_mask_local] = 3
-        self.pose_status_array[self.ambiguous_local] = 4
+        self.frame_status_array[self.blasted_local] = 3
+        self.frame_status_array[self.ambiguous_local] = 4
         self._refresh_slider()
 
     def get_result(self):
-        return self.new_data_array[self.frame_list], self.pose_status_array, self.is_entertained
+        return self.new_data_array[self.frame_list], self.frame_status_array, self.is_entertained
 
     def _setup_control(self):
         swap_box = QGroupBox("Manual Track Correction")
@@ -611,21 +610,20 @@ class Iteration_Review_Dialog(Track_Correction_Dialog):
         self.reject_button = QPushButton("Reject and Swap Track (R)")
         self.blast_button = QPushButton("Mark | Unmark Faulty Frame (D)")
 
-        self.auto_btn = QPushButton("Auto Approve (Shift + A)")
+        self.approve_all_button = QPushButton("Approve All Remaining")
         self.apply_button = QPushButton("Continue Training (Ctrl + S)")
         self.finish_button = QPushButton("Accept Current Weight and Fit the Whole Video")
 
         self.approve_button.clicked.connect(self._mark_approved)
         self.reject_button.clicked.connect(self._mark_rejected_swap)
         self.blast_button.clicked.connect(self._mark_blasted)
-        self.auto_btn.setCheckable(True)
-        self.auto_btn.setChecked(False)
+        self.approve_all_button.clicked.connect(self._approve_all_remaining)
         self.apply_button.clicked.connect(self._export_label)
         self.finish_button.clicked.connect(self._i_am_entertained)
 
         for btn in [self.approve_button, self.reject_button, self.blast_button]:
             swap_layout.addWidget(btn)
-        for btn in [self.auto_btn, self.apply_button, self.finish_button]:
+        for btn in [self.approve_all_button, self.apply_button, self.finish_button]:
             bottom_layout.addWidget(btn)
         
         big_layout.addLayout(swap_layout)
@@ -650,50 +648,43 @@ class Iteration_Review_Dialog(Track_Correction_Dialog):
             "save":{"key": "Ctrl+S", "callback": self._export_label},
             "approve":{"key": "A", "callback": self._mark_approved},
             "big_swap":{"key": "R", "callback": self._mark_rejected_swap},
-            "auto_app":{"key": "Shift+A", "callback": self._toggle_auto_approve},
             "blast":{"key": "D", "callback": self._mark_blasted},
         })
 
-    def _display_current_frame(self):
-        if self.auto_btn.isChecked():
-            self._mark_approved()
-        super()._display_current_frame()
-
     def _mark_approved(self):
-        if np.any(self.pose_status_array[self.current_frame_idx] == 1):
+        if self.frame_status_array[self.current_frame_idx] == 1:
             return
         self._save_state_for_undo()
-        if np.any(self.pose_status_array[self.current_frame_idx] == 2):
-            self.pose_status_array[self.current_frame_idx] = 1
+        if self.frame_status_array[self.current_frame_idx] == 2:
+            self.frame_status_array[self.current_frame_idx] = 1
             self._swap_track() 
         else:
-            self.pose_status_array[self.current_frame_idx] = 1
+            self.frame_status_array[self.current_frame_idx] = 1
             self._refresh_ui()
 
     def _mark_rejected_swap(self):
-        if np.any(self.pose_status_array[self.current_frame_idx] == 2):
+        if self.frame_status_array[self.current_frame_idx] == 2:
             return
-        self.auto_btn.setChecked(False)
         self._save_state_for_undo()
-        self.pose_status_array[self.current_frame_idx] = 2
+        self.frame_status_array[self.current_frame_idx] = 2
         self._refresh_ui()
         self._swap_track()
 
     def _mark_blasted(self):
+        if self.frame_status_array[self.current_frame_idx] == 3:
+            return
         self._save_state_for_undo()
-        self.auto_btn.setChecked(False)
-        color = self.plotter.get_current_color_map()
-        isd = Instance_Selection_Dialog(self.dlc_data.instance_count, color, list(self.pose_status_array[self.current_frame_idx]==3), parent=self)
-        isd.inst_checked.connect(self._mark_blast_worker)
-        isd.exec()
+        if self.frame_status_array[self.current_frame_idx] == 2:
+            self.frame_status_array[self.current_frame_idx] = 3
+            self._swap_track()
+        else:
+            self.frame_status_array[self.current_frame_idx] = 3
+            self._refresh_ui()
 
-    def _mark_blast_worker(self, idx, status):
-        self.pose_status_array[self.current_frame_idx, idx] = 3 if status else 1
+    def _approve_all_remaining(self):
+        self._save_state_for_undo()
+        self.frame_status_array[self.frame_status_array==0]=1
         self._refresh_ui()
-
-    def _toggle_auto_approve(self):
-        self._mark_approved()
-        self.auto_btn.setChecked(not self.auto_btn.isChecked())
 
     def _refresh_ui(self):
         super()._refresh_ui()
@@ -701,7 +692,7 @@ class Iteration_Review_Dialog(Track_Correction_Dialog):
 
     def _navigation_title_controller(self):
         super()._navigation_title_controller()
-        match np.max(self.pose_status_array[self.current_frame_idx]):
+        match self.frame_status_array[self.current_frame_idx]:
             case 1: self.selected_frame_label.setStyleSheet(f"color: white; background-color: {self.IR_PALLETTE[1]};")
             case 2: self.selected_frame_label.setStyleSheet(f"color: white; background-color: {self.IR_PALLETTE[2]};")
             case 3: self.selected_frame_label.setStyleSheet(f"color: white; background-color: {self.IR_PALLETTE[3]};")
@@ -711,20 +702,19 @@ class Iteration_Review_Dialog(Track_Correction_Dialog):
     def _refresh_slider(self):
         self.is_saved = False
         self.progress_slider.clear_frame_category()
-        status_arr = np.max(self.pose_status_array, axis=-1)
         palette = self.IR_PALLETTE
-        self.progress_slider.set_frame_category_array(status_arr, palette)
+        self.progress_slider.set_frame_category_array(self.frame_status_array, palette)
         self.progress_slider.commit_categories()
 
     def _determine_list_to_nav(self):
-        return np.where(np.max(self.pose_status_array, axis=-1) != 0)[0].tolist()
+        return np.where(self.frame_status_array != 0)[0].tolist()
 
     def _setup_uno(self):
         self.uno = Uno_Stack_Dict()
         self.uno.save_state_for_undo(self._compose_dict_for_uno())
 
     def _update_button_states(self):
-        current_status = self.pose_status_array[self.current_frame_idx, 0]
+        current_status = self.frame_status_array[self.current_frame_idx]
         self.approve_button.setEnabled(current_status != 1)
         self.reject_button.setEnabled(current_status != 2)
 
@@ -741,23 +731,21 @@ class Iteration_Review_Dialog(Track_Correction_Dialog):
         self.uno.save_state_for_undo(self._compose_dict_for_uno())
 
     def _compose_dict_for_uno(self):
-        return {"pred": self.new_data_array, "status": self.pose_status_array}
+        return {"pred": self.new_data_array, "status": self.frame_status_array}
 
     def _undo_changes(self):
         self._compose_dict_for_uno()
-        self.auto_btn.setChecked(False)
         uno_dict = self.uno.undo(self._compose_dict_for_uno())
         self.new_data_array = uno_dict["pred"]
-        self.pose_status_array = uno_dict["status"]
+        self.frame_status_array = uno_dict["status"]
         self._display_current_frame()
         self._refresh_ui()
 
     def _redo_changes(self):
         self._compose_dict_for_uno()
-        self.auto_btn.setChecked(False)
         uno_dict = self.uno.redo(self._compose_dict_for_uno())
         self.new_data_array = uno_dict["pred"]
-        self.pose_status_array = uno_dict["status"]
+        self.frame_status_array = uno_dict["status"]
         self._display_current_frame()
         self._refresh_ui()
 
