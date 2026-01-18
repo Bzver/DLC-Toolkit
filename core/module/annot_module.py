@@ -468,6 +468,6 @@ class Frame_Annotator:
             }
             mat_to_save = {"annotation": annotation_struct}
             sio.savemat(file_path, mat_to_save)
-            Loggerbox.info(f"Successfully saved to {file_path}")
+            Loggerbox.info(self.main, f"Successfully saved to {file_path}")
         except Exception as e:
-            Loggerbox.error(f"Failed to save {file_path}, Exception: {e}", exc=e)
+            Loggerbox.error(self.main, f"Failed to save {file_path}, Exception: {e}", exc=e)

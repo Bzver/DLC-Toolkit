@@ -451,7 +451,7 @@ class Frame_Label:
         if self.pred_data_array is None:
             return
         if self.inst_pastebin is None:
-            Loggerbox.warning("Pose pastebin is still empty, no pose to paste.")
+            Loggerbox.warning(self.main, "Pose pastebin is still empty, no pose to paste.")
             return
         selected_instance_idx = self._instance_select_inverted()
         if selected_instance_idx is None:

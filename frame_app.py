@@ -454,7 +454,7 @@ class Frame_App(QMainWindow):
         if self.dm.dlc_label_mode:
             return
         if self.dm.blob_config is None:
-            Loggerbox.warning("Smart masking requires background and threshold from Animal Counter.")
+            Loggerbox.warning(self, "Smart masking requires background and threshold from Animal Counter.")
             return
         self.dm.background_masking = not self.dm.background_masking
 
