@@ -2,7 +2,7 @@ import numpy as np
 
 from typing import Dict, List, Optional
 
-from .pose_analysis import calculate_pose_centroids, calculate_pose_rotations
+from .pose_analysis import calculate_pose_centroids
 from .pose_worker import pose_rotation_worker
 from .pose_average import get_average_pose
 
@@ -49,43 +49,46 @@ def generate_missing_kp_for_inst(
         pred_data_array:np.ndarray,
         current_frame_idx:int,
         selected_instance_idx:int,
-        angle_map_data:Dict[str, int],
-        canon_pose:Optional[np.ndarray]=None,
+        canon_pose:np.ndarray,
         ) -> np.ndarray:
-    
     num_keypoint = pred_data_array.shape[2] // 3
-    missing_keypoints = []
-    for keypoint_idx in range(num_keypoint):
-        x_idx = keypoint_idx * 3
-        x_val = pred_data_array[current_frame_idx, selected_instance_idx, x_idx]
-        if np.isnan(x_val):
-            missing_keypoints.append(keypoint_idx)
+    current_inst_data = pred_data_array[current_frame_idx, selected_instance_idx, :].reshape([num_keypoint, 3])
+    non_nan_mask = np.all(~np.isnan(current_inst_data), axis=1)
+    non_nan_indices = np.where(non_nan_mask)[0]
+    
+    non_nan_kp = current_inst_data[non_nan_indices, :2]
+    canon_observed = canon_pose[non_nan_indices]
 
-    if not missing_keypoints:
-        return pred_data_array
+    R, t = _fit_rigid_transform(canon_observed, non_nan_kp)
 
-    current_frame_centroids, local_coords = calculate_pose_centroids(pred_data_array, current_frame_idx)
-    set_centroid = current_frame_centroids[selected_instance_idx, :]
-    local_inst_x = local_coords[selected_instance_idx, 0::2]
-    local_inst_y = local_coords[selected_instance_idx, 1::2]
-    set_rotation = calculate_pose_rotations(local_inst_x, local_inst_y, angle_map_data=angle_map_data)
+    transformed_canon = (R @ canon_pose.T).T + t
 
-    if canon_pose is None:
-        average_pose = get_average_pose(pred_data_array, selected_instance_idx, angle_map_data=angle_map_data, frame_idx=current_frame_idx, 
-            initial_pose_range=10, max_attempts=20, valid_frames_threshold=100, set_centroid=set_centroid, set_rotation=set_rotation)
-        
-    else:
-        canon_pose = canon_pose.flatten()
-        average_pose = pose_rotation_worker(set_rotation, set_centroid, canon_pose, np.full(num_keypoint, 1.0))
-        
-    # Interpolate keypoint coordinates
-    for keypoint_idx in missing_keypoints:
-        try:
-            pred_data_array[current_frame_idx, selected_instance_idx, keypoint_idx*3:keypoint_idx*3 +3] = average_pose[keypoint_idx*3:keypoint_idx*3 + 3]
-        except ValueError:
-            # get_average_pose failed, fallback to centroid values
-            pred_data_array[current_frame_idx, selected_instance_idx, keypoint_idx*3] = set_centroid[0]
-            pred_data_array[current_frame_idx, selected_instance_idx, keypoint_idx*3+1] = set_centroid[1]
-            pred_data_array[current_frame_idx, selected_instance_idx, keypoint_idx*3+2] = 1.0
+    completed_kp = current_inst_data.copy()
+    missing_mask = ~non_nan_mask
+    completed_kp[missing_mask, :2] = transformed_canon[missing_mask]
+    completed_kp[missing_mask, 2] = 1.0
+
+    pred_data_array[current_frame_idx, selected_instance_idx] = completed_kp.flatten()
 
     return pred_data_array
+
+def _fit_rigid_transform(src: np.ndarray, dst: np.ndarray):
+    assert src.shape == dst.shape and src.shape[0] >= 2
+
+    src_mean = np.mean(src, axis=0)
+    dst_mean = np.mean(dst, axis=0)
+
+    src_centered = src - src_mean
+    dst_centered = dst - dst_mean
+
+    H = src_centered.T @ dst_centered
+    U, _, Vt = np.linalg.svd(H)
+    R = Vt.T @ U.T
+
+    if np.linalg.det(R) < 0:
+        Vt[1, :] *= -1
+        R = Vt.T @ U.T
+
+    t = dst_mean - R @ src_mean
+
+    return R, t
