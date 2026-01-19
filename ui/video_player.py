@@ -1,7 +1,7 @@
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QGridLayout, QPushButton, QLabel, QGroupBox
-from PySide6.QtGui import QFont
+from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QGridLayout, QPushButton, QLabel, QGroupBox, QLineEdit
+from PySide6.QtGui import QFont, QIntValidator
 
 from typing import Callable
 
@@ -114,6 +114,9 @@ class Video_Player_Widget(QtWidgets.QWidget):
                 self.clear_layout(item.layout())
                 item.layout().deleteLater()
 
+    def get_current_n(self) -> int:
+        return int(self.nav.control_btn_frame.n_edit.text())
+
     def _setup_display(self):
         self.display = QtWidgets.QLabel("No video loaded")
         self.display.setAlignment(Qt.AlignCenter)
@@ -193,12 +196,18 @@ class Nav_Control(QGroupBox):
         self.btn_layout = self._create_buttons()
 
     def _create_buttons(self):
-        self.prev_frame_button = QPushButton("←") if self.abridged else QPushButton("  ◄ Frame (←)  ")
-        self.next_frame_button = QPushButton("→") if self.abridged else QPushButton("  ► Next Frame (→)  ")
+        self.prev_frame_button = QPushButton("←") if self.abridged else QPushButton("  ◄ Prev (←)  ")
+        self.next_frame_button = QPushButton("→") if self.abridged else QPushButton("  ► Next (→)  ")
         self.prev_marked_frame_button = QPushButton("⇤") if self.abridged else QPushButton(f"  ◄ Prev {self.marked_name} (↑)  ")
         self.next_marked_frame_button = QPushButton("⇥") if self.abridged else QPushButton(f"  ► Next {self.marked_name} (↓)  ")
-        self.prev_10_frames_button = QPushButton("↞") if self.abridged else QPushButton("  ◄ Prev 10 (Shift + ←)  ")
-        self.next_10_frames_button = QPushButton("↠") if self.abridged else QPushButton("  ► Next 10 (Shift + →)  ")
+        self.prev_n_frames_button = QPushButton("↞") if self.abridged else QPushButton("  ◄ Prev n (Shift + ←)  ")
+        self.next_n_frames_button = QPushButton("↠") if self.abridged else QPushButton("  ► Next n (Shift + →)  ")
+
+        self.n_edit = QLineEdit()
+        self.n_edit.setText("10")
+        validator = QIntValidator(2, 999)
+        self.n_edit.setValidator(validator)
+        self.n_edit.setMaximumWidth(40)
 
         btn_layout = QHBoxLayout(self)
         btn_layout.setContentsMargins(0, 0, 0, 0)
@@ -207,15 +216,23 @@ class Nav_Control(QGroupBox):
         btn_layout.addWidget(self.next_frame_button)
         btn_layout.addWidget(self.prev_marked_frame_button)
         btn_layout.addWidget(self.next_marked_frame_button)
-        btn_layout.addWidget(self.prev_10_frames_button)
-        btn_layout.addWidget(self.next_10_frames_button)
+        btn_layout.addWidget(self.prev_n_frames_button)
+        btn_layout.addWidget(self.next_n_frames_button)
+        btn_layout.addWidget(self.n_edit)
 
-        # Connect signals
-        self.prev_10_frames_button.clicked.connect(lambda: self.frame_changed_sig.emit(-10))
         self.prev_frame_button.clicked.connect(lambda: self.frame_changed_sig.emit(-1))
         self.next_frame_button.clicked.connect(lambda: self.frame_changed_sig.emit(1))
-        self.next_10_frames_button.clicked.connect(lambda: self.frame_changed_sig.emit(10))
+        self.prev_n_frames_button.clicked.connect(self._on_prev_n_frames_clicked)
+        self.next_n_frames_button.clicked.connect(self._on_next_n_frames_clicked)
         self.prev_marked_frame_button.clicked.connect(self.prev_marked_frame_sig.emit)
         self.next_marked_frame_button.clicked.connect(self.next_marked_frame_sig.emit)
 
         return btn_layout
+    
+    def _on_prev_n_frames_clicked(self):
+        n = int(self.n_edit.text())
+        self.frame_changed_sig.emit(-n)
+
+    def _on_next_n_frames_clicked(self):
+        n = int(self.n_edit.text())
+        self.frame_changed_sig.emit(n)

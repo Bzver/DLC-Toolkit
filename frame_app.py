@@ -116,8 +116,8 @@ class Frame_App(QMainWindow):
         self.sc_comm.add_shortcuts_from_config({
             "prev_frame":{"key": "Left", "callback": lambda: self._change_frame(-1)},
             "next_frame":{"key": "Right", "callback": lambda: self._change_frame(1)},
-            "prev_fast":{"key": "Shift+Left", "callback": lambda: self._change_frame(-10)},
-            "next_fast":{"key": "Shift+Right", "callback": lambda: self._change_frame(10)},
+            "prev_fast":{"key": "Shift+Left", "callback": lambda: self._change_frame_interval(False)},
+            "next_fast":{"key": "Shift+Right", "callback": lambda: self._change_frame_interval(True)},
             "prev_mark":{"key": "Up", "callback": self._navigate_prev},
             "next_mark":{"key": "Down", "callback": self._navigate_next},
             "playback":{"key": "Space", "callback": self._toggle_playback},
@@ -424,6 +424,11 @@ class Frame_App(QMainWindow):
             self.at.display_current_frame()
             self.flabel.last_selected_idx = None
             self.at.navigation_title_controller()
+
+    def _change_frame_interval(self, forward:bool):
+        n = self.vid_play.get_current_n()
+        n = n if forward else -n
+        self._change_frame(n)
 
     def _navigate_prev(self):
         list_to_nav = self.at.determine_list_to_nav()
