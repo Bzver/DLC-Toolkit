@@ -1,15 +1,17 @@
 import numpy as np
 
+from ui import Spinbox_With_Label
+
 from PySide6 import QtWidgets
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QPushButton, QHBoxLayout, QVBoxLayout, QGroupBox, QLabel
 
-from typing import Optional, Any, Dict
+from typing import Optional, Dict
 
 from utils.pose import (
     outlier_bodypart,
     outlier_confidence,
-    outlier_enveloped,
+    outlier_duplicate,
     outlier_flicker,
     outlier_size,
     outlier_pose,
@@ -89,7 +91,7 @@ class Outlier_Container(QtWidgets.QWidget):
         self.outlier_confidence_gbox = self._build_outlier_confidence_gbox()
         self.outlier_bodypart_gbox = self._build_outlier_bodypart_gbox()
         self.outlier_size_gbox = self._build_outlier_size_gbox()
-        self.outlier_enveloped_gbox = self._build_outlier_enveloped_gbox()
+        self.outlier_duplicate_gbox = self._build_outlier_duplicate_gbox()
         self.outlier_pose_gbox = self._build_outlier_pose_gbox()
         self.outlier_flicker_gbox = self._build_outlier_flicker_gbox()
 
@@ -97,7 +99,7 @@ class Outlier_Container(QtWidgets.QWidget):
         layout.addWidget(self.outlier_confidence_gbox)
         layout.addWidget(self.outlier_bodypart_gbox)
         layout.addWidget(self.outlier_size_gbox)
-        layout.addWidget(self.outlier_enveloped_gbox)
+        layout.addWidget(self.outlier_duplicate_gbox)
         layout.addWidget(self.outlier_pose_gbox)
         layout.addWidget(self.outlier_flicker_gbox)
 
@@ -136,10 +138,11 @@ class Outlier_Container(QtWidgets.QWidget):
             mask = outlier_flicker(self.pred_data_array)
             masks.append(mask)
 
-        if self.outlier_enveloped_gbox.isChecked():
-            mask = outlier_enveloped(
+        if self.outlier_duplicate_gbox.isChecked():
+            mask = outlier_duplicate(
                 self.pred_data_array,
-                threshold=self.enveloped_spinbox.value()
+                bp_threshold=self.duplicate_bp_spinbox.value(),
+                dist_threshold=self.duplicate_dist_spinbox.value()
             )
             masks.append(mask)
 
@@ -234,20 +237,24 @@ class Outlier_Container(QtWidgets.QWidget):
 
         return gbox
 
-    def _build_outlier_enveloped_gbox(self):
-        gbox = QtWidgets.QGroupBox("Outlier Enveloped")
+    def _build_outlier_duplicate_gbox(self):
+        gbox = QtWidgets.QGroupBox("Outlier Duplicate")
         gbox.setCheckable(True)
         gbox.setChecked(False)
-        layout = QHBoxLayout(gbox)
+        layout = QVBoxLayout(gbox)
 
-        label = QLabel("Enveloped Threshold (ratio):")
-        self.enveloped_spinbox = QtWidgets.QDoubleSpinBox()
-        self.enveloped_spinbox.setRange(0.0, 1.0)
-        self.enveloped_spinbox.setSingleStep(0.05)
-        self.enveloped_spinbox.setValue(0.75)
-        self.enveloped_spinbox.setDecimals(2)
+        label = QLabel("Duplcate Bodypart Threshold (ratio):")
+        self.duplicate_bp_spinbox = QtWidgets.QDoubleSpinBox()
+        self.duplicate_bp_spinbox.setRange(0.0, 1.0)
+        self.duplicate_bp_spinbox.setSingleStep(0.1)
+        self.duplicate_bp_spinbox.setValue(0.7)
+        self.duplicate_bp_spinbox.setDecimals(2)
         layout.addWidget(label)
-        layout.addWidget(self.enveloped_spinbox)
+        layout.addWidget(self.duplicate_bp_spinbox)
+
+        self.duplicate_dist_spinbox = Spinbox_With_Label("Distance Threshold:", (1, 100), 3)
+        layout.addWidget(self.duplicate_dist_spinbox)
+
         return gbox
 
     def _build_outlier_pose_gbox(self):
