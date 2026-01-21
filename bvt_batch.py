@@ -1,17 +1,84 @@
 import os
 import numpy as np
+import yaml
 from PySide6 import QtWidgets
 from typing import List, Tuple, Optional
 
 from core.runtime import Data_Manager
 from core.tool.inference import DLC_Inference
-from core.io import backup_existing_prediction, get_existing_projects
+from core.io import backup_existing_prediction, get_existing_projects, csv_op
 from utils.helper import calculate_blob_inference_intervals
 from utils.logger import logger, set_headless_mode
 
 
 
 MAX_FRAMES_PER_RUN = 100000
+
+
+def batch_csv_to_h5(dlc_config_path: str):
+    if not os.path.isfile(dlc_config_path):
+        logger.error("[BATCH_CSV] DLC config file not found: %s", dlc_config_path)
+        return
+
+    dlc_dir = os.path.dirname(dlc_config_path)
+
+    try:
+        with open(dlc_config_path, 'r') as f:
+            config_org = yaml.safe_load(f)
+        scorer = config_org.get("scorer")
+        if not scorer:
+            logger.error("[BATCH_CSV] 'scorer' not found in DLC config.")
+            return
+    except Exception as e:
+        logger.error("[BATCH_CSV] Failed to read DLC config: %s", e)
+        return
+
+    labeled_data_dir = os.path.join(dlc_dir, "labeled-data")
+    if not os.path.isdir(labeled_data_dir):
+        logger.warning("[BATCH_CSV] labeled-data directory not found: %s", labeled_data_dir)
+        return
+
+    success_count = 0
+    skipped = []
+    failed = []
+
+    for project_name in os.listdir(labeled_data_dir):
+        project_dir = os.path.join(labeled_data_dir, project_name)
+        if not os.path.isdir(project_dir):
+            continue
+
+        csv_path = os.path.join(project_dir, f"CollectedData_{scorer}.csv")
+        h5_path = os.path.join(project_dir, f"CollectedData_{scorer}.h5")
+
+        if not os.path.isfile(csv_path):
+            skipped.append((project_name, "CSV missing"))
+            logger.debug("[BATCH_CSV] Skipped (CSV not found): %s", csv_path)
+            continue
+        if os.path.isfile(h5_path):
+            skipped.append((project_name, "H5 already exists"))
+            logger.debug("[BATCH_CSV] Skipped (H5 already exists): %s", h5_path)
+            continue
+
+        try:
+            csv_op.csv_to_h5(csv_path=csv_path, multi_animal=True, scorer=scorer)
+            success_count += 1
+            logger.info("[BATCH_CSV] Successfully converted: %s", csv_path)
+        except Exception as e:
+            failed.append((project_name, str(e)))
+            logger.error("[BATCH_CSV] Failed to convert %s: %s", csv_path, e)
+
+    total = len([d for d in os.listdir(labeled_data_dir) if os.path.isdir(os.path.join(labeled_data_dir, d))])
+    logger.info("[BATCH_CSV] Conversion finished: %d/%d succeeded.", success_count, total)
+
+    if skipped:
+        logger.info("[BATCH_CSV] Skipped %d projects:", len(skipped))
+        for name, reason in skipped:
+            logger.info("  - %s (%s)", name, reason)
+
+    if failed:
+        logger.error("[BATCH_CSV] Failed %d projects:", len(failed))
+        for name, err in failed:
+            logger.error("  - %s: %s", name, err)
 
 def batch_grayscale(dlc_config_path):
     success_count = 0
@@ -260,5 +327,7 @@ if __name__ == "__main__":
     set_headless_mode(True)
     rootdir = "D:/Data/Videos/20251101 Marathon/1102"
     dlc_config_path = "D:/Project/DLC-Models/NTD/config.yaml"
+
     # batch_inference(rootdir, dlc_config_path)
-    batch_grayscale(dlc_config_path)
+    # batch_grayscale(dlc_config_path)
+    batch_csv_to_h5(dlc_config_path)
