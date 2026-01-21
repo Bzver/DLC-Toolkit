@@ -66,6 +66,7 @@ class DLC_Save_Dialog_Label(DLC_Save_Dialog):
 
     def _save_old_proj(self):
         self.save_old.emit()
+        self.accept()
 
     def _save_new_proj(self):
         new_dd = New_Folder_Name_Dialog(self.video_name, exclude_current=True, parent=self)

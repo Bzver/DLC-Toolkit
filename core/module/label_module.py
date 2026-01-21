@@ -740,7 +740,7 @@ class Frame_Label:
         is_entertained = False
         current_crp_weight = (0.7, 0.15, 0.15)
         sigma, kappa = None, None
-        min_sim, gap_thresh = 0.15, 0.05
+        min_sim, gap_thresh = 0.10, 0.05
         used_starts = []
 
         progress = Progress_Indicator_Dialog(0, self.dm.total_frames, "Supervised Track Fixing", "", self.main)
@@ -748,7 +748,7 @@ class Frame_Label:
                                 crp_weight=current_crp_weight, cr_sigma=sigma, kappa=kappa, 
                                 minimum_similarity=min_sim, gap_threshold=gap_thresh,
                                 lookback_window=3, used_starts=used_starts)
-        
+
         # while not is_entertained:
 
         #     self.tf = Track_Fixer(self.pred_data_array, self.dm.angle_map_data, progress,
