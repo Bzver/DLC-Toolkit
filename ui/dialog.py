@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QPushButton, QHBoxLayout, QVBoxLayout, QDial, QDialog,
     QLabel, QDialogButtonBox, QCheckBox, QSizePolicy, QScrollArea, QComboBox)
 
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 
 from .component import Spinbox_With_Label
 from .menu_shortcut import Shortcut_Manager
@@ -264,15 +264,22 @@ class Frame_Display_Dialog(QDialog):
 
 class Instance_Selection_Dialog(QDialog):
     inst_checked = Signal(int, bool)
+    instances_selected = Signal(tuple)
 
-    def __init__(self, inst_count:int, colormap:List[str], select_status:List[bool], parent=None):
+    def __init__(self, inst_count:int, colormap:List[str], select_status:Optional[List[bool]]=None, dual_selection:bool=False, parent=None):
         super().__init__(parent)
         self.inst_count = inst_count
         self.colormap = colormap
+        self.dual_selection = dual_selection
+
+        if select_status is None or self.dual_selection:
+            self.select_status = [False] * self.inst_count
+        else:
+            self.select_status = select_status
 
         self.setWindowTitle("Select Instance")
         layout = QHBoxLayout(self)
-        
+
         self.buttons:List[QPushButton] = []
         self.shortcuts = Shortcut_Manager(self)
         sc_config = {}
@@ -280,7 +287,7 @@ class Instance_Selection_Dialog(QDialog):
         for inst_idx in range(self.inst_count):
             sc_config[inst_idx] = {"key": str(inst_idx+1), "callback": lambda idx=inst_idx: self._on_key_pressed(idx)}
             color = colormap[inst_idx % len(colormap)]
-            status = select_status[inst_idx]
+            status = self.select_status[inst_idx]
             btn = QPushButton(f"Inst {inst_idx+1}")
             btn.setStyleSheet(f"background-color: {color};")
             btn.setCheckable(True)
@@ -293,10 +300,16 @@ class Instance_Selection_Dialog(QDialog):
 
     def _on_button_clicked(self, idx: int):
         checked_status = self.buttons[idx].isChecked()
-        self.inst_checked.emit(idx, checked_status)
-        self.accept()
+        self.select_status[idx] = checked_status
+
+        if not self.dual_selection:
+            self.inst_checked.emit(idx, checked_status)
+            self.accept()
+        elif sum(self.select_status) == 2:
+            selected_indices = [i for i, x in enumerate(self.select_status) if x]
+            self.instances_selected.emit(tuple(selected_indices))
+            self.accept()
 
     def _on_key_pressed(self, idx: int):
         checked_status = self.buttons[idx].isChecked()
-        self.inst_checked.emit(idx, not checked_status)
-        self.accept()
+        self.buttons[idx].setChecked(not checked_status)

@@ -11,9 +11,9 @@ from .plot import Prediction_Plotter
 from .undo_redo import Uno_Stack, Uno_Stack_Dict
 from .mark_nav import navigate_to_marked_frame
 from core.io import Frame_Extractor, Frame_Extractor_Img
-from ui import Clickable_Video_Label, Video_Slider_Widget, Shortcut_Manager
+from ui import Clickable_Video_Label, Video_Slider_Widget, Shortcut_Manager, Instance_Selection_Dialog
 from utils.helper import (
-    frame_to_pixmap, handle_unsaved_changes_on_close, crop_coord_to_array, validate_crop_coord, indices_to_spans, frame_to_grayscale
+    frame_to_pixmap, handle_unsaved_changes_on_close, crop_coord_to_array, validate_crop_coord, indices_to_spans
     )
 from utils.track import swap_track
 from utils.dataclass import Loaded_DLC_Data, Plot_Config
@@ -504,17 +504,29 @@ class Track_Correction_Dialog(Parallel_Review_Dialog):
     def _determine_list_to_nav(self):
         return self.list_to_nav
     
-    def _swap_instance(self):
-        self._save_state_for_undo()
-        self.new_data_array = swap_track(self.new_data_array, self.frame_list[self.current_frame_idx])
-        self._display_current_frame()
-        self._refresh_ui()
+    def _swap_instance(self, swap_target:Tuple[int,int]=None):
+        if self.dlc_data.instance_count > 2 and not swap_target:
+            colormap = self.plotter.get_current_color_map()
+            inst_dialog = Instance_Selection_Dialog(self.pred_data_array.shape[1], colormap, dual_selection=True)
+            inst_dialog.instances_selected.connect(self._swap_instance)
+            inst_dialog.exec()
+        else:
+            self._save_state_for_undo()
+            self.new_data_array = swap_track(self.new_data_array, self.frame_list[self.current_frame_idx], swap_target=swap_target)
+            self._display_current_frame()
+            self._refresh_ui()
 
-    def _swap_track(self):
-        self._save_state_for_undo()
-        self.new_data_array = swap_track(self.new_data_array, self.frame_list[self.current_frame_idx], swap_range=[-1])
-        self._display_current_frame()
-        self._refresh_ui()
+    def _swap_track(self, swap_target:Tuple[int,int]=None):
+        if self.dlc_data.instance_count > 2 and not swap_target:
+            colormap = self.plotter.get_current_color_map()
+            inst_dialog = Instance_Selection_Dialog(self.pred_data_array.shape[1], colormap, dual_selection=True)
+            inst_dialog.instances_selected.connect(self._swap_track)
+            inst_dialog.exec()
+        else:
+            self._save_state_for_undo()
+            self.new_data_array = swap_track(self.new_data_array, self.frame_list[self.current_frame_idx], swap_range=[-1], swap_target=swap_target)
+            self._display_current_frame()
+            self._refresh_ui()
 
     def _back_search_nonempty_frames(self, lookback_window: int = 10) -> int:
         start_local = self.current_frame_idx

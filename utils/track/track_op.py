@@ -17,20 +17,22 @@ def delete_track(
 def swap_track(
         pred_data_array:np.ndarray,
         current_frame_idx:int,
+        swap_target:Optional[List[int]]=None,
         swap_range:Optional[List[int]]=None
         ) -> np.ndarray:
-    
     if not swap_range:
         frames_to_swap = current_frame_idx
-
     elif swap_range[0] == -1:
         frames_to_swap = range(current_frame_idx, pred_data_array.shape[0])
-
     else:
         frames_to_swap = swap_range
 
-    pred_data_array[frames_to_swap, 0, :], pred_data_array[frames_to_swap, 1, :] = \
-    pred_data_array[frames_to_swap, 1, :].copy(), pred_data_array[frames_to_swap, 0, :].copy()
+    if not swap_target:
+        swap_target = [0, 1]
+
+    x, y = swap_target
+    pred_data_array[frames_to_swap, y, :], pred_data_array[frames_to_swap, x, :] = \
+    pred_data_array[frames_to_swap, x, :].copy(), pred_data_array[frames_to_swap, y, :].copy()
 
     return pred_data_array
 

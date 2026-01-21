@@ -10,7 +10,7 @@ from typing import Optional, Tuple
 from core.runtime import Data_Manager, Video_Manager
 from core.tool import (Outlier_Finder, Canvas, Prediction_Plotter, Uno_Stack,
                        Track_Correction_Dialog, Iteration_Review_Dialog)
-from ui import (Menu_Widget, Video_Player_Widget, Pose_Rotation_Dialog, Status_Bar,
+from ui import (Menu_Widget, Video_Player_Widget, Pose_Rotation_Dialog, Status_Bar, Instance_Selection_Dialog,
                 Shortcut_Manager, Progress_Indicator_Dialog, Frame_Range_Dialog)
 from utils.pose import (
     rotate_selected_inst, generate_missing_inst, generate_missing_kp_for_inst,
@@ -395,46 +395,69 @@ class Frame_Label:
                 self.status_bar.show_message(f"Deleted inst {selected_instance_idx} between frame {start} to {end}.")
                 self.display_current_frame()
 
-    def _swap_track_single(self):
+    def _swap_track_single(self, swap_target:Tuple[int,int]=None):
         if self.pred_data_array is None:
             return
-        self._save_state_for_undo()
-        try:
-            self.pred_data_array = swap_track(self.pred_data_array, self.dm.current_frame_idx)
-        except ValueError as e:
-            Loggerbox.error(self.main, "Swap Error", str(e), exc=e)
-            return
-        self.display_current_frame()
+        if self.dm.dlc_data.instance_count > 2 and not swap_target:
+            colormap = self.plotter.get_current_color_map()
+            inst_dialog = Instance_Selection_Dialog(self.pred_data_array.shape[1], colormap, dual_selection=True)
+            inst_dialog.instances_selected.connect(self._swap_track_single)
+            inst_dialog.exec()
+        else:
+            self._save_state_for_undo()
+            try:
+                self.pred_data_array = swap_track(self.pred_data_array, self.dm.current_frame_idx, swap_target=swap_target)
+            except ValueError as e:
+                Loggerbox.error(self.main, "Swap Error", str(e), exc=e)
+                return
+            self.display_current_frame()
 
-    def _swap_track_free(self, selected_range:Optional[Tuple[int,int]]):
+    def _swap_track_free(self, selected_range:Optional[Tuple[int,int]]=None):
         if self.pred_data_array is None:
             return
         
-        if selected_range is None or selected_range is False:
+        if not selected_range:
             fm_dialog = Frame_Range_Dialog(self.dm.total_frames, parent=self.main)
             fm_dialog.range_selected.connect(self._swap_track_free)
             fm_dialog.exec()
         else:
-            start, end = selected_range
+            self._swap_range = selected_range
+            self._swap_track_free_worker()
+
+    def _swap_track_free_worker(self, swap_target:Optional[Tuple[int,int]]=None):
+        start, end = self._swap_range
+
+        if self.dm.dlc_data.instance_count > 2 and not swap_target:
+            colormap = self.plotter.get_current_color_map()
+            inst_dialog = Instance_Selection_Dialog(self.pred_data_array.shape[1], colormap, dual_selection=True)
+            inst_dialog.instances_selected.connect(self._swap_track_free_worker)
+            inst_dialog.exec()
+        else:
             self._save_state_for_undo()
             try:
-                self.pred_data_array = swap_track(self.pred_data_array, self.dm.current_frame_idx, swap_range=range(start, end+1))
+                self.pred_data_array = swap_track(self.pred_data_array, self.dm.current_frame_idx, swap_range=range(start, end+1), swap_target=swap_target)
             except ValueError as e:
-                Loggerbox.error(self.main, "Deletion Error", str(e), exc=e)
+                Loggerbox.error(self.main, "Swap Error", str(e), exc=e)
             else:
                 self.status_bar.show_message(f"Swap insts between frame {start} to {end}.")
                 self.display_current_frame()
 
-    def _swap_track_continous(self):
+    def _swap_track_continous(self, swap_target:Optional[Tuple[int,int]]=None):
         if self.pred_data_array is None:
             return
-        self._save_state_for_undo()
-        try:
-            self.pred_data_array = swap_track(self.pred_data_array, self.dm.current_frame_idx, swap_range=[-1])
-        except ValueError as e:
-            Loggerbox.error(self.main, "Swap Error", str(e), exc=e)
-            return
-        self.display_current_frame()
+        if self.dm.dlc_data.instance_count > 2 and not swap_target:
+            colormap = self.plotter.get_current_color_map()
+            inst_dialog = Instance_Selection_Dialog(self.pred_data_array.shape[1], colormap, dual_selection=True)
+            inst_dialog.instances_selected.connect(self._swap_track_continous)
+            inst_dialog.exec()
+        else:
+            self._save_state_for_undo()
+            try:
+                self.pred_data_array = swap_track(self.pred_data_array, self.dm.current_frame_idx, swap_range=[-1], swap_target=swap_target)
+            except ValueError as e:
+                Loggerbox.error(self.main, "Swap Error", str(e), exc=e)
+                return
+            self.display_current_frame()
 
     def _copy_inst(self):
         frame_idx = self.dm.current_frame_idx
@@ -720,29 +743,34 @@ class Frame_Label:
         min_sim, gap_thresh = 0.15, 0.05
         used_starts = []
 
-        while not is_entertained:
-            progress = Progress_Indicator_Dialog(0, self.dm.total_frames, "Supervised Track Fixing", "", self.main)
+        progress = Progress_Indicator_Dialog(0, self.dm.total_frames, "Supervised Track Fixing", "", self.main)
+        self.tf = Track_Fixer(self.pred_data_array, self.dm.angle_map_data, progress,
+                                crp_weight=current_crp_weight, cr_sigma=sigma, kappa=kappa, 
+                                minimum_similarity=min_sim, gap_threshold=gap_thresh,
+                                lookback_window=3, used_starts=used_starts)
+        
+        # while not is_entertained:
 
-            self.tf = Track_Fixer(self.pred_data_array, self.dm.angle_map_data, progress,
-                                  crp_weight=current_crp_weight, cr_sigma=sigma, kappa=kappa, 
-                                  minimum_similarity=min_sim, gap_threshold=gap_thresh,
-                                  lookback_window=3, used_starts=used_starts)
+        #     self.tf = Track_Fixer(self.pred_data_array, self.dm.angle_map_data, progress,
+        #                           crp_weight=current_crp_weight, cr_sigma=sigma, kappa=kappa, 
+        #                           minimum_similarity=min_sim, gap_threshold=gap_thresh,
+        #                           lookback_window=3, used_starts=used_starts)
 
-            pred_data_array, blasted_frames, amongus_frames, frame_list, used_starts = self.tf.iter_orchestrator()
-            dialog = Iteration_Review_Dialog(self.dm.dlc_data, self.vm.extractor, pred_data_array, frame_list, blasted_frames, amongus_frames, parent=self.main)
-            dialog.exec()
+        #     pred_data_array, blasted_frames, amongus_frames, frame_list, used_starts = self.tf.iter_orchestrator()
+        #     dialog = Iteration_Review_Dialog(self.dm.dlc_data, self.vm.extractor, pred_data_array, frame_list, blasted_frames, amongus_frames, parent=self.main)
+        #     dialog.exec()
 
-            if dialog.was_cancelled:
-                return
+        #     if dialog.was_cancelled:
+        #         return
 
-            corrected_pred, status_array, is_entertained = dialog.get_result()
+        #     corrected_pred, status_array, is_entertained = dialog.get_result()
 
-            self.tf.process_labels(corrected_pred, frame_list, status_array)
-            current_crp_weight, sigma, min_sim, gap_thresh, kappa = self.tf.get_params()
+        #     self.tf.process_labels(corrected_pred, frame_list, status_array)
+        #     current_crp_weight, sigma, min_sim, gap_thresh, kappa = self.tf.get_params()
 
-        pred_data_array, blasted_frames, amongus_frames = self.tf.fit_full_video()
+        pred_data_array, amongus_frames = self.tf.fit_full_video()
         dialog = Track_Correction_Dialog(
-            self.dm.dlc_data, self.vm.extractor, pred_data_array, list(range(self.dm.total_frames)), blasted_frames, amongus_frames, parent=self.main)
+            self.dm.dlc_data, self.vm.extractor, pred_data_array, list(range(self.dm.total_frames)), [], amongus_frames, parent=self.main)
 
         dialog.pred_data_exported.connect(self._get_pred_data_from_manual_correction)
         dialog.exec()
