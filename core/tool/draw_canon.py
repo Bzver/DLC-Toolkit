@@ -42,12 +42,9 @@ class Canonical_Pose_Dialog(QDialog):
         self.gview.setTransform(new_transform)
         self.gview.toggle_zoom_mode()
 
-        dummy_dlc_data = self.dlc_data
-        dummy_dlc_data.instance_count = 1
-
         flatten_canon = np.full((2, self.dlc_data.num_keypoint*3,), np.nan)
         flatten_canon[0, 0::3] = self.canon_pose[:, 0] + 0.5 * w
         flatten_canon[0, 1::3] = self.canon_pose[:, 1] + 0.5 * h
 
-        plotter = Prediction_Plotter(dlc_data=dummy_dlc_data, fast_mode=False)
+        plotter = Prediction_Plotter(dlc_data=self.dlc_data, fast_mode=False)
         plotter.plot_predictions(self.gview.gscene, flatten_canon)
