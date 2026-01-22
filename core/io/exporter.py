@@ -156,7 +156,7 @@ class Exporter:
                 logger.error(f"[EXPORTER] Error applying crop {self.crop_coord} to frame. Error: {e}")
 
         if self.grayscaling:
-            frame = frame_to_grayscale(frame)
+            frame = frame_to_grayscale(frame, keep_as_bgr=True)
 
         return frame
     

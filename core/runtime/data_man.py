@@ -67,8 +67,21 @@ class Data_Manager:
 
     def load_metadata_to_dm(self, dlc_config_path:str):
         data_loader = Prediction_Loader(dlc_config_path)
+
+        existing_data = False
+        if self.dlc_data is not None and self.dlc_data.pred_data_array is not None:
+            existing_data = True
+            prediction_filepath = self.dlc_data.prediction_filepath
+            pred_data_array = self.dlc_data.pred_data_array.copy()
+            pred_frame_count = self.dlc_data.pred_frame_count
+
         self.dlc_data = data_loader.load_data(metadata_only=True)
         self.dlc_data.pred_frame_count = self.total_frames
+
+        if existing_data:
+            self.dlc_data.prediction_filepath = prediction_filepath
+            self.dlc_data.pred_data_array = pred_data_array
+            self.dlc_data.pred_frame_count = pred_frame_count
 
     def load_dlc_label(self, image_folder:str, prediction_path:Optional[str]=None):
         """Load DLC Label without a preexisting prediction"""

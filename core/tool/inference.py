@@ -276,7 +276,7 @@ class DLC_Inference(QDialog):
 
         inference_video_path = None
         try:
-            if len(self.frame_list)  > int(0.9 * self.total_frames) and not (self.cropping or self.masking):
+            if len(self.frame_list)  > int(0.9 * self.total_frames) and not (self.cropping or self.masking or self.grayscaling):
                 inference_video_path = self.video_filepath
                 self.extractor_reviewer = Frame_Extractor(inference_video_path)
             elif len(self.frame_list) < 500 and not self.model_name.startswith("CondPreNet_"):
@@ -341,7 +341,8 @@ class DLC_Inference(QDialog):
             frame_list=self.frame_list,
             progress_callback=progress,
             crop_coord=self.crop_coord if self.cropping else None,
-            mask=self.mask_region
+            mask=self.mask_region,
+            grayscaling=self.grayscaling
             )
         corrected_indices = exporter.export_data_to_DLC(frame_only=True)
         if corrected_indices:
@@ -356,7 +357,8 @@ class DLC_Inference(QDialog):
             frame_list=self.frame_list,
             progress_callback=progress,
             crop_coord=self.crop_coord if self.cropping else None,
-            mask=self.mask_region
+            mask=self.mask_region,
+            grayscaling=self.grayscaling
             )
         corrected_indices = exporter.export_frame_to_video()
         if corrected_indices:
