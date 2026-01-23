@@ -262,6 +262,22 @@ class Frame_Display_Dialog(QDialog):
         self.showMaximized()
 
 
+class ROI_Dialog(Frame_Display_Dialog):
+    roi_reset_requested = Signal()
+
+    def __init__(self, title, image, parent=None):
+        super().__init__(title, image, parent)
+
+        self.reset_btn = QPushButton("Reset ROI")
+        self.reset_btn.clicked.connect(self._on_reset_request)
+        self.dialog_layout.addWidget(self.reset_btn)
+        self.setWindowTitle("ROI Viewer")
+
+    def _on_reset_request(self):
+        self.roi_reset_requested.emit()
+        self.accept()
+
+
 class Instance_Selection_Dialog(QDialog):
     inst_checked = Signal(int, bool)
     instances_selected = Signal(tuple)

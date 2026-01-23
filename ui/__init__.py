@@ -12,6 +12,7 @@ from .dialog import (
     Frame_Range_Dialog,
     Frame_Display_Dialog,
     Instance_Selection_Dialog,
+    ROI_Dialog,
 )
 
 from .video_slider import Slider_With_Marks, Video_Slider_Widget
@@ -35,6 +36,7 @@ __all__ = (
     Instance_Selection_Dialog,
     Frame_Range_Dialog,
     Frame_Display_Dialog,
+    ROI_Dialog,
     Menu_Widget,
     Shortcut_Manager,
     Video_Slider_Widget,
