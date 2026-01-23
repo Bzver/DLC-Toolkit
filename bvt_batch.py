@@ -15,9 +15,9 @@ from utils.logger import logger, set_headless_mode
 MAX_FRAMES_PER_RUN = 100000
 
 
-def batch_csv_to_h5(dlc_config_path: str):
+def batch_to_h5(dlc_config_path: str):
     if not os.path.isfile(dlc_config_path):
-        logger.error("[BATCH_CSV] DLC config file not found: %s", dlc_config_path)
+        logger.error("[BATCH] DLC config file not found: %s", dlc_config_path)
         return
 
     dlc_dir = os.path.dirname(dlc_config_path)
@@ -27,15 +27,15 @@ def batch_csv_to_h5(dlc_config_path: str):
             config_org = yaml.safe_load(f)
         scorer = config_org.get("scorer")
         if not scorer:
-            logger.error("[BATCH_CSV] 'scorer' not found in DLC config.")
+            logger.error("[BATCH] 'scorer' not found in DLC config.")
             return
     except Exception as e:
-        logger.error("[BATCH_CSV] Failed to read DLC config: %s", e)
+        logger.error("[BATCH] Failed to read DLC config: %s", e)
         return
 
     labeled_data_dir = os.path.join(dlc_dir, "labeled-data")
     if not os.path.isdir(labeled_data_dir):
-        logger.warning("[BATCH_CSV] labeled-data directory not found: %s", labeled_data_dir)
+        logger.warning("[BATCH] labeled-data directory not found: %s", labeled_data_dir)
         return
 
     success_count = 0
@@ -52,31 +52,31 @@ def batch_csv_to_h5(dlc_config_path: str):
 
         if not os.path.isfile(csv_path):
             skipped.append((project_name, "CSV missing"))
-            logger.debug("[BATCH_CSV] Skipped (CSV not found): %s", csv_path)
+            logger.debug("[BATCH] Skipped (CSV not found): %s", csv_path)
             continue
         if os.path.isfile(h5_path):
             skipped.append((project_name, "H5 already exists"))
-            logger.debug("[BATCH_CSV] Skipped (H5 already exists): %s", h5_path)
+            logger.debug("[BATCH] Skipped (H5 already exists): %s", h5_path)
             continue
 
         try:
             csv_op.csv_to_h5(csv_path=csv_path, multi_animal=True, scorer=scorer)
             success_count += 1
-            logger.info("[BATCH_CSV] Successfully converted: %s", csv_path)
+            logger.info("[BATCH] Successfully converted: %s", csv_path)
         except Exception as e:
             failed.append((project_name, str(e)))
-            logger.error("[BATCH_CSV] Failed to convert %s: %s", csv_path, e)
+            logger.error("[BATCH] Failed to convert %s: %s", csv_path, e)
 
     total = len([d for d in os.listdir(labeled_data_dir) if os.path.isdir(os.path.join(labeled_data_dir, d))])
-    logger.info("[BATCH_CSV] Conversion finished: %d/%d succeeded.", success_count, total)
+    logger.info("[BATCH] Conversion finished: %d/%d succeeded.", success_count, total)
 
     if skipped:
-        logger.info("[BATCH_CSV] Skipped %d projects:", len(skipped))
+        logger.info("[BATCH] Skipped %d projects:", len(skipped))
         for name, reason in skipped:
             logger.info("  - %s (%s)", name, reason)
 
     if failed:
-        logger.error("[BATCH_CSV] Failed %d projects:", len(failed))
+        logger.error("[BATCH] Failed %d projects:", len(failed))
         for name, err in failed:
             logger.error("  - %s: %s", name, err)
 
@@ -129,6 +129,55 @@ def batch_grayscale(dlc_config_path):
         logger.info(f"[BATCH] Failed {len(failed)} projects:")
         for f in failed:
             logger.info(f"  - {f}")
+
+def batch_kp_normalization(dlc_config_path, task, dialog):
+    if not os.path.isfile(dlc_config_path):
+        logger.error("[BATCH] DLC config file not found: %s", dlc_config_path)
+        return
+
+    dlc_dir = os.path.dirname(dlc_config_path)
+
+    try:
+        with open(dlc_config_path, 'r') as f:
+            config_org = yaml.safe_load(f)
+        scorer = config_org.get("scorer")
+        if not scorer:
+            logger.error("[BATCH] 'scorer' not found in DLC config.")
+            return
+    except Exception as e:
+        logger.error("[BATCH] Failed to read DLC config: %s", e)
+        return
+
+    labeled_data_dir = os.path.join(dlc_dir, "labeled-data")
+    if not os.path.isdir(labeled_data_dir):
+        logger.warning("[BATCH] labeled-data directory not found: %s", labeled_data_dir)
+        return
+
+    failed = []
+
+    for project_name in os.listdir(labeled_data_dir):
+        project_dir = os.path.join(labeled_data_dir, project_name)
+        if not os.path.isdir(project_dir):
+            continue
+
+        if project_dir.endswith("_NM"):
+            continue
+
+        dm = Data_Manager(_pseudo_callback, _pseudo_callback, dialog)
+        dm.load_metadata_to_dm(dlc_config_path)
+        dm.load_dlc_label(project_dir)
+        pred_data_array = dm.dlc_data.pred_data_array.copy()
+
+        for t_idx, r1_idx, r2_idx in task:
+            pred_data_array[:, :, t_idx*3:t_idx*3+2] = (dm.dlc_data.pred_data_array[:, :, r1_idx*3:r1_idx*3+2] + dm.dlc_data.pred_data_array[:, :, r2_idx*3:r2_idx*3+2]) / 2
+        dm.dlc_data.pred_data_array = pred_data_array
+
+        dm.migrate_existing_project(f"{project_dir}_NM")
+
+    if failed:
+        logger.error("[BATCH] Failed %d projects:", len(failed))
+        for name, err in failed:
+            logger.error("  - %s: %s", name, err)
 
 def batch_inference(rootdir, dlc_config_path, dialog):
     pkl_list = []
@@ -326,8 +375,11 @@ if __name__ == "__main__":
     dialog = QtWidgets.QDialog()
     set_headless_mode(True)
     rootdir = "D:/Data/Videos/20251101 Marathon/1102"
-    dlc_config_path = "D:/Project/DLC-Models/NTD/config.yaml"
-
+    dlc_config_path = "D:/Project/DLC-Models/NTD-Blob/config.yaml"
+ 
     # batch_inference(rootdir, dlc_config_path)
     # batch_grayscale(dlc_config_path)
-    batch_csv_to_h5(dlc_config_path)
+    # batch_to_h5(dlc_config_path)
+
+    task = [(11, 7, 9), (10, 6, 8), (13, 9, 3), (12, 8, 3)]
+    batch_kp_normalization(dlc_config_path, task, dialog)
