@@ -25,6 +25,9 @@ class Prediction_Plotter:
         self.cv_mode = fast_mode
 
         self.current_frame_data = None
+        self.marked_frame_instance = None
+        self.marked_frame_kp = None
+
         self.frame_cv2 = None
         self.graphics_scene = None
 
@@ -40,7 +43,13 @@ class Prediction_Plotter:
 
         self.keypoint_coords = {}
 
-    def plot_predictions(self, frame:Frame_CV2|QGraphicsScene, current_frame_data:np.ndarray) -> Frame_CV2:
+    def plot_predictions(
+            self,
+            frame:Frame_CV2|QGraphicsScene,
+            current_frame_data:np.ndarray,
+            marked_frame_instance:Optional[np.ndarray]=None,
+            marked_frame_kp:Optional[np.ndarray]=None,
+            ) -> Frame_CV2:
         if frame is None:
             raise ValueError("Nonetype cannot be used as plotting canvas.")
 
@@ -64,6 +73,9 @@ class Prediction_Plotter:
             return frame
         
         self.current_frame_data = current_frame_data
+        self.marked_frame_instance = marked_frame_instance
+        self.marked_frame_kp = marked_frame_kp
+
         return self._plot_worker()
 
     def get_current_color_map(self):
@@ -112,8 +124,14 @@ class Prediction_Plotter:
                 if isinstance(keypoint_item, Draggable_Keypoint):
                     keypoint_item.setFlag(QGraphicsEllipseItem.ItemIsMovable, self.plot_config.edit_mode)
 
+                if self.marked_frame_kp[inst_idx, kp_idx]:
+                    rect_item = QGraphicsRectItem(0, 0, self.plot_config.point_size + 4, self.plot_config.point_size + 4)
+                    rect_item.setPos(x - self.plot_config.point_size / 2 - 2, y - self.plot_config.point_size / 2 - 2)
+                    rect_item.setPen(QtGui.QPen(QtGui.QColor(255, 51, 51), 1))
+                    self.graphics_scene.addItem(rect_item)
+
                 self.graphics_scene.addItem(keypoint_item)
-                keypoint_item.setZValue(1) # Ensure keypoints are on top of the video frame
+                keypoint_item.setZValue(1)
                 if self.plot_callback is not None:
                     keypoint_item.keypoint_moved.connect(self.plot_callback.keypoint_coords_callback)
                     keypoint_item.keypoint_drag_started.connect(self.plot_callback.keypoint_object_callback)
@@ -123,7 +141,7 @@ class Prediction_Plotter:
         y_coords = [self.keypoint_coords[p][1] for p in self.keypoint_coords if self.keypoint_coords[p] is not None]
         kp_confidence = [self.keypoint_coords[p][2] for p in self.keypoint_coords if self.keypoint_coords[p] is not None]
 
-        if not x_coords or not y_coords: # Skip if the mice has no keypoint
+        if not x_coords or not y_coords:
             return
 
         kp_inst_mean = sum(kp_confidence) / len(kp_confidence)
@@ -156,6 +174,10 @@ class Prediction_Plotter:
             rect_item = Selectable_Instance(min_x, min_y, max_x - min_x, max_y - min_y, inst_idx, default_color_rgb=color)
             rect_item.setOpacity(self.plot_config.plot_opacity)
 
+            if self.marked_frame_instance is not None:
+                marked_status = self.marked_frame_instance[inst_idx]
+                rect_item.set_marked(marked_status)
+
             if isinstance(rect_item, Selectable_Instance):
                 rect_item.setFlag(QGraphicsRectItem.ItemIsMovable, self.plot_config.edit_mode)
 
@@ -172,7 +194,6 @@ class Prediction_Plotter:
                 text_item_inst.setFlag(QGraphicsTextItem.ItemIgnoresTransformations) 
                 self.graphics_scene.addItem(text_item_inst)
 
-
     def _plot_keypoint_label(self, color_inst:Color_RGB):
         for kp_idx, (x, y, _) in self.keypoint_coords.items():
             keypoint_label = self.dlc_data.keypoints[kp_idx]
@@ -188,7 +209,7 @@ class Prediction_Plotter:
                 font = text_item.font()
                 fm = QtGui.QFontMetrics(font)
                 text_rect = fm.boundingRect(keypoint_label)
-                
+
                 text_width = text_rect.width()
                 text_height = text_rect.height()
 

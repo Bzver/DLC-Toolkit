@@ -5,8 +5,8 @@ from PySide6.QtWidgets import QGraphicsEllipseItem, QGraphicsRectItem
 
 
 class Draggable_Keypoint(QtCore.QObject, QGraphicsEllipseItem):
-    keypoint_moved = Signal(int, int, float, float) # instance_id, keypoint_id, new_x, new_y, emit when the keypoint is moved
-    keypoint_drag_started = Signal(object) # Emits the Draggable_Keypoint object itself
+    keypoint_moved = Signal(int, int, float, float) # instance_id, keypoint_id, new_x, new_y
+    keypoint_drag_started = Signal(object)
 
     def __init__(self, x, y, width, height, instance_id, keypoint_id, default_color_rgb, parent=None):
         QtCore.QObject.__init__(self, None)
@@ -16,29 +16,29 @@ class Draggable_Keypoint(QtCore.QObject, QGraphicsEllipseItem):
         self.default_color_rgb = default_color_rgb
         self.setBrush(QtGui.QBrush(QtGui.QColor(*default_color_rgb)))
         self.setPen(QtGui.QPen(QtGui.QColor(*default_color_rgb), 1))
-        self.setFlag(QGraphicsEllipseItem.ItemIsMovable, False) # Initially not movable, enabled by direct_keypoint_edit
+        self.setFlag(QGraphicsEllipseItem.ItemIsMovable, False)
         self.setFlag(QGraphicsEllipseItem.ItemSendsGeometryChanges, True)
         self.setAcceptHoverEvents(True)
-        self.original_pos = self.pos() # Store initial position on press
+        self.original_pos = self.pos() 
 
     def hoverEnterEvent(self, event):
-        self.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 0))) # Yellow on hover
+        self.setBrush(QtGui.QBrush(QtGui.QColor(255, 255, 0)))                          # Yellow
         super().hoverEnterEvent(event)
 
     def hoverLeaveEvent(self, event):
-        self.setBrush(QtGui.QBrush(QtGui.QColor(*self.default_color_rgb))) # Revert to default
+        self.setBrush(QtGui.QBrush(QtGui.QColor(*self.default_color_rgb)))
         super().hoverLeaveEvent(event)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton and self.flags() & QGraphicsEllipseItem.ItemIsMovable:
             self.keypoint_drag_started.emit(self)
-            self.original_pos = self.pos() # Store position at the start of the drag
+            self.original_pos = self.pos()
         super().mousePressEvent(event)
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.LeftButton and self.flags() & QGraphicsEllipseItem.ItemIsMovable:
             new_pos = self.pos()
-            if new_pos != self.original_pos: # Calculate the delta from the original position
+            if new_pos != self.original_pos:
                 delta_x = new_pos.x() - self.original_pos.x()
                 delta_y = new_pos.y() - self.original_pos.y()
                 self.keypoint_moved.emit(self.instance_id, self.keypoint_id, delta_x, delta_y)
@@ -46,14 +46,13 @@ class Draggable_Keypoint(QtCore.QObject, QGraphicsEllipseItem):
 
     def itemChange(self, change, value):
         if change == QGraphicsEllipseItem.ItemPositionChange and self.scene():
-            # The actual data array update will happen on mouse release
             return value
         return super().itemChange(change, value)
 
 
 class Selectable_Instance(QtCore.QObject, QGraphicsRectItem):
-    bounding_box_clicked = Signal(object)                        # Signal to emit when this box is clicked
-    bounding_box_moved = Signal(int, float, float)  # Signal to emit when the bounding box is moved, instance_id, dx, dy
+    bounding_box_clicked = Signal(object)
+    bounding_box_moved = Signal(int, float, float)
 
     def __init__(self, x, y, width, height, instance_id, default_color_rgb, parent=None):
         QtCore.QObject.__init__(self, parent)
@@ -61,22 +60,24 @@ class Selectable_Instance(QtCore.QObject, QGraphicsRectItem):
         self.instance_id = instance_id
         self.setFlag(QGraphicsRectItem.ItemIsSelectable, True)
         self.setFlag(QGraphicsRectItem.ItemSendsGeometryChanges, True)
-        self.setFlag(QGraphicsRectItem.ItemIsMovable, False) # Initially not movable, enabled by direct_keypoint_edit
+        self.setFlag(QGraphicsRectItem.ItemIsMovable, False)
         self.setAcceptHoverEvents(True)
 
-        self.default_pen = QPen(QColor(*default_color_rgb), 1) # Use passed color
-        self.selected_pen = QPen(QColor(255, 0, 0), 2) # Red, 2px
-        self.hover_pen = QPen(QColor(255, 255, 0), 1) # Yellow, 1px
+        self.default_pen = QPen(QColor(*default_color_rgb), 1)
+        self.selected_pen = QPen(QColor(255, 0, 0), 2)                  # Red, 2px
+        self.hover_pen = QPen(QColor(255, 255, 0), 1)                   # Yellow
+        self.marker_pen = QPen(QColor(255, 51, 51), 2)                    # Red
 
         self.setPen(self.default_pen)
         self.is_selected = False
-        self.last_mouse_pos = None # To track mouse movement for dragging
+        self.is_marked = True
+        self.last_mouse_pos = None
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            self.bounding_box_clicked.emit(self) # Emit the signal for selection
+            self.bounding_box_clicked.emit(self)
             if self.flags() & QGraphicsRectItem.ItemIsMovable:
-                self.last_mouse_pos = event.scenePos() # Store the initial mouse position for dragging
+                self.last_mouse_pos = event.scenePos()
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
@@ -86,7 +87,7 @@ class Selectable_Instance(QtCore.QObject, QGraphicsRectItem):
             dy = current_pos.y() - self.last_mouse_pos.y()
             
             self.setPos(self.pos().x() + dx, self.pos().y() + dy)
-            self.last_mouse_pos = current_pos # Update last position for next move event
+            self.last_mouse_pos = current_pos
 
         super().mouseMoveEvent(event)
 
@@ -98,9 +99,9 @@ class Selectable_Instance(QtCore.QObject, QGraphicsRectItem):
                 dy = self.pos().y() - self.initial_pos_on_press.y()
                 if dx != 0 or dy != 0:
                     self.bounding_box_moved.emit(self.instance_id, dx, dy)
-                del self.initial_pos_on_press # Clean up
+                del self.initial_pos_on_press
             
-            self.last_mouse_pos = None # Reset
+            self.last_mouse_pos = None
         super().mouseReleaseEvent(event)
 
     def itemChange(self, change, value):
@@ -116,7 +117,10 @@ class Selectable_Instance(QtCore.QObject, QGraphicsRectItem):
 
     def hoverLeaveEvent(self, event):
         if not self.is_selected:
-            self.setPen(self.default_pen)
+            if self.is_marked:
+                self.setPen(self.marker_pen)
+            else:
+                self.setPen(self.default_pen)
         super().hoverLeaveEvent(event)
 
     def toggle_selection(self):
@@ -126,17 +130,23 @@ class Selectable_Instance(QtCore.QObject, QGraphicsRectItem):
     def update_visual(self):
         if self.is_selected:
             self.setPen(self.selected_pen)
+        elif self.is_marked:
+            self.setPen(self.marker_pen)
         else:
             self.setPen(self.default_pen)
 
+    def set_marked(self, status:bool):
+        self.is_marked = status
+        self.update_visual()
+
 
 class Clickable_Video_Label(QtWidgets.QLabel):
-    clicked = Signal(int) # Signal to emit cam_idx when clicked
+    clicked = Signal(int)
 
     def __init__(self, cam_idx, parent=None):
         super().__init__(parent)
         self.cam_idx = cam_idx
-        self.setMouseTracking(True) # Enable mouse tracking for hover effects
+        self.setMouseTracking(True)
 
     def mousePressEvent(self, event: QtGui.QMouseEvent):
         if event.button() == Qt.LeftButton:
