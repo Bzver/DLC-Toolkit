@@ -134,6 +134,8 @@ class Frame_View:
             self._plot_current_frame(frame)
 
     def get_mask_from_blob_config(self):
+        if not self.dm.blob_config:
+            return
         try:
             frame_batch = self.vm.get_random_frame_samples(sample_count=20)
             mask = get_smart_bg_masking(
@@ -142,6 +144,8 @@ class Frame_View:
                 threshold = self.dm.blob_config.threshold,
                 polarity = self.dm.blob_config.blob_type
                 )
+        except KeyError:
+            pass
         except Exception as e:
             raise RuntimeError(f"[VIEW] Failed to get masking from workspace file: {e}.")
         else:
