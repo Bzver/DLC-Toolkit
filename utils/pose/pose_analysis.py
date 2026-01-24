@@ -22,17 +22,17 @@ def calculate_pose_centroids(
             - pose_centroids: Array of shape (instances, 2) or (N, instances, 2) with mean x and y coordinates.
             - local_coords: Array of shape (instances, keypoints*2) or (N, instances, keypoints*2) with relative positions.
     """
-    _, instance_count, xyconf = pred_data_array.shape
-    num_keypoint = xyconf // 3
+    _, I, D = pred_data_array.shape
+    K = D // 3
 
     pred_data_array_sliced = pred_data_array[frame_idx:frame_idx+1] if frame_idx > 0 else pred_data_array
 
     x_vals = pred_data_array_sliced[..., 0::3]
     y_vals = pred_data_array_sliced[..., 1::3]
-    frame_count = x_vals.shape[0]
+    F = x_vals.shape[0]
 
-    pose_centroids = np.full((frame_count, instance_count, 2), np.nan, dtype=np.float64)
-    local_coords = np.full((frame_count, instance_count, num_keypoint*2), np.nan, dtype=np.float64)
+    pose_centroids = np.full((F, I, 2), np.nan, dtype=np.float64)
+    local_coords = np.full((F, I, K*2), np.nan, dtype=np.float64)
     
     valid_mask = np.any(~np.isnan(x_vals), axis=-1)
 
@@ -42,11 +42,40 @@ def calculate_pose_centroids(
     local_coords[..., 0::2] = x_vals - pose_centroids[..., 0, np.newaxis]
     local_coords[..., 1::2] = y_vals - pose_centroids[..., 1, np.newaxis]
     
-    if frame_count == 1:
+    if F == 1:
         pose_centroids = np.squeeze(pose_centroids, axis=0)
         local_coords = np.squeeze(local_coords, axis=0)
 
     return pose_centroids, local_coords
+
+def calculate_anatomical_centers(
+    pred_data_array: np.ndarray,
+    angle_map_data: Dict[str, int]
+) -> np.ndarray:
+    """
+    Compute pose centers using anatomical center keypoint when available,
+    falling back to geometric centroid otherwise.
+    
+    Args:
+        pred_data_array : (F, I, 3*K)
+        angle_map_data : dict with 'head_idx', 'tail_idx', 'center_idx'
+    
+    Returns:
+        centers : (F, I, 2) array of [x, y] centers
+    """
+    center_idx = angle_map_data["center_idx"]
+
+    centroids, _ = calculate_pose_centroids(pred_data_array)
+    
+    center_x = pred_data_array[:, :, center_idx * 3]
+    center_y = pred_data_array[:, :, center_idx * 3 + 1]
+    valid = ~np.isnan(center_x) & ~np.isnan(center_y)
+
+    centers = centroids.copy()
+    centers[valid, 0] = center_x[valid]
+    centers[valid, 1] = center_y[valid]
+
+    return centers
 
 def calculate_pose_rotations(
     local_x: np.ndarray,
@@ -211,8 +240,9 @@ def calculate_canonical_pose(
         canon_pose (np.ndarray): Canonical average pose of shape (K, 2)
         aligned_frame_poses (np.ndarray):  Aligned individual poses of shape (M, 2*K)
         """
-    F, I, XYCONF = pred_data_array.shape
-    pred_data_combined = pred_data_array.reshape(F*I, 1, XYCONF)
+    F, I, D = pred_data_array.shape
+    K = D // 3
+    pred_data_combined = pred_data_array.reshape(F*I, 1, D)
     _, local_coords = calculate_pose_centroids(pred_data_combined)
     all_frame_poses = np.squeeze(local_coords)
 
@@ -227,7 +257,7 @@ def calculate_canonical_pose(
     aligned_frame_poses = pose_alignment_worker(valid_frame_poses, valid_angles)
 
     average_pose = np.nanmean((aligned_frame_poses), axis=0)
-    canon_pose = average_pose.reshape(XYCONF//3, 2) # (kp,2)
+    canon_pose = average_pose.reshape(K, 2)
     
     return canon_pose, aligned_frame_poses
 
@@ -249,21 +279,15 @@ def calculate_aligned_local(
         np.ndarray: 
             Aligned local coordinates of shape (frames, instances, keypoints * 3), 
     """
-    F, I, XYCONF = pred_data_array.shape
-    K = XYCONF // 3
+    F, I, D = pred_data_array.shape
+    K = D // 3
 
     local_poses = np.full((F, I, K*2), np.nan)
 
-    center_idx = angle_map_data["center_idx"]
-
-    pose_centroids = pred_data_array[:, :, center_idx*3:center_idx*3+2]
-    math_centroids, _ = calculate_pose_centroids(pred_data_array)
-
-    nan_mask = np.isnan(pose_centroids)
-    pose_centroids[nan_mask] = math_centroids[nan_mask]
+    centers = calculate_anatomical_centers(pred_data_array, angle_map_data)
     
-    local_poses[..., 0::2] = pred_data_array[:, :, 0::3] - pose_centroids[..., 0, np.newaxis]
-    local_poses[..., 1::2] = pred_data_array[:, :, 1::3] - pose_centroids[..., 1, np.newaxis]
+    local_poses[..., 0::2] = pred_data_array[:, :, 0::3] - centers[..., 0, np.newaxis]
+    local_poses[..., 1::2] = pred_data_array[:, :, 1::3] - centers[..., 1, np.newaxis]
     flat_local = local_poses.reshape(F*I, 2*K)
     flat_x = flat_local[:, 0::2]
     flat_y = flat_local[:, 1::2]
