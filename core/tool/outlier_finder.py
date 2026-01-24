@@ -1,26 +1,18 @@
 import numpy as np
-
-from ui import Spinbox_With_Label
-
 from PySide6 import QtWidgets
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QPushButton, QHBoxLayout, QVBoxLayout, QGroupBox, QLabel
-
+from PySide6.QtWidgets import QPushButton, QHBoxLayout, QVBoxLayout, QGroupBox, QLabel, QStackedWidget
 from typing import Optional, Dict
 
+from ui import Spinbox_With_Label
 from utils.pose import (
-    outlier_bodypart,
-    outlier_confidence,
-    outlier_duplicate,
-    outlier_flicker,
-    outlier_size,
-    outlier_pose,
-)
+    outlier_bodypart, outlier_confidence, outlier_duplicate, outlier_speed,
+    outlier_size, outlier_rotation, outlier_pose)
 from utils.logger import Loggerbox
 
+
 class Outlier_Finder(QGroupBox):
-    list_changed = Signal(list)
-    mask_changed = Signal(object)
+    mask_changed = Signal(object, bool)
 
     def __init__(self,
                 pred_data_array:np.ndarray,
@@ -30,49 +22,72 @@ class Outlier_Finder(QGroupBox):
         super().__init__(parent)
         self.setTitle("Outlier Finder")
         self.pred_data_array = pred_data_array
-        self.outlier_mask = None
+        F, I, _ = self.pred_data_array.shape
+        self.outliers = np.zeros((F, I), dtype=bool)
         
         layout = QVBoxLayout(self)
-        self.outlier_container = Outlier_Container(
-            self.pred_data_array, canon_pose=canon_pose, angle_map_data=angle_map_data)
-        layout.addWidget(self.outlier_container)
 
-        button_frame = self._build_button_frame()
-        layout.addLayout(button_frame)
+        mode_layout = QHBoxLayout()
+        mode_label = QLabel("Mode:")
+        self.mode_combo = QtWidgets.QComboBox()
+        self.mode_combo.addItems(["Instance", "Keypoint"])
+        self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
+        mode_layout.addWidget(mode_label)
+        mode_layout.addWidget(self.mode_combo)
+        mode_layout.addStretch()
+        layout.addLayout(mode_layout)
 
-    def _build_button_frame(self):
+        self.outlier_stack = QStackedWidget()
+        self.instance_container = Outlier_Container(self.pred_data_array, canon_pose, angle_map_data)
+        self.keypoint_container = Outlier_Container_KP(self.pred_data_array, canon_pose, angle_map_data)
+        self.outlier_stack.addWidget(self.instance_container)
+        self.outlier_stack.addWidget(self.keypoint_container)
+
+        layout.addWidget(self.outlier_stack)
+
         button_frame = QHBoxLayout()
-
         preview_button = QPushButton("Preview Outliers")
-        preview_button.clicked.connect(self.outlier_preview)
-
+        preview_button.clicked.connect(self._outlier_preview)
         delete_button = QPushButton("Delete Outliers")
-        delete_button.clicked.connect(self.outlier_delete)
-
+        delete_button.clicked.connect(self._outlier_delete)
         button_frame.addWidget(preview_button)
         button_frame.addWidget(delete_button)
-        return button_frame
-
-    def get_outlier_mask(self):
-        outlier_mask = self.outlier_container.get_combined_mask()
-        self.outliers = outlier_mask
-        if outlier_mask is None or not np.any(outlier_mask):
-            self.list_changed.emit([])
-            return
-
-    def outlier_preview(self):
-        self.get_outlier_mask()
+        layout.addLayout(button_frame)
+            
+    def _outlier_preview(self):
+        self._get_outlier_mask()
         if self.outliers is not None:
-            outlier_frames = np.where(np.any(self.outliers, axis=1))[0].tolist()
-            self.list_changed.emit(outlier_frames)
+            self.mask_changed.emit(self.outliers, False)
+
+    def _outlier_delete(self):
+        self._get_outlier_mask()
+        if self.outliers is not None:
+            self.mask_changed.emit(self.outliers, True)
+
+    def _get_outlier_mask(self):
+        current_index = self.outlier_stack.currentIndex()
+        if current_index == 0:
+            outlier_mask = self.instance_container.get_combined_mask()
+            if outlier_mask is not None:
+                self.outliers = outlier_mask
+            self.mask_changed.emit(self.outliers, False)
         else:
-            self.list_changed.emit([])
+            outlier_mask = self.keypoint_container.get_combined_mask()
+            if outlier_mask is not None:
+                self.outliers = outlier_mask
+            self.mask_changed.emit(self.outliers, False)
 
-    def outlier_delete(self):
-        self.get_outlier_mask()
-        if self.outliers is not None:
-            self.mask_changed.emit(self.outliers)
-            self.list_changed.emit([])
+    def _on_mode_changed(self, index: int):
+        self.outlier_stack.setCurrentIndex(index)
+        self._refresh_outliers_shape()
+        
+    def _refresh_outliers_shape(self):
+        F, I, D = self.pred_data_array.shape
+        if self.outlier_stack.currentIndex() == 0:
+            self.outliers = np.zeros((F, I), dtype=bool)
+        else:
+            K = D // 3
+            self.outliers = np.zeros((F, I, K), dtype=bool)
 
 class Outlier_Container(QtWidgets.QWidget):
     def __init__(self,
@@ -85,28 +100,30 @@ class Outlier_Container(QtWidgets.QWidget):
         self.canon_pose = canon_pose
         self.angle_map_data = angle_map_data
 
-        layout = QVBoxLayout(self)
+        self.oc_layout = QVBoxLayout(self)
 
         self.logic_widget = self._build_or_and_radio_widget()
         self.outlier_confidence_gbox = self._build_outlier_confidence_gbox()
         self.outlier_bodypart_gbox = self._build_outlier_bodypart_gbox()
         self.outlier_size_gbox = self._build_outlier_size_gbox()
+        self.outlier_rotation_gbox = self._build_outlier_rotation_gbox()
         self.outlier_duplicate_gbox = self._build_outlier_duplicate_gbox()
         self.outlier_pose_gbox = self._build_outlier_pose_gbox()
-        self.outlier_flicker_gbox = self._build_outlier_flicker_gbox()
+        self.outlier_speed_gbox = self._build_outlier_speed_gbox()
 
-        layout.addWidget(self.logic_widget)
-        layout.addWidget(self.outlier_confidence_gbox)
-        layout.addWidget(self.outlier_bodypart_gbox)
-        layout.addWidget(self.outlier_size_gbox)
-        layout.addWidget(self.outlier_duplicate_gbox)
-        layout.addWidget(self.outlier_pose_gbox)
-        layout.addWidget(self.outlier_flicker_gbox)
+        self.oc_layout.addWidget(self.logic_widget)
+        self.oc_layout.addWidget(self.outlier_confidence_gbox)
+        self.oc_layout.addWidget(self.outlier_bodypart_gbox)
+        self.oc_layout.addWidget(self.outlier_size_gbox)
+        self.oc_layout.addWidget(self.outlier_rotation_gbox)
+        self.oc_layout.addWidget(self.outlier_duplicate_gbox)
+        self.oc_layout.addWidget(self.outlier_pose_gbox)
+        self.oc_layout.addWidget(self.outlier_speed_gbox)
 
         if self.canon_pose is None:
-            self.outlier_size_gbox.setEnabled(False)
-        if self.angle_map_data is None:
             self.outlier_pose_gbox.setEnabled(False)
+        if self.angle_map_data is None:
+            self.outlier_rotation_gbox.setEnabled(False)
 
     def get_combined_mask(self) -> Optional[np.ndarray]:
         masks = []
@@ -128,14 +145,17 @@ class Outlier_Container(QtWidgets.QWidget):
         if self.outlier_size_gbox.isChecked():
             mask = outlier_size(
                 self.pred_data_array,
-                canon_pose=self.canon_pose,
                 min_ratio=self.min_size_spinbox.value(),
                 max_ratio=self.max_size_spinbox.value()
             )
             masks.append(mask)
 
-        if self.outlier_flicker_gbox.isChecked():
-            mask = outlier_flicker(self.pred_data_array)
+        if self.outlier_rotation_gbox.isChecked():
+            mask = outlier_rotation(
+                self.pred_data_array,
+                angle_map_data=self.angle_map_data,
+                threshold_deg=self.rotation_angle_spinbox.value()
+            )
             masks.append(mask)
 
         if self.outlier_duplicate_gbox.isChecked():
@@ -149,11 +169,19 @@ class Outlier_Container(QtWidgets.QWidget):
         if self.outlier_pose_gbox.isChecked():
             mask = outlier_pose(
                 self.pred_data_array,
-                angle_map_data=self.angle_map_data,
-                quant_step=self.pose_step_spinbox.value(),
-                min_samples=self.pose_sample_spinbox.value(),
+                canon_pose=self.canon_pose,
+                threshold_px=self.pose_error_spinbox.value()
             )
             masks.append(mask)
+
+        if self.outlier_speed_gbox.isChecked():
+            mask = outlier_speed(
+                self.pred_data_array,
+                angle_map_data=self.angle_map_data,
+                max_speed_px=self.speed_spinbox.value()
+            )
+            masks.append(mask)
+
         if not masks:
             Loggerbox.warning(self, "No Detectors Enabled", "All outlier detectors are disabled.")
         else:
@@ -168,7 +196,7 @@ class Outlier_Container(QtWidgets.QWidget):
             return combined
 
     def _build_outlier_confidence_gbox(self):
-        gbox = QtWidgets.QGroupBox("Outlier Confidence")
+        gbox = QGroupBox("Outlier Confidence")
         gbox.setCheckable(True)
         gbox.setChecked(True)
         layout = QHBoxLayout(gbox)
@@ -184,104 +212,111 @@ class Outlier_Container(QtWidgets.QWidget):
         return gbox
 
     def _build_outlier_bodypart_gbox(self):
-        gbox = QtWidgets.QGroupBox("Outlier Bodypart")
+        gbox = QGroupBox("Outlier Bodypart")
         gbox.setCheckable(True)
         gbox.setChecked(False)
         layout = QHBoxLayout(gbox)
 
-        label = QLabel("Bodypart Threshold:")
-        self.bodypart_spinbox = QtWidgets.QSpinBox()
-        self.bodypart_spinbox.setRange(0, 30)
-        self.bodypart_spinbox.setValue(2)
-        layout.addWidget(label)
+        self.bodypart_spinbox = Spinbox_With_Label("Bodypart Threshold:", (0, 30), 4)
+        self.bodypart_spinbox.setToolTip("Minimum number of detected keypoints required for an instance to be considered valid.")
         layout.addWidget(self.bodypart_spinbox)
         return gbox
 
     def _build_outlier_size_gbox(self):
-        gbox = QtWidgets.QGroupBox("Outlier Size")
+        gbox = QGroupBox("Outlier Size")
         gbox.setCheckable(True)
         gbox.setChecked(False)
         layout = QVBoxLayout(gbox)
 
         min_frame = QHBoxLayout()
         min_label = QLabel("Min Size Ratio:")
+        min_label.setToolTip("Instances smaller than this ratio of the average pose size are considered too small.")
         self.min_size_spinbox = QtWidgets.QDoubleSpinBox()
         self.min_size_spinbox.setRange(0.0, 1.0)
         self.min_size_spinbox.setSingleStep(0.05)
         self.min_size_spinbox.setValue(0.5)
         self.min_size_spinbox.setDecimals(2)
+        self.min_size_spinbox.setToolTip("Minimum allowed size relative to the dataset-wide average pose radius (e.g., 0.5 = half the average size).")
         min_frame.addWidget(min_label)
         min_frame.addWidget(self.min_size_spinbox)
         layout.addLayout(min_frame)
 
         max_frame = QHBoxLayout()
         max_label = QLabel("Max Size Ratio:")
+        max_label.setToolTip("Instances larger than this ratio of the average pose size are considered too large.")
         self.max_size_spinbox = QtWidgets.QDoubleSpinBox()
         self.max_size_spinbox.setRange(1.0, 5.0)
         self.max_size_spinbox.setSingleStep(0.1)
         self.max_size_spinbox.setValue(2.0)
         self.max_size_spinbox.setDecimals(2)
+        self.max_size_spinbox.setToolTip("Maximum allowed size relative to the dataset-wide average pose radius (e.g., 2.0 = twice the average size).")
         max_frame.addWidget(max_label)
         max_frame.addWidget(self.max_size_spinbox)
         layout.addLayout(max_frame)
         return gbox
 
-    def _build_outlier_flicker_gbox(self):
-        gbox = QtWidgets.QGroupBox("Outlier Flicker")
+    def _build_outlier_rotation_gbox(self):
+        gbox = QGroupBox("Outlier Rotation")
         gbox.setCheckable(True)
         gbox.setChecked(False)
+        layout = QHBoxLayout(gbox)
 
-        layout = QtWidgets.QVBoxLayout()
-        gbox.setLayout(layout)
-        gbox.setFixedHeight(15)
-
+        self.rotation_angle_spinbox = Spinbox_With_Label("Angle Threshold (°):", (1, 180), 50)
+        self.rotation_angle_spinbox.setToolTip("Minimum allowed angle (in degrees) between head-center and tail-center vectors.")
+        layout.addWidget(self.rotation_angle_spinbox)
+        layout.addStretch()
         return gbox
 
+
+
     def _build_outlier_duplicate_gbox(self):
-        gbox = QtWidgets.QGroupBox("Outlier Duplicate")
+        gbox = QGroupBox("Outlier Duplicate")
         gbox.setCheckable(True)
         gbox.setChecked(False)
         layout = QVBoxLayout(gbox)
 
-        label = QLabel("Duplcate Bodypart Threshold (ratio):")
+        dbp_lframe = QHBoxLayout()
+        label = QLabel("Bodypart Threshold:")
+        label.setToolTip("Fraction of overlapping keypoints required to consider two instances as duplicates.")
         self.duplicate_bp_spinbox = QtWidgets.QDoubleSpinBox()
         self.duplicate_bp_spinbox.setRange(0.0, 1.0)
         self.duplicate_bp_spinbox.setSingleStep(0.1)
         self.duplicate_bp_spinbox.setValue(0.7)
         self.duplicate_bp_spinbox.setDecimals(2)
-        layout.addWidget(label)
-        layout.addWidget(self.duplicate_bp_spinbox)
+        self.duplicate_bp_spinbox.setToolTip("Threshold (0.0–1.0): if the number of close keypoints exceeds this fraction of the smaller instance’s valid keypoints, duplication is suspected.")
+        dbp_lframe.addWidget(label)
+        dbp_lframe.addWidget(self.duplicate_bp_spinbox)
 
         self.duplicate_dist_spinbox = Spinbox_With_Label("Distance Threshold:", (1, 100), 3)
+        self.duplicate_dist_spinbox.setToolTip("Maximum distance (in pixels) between two keypoints to be considered 'close' for duplicate detection.")
+        layout.addLayout(dbp_lframe)
         layout.addWidget(self.duplicate_dist_spinbox)
 
         return gbox
 
     def _build_outlier_pose_gbox(self):
-        gbox = QtWidgets.QGroupBox("Outlier Pose")
+        gbox = QGroupBox("Outlier Pose")
         gbox.setCheckable(True)
         gbox.setChecked(False)
         layout = QVBoxLayout(gbox)
 
-        step_frame = QHBoxLayout()
-        step_label = QLabel("Quantization Step:")
-        self.pose_step_spinbox = QtWidgets.QDoubleSpinBox()
-        self.pose_step_spinbox.setRange(0.05, 2.0)
-        self.pose_step_spinbox.setSingleStep(0.05)
-        self.pose_step_spinbox.setValue(1.5)
-        step_frame.addWidget(step_label)
-        step_frame.addWidget(self.pose_step_spinbox)
-        layout.addLayout(step_frame)
+        self.pose_error_spinbox = Spinbox_With_Label("Error Threshold:", (1, 250), 45)
+        self.pose_error_spinbox.setToolTip(
+            "Instances with mean keypoint error above this value are considered outliers. Only applied to poses with all keypoints present.")
+        layout.addWidget(self.pose_error_spinbox)
 
-        sample_frame = QHBoxLayout()
-        sample_label = QLabel("Min Samples:")
-        self.pose_sample_spinbox = QtWidgets.QSpinBox()
-        self.pose_sample_spinbox.setRange(2, 10)
-        self.pose_sample_spinbox.setValue(2)
-        sample_frame.addWidget(sample_label)
-        sample_frame.addWidget(self.pose_sample_spinbox)
-        layout.addLayout(sample_frame)
+        return gbox
 
+    def _build_outlier_speed_gbox(self):
+        gbox = QGroupBox("Outlier Speed")
+        gbox.setCheckable(True)
+        gbox.setChecked(False)
+        layout = QHBoxLayout(gbox)
+
+        self.speed_spinbox = Spinbox_With_Label("Max Speed (px/frame):", (1, 500), 50)
+        self.speed_spinbox.setToolTip("Instances moving faster than this between frames are considered outliers.")
+        layout.addWidget(self.speed_spinbox)
+        layout.addStretch()
         return gbox
 
     def _build_or_and_radio_widget(self):
@@ -300,5 +335,57 @@ class Outlier_Container(QtWidgets.QWidget):
         layout.addWidget(self.radio_and)
 
         layout.addStretch()
+        logic_widget.setMaximumHeight(50)
         
         return logic_widget
+
+class Outlier_Container_KP(Outlier_Container):
+    def __init__(self, pred_data_array, canon_pose = None, angle_map_data = None, parent=None):
+        super().__init__(pred_data_array, canon_pose, angle_map_data, parent)
+
+        self.outlier_duplicate_gbox.setVisible(False)
+        self.outlier_bodypart_gbox.setVisible(False)
+        self.outlier_size_gbox.setVisible(False)
+        self.outlier_rotation_gbox.setVisible(False)
+
+    def get_combined_mask(self) -> Optional[np.ndarray]:
+        masks = []
+
+        if self.outlier_confidence_gbox.isChecked():
+            mask = outlier_confidence(
+                self.pred_data_array,
+                threshold=self.confidence_spinbox.value(),
+                kp_mode=True
+            )
+            masks.append(mask)
+
+        if self.outlier_speed_gbox.isChecked():
+            mask = outlier_speed(
+                self.pred_data_array,
+                angle_map_data=self.angle_map_data,
+                max_speed_px=self.speed_spinbox.value(),
+                kp_mode=True
+            )
+            masks.append(mask)
+
+        if self.outlier_pose_gbox.isChecked():
+            mask = outlier_pose(
+                self.pred_data_array,
+                canon_pose=self.canon_pose,
+                threshold_px=self.pose_error_spinbox.value(),
+                kp_mode=True
+            )
+            masks.append(mask)
+
+        if not masks:
+            Loggerbox.warning(self, "No Detectors Enabled", "All outlier detectors are disabled.")
+        else:
+            combined = masks[0]
+            if self.radio_or.isChecked():
+                for m in masks[1:]:
+                    combined = np.logical_or(combined, m)
+            else:
+                for m in masks[1:]:
+                    combined = np.logical_and(combined, m)
+
+            return combined

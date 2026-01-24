@@ -1,231 +1,155 @@
 import numpy as np
 from itertools import combinations
-from typing import Tuple, Dict
+from typing import Dict, Optional
 
-from .pose_analysis import calculate_pose_centroids, calculate_pose_rotations
-from .pose_worker import pose_alignment_worker
-from utils.helper import get_instances_on_current_frame, bye_bye_runtime_warning
+from .pose_analysis import calculate_pose_centroids, calculate_anatomical_centers, calculate_aligned_local
+from utils.helper import bye_bye_runtime_warning
 
 
-def outlier_removal(pred_data_array:np.ndarray, outlier_mask:np.ndarray) -> Tuple[np.ndarray, int, int]:
-    """
-    Removes outliers from the prediction data by setting flagged values to NaN.
-
-    Args:
-        pred_data_array (np.ndarray): Array of shape (num_frames, num_instances, num_keypoints * 3) 
-            containing flattened 2D predictions (x, y, confidence).
-        outlier_mask (np.ndarray): Boolean mask of shape (num_frames, num_instances) indicating 
-            which instance-frame pairs are outliers.
-
-    Returns:
-        Tuple[np.ndarray, int, int]:
-            - Modified prediction array with outliers set to NaN.
-            - Number of frames that contained at least one outlier.
-            - Total number of instance outliers removed.
-    """
-    data_array = pred_data_array.copy()
-    removed_frames_count = np.sum(np.any(outlier_mask, axis=1))
-    removed_instances_count = np.sum(outlier_mask)
-    data_array[outlier_mask] = np.nan
-    return data_array, removed_frames_count, removed_instances_count
+def outlier_removal(pred_data_array:np.ndarray, outlier_mask:np.ndarray) -> np.ndarray:
+    if outlier_mask.ndim == 2:
+        data_array = pred_data_array.copy()
+        data_array[outlier_mask] = np.nan
+        return data_array
+    elif outlier_mask.ndim == 3:
+        F, I, D = pred_data_array.shape
+        K = D // 3
+        data_array = pred_data_array.reshape(F, I, K, 3)
+        data_array[outlier_mask] = np.nan
+        return data_array.reshape(F, I, D)
 
 ########################################################################################################
 
-def outlier_confidence(pred_data_array:np.ndarray, threshold:float=0.5) -> np.ndarray:
-    """
-    Flags instances with average keypoint confidence below a given threshold.
-
-    Args:
-        pred_data_array (np.ndarray): Prediction array of shape (num_frames, num_instances, num_keypoints * 3).
-        threshold (float): Minimum average confidence for an instance to be considered valid.
-
-    Returns:
-        np.ndarray: Boolean mask of shape (num_frames, num_instances) where True indicates low confidence.
-    """
+def outlier_confidence(pred_data_array:np.ndarray, threshold:float=0.5, kp_mode:bool=False) -> np.ndarray:
     confidence_scores = pred_data_array[:, :, 2::3]
+
+    if kp_mode:
+        return confidence_scores < threshold
+
     with bye_bye_runtime_warning():
         inst_conf = np.nanmean(confidence_scores, axis=2)
-    low_conf_mask = inst_conf < threshold
-    return low_conf_mask
+        return inst_conf < threshold
 
 def outlier_bodypart(pred_data_array:np.ndarray, threshold:int=2) -> np.ndarray:
-    """
-    Flags instances that have fewer detected keypoints than the specified threshold.
-
-    Only considers instances with at least one valid keypoint (excludes completely missing ones).
-
-    Args:
-        pred_data_array (np.ndarray): Prediction array of shape (num_frames, num_instances, num_keypoints * 3).
-        threshold (int): Minimum number of visible keypoints required.
-
-    Returns:
-        np.ndarray: Boolean mask of shape (num_frames, num_instances) where True indicates too few body parts.
-    """
     x_coords_mask = ~np.isnan(pred_data_array[:, :, 0::3])
     y_coords_mask = ~np.isnan(pred_data_array[:, :, 1::3])
 
     discovered_bodyparts = np.sum(np.logical_and(x_coords_mask, y_coords_mask), axis=2)
-    low_bp_mask = np.logical_and(discovered_bodyparts < threshold,
-        discovered_bodyparts > 0) # No need to include empty instances
+    low_bp_mask = np.logical_and(discovered_bodyparts < threshold, discovered_bodyparts > 0)
     
     return low_bp_mask
 
-def outlier_size(
-        pred_data_array:np.ndarray,
-        canon_pose:np.ndarray,
-        min_ratio:float=0.3,
-        max_ratio:float=2.5
-        ) -> np.ndarray:
-    """
-    Flags instances whose size (mean distance of keypoints from centroid) is significantly different 
-    from the canonical pose size.
-
-    Helps detect implausible detections (e.g., extremely small or large animal poses).
-
-    Args:
-        pred_data_array (np.ndarray): Prediction array of shape (num_frames, num_instances, num_keypoints * 3).
-        canon_pose (np.ndarray): Canonical 2D pose of shape (num_keypoints, 2) used as size reference.
-        min_ratio (float): Instances smaller than this ratio of the canonical size are flagged.
-        max_ratio (float): Instances larger than this ratio of the canonical size are flagged.
-
-    Returns:
-        np.ndarray: Boolean mask of shape (num_frames, num_instances) where True indicates abnormal size.
-    """
+def outlier_size(pred_data_array:np.ndarray, min_ratio:float=0.3, max_ratio:float=2.5) -> np.ndarray:
     total_frames, instance_count, _ = pred_data_array.shape
-    canon_radius = np.mean(np.sqrt(canon_pose[:, 0]**2 + canon_pose[:, 1]**2))
+
     _, local_coords = calculate_pose_centroids(pred_data_array)
     inst_radius = np.full((total_frames, instance_count), np.nan)
     for inst_idx in range(instance_count):
-        
         with bye_bye_runtime_warning():
             inst_radius[:, inst_idx] = np.nanmean(
                 np.sqrt(local_coords[:, inst_idx, 0::2]**2 + local_coords[:, inst_idx, 1::2]**2), axis=1)
-        
-    small_mask = inst_radius < canon_radius * min_ratio
-    large_mask = inst_radius >= canon_radius * max_ratio
+
+    mean_radius = np.nanmean(inst_radius)
+
+    small_mask = inst_radius < mean_radius * min_ratio
+    large_mask = inst_radius >= mean_radius * max_ratio
 
     return np.logical_or(small_mask, large_mask)
 
 def outlier_pose(
     pred_data_array: np.ndarray,
-    angle_map_data: Dict[str, int],
-    quant_step: float = 1.0,
-    min_samples: int = 3
+    canon_pose: np.ndarray,
+    threshold_px: float = 15.0,
+    kp_mode:bool=False
 ) -> np.ndarray:
-    """
-    Flags pose outliers using pose quantization and frequency counting across all frames and instances.
+    F, I, _ = pred_data_array.shape
+    K = canon_pose.shape[0]
+    assert pred_data_array.shape[2] == K * 3, "Keypoint count mismatch"
 
-    Args:
-        pred_data_array (np.ndarray): Shape (F, I, 3*K)
-        angle_map_data : Dict with 'head_idx', 'tail_idx', 'angle_map'.
-            - angle map: list of (i, j, offset, weight) of each connection
-        quant_step (float): Grid spacing for quantization (e.g., 0.25). Smaller = stricter.
-        min_samples (int): Minimum number of occurrences for a quantized pose to be considered valid.
-            Poses appearing fewer than this threshold are flagged as outliers.
+    data = pred_data_array.reshape(F, I, K, 3)
+    xy = data[..., :2]
 
-    Returns:
-        np.ndarray: Boolean mask (F, I) where True = outlier pose.
-    """
-    angle_map = angle_map_data["angle_map"]
-    num_kp = max(max(entry["i"], entry["j"]) for entry in angle_map) + 1
+    fully_observed = np.all(~np.isnan(xy), axis=(2, 3))
 
-    scores = np.zeros(num_kp)
-    for entry in angle_map:
-        i, j, w = entry["i"], entry["j"], entry["weight"]
-        scores[i] += w
-        scores[j] += w
+    outlier_mask = np.zeros((F, I), dtype=bool)
 
-    top_indices = np.argsort(scores)[::-1][:6]
+    if not np.any(fully_observed):
+        return outlier_mask
 
-    _, local_coords = calculate_pose_centroids(pred_data_array) # (F, I, K*2)
-    local_coords = np.nan_to_num(local_coords, nan=0.0)
+    N = np.sum(fully_observed)
+    xy_complete = xy[fully_observed]
+    canon_batch = np.tile(canon_pose[None, :, :], (N, 1, 1))
 
-    local_x_all, local_y_all = local_coords[:,:,0::2], local_coords[:,:,1::2]
+    src_mean = np.mean(canon_batch, axis=1, keepdims=True)
+    dst_mean = np.mean(xy_complete, axis=1, keepdims=True)
 
-    local_max = np.max(np.sqrt(local_x_all**2 + local_y_all**2), axis=2) # (F, I)
-    outlier_mask = np.zeros_like(local_max, dtype=bool)
-    local_max[local_max < 1e-6] = 1.0
-    
-    local_norm = local_coords / local_max[..., np.newaxis]
-    local_norm_flat = local_norm.reshape(-1,  local_norm.shape[-1])  # (F*I, K*2)
+    src_centered = canon_batch - src_mean
+    dst_centered = xy_complete - dst_mean
 
-    slice_indices = np.sort(np.concatenate([2 * top_indices, 2 * top_indices + 1]))
+    H = np.einsum('nki,nkj->nij', src_centered, dst_centered)
+    U, _, Vt = np.linalg.svd(H)
+    R = np.einsum('nij,nkj->nik', Vt, U)  # R = V @ U^T
 
-    local_norm_sliced = local_norm_flat[:, slice_indices]
-    valid_mask = ~np.all(local_norm_sliced == 0.0, axis=1)
-    valid_indices = np.where(valid_mask)[0]
+    detR = np.linalg.det(R)
+    reflect_mask = detR < 0
+    if np.any(reflect_mask):
+        Vt_reflect = Vt.copy()
+        Vt_reflect[reflect_mask, 1, :] *= -1
+        R[reflect_mask] = np.einsum('nij,nkj->nik', Vt_reflect[reflect_mask], U[reflect_mask])
 
-    local_norm_filtered = local_norm_sliced[valid_mask]
-    angles = calculate_pose_rotations(
-        local_x=local_norm_filtered[:, 0::2],
-        local_y=local_norm_filtered[:, 1::2],
-        angle_map_data=angle_map_data)
-    local_norm_rotated = pose_alignment_worker(local_norm_filtered, angles=angles)
+    t = dst_mean.squeeze(axis=1) - np.einsum('nij,nj->ni', R, src_mean.squeeze(axis=1))
+    transformed_canon = np.einsum('nij,nkj->nki', R, canon_batch) + t[:, None, :]
 
-    if quant_step > 0:
-        X_quantized = np.round(local_norm_rotated / quant_step) * quant_step
-    else:
-        X_quantized = local_norm_rotated.copy()
+    flat_indices = np.flatnonzero(fully_observed.ravel())
 
-    _, inverse_indices, counts = np.unique(
-        X_quantized, axis=0, return_inverse=True, return_counts=True
-    )
+    errors = np.linalg.norm(xy_complete - transformed_canon, axis=2)
+    if kp_mode:
+        outliers_complete_kp = errors > threshold_px
+        outlier_kp_mask_flat = np.zeros((F * I, K), dtype=bool)
+        outlier_kp_mask_flat[flat_indices] = outliers_complete_kp
+        return outlier_kp_mask_flat.reshape(F, I, K)
 
-    outlier_valid = counts[inverse_indices] < min_samples
+    outlier_complete = np.mean(errors, axis=1) > threshold_px
+    outlier_mask_flat = np.zeros(F * I, dtype=bool)
+    outlier_mask_flat[flat_indices[outlier_complete]] = True
+    return outlier_mask_flat.reshape(F, I)
 
-    for idx, is_outlier in enumerate(outlier_valid):
-        if is_outlier:
-            global_idx = valid_indices[idx]
-            f = global_idx // pred_data_array.shape[1]
-            i = global_idx % pred_data_array.shape[1]
-            outlier_mask[f, i] = True
+def outlier_rotation(pred_data_array: np.ndarray, angle_map_data: Dict[str, int], threshold_deg: float = 10.0) -> np.ndarray:
+    head_idx = angle_map_data['head_idx']
+    center_idx = angle_map_data['center_idx']
+    tail_idx = angle_map_data['tail_idx']
 
-    return outlier_mask
+    hx, hy = pred_data_array[:, :, head_idx * 3], pred_data_array[:, :, head_idx * 3 + 1]
+    cx, cy = pred_data_array[:, :, center_idx * 3], pred_data_array[:, :, center_idx * 3 + 1]
+    tx, ty = pred_data_array[:, :, tail_idx * 3], pred_data_array[:, :, tail_idx * 3 + 1]
 
-def outlier_flicker(pred_data_array: np.ndarray) -> np.ndarray:
-    """
-    Flags instances that appear only in the current frame but not in adjacent frames (flickering).
-    
-    Args:
-        pred_data_array (np.ndarray): Shape (num_frames, num_instances, num_keypoints * 3).
+    v1x = hx - cx
+    v1y = hy - cy
+    v2x = tx - cx
+    v2y = ty - cy
 
-    Returns:
-        np.ndarray: Boolean mask of shape (num_frames, num_instances) where True = flickering.
-    """
-    all_x, all_y = pred_data_array[:, :, 0::3], pred_data_array[:, :, 1::3]
-    presence = np.any(~np.isnan(all_x) & ~np.isnan(all_y), axis=2)
+    cross = v1x * v2y - v1y * v2x
+    dot = v1x * v2x + v1y * v2y
+    angles_rad = np.arctan2(np.abs(cross), dot)
+    angles_deg = np.degrees(angles_rad)
 
-    instance_count = presence.shape[1]
+    valid_head = ~np.isnan(hx) & ~np.isnan(hy)
+    valid_center = ~np.isnan(cx) & ~np.isnan(cy)
+    valid_tail = ~np.isnan(tx) & ~np.isnan(ty)
+    all_valid = valid_head & valid_center & valid_tail
 
-    prev_presence = np.concatenate([np.zeros((1, instance_count), dtype=bool), presence[:-1]], axis=0)
-    next_presence = np.concatenate([presence[1:], np.zeros((1, instance_count), dtype=bool)], axis=0)
-    flicker_mask = presence & (~prev_presence) & (~next_presence)
+    low_angle_mask = (angles_deg < threshold_deg) & all_valid
 
-    return flicker_mask
+    return low_angle_mask
 
 def outlier_duplicate(
         pred_data_array:np.ndarray,
         bp_threshold:float=0.5,
         dist_threshold:float=5.0
         ) -> np.ndarray:
-    """
-    Detects duplicate detections by identifying instances whose keypoints are abnormally close.
-
-    Compares all pairs of instances. An instance is flagged if a large proportion of its keypoints 
-    are within a small distance of another instance's keypoints. The lower-confidence or smaller 
-    instance is marked as the duplicate.
-
-    Args:
-        pred_data_array (np.ndarray): Prediction array of shape (num_frames, num_instances, num_keypoints * 3).
-        bp_threshold (float): Proportion of overlapping keypoints required to flag duplicates.
-        dist_threshold (float): Maximum distance (in pixels) for two keypoints to be considered overlapping.
-
-    Returns:
-        np.ndarray: Boolean mask of shape (num_frames, num_instances) where True indicates a duplicate instance.
-    """
-    total_frames, instance_count, _ = pred_data_array.shape
-    instances = list(range(instance_count))
-    duplicate_mask = np.zeros((total_frames, instance_count), dtype=bool)
+    F, I, _ = pred_data_array.shape
+    instances = list(range(I))
+    duplicate_mask = np.zeros((F, I), dtype=bool)
 
     for inst_1_idx, inst_2_idx in combinations(instances, 2):
         inst_1_x = pred_data_array[:, inst_1_idx, 0::3]
@@ -239,6 +163,7 @@ def outlier_duplicate(
         with bye_bye_runtime_warning():
             inst_1_conf = np.nanmean(pred_data_array[:, inst_1_idx, 2::3], axis=1)
             inst_2_conf = np.nanmean(pred_data_array[:, inst_2_idx, 2::3], axis=1)
+
         inst_1_valid_kp = np.sum(~np.isnan(inst_1_x), axis=1)
         inst_2_valid_kp = np.sum(~np.isnan(inst_2_x), axis=1)
 
@@ -258,3 +183,53 @@ def outlier_duplicate(
             duplicate_mask[frame_idx, inst_to_mark] = True
             
     return duplicate_mask
+
+def outlier_speed(
+    pred_data_array: np.ndarray,
+    angle_map_data: Optional[Dict[str, int]]=None,
+    max_speed_px: float = 50.0,
+    kp_mode: bool = False
+) -> np.ndarray:
+    F, I, D = pred_data_array.shape
+    K = D // 3
+
+    x = pred_data_array[:, :, 0::3]
+    y = pred_data_array[:, :, 1::3]
+
+    if kp_mode:
+        if angle_map_data is not None:
+            aligned_array = calculate_aligned_local(pred_data_array, angle_map_data)
+            x = aligned_array[:, :, 0::3]
+            y = aligned_array[:, :, 1::3]
+
+        dx = np.diff(x, axis=0)
+        dy = np.diff(y, axis=0)
+        speed = np.sqrt(dx**2 + dy**2)
+
+        valid_curr = ~np.isnan(x[:-1]) & ~np.isnan(y[:-1])
+        valid_next = ~np.isnan(x[1:]) & ~np.isnan(y[1:])
+        valid = valid_curr & valid_next
+
+        mask = np.zeros((F, I, K), dtype=bool)
+        mask[1:] = (speed > max_speed_px) & valid
+
+        return mask
+    else:
+        if angle_map_data is not None:
+            centers = calculate_anatomical_centers(pred_data_array, angle_map_data)
+        else:
+            centroids, _ = calculate_pose_centroids(pred_data_array)
+            centers = centroids
+
+        dx = np.diff(centers[..., 0], axis=0)
+        dy = np.diff(centers[..., 1], axis=0)
+        speed = np.sqrt(dx**2 + dy**2)
+
+        valid_curr = np.any(~np.isnan(x[:-1]), axis=2)
+        valid_next = np.any(~np.isnan(x[1:]), axis=2)
+        valid = valid_curr & valid_next
+
+        mask = np.zeros((F, I), dtype=bool)
+        mask[1:] = (speed > max_speed_px) & valid
+
+        return mask

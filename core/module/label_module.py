@@ -14,7 +14,7 @@ from ui import (Menu_Widget, Video_Player_Widget, Pose_Rotation_Dialog, Status_B
                 Shortcut_Manager, Progress_Indicator_Dialog, Frame_Range_Dialog)
 from utils.pose import (
     rotate_selected_inst, generate_missing_inst, generate_missing_kp_for_inst,
-    calculate_pose_centroids, calculate_pose_rotations
+    calculate_pose_centroids, calculate_pose_rotations, outlier_removal
     )
 from utils.track import (
     Track_Fixer, interpolate_track_all, delete_track, swap_track, interpolate_track,
@@ -161,7 +161,7 @@ class Frame_Label:
         self.inst_pastebin = None
         self.pred_data_array = None
         self.open_outlier = False
-        self.skip_outlier_clean= False
+        self.outlier_mask = None
         self.reset_zoom()
             
     def init_loaded_vid(self):
@@ -221,7 +221,12 @@ class Frame_Label:
 
         if self.pred_data_array is not None:
             self.plotter.plot_config = self.dm.plot_config
-            self.plotter.plot_predictions(self.gview.gscene, current_frame_data)
+            if self.outlier_mask is None:
+                self.plotter.plot_predictions(self.gview.gscene, current_frame_data)
+            elif self.outlier_mask.ndim == 2:
+                self.plotter.plot_predictions(self.gview.gscene, current_frame_data, marked_frame_instance=self.outlier_mask[self.dm.current_frame_idx])
+            elif self.outlier_mask.ndim == 3:
+                self.plotter.plot_predictions(self.gview.gscene, current_frame_data, marked_frame_kp=self.outlier_mask[self.dm.current_frame_idx])
 
         self.gview.update()
         self.vid_play.set_current_frame(self.dm.current_frame_idx)
@@ -310,12 +315,8 @@ class Frame_Label:
         if self.open_outlier:
             self.menu_slot_callback()
             self.outlier_finder = Outlier_Finder(
-                self.pred_data_array,
-                canon_pose=self.dm.canon_pose, 
-                angle_map_data=self.dm.angle_map_data,
-                parent=self.main)
+                self.pred_data_array, canon_pose=self.dm.canon_pose, angle_map_data=self.dm.angle_map_data, parent=self.main)
             self.outlier_finder.mask_changed.connect(self._handle_outlier_mask_from_comp)
-            self.outlier_finder.list_changed.connect(self._handle_frame_list_from_comp)
             self.vid_play.set_right_panel_widget(self.outlier_finder)
         else:
             self.vid_play.set_right_panel_widget(None)
@@ -621,17 +622,19 @@ class Frame_Label:
         self.pred_data_array = rotate_selected_inst(self.pred_data_array, self.dm.current_frame_idx, instance_idx, angle_delta)
         self.display_current_frame()
 
-    def _handle_frame_list_from_comp(self, frame_list):
+    def _handle_outlier_mask_from_comp(self, outlier_mask:np.ndarray, delete:bool):
+        frame_list = np.where(np.any(outlier_mask, axis=1))[0].tolist()
         self.dm.handle_cat_update("outlier", frame_list)
         if frame_list:
             self.dm.current_frame_idx = frame_list[0]
+            self.outlier_mask = outlier_mask
         self.refresh_and_display()
 
-    def _handle_outlier_mask_from_comp(self, outlier_mask:np.ndarray):
-        self._save_state_for_undo()
-        self.pred_data_array[outlier_mask] = np.nan
-        self.display_current_frame()
-        self.dm.handle_cat_update("outlier", [])
+        if delete:
+            self._save_state_for_undo()
+            self.pred_data_array = outlier_removal(self.pred_data_array, self.outlier_mask)
+            self.display_current_frame()
+            self.dm.handle_cat_update("outlier", [])
 
     def _handle_config_from_config(self, new_config:Plot_Config):
         self.dm.plot_config = new_config

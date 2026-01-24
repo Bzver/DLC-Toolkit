@@ -46,7 +46,7 @@ def get_average_pose(
         outlier_conf_mask = outlier_confidence(pred_data_sliced, confidence_threshold)
         outlier_bp_mask = outlier_bodypart(pred_data_sliced, bodypart_threshold)
         outlier_mask = np.logical_or(outlier_bp_mask, outlier_conf_mask)
-        pred_data_filtered, _, _ = outlier_removal(pred_data_sliced, outlier_mask)
+        pred_data_filtered = outlier_removal(pred_data_sliced, outlier_mask)
 
         truncate_mask = np.any(~np.isnan(pred_data_filtered[:, selected_instance_idx, :]), axis=1)
         pred_data_truncated = pred_data_filtered[truncate_mask]

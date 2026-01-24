@@ -4,6 +4,7 @@ from .pose_analysis import (
     calculate_canonical_pose,
     calculate_pose_rotations,
     calculate_aligned_local,
+    calculate_anatomical_centers,
 )
 
 from .pose_average import get_average_pose
@@ -17,9 +18,10 @@ from .outlier import (
     outlier_bodypart,
     outlier_confidence,
     outlier_duplicate,
-    outlier_flicker,
     outlier_size,
-    outlier_pose
+    outlier_rotation,
+    outlier_pose,
+    outlier_speed,
 )
 from .instance_op import (
     rotate_selected_inst,
@@ -36,6 +38,7 @@ __all__ = (
     calculate_pose_bbox,
     calculate_canonical_pose,
     calculate_pose_rotations,
+    calculate_anatomical_centers,
     pose_alignment_worker,
     pose_rotation_worker,
     get_average_pose,
@@ -43,7 +46,8 @@ __all__ = (
     outlier_bodypart,
     outlier_confidence,
     outlier_duplicate,
-    outlier_flicker,
     outlier_size,
+    outlier_rotation,
     outlier_pose,
+    outlier_speed,
 )
