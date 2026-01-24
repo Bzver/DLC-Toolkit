@@ -9,7 +9,7 @@ from typing import List, Dict, Tuple, Optional
 
 from .hungarian import Hungarian
 from .sigma_kappa import sigma_estimation, kappa_estimation
-from utils.pose import calculate_pose_centroids, calculate_aligned_local, calculate_pose_rotations
+from utils.pose import calculate_pose_centroids, calculate_aligned_local, calculate_pose_rotations, calculate_anatomical_centers
 from utils.helper import get_instance_count_per_frame
 from utils.dataclass import Track_Properties
 from utils.logger import logger
@@ -431,24 +431,21 @@ class Track_Fixer:
         logger.info(f"[TMOD] Precomputed {len(self.valid_starts)} windows. Top ambiguity score: {self.window_scores[0]:.2f}")
 
     def _pose_array_to_crp(self, pred_data_array) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        centroids, local_coords = calculate_pose_centroids(pred_data_array)
+        _, local_coords = calculate_pose_centroids(pred_data_array)
         local_x, local_y = local_coords[..., 0::2], local_coords[..., 1::2]
 
-        center_start = self.angle_map["center_idx"] * 3
-        center_kp = pred_data_array[..., center_start:center_start+2]
-        center_available_mask = np.all(~np.isnan(center_kp), axis=-1)
-
-        centroids[center_available_mask] = center_kp[center_available_mask]
+        centroids = calculate_anatomical_centers(pred_data_array, self.angle_map)
         rotations = calculate_pose_rotations(local_x, local_y, self.angle_map)
         poses = calculate_aligned_local(pred_data_array, self.angle_map)
+
         return centroids, rotations, poses
 
     @staticmethod
     def _sync_changes(array_list:List[np.ndarray], frame_idx:int, new_order:List[int]):
         for array in array_list:
-            if len(array.shape) == 3:
+            if array.ndim == 3:
                 array[frame_idx, :, :] = array[frame_idx, new_order, :]
-            elif len(array.shape) == 2:
+            elif array.ndim == 2:
                 array[frame_idx, :] = array[frame_idx, new_order]
             else:
                 raise RuntimeError(f"Incompatible array shape: {array.shape}")

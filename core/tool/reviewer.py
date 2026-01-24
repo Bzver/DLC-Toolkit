@@ -218,7 +218,7 @@ class Parallel_Review_Dialog(QDialog):
         list_to_nav = self._determine_list_to_nav()
         navigate_to_marked_frame(
             self, list_to_nav, self.current_frame_idx, self._handle_frame_change_from_comp, "prev")
-
+        
     def _navigate_next(self):
         list_to_nav = self._determine_list_to_nav()
         navigate_to_marked_frame(
@@ -451,6 +451,8 @@ class Track_Correction_Dialog(Parallel_Review_Dialog):
             "next_fast":{"key": "Shift+Right", "callback": lambda: self._change_frame(10)},
             "prev_mark":{"key": "Up", "callback": self._navigate_prev},
             "next_mark":{"key": "Down", "callback": self._navigate_next},
+            "prev_mid":{"key": "Shift+Up", "callback": self._navigate_prev_mid},
+            "next_mid":{"key": "Shift+Down", "callback": self._navigate_next_mid},
             "playback":{"key": "Space", "callback": self._toggle_playback},
             "undo": {"key": "Ctrl+Z", "callback": self._undo_changes},
             "redo": {"key": "Ctrl+Y", "callback": self._redo_changes},
@@ -503,7 +505,17 @@ class Track_Correction_Dialog(Parallel_Review_Dialog):
 
     def _determine_list_to_nav(self):
         return self.list_to_nav
-    
+
+    def _navigate_prev_mid(self):
+        list_to_nav = self._determine_list_to_nav()
+        navigate_to_marked_frame(
+            self, list_to_nav, self.current_frame_idx, self._handle_frame_change_from_comp, "prev", midway=True)
+        
+    def _navigate_next_mid(self):
+        list_to_nav = self._determine_list_to_nav()
+        navigate_to_marked_frame(
+            self, list_to_nav, self.current_frame_idx, self._handle_frame_change_from_comp, "next", midway=True)
+
     def _swap_instance(self, swap_target:Tuple[int,int]=None):
         if self.dlc_data.instance_count > 2 and not swap_target:
             colormap = self.plotter.get_current_color_map()

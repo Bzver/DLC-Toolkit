@@ -741,9 +741,9 @@ class Frame_Label:
         self._save_state_for_undo()
 
         is_entertained = False
-        current_crp_weight = (0.7, 0.15, 0.15)
+        current_crp_weight = (1, 0, 0)
         sigma, kappa = None, None
-        min_sim, gap_thresh = 0.10, 0.05
+        min_sim, gap_thresh = 0.10, 0.10
         used_starts = []
 
         progress = Progress_Indicator_Dialog(0, self.dm.total_frames, "Supervised Track Fixing", "", self.main)

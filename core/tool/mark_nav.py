@@ -8,24 +8,9 @@ def navigate_to_marked_frame(
         frame_list:List[int],
         current_frame_idx:int,
         change_frame_callback:Callable[[int], None],
-        direction:Literal["prev","next"]
+        direction:Literal["prev","next"],
+        midway:bool=False,
         ):
-    """
-    Navigates to the previous or next frame in a sorted list of frames.
-
-    Args:
-        parent: Parent widget for displaying warning or error messages.
-        frame_list (List[int]): List of frame indices that are marked.
-        current_frame_idx (int): Index of the currently displayed frame.
-        change_frame_callback (Callable[[int], None]): Function to call with the destination frame index.
-        direction (Literal["prev", "next"]): Direction of navigation — either "prev" or "next".
-
-    Behavior:
-        - Sorts the frame list and finds the nearest previous or next frame.
-        - If no such frame exists, shows a warning.
-        - Otherwise, calls the frame change callback with the target frame.
-        - On exception during callback, shows a critical error message.
-    """
     if not frame_list:
         Loggerbox.warning(parent, "No Marked Frames", "No marked frames to navigate.")
         return
@@ -43,10 +28,10 @@ def navigate_to_marked_frame(
         Loggerbox.warning(parent, "Navigation", no_frame_message)
         return
 
-    try:
+    if midway and abs(dest_frame_idx - current_frame_idx) > 1:
+        change_frame_callback((dest_frame_idx + current_frame_idx) // 2)
+    else:
         change_frame_callback(dest_frame_idx)
-    except Exception as e:
-        Loggerbox.error(parent, "Exception", e, exc=e)
 
 def _get_prev_frame_in_list(frame_list:List[int], current_frame_idx:int) -> Optional[int]:
     try:
