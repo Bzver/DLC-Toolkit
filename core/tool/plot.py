@@ -124,7 +124,7 @@ class Prediction_Plotter:
                 if isinstance(keypoint_item, Draggable_Keypoint):
                     keypoint_item.setFlag(QGraphicsEllipseItem.ItemIsMovable, self.plot_config.edit_mode)
 
-                if self.marked_frame_kp[inst_idx, kp_idx]:
+                if self.marked_frame_kp is not None and self.marked_frame_kp[inst_idx, kp_idx]:
                     rect_item = QGraphicsRectItem(0, 0, self.plot_config.point_size + 4, self.plot_config.point_size + 4)
                     rect_item.setPos(x - self.plot_config.point_size / 2 - 2, y - self.plot_config.point_size / 2 - 2)
                     rect_item.setPen(QtGui.QPen(QtGui.QColor(255, 51, 51), 1))

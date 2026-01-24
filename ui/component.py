@@ -70,7 +70,7 @@ class Selectable_Instance(QtCore.QObject, QGraphicsRectItem):
 
         self.setPen(self.default_pen)
         self.is_selected = False
-        self.is_marked = True
+        self.is_marked = False
         self.last_mouse_pos = None
 
     def mousePressEvent(self, event):

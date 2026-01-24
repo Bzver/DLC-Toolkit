@@ -483,7 +483,7 @@ class On_Hold_Dialog(QDialog):
         text_layout.setSpacing(4)
         title_label = QtWidgets.QLabel("<b>DeepLabCut Analysis Started</b>")
         title_label.setWordWrap(True)
-        info_label = QtWidgets.QLabel("DeeplabCut inference in progress,\n Check the terminal for status.")
+        info_label = QtWidgets.QLabel("DeeplabCut inference started,\n Check terminal for progress.")
         info_label.setWordWrap(True)
         info_label.setStyleSheet("QLabel { color: gray; }")
         text_layout.addWidget(title_label)
