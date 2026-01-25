@@ -6,7 +6,7 @@ from PySide6.QtGui import QPixmap
 from core.runtime import Data_Manager, Video_Manager
 from core.tool import Mark_Generator, Blob_Counter, Prediction_Plotter
 from ui import Menu_Widget, Video_Player_Widget, Frame_List_Dialog, Status_Bar, Inference_interval_Dialog, Shortcut_Manager
-from utils.helper import frame_to_pixmap, calculate_blob_inference_intervals, get_smart_bg_masking, frame_to_grayscale
+from utils.helper import frame_to_pixmap, calculate_blob_inference_intervals, frame_to_grayscale
 from utils.logger import Loggerbox, QMessageBox
 
 
@@ -121,7 +121,7 @@ class Frame_View:
         if self.dm.background_masking:
             mask = self.dm.background_mask
             if mask is None:
-                mask = self.get_mask_from_blob_config()
+                mask = self.dm.get_mask_from_blob_config(self.vm.get_random_frame_samples(sample_count=20))
         
             frame =  np.clip(frame.astype(np.int16) + mask, 0, 255).astype(np.uint8)
 
@@ -132,24 +132,6 @@ class Frame_View:
             self.blob_counter.set_current_frame(frame, self.dm.current_frame_idx)
         else:
             self._plot_current_frame(frame)
-
-    def get_mask_from_blob_config(self):
-        if not self.dm.blob_config:
-            return
-        try:
-            frame_batch = self.vm.get_random_frame_samples(sample_count=20)
-            mask = get_smart_bg_masking(
-                frame_batched = frame_batch,
-                background = self.dm.blob_config.background_frames[self.dm.blob_config.bg_removal_method], 
-                threshold = self.dm.blob_config.threshold,
-                polarity = self.dm.blob_config.blob_type
-                )
-        except KeyError:
-            pass
-        except Exception as e:
-            raise RuntimeError(f"[VIEW] Failed to get masking from workspace file: {e}.")
-        else:
-            self.dm.background_mask = mask
 
     def _plot_current_frame(self, frame, count=None):
         if self.dm.dlc_data is not None and self.dm.dlc_data.pred_data_array is not None:
@@ -338,7 +320,7 @@ class Frame_View:
 
         mask = self.dm.background_mask
         if mask is None:
-            mask = self.get_mask_from_blob_config()
+            mask = self.dm.get_mask_from_blob_config(self.vm.get_random_frame_samples(sample_count=20))
 
         from core.tool import DLC_Inference
         try:

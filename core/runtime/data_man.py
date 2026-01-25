@@ -12,7 +12,8 @@ from core.io import (
     backup_existing_prediction, save_predictions_to_new_h5, get_frame_list_from_h5,
     prediction_to_csv, remove_confidence_score, append_new_video_to_dlc_config)
 from ui import Head_Tail_Dialog
-from utils.helper import infer_head_tail_indices, build_angle_map, crop_coord_to_array, frame_to_grayscale
+from utils.helper import (
+    infer_head_tail_indices, build_angle_map, crop_coord_to_array, frame_to_grayscale, get_smart_bg_masking)
 from utils.pose import calculate_canonical_pose, calculate_pose_bbox
 from utils.logger import logger, Loggerbox
 from utils.dataclass import Plot_Config, Blob_Config, Loaded_DLC_Data
@@ -344,6 +345,23 @@ class Data_Manager:
             )
         crop_coords = np.clip(crop_coords, 0, [max_x, max_y, max_x, max_y]).astype(int)
         return crop_coords
+
+    def get_mask_from_blob_config(self, frame_batch:np.ndarray):
+        if not self.blob_config:
+            return
+        try:
+            mask = get_smart_bg_masking(
+                frame_batched = frame_batch,
+                background = self.blob_config.background_frames[self.blob_config.bg_removal_method], 
+                threshold = self.blob_config.threshold,
+                polarity = self.blob_config.blob_type
+                )
+        except KeyError:
+            pass
+        except Exception as e:
+            raise RuntimeError(f"[VIEW] Failed to get masking from workspace file: {e}.")
+        else:
+            self.background_mask = mask
 
     def handle_mode_switch_fview_to_flabel(self):
         self.fm.clear_category("rejected")

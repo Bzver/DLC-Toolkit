@@ -4,12 +4,11 @@ import yaml
 from PySide6 import QtWidgets
 from typing import List, Tuple, Optional
 
-from core.runtime import Data_Manager
+from core.runtime import Data_Manager, Video_Manager
 from core.tool.inference import DLC_Inference
 from core.io import backup_existing_prediction, get_existing_projects, csv_op
 from utils.helper import calculate_blob_inference_intervals
 from utils.logger import logger, set_headless_mode
-
 
 
 MAX_FRAMES_PER_RUN = 100000
@@ -203,9 +202,8 @@ def batch_inference(rootdir, dlc_config_path, dialog):
                 data_manager=dm,
                 dlc_config_path=dlc_config_path,
                 crop=True,
-                blob_based_infer=True,
-                infer_interval=(2,2,1,1),
-                infer_only_empty_frames=False,
+                mask=True,
+                grayscale=True,
                 batch_size=32,
                 detector_batch_size=32,
             )
@@ -239,6 +237,8 @@ def _inference_workspace_vid(
         infer_only_empty_frames:bool=False,
         crop:bool=False,
         crop_region:Optional[Tuple[int,int,int,int]]=None,
+        mask:bool=False,
+        grayscale:bool=False,
         shuffle_idx:Optional[int]=None,
         batch_size:Optional[int]=None,
         detector_batch_size:Optional[int]=None,
@@ -267,6 +267,15 @@ def _inference_workspace_vid(
                 crop_region = x1, y1, x2, y2
             except:
                 raise RuntimeError("[BATCH] ROI in workspace is malformed, fail to translate the ROI in workspace.")
+            
+    if mask:
+        try:
+            vm = Video_Manager()
+            vm.init_extractor(dm.video_file)
+            dm.get_mask_from_blob_config(vm.get_random_frame_samples(sample_count=20))
+        except Exception as e:
+            logger.error(f"Failed to get masking: {e}")
+            pass
 
     inference_list = []
     if partial_infer:
@@ -316,9 +325,12 @@ def _inference_workspace_vid(
             frame_list=chunk_list,
             video_filepath=dm.video_file,
             roi=crop_region,
+            mask=dm.background_mask,
             parent=dialog
         )
         inference_window.cropping = crop
+        inference_window.masking = mask
+        inference_window.grayscaling = grayscale
         if batch_size is not None:
             inference_window._batch_size_spinbox_changed(batch_size)
         if detector_batch_size is not None:
@@ -331,7 +343,7 @@ def _inference_workspace_vid(
             else:
                 inference_window._shuffle_spinbox_changed(shuffle_idx)
 
-        logger.info("[BATCH] Inference process initiated.")
+        logger.info(f"[BATCH] Inference process initiated. cropping: {crop}, masking: {dm.background_mask is not None}, grayscaling: {grayscale}")
         inference_window._inference_pipe(headless=True)
 
 def _pseudo_callback(*arg, **kwargs):
@@ -374,12 +386,12 @@ if __name__ == "__main__":
     app = QtWidgets.QApplication([])
     dialog = QtWidgets.QDialog()
     set_headless_mode(True)
-    rootdir = "D:/Data/Videos/20251101 Marathon/1102"
-    dlc_config_path = "D:/Project/DLC-Models/NTD-Blob/config.yaml"
+    rootdir = "D:/Data/Videos/20251018 Marathon/1018"
+    dlc_config_path = "D:/Project/DLC-Models/NTD/config.yaml"
  
-    # batch_inference(rootdir, dlc_config_path)
+    batch_inference(rootdir, dlc_config_path, dialog)
     # batch_grayscale(dlc_config_path)
     # batch_to_h5(dlc_config_path)
 
-    task = [(11, 7, 9), (10, 6, 8), (13, 9, 3), (12, 8, 3)]
-    batch_kp_normalization(dlc_config_path, task, dialog)
+    # task = [(11, 7, 9), (10, 6, 8), (13, 9, 3), (12, 8, 3)]
+    # batch_kp_normalization(dlc_config_path, task, dialog)
