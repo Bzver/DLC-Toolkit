@@ -9,10 +9,10 @@ from PySide6.QtWidgets import QVBoxLayout, QFileDialog
 from typing import List, Dict, Optional
 
 from core.runtime import Data_Manager, Video_Manager
-from core.tool import Annotation_Config, Annotation_Summary_Table, get_next_frame_in_list
+from core.tool import Annotation_Config, Annotation_Summary_Table, Prediction_Plotter, get_next_frame_in_list
 from core.io import load_annotation
 from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Status_Bar, Frame_List_Dialog
-from utils.helper import frame_to_pixmap
+from utils.helper import frame_to_pixmap, frame_to_grayscale
 from utils.logger import Loggerbox
 
 
@@ -179,18 +179,26 @@ class Frame_Annotator:
     def display_current_frame(self):
         if not self.vm.check_status_msg():
             self.vid_play.display.setText("No video loaded")
+            return
+
+        if self.dm.dlc_data is not None and not hasattr(self, "plotter"):
+            self.plotter = Prediction_Plotter(dlc_data=self.dm.dlc_data, plot_config=self.dm.plot_config)
 
         frame = self.vm.get_frame(self.dm.current_frame_idx)
         if frame is None:
             self.vid_play.display.setText("Failed to load current frame.")
             return
+        
+        if self.dm.background_masking:
+            mask = self.dm.background_mask
+            if mask is None:
+                mask = self.get_mask_from_blob_config()
+        
+            frame =  np.clip(frame.astype(np.int16) + mask, 0, 255).astype(np.uint8)
 
-        pixmap = frame_to_pixmap(frame)
-        scaled_pixmap = pixmap.scaled(self.vid_play.display.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self.vid_play.display.setPixmap(scaled_pixmap)
-        self.vid_play.display.setText("")
-        self.vid_play.set_current_frame(self.dm.current_frame_idx)
-
+        if self.dm.use_grayscale:
+            frame = frame_to_grayscale(frame, keep_as_bgr=True)
+    
         if self.annot_array is not None:
             idx = int(self.annot_array[self.dm.current_frame_idx])
             cat = self.idx_to_cat[idx] 
@@ -199,6 +207,18 @@ class Frame_Annotator:
                 self.annot_sum.highlight_current_frame(self.dm.current_frame_idx)
         else:
             self.status_bar.show_message("", 0)
+
+        self._plot_current_frame(frame)
+    
+    def _plot_current_frame(self, frame, count=None):
+        if self.dm.dlc_data is not None and self.dm.dlc_data.pred_data_array is not None:
+            frame = self.plotter.plot_predictions(frame, self.dm.dlc_data.pred_data_array[self.dm.current_frame_idx,:,:])
+
+        pixmap = frame_to_pixmap(frame)
+        scaled_pixmap = pixmap.scaled(self.vid_play.display.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.vid_play.display.setPixmap(scaled_pixmap)
+        self.vid_play.display.setText("")
+        self.vid_play.set_current_frame(self.dm.current_frame_idx)
             
     def _annotate(self, category: str):
         if self.annot_array is None:
