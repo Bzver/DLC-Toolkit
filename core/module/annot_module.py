@@ -60,7 +60,6 @@ class Frame_Annotator:
             "View":{
                 "buttons": [
                     ("Toggle Annotation Config", self._toggle_annotation_config),
-                    ("Choose Annotation Category to Navigate", self._choose_nav_cat),
                 ]
             },
             "Save":{
@@ -103,7 +102,6 @@ class Frame_Annotator:
         if hasattr(self, "annot_conf") and self.annot_conf is not None:
             self.annot_conf.sync_behaviors_map(self.behav_map)
         self.annot_array = None
-        self.nav_list = []
         self._refresh_annot_numeric()
 
     def _setup_shortcuts(self):
@@ -254,20 +252,8 @@ class Frame_Annotator:
             return next_change
 
     def determine_list_to_nav(self):
-        return self.nav_list
-
-    def _choose_nav_cat(self):
-        frame_categories = {key: (key, self._get_cat_list_from_array(key)) for key in self.cat_to_idx.keys()}
-        if frame_categories:
-            list_select_dialog = Frame_List_Dialog(frame_categories, parent=self.main)
-            list_select_dialog.frame_indices_acquired.connect(self._nav_cat_selected)
-            list_select_dialog.exec()
-
-    def _nav_cat_selected(self, frame_list:List[int]):
-        self.nav_list = frame_list
-        if self.nav_list:
-            self.dm.current_frame_idx = self.nav_list[0]
-            self.display_current_frame()
+        if self.annot_array is not None:
+            return np.insert(np.where(np.diff(self.annot_array)!=0)[0]+1, 0, 0).tolist()
 
     ###################################################################################################################################################
 

@@ -282,7 +282,7 @@ class DLC_Inference(QDialog):
             if len(self.frame_list)  > int(0.9 * self.total_frames) and not (self.cropping or self.masking or self.grayscaling):
                 inference_video_path = self.video_filepath
                 self.extractor_reviewer = Frame_Extractor(inference_video_path)
-            elif len(self.frame_list) < 500 and not self.model_name.startswith("CondPreNet_"):
+            elif len(self.frame_list) < max(int(0.1 * self.total_frames), 5000) and not self.model_name.startswith("CondPreNet_"):
                 self._extract_marked_frame_images()
                 self.extractor_reviewer = Frame_Extractor_Img(self.temp_dir)
             else:
