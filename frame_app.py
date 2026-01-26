@@ -555,6 +555,7 @@ class Frame_App(QMainWindow):
     def _on_mask_return(self, mask):
         self.dm.background_mask = mask
         self.dm.background_masking = True
+        self.at.display_current_frame()
 
     def _on_label_folder_return(self, image_folder):
         if not image_folder:

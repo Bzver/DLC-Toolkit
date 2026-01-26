@@ -248,21 +248,21 @@ class Frame_Display_Dialog(QDialog):
         super().__init__(parent)
 
         self.setWindowTitle(title)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowMinMaxButtonsHint)
+
         self.dialog_layout = QHBoxLayout(self)
 
         self.label = QLabel()
         self.label.setPixmap(QtGui.QPixmap.fromImage(image))
-        self.label.setAlignment(Qt.AlignCenter)
+        self.label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         self.label.setScaledContents(False)
-        self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
 
         scroll_area = QScrollArea()
         scroll_area.setWidget(self.label)
         scroll_area.setWidgetResizable(True)
 
         self.dialog_layout.addWidget(scroll_area)
-        self.showMaximized()
-
 
 class ROI_Dialog(Frame_Display_Dialog):
     roi_reset_requested = Signal()
@@ -335,7 +335,6 @@ class Mask_Dialog(Frame_Display_Dialog):
         self.label.mouseReleaseEvent = self._mouse_release
 
         self._update_display()
-        self.showMaximized()
 
     def _set_tool(self, tool: str):
         self.current_tool = tool
