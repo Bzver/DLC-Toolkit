@@ -1,6 +1,6 @@
 import numpy as np
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from .pose_analysis import calculate_pose_centroids
 from .pose_worker import pose_rotation_worker
@@ -91,4 +91,73 @@ def _fit_rigid_transform(src: np.ndarray, dst: np.ndarray):
 
     t = dst_mean - R @ src_mean
 
+    return R, t
+
+def generate_missing_kp_batch(
+    pred_data_array: np.ndarray,
+    canon_pose: np.ndarray,
+) -> np.ndarray:
+    data = pred_data_array.copy()
+
+    N_frames, N_inst, flat_dim = data.shape
+    K = flat_dim // 3
+
+    data_reshaped = data.reshape(-1, K, 3)
+    total_instances = data_reshaped.shape[0]
+
+    non_nan_mask = np.all(~np.isnan(data_reshaped[..., :2]), axis=2)
+
+    mask_to_indices = {}
+    for idx in range(total_instances):
+        mask_key = tuple(non_nan_mask[idx].tolist())
+        if mask_key not in mask_to_indices:
+            mask_to_indices[mask_key] = []
+        mask_to_indices[mask_key].append(idx)
+
+    for mask_key, indices in mask_to_indices.items():
+        if len(indices) == 0:
+            continue
+
+        mask = np.array(mask_key)
+        if not np.any(mask):
+            continue
+
+        group_data = data_reshaped[indices]
+        observed_kp = group_data[:, mask, :2]
+        canon_obs = canon_pose[mask][None, :, :]
+
+        try:
+            R, t = _fit_rigid_transform_batch(canon_obs, observed_kp)
+        except np.linalg.LinAlgError:
+            continue
+
+        canon_full = canon_pose[None, :, :]
+        transformed = np.einsum('bij,bkj->bki', R, canon_full) + t
+
+        missing_mask = ~mask
+        group_data[:, missing_mask, :2] = transformed[:, missing_mask, :]
+        group_data[:, missing_mask, 2] = 1.0
+
+        data_reshaped[indices] = group_data
+
+    pred_data_array[:] = data_reshaped.reshape(N_frames, N_inst, -1)
+    return pred_data_array
+
+def _fit_rigid_transform_batch(canon_observed: np.ndarray, observed_kp: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    canon_mean = np.nanmean(canon_observed, axis=1, keepdims=True)
+    obs_mean = np.nanmean(observed_kp, axis=1, keepdims=True)
+
+    canon_centered = canon_observed - canon_mean
+    obs_centered = observed_kp - obs_mean
+
+    H = np.einsum('bmi,bmj->bij', canon_centered, obs_centered)
+
+    U, _, Vt = np.linalg.svd(H)
+    R = np.einsum('bij,bjk->bik', Vt, U)
+
+    det_R = np.linalg.det(R)
+    R_reflect = np.array([[1, 0], [0, -1]], dtype=R.dtype)
+    R = np.where(det_R[:, None, None] < 0, R @ R_reflect, R)
+
+    t = obs_mean - np.einsum('bij,bkj->bki', R, canon_mean)
     return R, t
