@@ -3,7 +3,7 @@ from itertools import combinations
 from typing import Dict, Optional
 
 from .pose_analysis import calculate_pose_centroids, calculate_anatomical_centers, calculate_aligned_local
-from utils.helper import bye_bye_runtime_warning
+from utils.helper import bye_bye_runtime_warning, clean_inconsistent_nans
 
 
 def outlier_removal(pred_data_array:np.ndarray, outlier_mask:np.ndarray) -> np.ndarray:
@@ -21,6 +21,7 @@ def outlier_removal(pred_data_array:np.ndarray, outlier_mask:np.ndarray) -> np.n
 ########################################################################################################
 
 def outlier_confidence(pred_data_array:np.ndarray, threshold:float=0.5, kp_mode:bool=False) -> np.ndarray:
+    pred_data_array = clean_inconsistent_nans(pred_data_array)
     confidence_scores = pred_data_array[:, :, 2::3]
 
     if kp_mode:

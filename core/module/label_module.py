@@ -551,7 +551,8 @@ class Frame_Label:
             return
         
         self._save_state_for_undo()
-        self.pred_data_array = generate_missing_kp_batch(self.pred_data_array, self.dm.canon_pose)
+        min_visible_kp = self.dm.dlc_data.num_keypoint // 2
+        self.pred_data_array = generate_missing_kp_batch(self.pred_data_array, self.dm.canon_pose, min_visible_kp)
         self.display_current_frame()
 
     def _generate_inst(self):
@@ -750,8 +751,8 @@ class Frame_Label:
         self._save_state_for_undo()
 
         is_entertained = False
-        current_crp_weight = (1, 0, 0)
-        sigma, kappa = None, None
+        current_crp_weight = (0.75, 0.15, 0.1)
+        sigma, kappa = (75, 0.2), None
         min_sim, gap_thresh = 0.10, 0.10
         used_starts = []
 

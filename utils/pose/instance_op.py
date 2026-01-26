@@ -96,6 +96,7 @@ def _fit_rigid_transform(src: np.ndarray, dst: np.ndarray):
 def generate_missing_kp_batch(
     pred_data_array: np.ndarray,
     canon_pose: np.ndarray,
+    min_visible_kp: int = 4
 ) -> np.ndarray:
     data = pred_data_array.copy()
 
@@ -119,7 +120,7 @@ def generate_missing_kp_batch(
             continue
 
         mask = np.array(mask_key)
-        if not np.any(mask):
+        if np.sum(mask) < min_visible_kp:
             continue
 
         group_data = data_reshaped[indices]
