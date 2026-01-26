@@ -27,12 +27,14 @@ from .instance_op import (
     rotate_selected_inst,
     generate_missing_inst,
     generate_missing_kp_for_inst,
+    generate_missing_kp_batch,
 )
 
 __all__ = (
     rotate_selected_inst,
     generate_missing_inst,
     generate_missing_kp_for_inst,
+    generate_missing_kp_batch,
     calculate_pose_centroids,
     calculate_aligned_local,
     calculate_pose_bbox,

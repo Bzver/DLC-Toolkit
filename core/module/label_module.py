@@ -13,8 +13,8 @@ from core.tool import (Outlier_Finder, Canvas, Prediction_Plotter, Uno_Stack,
 from ui import (Menu_Widget, Video_Player_Widget, Pose_Rotation_Dialog, Status_Bar, Instance_Selection_Dialog,
                 Shortcut_Manager, Progress_Indicator_Dialog, Frame_Range_Dialog)
 from utils.pose import (
-    rotate_selected_inst, generate_missing_inst, generate_missing_kp_for_inst,
-    calculate_pose_centroids, calculate_pose_rotations, outlier_removal
+    rotate_selected_inst, generate_missing_inst, generate_missing_kp_for_inst, 
+    generate_missing_kp_batch, calculate_pose_centroids, calculate_pose_rotations, outlier_removal
     )
 from utils.track import (
     Track_Fixer, interpolate_track_all, delete_track, swap_track, interpolate_track,
@@ -62,6 +62,7 @@ class Frame_Label:
                             ("Interpolate Selected Instance on Current Frame (T)", self._interpolate_track),
                             ("Interpolate Missing Keypoints for Selected Instance (Shift+T)", self._interpolate_missing_kp),
                             ("Interpolate Selected Instance Across All Frames", self._interpolate_all),     
+                            ("Interpolate Missing Keypoints for All Frames", self._interpolate_all_missing_kp),
                         ]
                     },
                     {
@@ -87,7 +88,7 @@ class Frame_Label:
                             ("Paste Inst On Current Frame (Ctrl + V)", self._paste_inst),
                         ]
                     },
-                    ("Supervised Track Correction", self._temporal_track_correct),
+                    ("Manual Track Correction", self._temporal_track_correct),
                     ("Generate Instance (G)", self._generate_inst),
                     ("Rotate Selected Instance (R)", self._rotate_inst),
                 ]
@@ -544,7 +545,15 @@ class Frame_Label:
             selected_instance_idx=selected_instance_idx,
             canon_pose=self.dm.canon_pose)
         self.display_current_frame()
+
+    def _interpolate_all_missing_kp(self):
+        if self.pred_data_array is None:
+            return
         
+        self._save_state_for_undo()
+        self.pred_data_array = generate_missing_kp_batch(self.pred_data_array, self.dm.canon_pose)
+        self.display_current_frame()
+
     def _generate_inst(self):
         if self.pred_data_array is None:
             return
