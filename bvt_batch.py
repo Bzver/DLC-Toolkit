@@ -269,13 +269,7 @@ def _inference_workspace_vid(
                 raise RuntimeError("[BATCH] ROI in workspace is malformed, fail to translate the ROI in workspace.")
             
     if mask:
-        try:
-            vm = Video_Manager()
-            vm.init_extractor(dm.video_file)
-            dm.get_mask_from_blob_config(vm.get_random_frame_samples(sample_count=20))
-        except Exception as e:
-            logger.error(f"Failed to get masking: {e}")
-            pass
+        assert dm.background_mask is not None, "No mask is loaded in data manager when mask parameter is set to True."
 
     inference_list = []
     if partial_infer:
@@ -386,7 +380,7 @@ if __name__ == "__main__":
     app = QtWidgets.QApplication([])
     dialog = QtWidgets.QDialog()
     set_headless_mode(True)
-    rootdir = "D:/Data/Videos/20251018 Marathon/1018"
+    rootdir = "D:/Project/WORKINGONIT/20251201 Marathon/"
     dlc_config_path = "D:/Project/DLC-Models/NTD/config.yaml"
  
     batch_inference(rootdir, dlc_config_path, dialog)

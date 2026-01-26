@@ -122,8 +122,9 @@ class Frame_View:
             mask = self.dm.background_mask
             if mask is None:
                 mask = self.dm.get_mask_from_blob_config(self.vm.get_random_frame_samples(sample_count=20))
-        
-            frame =  np.clip(frame.astype(np.int16) + mask, 0, 255).astype(np.uint8)
+
+            if mask is not None:
+                frame =  np.clip(frame.astype(np.int16) + mask, 0, 255).astype(np.uint8)
 
         if self.dm.use_grayscale:
             frame = frame_to_grayscale(frame, keep_as_bgr=True)

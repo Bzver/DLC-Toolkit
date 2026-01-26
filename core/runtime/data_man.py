@@ -419,6 +419,7 @@ class Data_Manager:
             'inst_count_per_frame_pred': self.inst_count_per_frame_pred,
             'blob_array': self.blob_array,
             'roi': self.roi,
+            'bg_mask': self.background_mask,
             'dlc_label_mode': self.dlc_label_mode,
         }
         try:
@@ -443,6 +444,7 @@ class Data_Manager:
         self.blob_array = workspace_state.get('blob_array')
         self.label_file = workspace_state.get('label_file')
         self.roi = workspace_state.get('roi')
+        self.background_mask = workspace_state.get('bg_mask')
 
         if 'frame_store' in workspace_state.keys():
             self.fm = Frame_Manager.from_dict(workspace_state.get('frame_store'), self.refresh_callback)

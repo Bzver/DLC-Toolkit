@@ -316,17 +316,16 @@ class Mask_Dialog(Frame_Display_Dialog):
 
         control_layout.addWidget(tool_group)
         control_layout.addWidget(self.brush_spin)
-        control_layout.addStretch()
-
         self.white_radio.toggled.connect(lambda: self._set_tool("white"))
         self.black_radio.toggled.connect(lambda: self._set_tool("black"))
         self.eraser_radio.toggled.connect(lambda: self._set_tool("eraser"))
 
-        self.dialog_layout.addLayout(control_layout)
-
         ok_btn = QPushButton("Apply Mask")
         ok_btn.clicked.connect(self._on_apply)
-        self.dialog_layout.addWidget(ok_btn)
+        control_layout.addWidget(ok_btn)
+        control_layout.addStretch()
+
+        self.dialog_layout.addLayout(control_layout)
 
         self.label.setAttribute(Qt.WA_StaticContents)
         self.label.setMouseTracking(True)
