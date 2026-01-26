@@ -6,8 +6,8 @@ from PySide6.QtWidgets import QMainWindow, QVBoxLayout, QHBoxLayout, QApplicatio
 from core.runtime import Data_Manager, Video_Manager
 from core.module import Frame_View, Frame_Label, Frame_Annotator
 from core.tool import Canonical_Pose_Dialog, Plot_Config_Menu, DLC_Save_Dialog, Load_Label_Dialog, DLC_Save_Dialog_Label, navigate_to_marked_frame
-from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Toggle_Switch, Status_Bar, Frame_List_Dialog, ROI_Dialog
-from utils.helper import frame_to_qimage, get_roi_cv2, plot_roi, validate_crop_coord
+from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Toggle_Switch, Status_Bar, Frame_List_Dialog, ROI_Dialog, Mask_Dialog
+from utils.helper import frame_to_qimage, mask_to_qimage, get_roi_cv2, plot_roi, validate_crop_coord
 from utils.logger import Loggerbox, QMessageBox
 from utils.dataclass import Nav_Callback, Plot_Config
 
@@ -91,9 +91,10 @@ class Frame_App(QMainWindow):
                         "items": [
                             ("Canonical Pose", self._view_canonical_pose),
                             ("Config Menu", self._open_plot_config_menu),
-                            ("Toggle Smart Masking", self._toggle_bg_masking),
+                            ("Toggle Masking", self._toggle_bg_masking),
                             ("Toggle Grayscale", self._toggle_grayscale),
                             ("ROI Region", self._check_roi),
+                            ("Mask Region", self._paint_mask)
                         ]
                     },
                     {
@@ -458,12 +459,10 @@ class Frame_App(QMainWindow):
             return
         if self.dm.dlc_label_mode:
             return
-        if self.dm.blob_config is None:
-            Loggerbox.warning(self, "Smart masking requires background and threshold from Animal Counter.")
-            return
+
         self.dm.background_masking = not self.dm.background_masking
 
-        if self.dm.background_masking:
+        if self.dm.background_masking and self.dm.background_mask is None:
             self.dm.get_mask_from_blob_config(self.vm.get_random_frame_samples(sample_count=20))
 
         self.at.display_current_frame()
@@ -494,6 +493,16 @@ class Frame_App(QMainWindow):
         if roi is None:
             return
         self.dm.roi = roi
+
+    def _paint_mask(self):
+        frame_qimage = frame_to_qimage(self.vm.get_frame(self.dm.current_frame_idx))
+        mask_qimage = None
+        if self.dm.background_mask is not None:
+            mask_qimage = mask_to_qimage(self.dm.background_mask)
+
+        dialog = Mask_Dialog("Set Mask Region", frame_qimage, mask_qimage)
+        dialog.mask_painted.connect(self._on_mask_return)
+        dialog.exec()
 
     def _open_plot_config_menu(self):
         if not self.vm.check_status_msg():
@@ -542,6 +551,10 @@ class Frame_App(QMainWindow):
         self.dm.current_frame_idx = new_frame_idx
         self.at.navigation_title_controller()
         self.at.display_current_frame()
+
+    def _on_mask_return(self, mask):
+        self.dm.background_mask = mask
+        self.dm.background_masking = True
 
     def _on_label_folder_return(self, image_folder):
         if not image_folder:

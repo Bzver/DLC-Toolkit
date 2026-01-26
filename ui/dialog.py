@@ -1,9 +1,11 @@
+import numpy as np
 from functools import partial
 from PySide6 import QtWidgets, QtGui
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QPoint
 from PySide6.QtWidgets import (
-    QPushButton, QHBoxLayout, QVBoxLayout, QDial, QDialog,
+    QPushButton, QHBoxLayout, QVBoxLayout, QDial, QDialog, QRadioButton, QGroupBox,
     QLabel, QDialogButtonBox, QCheckBox, QSizePolicy, QScrollArea, QComboBox)
+from PySide6.QtGui import QPainter, QPixmap, QMouseEvent, QImage, QColor, QPen
 
 from typing import List, Dict, Tuple, Optional
 
@@ -246,7 +248,7 @@ class Frame_Display_Dialog(QDialog):
         super().__init__(parent)
 
         self.setWindowTitle(title)
-        self.dialog_layout = QVBoxLayout(self)
+        self.dialog_layout = QHBoxLayout(self)
 
         self.label = QLabel()
         self.label.setPixmap(QtGui.QPixmap.fromImage(image))
@@ -271,12 +273,152 @@ class ROI_Dialog(Frame_Display_Dialog):
         self.reset_btn = QPushButton("Reset ROI")
         self.reset_btn.clicked.connect(self._on_reset_request)
         self.dialog_layout.addWidget(self.reset_btn)
-        self.setWindowTitle("ROI Viewer")
 
     def _on_reset_request(self):
         self.roi_reset_requested.emit()
         self.accept()
 
+class Mask_Dialog(Frame_Display_Dialog):
+    mask_painted = Signal(object)
+
+    def __init__(self, title: str, image: QImage, current_mask:Optional[QImage]=None, parent=None):
+        super().__init__(title, image, parent)
+
+        self.original_image = image.copy()
+
+        if current_mask is not None:
+            self.current_mask = current_mask
+        else:
+            self.current_mask = QImage(image.size(), QImage.Format_ARGB32)
+            self.current_mask.fill(Qt.transparent)
+
+        self.brush_size = 50
+        self.current_tool = "white"  # 'white', 'black', or 'eraser'
+        self.drawing = False
+        self.last_pos = QPoint()
+
+        control_layout = QVBoxLayout()
+
+        tool_group = QGroupBox("Tool")
+        tool_layout = QVBoxLayout()
+        self.white_radio = QRadioButton("White Pen")
+        self.black_radio = QRadioButton("Black Pen")
+        self.eraser_radio = QRadioButton("Eraser")
+        self.white_radio.setChecked(True)
+
+        tool_layout.addWidget(self.white_radio)
+        tool_layout.addWidget(self.black_radio)
+        tool_layout.addWidget(self.eraser_radio)
+        tool_group.setLayout(tool_layout)
+
+        self.brush_spin = Spinbox_With_Label("Brush Size:", (1, 200), self.brush_size)
+        self.brush_spin.value_changed.connect(self._on_brush_size_changed)
+
+        control_layout.addWidget(tool_group)
+        control_layout.addWidget(self.brush_spin)
+        control_layout.addStretch()
+
+        self.white_radio.toggled.connect(lambda: self._set_tool("white"))
+        self.black_radio.toggled.connect(lambda: self._set_tool("black"))
+        self.eraser_radio.toggled.connect(lambda: self._set_tool("eraser"))
+
+        self.dialog_layout.addLayout(control_layout)
+
+        ok_btn = QPushButton("Apply Mask")
+        ok_btn.clicked.connect(self._on_apply)
+        self.dialog_layout.addWidget(ok_btn)
+
+        self.label.setAttribute(Qt.WA_StaticContents)
+        self.label.setMouseTracking(True)
+        self.label.mousePressEvent = self._mouse_press
+        self.label.mouseMoveEvent = self._mouse_move
+        self.label.mouseReleaseEvent = self._mouse_release
+
+        self._update_display()
+        self.showMaximized()
+
+    def _set_tool(self, tool: str):
+        self.current_tool = tool
+
+    def _on_brush_size_changed(self, value: int):
+        self.brush_size = value
+
+    def _get_pen_color(self):
+        if self.current_tool == "white":
+            return QColor(Qt.white)
+        elif self.current_tool == "black":
+            return QColor(Qt.black)
+        else:  # eraser
+            return QColor(Qt.transparent)
+
+    def _mouse_press(self, event: QMouseEvent):
+        if event.button() == Qt.LeftButton:
+            self.drawing = True
+            self.last_pos = event.pos()
+            self._draw_line_to(event.pos())
+
+    def _mouse_move(self, event: QMouseEvent):
+        if self.drawing:
+            self._draw_line_to(event.pos())
+        self.last_pos = event.pos()
+
+    def _mouse_release(self, event: QMouseEvent):
+        if event.button() == Qt.LeftButton:
+            self.drawing = False
+
+    def _draw_line_to(self, pos: QPoint):
+        painter = QPainter(self.current_mask)
+        painter.setRenderHint(QPainter.Antialiasing)
+        pen = QPen()
+        pen.setWidth(self.brush_size)
+        pen.setCapStyle(Qt.RoundCap)
+        pen.setJoinStyle(Qt.RoundJoin)
+
+        if self.current_tool == "eraser":
+            pen.setColor(Qt.transparent)
+            painter.setCompositionMode(QPainter.CompositionMode_Clear)
+        else:
+            pen.setColor(self._get_pen_color())
+            painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+
+        painter.setPen(pen)
+        painter.drawLine(self.last_pos, pos)
+        painter.end()
+
+        self._update_display()
+        self.last_pos = pos
+
+    def _update_display(self):
+        combined = self.original_image.copy()
+        painter = QPainter(combined)
+        painter.setCompositionMode(QPainter.CompositionMode_SourceOver)
+        painter.drawImage(0, 0, self.current_mask)
+        painter.end()
+
+        self.label.setPixmap(QPixmap.fromImage(combined))
+
+    def _on_apply(self):
+        qimage = self.current_mask.convertToFormat(QImage.Format_ARGB32)
+        width = qimage.width()
+        height = qimage.height()
+
+        ptr = qimage.bits()
+        arr = np.frombuffer(ptr, dtype=np.uint8).reshape((height, width, 4))
+
+        alpha = arr[:, :, 3].astype(np.int16)
+        red = arr[:, :, 2].astype(np.int16)
+
+        mask_out = np.zeros((height, width, 3), dtype=np.int16)
+
+        painted = alpha > 0
+        white_mask = painted & (red == 255)
+        black_mask = painted & (red == 0)
+
+        mask_out[white_mask] = 255
+        mask_out[black_mask] = -255
+
+        self.mask_painted.emit(mask_out)
+        self.accept()
 
 class Instance_Selection_Dialog(QDialog):
     inst_checked = Signal(int, bool)

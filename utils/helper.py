@@ -335,11 +335,29 @@ def calculate_snapping_zoom_level(
 
 ###########################################################################################
 
-def frame_to_qimage(frame, request_dim=False) -> QtGui.QImage | Tuple[QtGui.QImage, int, int]:
-    rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    h, w, ch = rgb_image.shape
-    bytes_per_line = ch * w
-    qt_image = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
+def frame_to_qimage(frame:np.ndarray, request_dim=False) -> Union[QtGui.QImage, Tuple[QtGui.QImage, int, int]]:
+    if frame is None or frame.size == 0:
+        raise ValueError("Input frame is empty")
+
+    h, w = frame.shape[:2]
+
+    if frame.ndim == 3 and frame.shape[2] == 4: # BGRA → RGBA
+        rgba = cv2.cvtColor(frame, cv2.COLOR_BGRA2RGBA)
+        bytes_per_line = 4 * w
+        qt_image = QtGui.QImage(rgba.data, w, h, bytes_per_line, QtGui.QImage.Format_RGBA8888)
+    elif frame.ndim == 3 and frame.shape[2] == 3: # BGR → RGB
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        bytes_per_line = 3 * w
+        qt_image = QtGui.QImage(rgb.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
+    elif frame.ndim == 2: # Grayscale
+        gray = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
+        bytes_per_line = 3 * w
+        qt_image = QtGui.QImage(gray.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
+    else:
+        raise ValueError(f"Unsupported frame shape: {frame.shape}")
+
+    qt_image = qt_image.copy()
+
     if request_dim:
         return qt_image, w, h
     else:
@@ -395,6 +413,17 @@ def get_smart_bg_masking(
         artifact_mask = np.repeat(artifact_mask[..., np.newaxis], 3, axis=2)
 
     return artifact_mask
+
+def mask_to_qimage(mask):
+    h, w = mask.shape[:2]
+    arr = np.zeros((h, w, 4), dtype=np.uint8)
+    first_ch = mask[:, :, 0]
+    white_mask = (first_ch == 255)
+    black_mask = (first_ch == -255)
+    arr[white_mask, :] = [255, 255, 255, 255]
+    arr[black_mask, :] = [0, 0, 0, 255]
+
+    return frame_to_qimage(arr)
 
 def frame_to_grayscale(frame:np.ndarray, keep_as_bgr:bool=False):
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
