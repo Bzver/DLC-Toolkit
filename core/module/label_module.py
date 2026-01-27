@@ -88,7 +88,7 @@ class Frame_Label:
                             ("Paste Inst On Current Frame (Ctrl + V)", self._paste_inst),
                         ]
                     },
-                    ("Manual Track Correction", self._temporal_track_correct),
+                    ("Semi Automatic Track Correction", self._temporal_track_correct),
                     ("Generate Instance (G)", self._generate_inst),
                     ("Rotate Selected Instance (R)", self._rotate_inst),
                 ]

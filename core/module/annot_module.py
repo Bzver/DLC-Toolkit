@@ -2,6 +2,7 @@ import os
 import json
 import scipy.io as sio
 import numpy as np
+import pandas as pd
 
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt
@@ -11,8 +12,9 @@ from typing import List, Dict, Optional
 
 from core.runtime import Data_Manager, Video_Manager
 from core.tool import Annotation_Config, Annotation_Summary_Table, Prediction_Plotter, get_next_frame_in_list
-from core.io import load_annotation
+from core.io import load_annotation, prediction_to_csv
 from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Status_Bar, Frame_List_Dialog
+from utils.track import interpolate_track_all
 from utils.helper import frame_to_pixmap, frame_to_grayscale, get_instance_count_per_frame, array_to_iterable_runs
 from utils.logger import Loggerbox
 
@@ -67,7 +69,7 @@ class Frame_Annotator:
                 "buttons": [
                     ("Export in Text", self._export_annotation_to_text),
                     ("Export in Mat", self._export_annotation_to_mat),
-                    ("Export Truncated in Text", self._export_truncated_package)
+                    ("Export Truncated in BORIS", self._export_truncated_package)
                 ]
             },
         }
@@ -476,61 +478,73 @@ class Frame_Annotator:
             }
             mat_to_save = {"annotation": annotation_struct}
             sio.savemat(file_path, mat_to_save)
-            Loggerbox.info(self.main, f"Successfully saved to {file_path}")
+            Loggerbox.info(self.main, "Success", f"Successfully saved to {file_path}")
         except Exception as e:
-            Loggerbox.error(self.main, f"Failed to save {file_path}, Exception: {e}", exc=e)
+            Loggerbox.error(self.main, "Failed", f"Failed to save {file_path}, Exception: {e}", exc=e)
 
-    def _export_truncated_package(self, min_duration:int=10):
+    def _export_truncated_package(self, min_duration:int=10, max_gap:int=2, fps:int=10):
         if self.dm.dlc_data is None or self.dm.dlc_data.pred_data_array is None:
             return
         
         file_dialog = QFileDialog(self.main)
-        file_path, _ = file_dialog.getSaveFileName(self.main, "Export Truncated Annotation to Text File", "", "Text Files (*.txt);;All Files (*)")
+        file_path, _ = file_dialog.getSaveFileName(self.main, "Export Truncated Annotation to BORIS Format", "", "CSV Files (*.csv);;All Files (*)")
 
         if not file_path:
             return
 
-        pred_data_array = self.dm.dlc_data.pred_data_array
+        pred_data_array = self.dm.dlc_data.pred_data_array.copy()
         I = pred_data_array.shape[1]
-        instance_array = get_instance_count_per_frame(self.dm.dlc_data.pred_data_array)
+        for inst_idx in range(I):
+            pred_data_array = interpolate_track_all(pred_data_array, inst_idx, max_gap)
+
+        instance_array = get_instance_count_per_frame(pred_data_array)
         
         frames_to_use = np.zeros_like(instance_array, dtype=bool)
         truncated_arrays = []
 
-        new_start = 0
-        new_end = 0
-
-        segments = []
         for start, end, value in array_to_iterable_runs(instance_array != I):
             if value:
                 continue
-            if end - start < min_duration:
+            if end - start + 1 < min_duration:
                 continue
 
             frames_to_use[start:end+1] = True
             truncated_arrays.append(self.annot_array[start:end+1])
 
-            new_end = new_start + (end - start)
-            new_start = new_end + 1
-
         frame_list = np.where(frames_to_use)[0].tolist()
-        truncated_array = np.concatenate(truncated_arrays)
+        truncated_behavior_array = np.concatenate(truncated_arrays)
+        truncated_pred_array = pred_data_array[frames_to_use]
 
-        content = "Caltech Behavior Annotator - Annotation File\n\n"
-        content += "Configuration file:\n"
-        for category, key in self.behav_map.items():
-            content += f"{category}\t{key}\n"
-        content += "\n"
-        content += "S1:\tstart\tend\ttype\n"
-        content += "-----------------------------\n"
+        behavior_list = [b for b in self.idx_to_cat.values()]
 
-        for start, end, value in array_to_iterable_runs(truncated_array):
-            category = self.idx_to_cat[value]
-            content += f"\t{start}\t{end}\t{category}\n"
+        truncated_one_hot = np.zeros((truncated_behavior_array.size, len(behavior_list)), dtype=int)
+        truncated_one_hot[np.arange(truncated_behavior_array.size), truncated_behavior_array] = 1
 
-        with open(file_path, 'w') as f:
-            f.write(content)
+        df_annot = pd.DataFrame(truncated_one_hot, columns=behavior_list)
+        if "other" in behavior_list:
+            behavior_cols = [col for col in df_annot.columns if col != "other"]
+            new_column_order = behavior_cols + ["other"]
+            df_annot = df_annot[new_column_order]
 
-        json_path = file_path.replace(".txt", ".json")
-        with open(json_path, 'w') as f:
-            json.dump(frame_list, f)
+        df_annot.insert(0, "time", np.arange(len(frame_list)) / fps)
+
+        try:
+            df_annot.to_csv(file_path, sep=',', index=False, float_format='%.6f')
+
+            pred_path = file_path.replace(".csv", "_pred.csv")
+            prediction_to_csv(self.dm.dlc_data, truncated_pred_array, pred_path, keep_conf=True)
+
+            json_path = file_path.replace(".csv", ".json")
+            with open(json_path, 'w') as f:
+                json.dump({
+                    "original_frames": frame_list,
+                    "fps": fps,
+                    "min_duration_frames": min_duration,
+                    "max_gap_frames": max_gap,
+                    "num_instances": I,
+                    "total_exported_frames": len(frame_list)
+                }, f, indent=2)
+        except Exception as e:
+            Loggerbox.error(self.main, "Failed", f"Failed to save {file_path}, Exception: {e}", exc=e)
+        else:
+            Loggerbox.info(self.main, "Success", f"Successfully saved to {file_path}")
