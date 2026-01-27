@@ -102,7 +102,7 @@ class Exporter:
             logger.warning("[EXPORTER] Frame list is empty. No frames to extract.")
             return []
 
-        if len(self.frame_list) < total_video_frames // 10: # sparse extraction
+        if len(self.frame_list) < total_video_frames // 100: # sparse extraction
             logger.info(f"[EXPORTER] Performing sparse frame extraction for {len(self.frame_list)} frames.")
             corrected_indices = self._sparse_frame_extraction()
         else:
