@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QVBoxLayout, QFileDialog
 from typing import List, Dict, Optional, Tuple
 
 from core.runtime import Data_Manager, Video_Manager
-from core.tool import Annotation_Config, Annotation_Summary_Table, Prediction_Plotter, get_next_frame_in_list
+from core.tool import Annotation_Config, Annotation_Summary_Table, Prediction_Plotter, Uno_Stack, get_next_frame_in_list
 from core.io import load_annotation, prediction_to_csv, load_onehot_csv
 from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Status_Bar, Frame_List_Dialog
 from utils.track import interpolate_track_all
@@ -91,6 +91,7 @@ class Frame_Annotator:
             self.vid_play.sld.toggle_zoom_slider()
         self.open_annot = False
         self.annot_conf = None
+        self.uno_stack = None
         self.sc_annot.clear()
 
     def reset_state(self, hardcore=False):
@@ -106,6 +107,8 @@ class Frame_Annotator:
 
     def _setup_shortcuts(self):
         self.sc_annot.clear()
+        self.sc_annot.add_shortcut("undo", "Ctrl+Z", self._undo_annotation)
+        self.sc_annot.add_shortcut("redo", "Ctrl+Y", self._redo_annotation)
         for category, (key, _) in self.behav_map.items():
             if not key.strip():
                 continue
@@ -117,6 +120,8 @@ class Frame_Annotator:
         frame_count = self.vm.get_frame_counts()
         self.annot_array = np.zeros((frame_count,), dtype=np.uint8)
         self.open_annot = True
+        self.uno_stack = Uno_Stack(max_undo_stack_size=50)
+        self.uno_stack.save_state_for_undo(self.annot_array)
 
     def _load_annotation(self):
         file_dialog = QFileDialog(self.main)
@@ -280,6 +285,8 @@ class Frame_Annotator:
         if old_idx == new_idx:
             return
 
+        self._save_state_for_undo()
+
         next_change = self._find_next_annot_change()
         self.annot_array[frame_idx:next_change] = new_idx
         self.refresh_ui()
@@ -360,6 +367,8 @@ class Frame_Annotator:
     def _handle_annot_category_remove(self, dest_category, src_category):
         if dest_category == src_category:
             return
+        
+        self._save_state_for_undo()
         dest_idx = self.cat_to_idx[dest_category]
         src_idx = self.cat_to_idx[src_category]
         self.annot_array[self.annot_array == src_idx] = dest_idx
@@ -386,6 +395,7 @@ class Frame_Annotator:
                 Loggerbox.warning(self.main, "Error", "Please input numbers of minimum frames.")
                 return
             
+            self._save_state_for_undo()
             before_counts = np.bincount(self.annot_array)
 
             short_mask = np.array([True])
@@ -442,6 +452,30 @@ class Frame_Annotator:
             dialog.exec()
 
             self.refresh_ui()
+
+    def _save_state_for_undo(self):
+        if self.uno_stack is not None and self.annot_array is not None:
+            self.uno_stack.save_state_for_undo(self.annot_array)
+
+    def _undo_annotation(self):
+        if self.uno_stack is None:
+            return
+        restored = self.uno_stack.undo(self.annot_array)
+        if restored is not None:
+            self.annot_array = restored.copy()
+            self.refresh_ui()
+            self.display_current_frame()
+            self.status_bar.show_message("Undo performed", 1500)
+
+    def _redo_annotation(self):
+        if self.uno_stack is None:
+            return
+        restored = self.uno_stack.redo(self.annot_array)
+        if restored is not None:
+            self.annot_array = restored.copy()
+            self.refresh_ui()
+            self.display_current_frame()
+            self.status_bar.show_message("Redo performed", 1500)
 
     def _auto_load(self):
         if self.dm.video_file is None:
