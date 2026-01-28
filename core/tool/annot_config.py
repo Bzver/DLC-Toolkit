@@ -2,9 +2,11 @@ import numpy as np
 import string
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QVBoxLayout, QHBoxLayout, QHeaderView,
-    QDialog, QLineEdit, QPushButton, QFormLayout, QLabel, QComboBox, QDialogButtonBox
+    QDialog, QLineEdit, QPushButton, QFormLayout, QLabel, QComboBox, QDialogButtonBox,
+    QColorDialog
 )
 
 from utils.helper import indices_to_spans
@@ -25,20 +27,26 @@ class Annotation_Config(QtWidgets.QWidget):
     category_removed = Signal(str, str)
     map_change = Signal(dict)
 
+    COLOR_HEX_EXPANDED = (
+        "#009688", "#FF5722", "#795548", "#2196F3", "#CDDC39", "#FFC107",
+        "#8BC34A", "#673AB7", "#03A9F4", "#E91E63", "#00E676", "#BD34A6", "#9C27B0"
+    )
+
     def __init__(self, behaviors_map: dict, parent: QtWidgets.QWidget = None):
         super().__init__(parent)
-        self._behaviors_map = behaviors_map.copy()
+        self._behaviors_map = behaviors_map
         self.layout = QVBoxLayout(self)
 
         self.table_widget = QTableWidget()
-        self.table_widget.setColumnCount(2)
-        self.table_widget.setHorizontalHeaderLabels(["Category", "Key"])
+        self.table_widget.setColumnCount(3)
+        self.table_widget.setHorizontalHeaderLabels(["Category", "Key", "Color"])
         self.table_widget.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table_widget.verticalHeader().setVisible(False)
         self.table_widget.setEditTriggers(QTableWidget.DoubleClicked)
         self.table_widget.setSelectionBehavior(QTableWidget.SelectRows)
         self.table_widget.setSelectionMode(QTableWidget.SingleSelection)
         self.table_widget.itemChanged.connect(self._handle_item_changed)
+        self.table_widget.cellClicked.connect(self._handle_cell_clicked)
 
         self.table_widget.setStyleSheet(TABLE_STYLESHEET)
         self.layout.addWidget(self.table_widget)
@@ -55,17 +63,20 @@ class Annotation_Config(QtWidgets.QWidget):
         self.layout.addLayout(button_layout)
         self._populate_table()
 
-    def add_category_external(self, new_category:str):
-        existing_keys = set(self._behaviors_map.values())
+    def add_category_external(self, new_category: str):
+        existing_keys = {v[0] for v in self._behaviors_map.values()}
         pool = list(string.ascii_lowercase)
         available_keys = [k for k in pool if k not in existing_keys]
         if not available_keys:
             raise RuntimeError("No valid keys left, remove some behaviors first!")
-        self._behaviors_map[new_category] = available_keys[0]
+
+        color_pool = self.COLOR_HEX_EXPANDED
+        color = color_pool[len(self._behaviors_map) % len(color_pool)]
+        self._behaviors_map[new_category] = (available_keys[0], color)
         self.map_change.emit(self._behaviors_map)
         self._populate_table()
 
-    def highlight_current_category(self, category:str):
+    def highlight_current_category(self, category: str):
         for row in range(self.table_widget.rowCount()):
             cat_item = self.table_widget.item(row, 0)
             if cat_item and cat_item.text() == category:
@@ -76,7 +87,6 @@ class Annotation_Config(QtWidgets.QWidget):
                     QTableWidget.PositionAtCenter
                 )
                 return
-
         self.table_widget.clearSelection()
 
     def sync_behaviors_map(self, behaviors_map):
@@ -85,13 +95,66 @@ class Annotation_Config(QtWidgets.QWidget):
 
     def _populate_table(self):
         self.table_widget.setRowCount(len(self._behaviors_map))
-        for row, (category, key) in enumerate(self._behaviors_map.items()):
+        for row, (category, (key, color)) in enumerate(self._behaviors_map.items()):
+
             category_item = QTableWidgetItem(category)
             category_item.setFlags(category_item.flags() & ~Qt.ItemIsEditable)
             self.table_widget.setItem(row, 0, category_item)
 
-            key_item = QTableWidgetItem(key.upper()) 
+            key_item = QTableWidgetItem(key.upper())
             self.table_widget.setItem(row, 1, key_item)
+
+            color_item = QTableWidgetItem()
+            color_item.setFlags(color_item.flags() & ~Qt.ItemIsEditable)
+            self._set_color_item_background(color_item, color)
+            self.table_widget.setItem(row, 2, color_item)
+
+    def _set_color_item_background(self, item: QTableWidgetItem, color_hex: str):
+        """Set background color of table item based on hex string"""
+        try:
+            color = QColor(color_hex)
+            if not color.isValid():
+                color = QColor("#808080")
+        except Exception:
+            color = QColor("#808080")
+        item.setBackground(color)
+        item.setText("")
+
+    def _handle_cell_clicked(self, row: int, column: int):
+        if column == 2:
+            category = self.table_widget.item(row, 0).text()
+            current_color = self._behaviors_map[category][1]
+            color_dialog = QColorDialog(QColor(current_color), self)
+            color_dialog.setWindowTitle(f"Select Color for '{category}'")
+            if color_dialog.exec() == QDialog.Accepted:
+                new_color = color_dialog.selectedColor()
+                if new_color.isValid():
+                    new_color_hex = new_color.name(QColor.HexArgb)
+                    old_key, _ = self._behaviors_map[category]
+                    self._behaviors_map[category] = (old_key, new_color_hex)
+                    self.map_change.emit(self._behaviors_map)
+                    self._set_color_item_background(self.table_widget.item(row, 2), new_color_hex)
+
+    def _handle_cell_clicked(self, row: int, column: int):
+        if not column == 2:
+            return
+        
+        category = self.table_widget.item(row, 0).text()
+        qcolor = self._behaviors_map[category][1]
+
+        color_dialog = QColorDialog(qcolor, self)
+        color_dialog.setWindowTitle(f"Select Color for '{category}'")
+        color_dialog.setOption(QColorDialog.ShowAlphaChannel, False)
+        
+        if color_dialog.exec() == QDialog.Accepted:
+            new_color = color_dialog.selectedColor()
+            if new_color.isValid():
+                new_color.setAlpha(255)
+                new_color_hex = new_color.name(QColor.HexRgb)
+                old_key, _ = self._behaviors_map[category]
+                self._behaviors_map[category] = (old_key, new_color_hex)
+                self.map_change.emit(self._behaviors_map)
+                self._set_color_item_background(self.table_widget.item(row, 2), new_color_hex)
 
     def _handle_item_changed(self, item: QTableWidgetItem):
         if item.column() != 1:
@@ -103,12 +166,13 @@ class Annotation_Config(QtWidgets.QWidget):
 
         if len(new_key) != 1 or not new_key.isalpha():
             Loggerbox.warning(self, "Invalid Input", "Key must be a single alphabet character.")
-            item.setText(self._behaviors_map[category].upper())
+            current_key = self._behaviors_map[category][0]
+            item.setText(current_key.upper())
             return
 
         new_key_lower = new_key.lower()
 
-        for cat, key in self._behaviors_map.items():
+        for cat, (key, _) in self._behaviors_map.items():
             if cat != category and key == new_key_lower:
                 Loggerbox.warning(
                     self,
@@ -116,17 +180,19 @@ class Annotation_Config(QtWidgets.QWidget):
                     f"Key '{new_key}' is already assigned to category '{cat}'.\n"
                     "Each key must be unique."
                 )
-                item.setText(self._behaviors_map[category].upper())
+                current_key = self._behaviors_map[category][0]
+                item.setText(current_key.upper())
                 return
 
-        self._behaviors_map[category] = new_key_lower
+        _, current_color = self._behaviors_map[category]
+        self._behaviors_map[category] = (new_key_lower, current_color)
         self.map_change.emit(self._behaviors_map)
         item.setText(new_key.upper())
 
     def _add_category(self):
         dialog = Add_Category_Dialog(self)
         if dialog.exec() == QDialog.Accepted:
-            category, key = dialog.get_inputs()
+            category, key, color = dialog.get_inputs()
             if not category:
                 Loggerbox.warning(self, "Input Error", "Category name cannot be empty.")
                 return
@@ -138,12 +204,12 @@ class Annotation_Config(QtWidgets.QWidget):
                 Loggerbox.warning(self, "Duplicate Category", f"Category '{category}' already exists.")
                 return
 
-            if key in [v.lower() for v in self._behaviors_map.values()]:
-                existing = [k for k, v in self._behaviors_map.items() if v.lower() == key][0]
+            if key in [v[0].lower() for v in self._behaviors_map.values()]:
+                existing = [k for k, v in self._behaviors_map.items() if v[0].lower() == key][0]
                 Loggerbox.warning(self, "Duplicate Key", f"Key '{key.upper()}' is already used by '{existing}'.")
                 return
 
-            self._behaviors_map[category] = key
+            self._behaviors_map[category] = (key.lower(), color)
             self.map_change.emit(self._behaviors_map)
             self._populate_table()
 
@@ -196,20 +262,35 @@ class Annotation_Config(QtWidgets.QWidget):
                                 f"Category '{category_to_remove}' removed.\n"
                                 f"Frames reassigned to '{target_category}'.")
 
+
 class Add_Category_Dialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Add Category")
-        self.resize(300, 120)
+        self.resize(350, 150)
 
         self.category_edit = QLineEdit()
         self.key_edit = QLineEdit()
         self.key_edit.setMaxLength(1)
         self.key_edit.setPlaceholderText("e.g. H")
 
+        self.color_preview = QLabel()
+        self.color_preview.setFixedSize(30, 20)
+        self.color_preview.setStyleSheet("border: 1px solid #ccc;")
+        self.color_button = QPushButton("Select Color")
+        self.color_button.clicked.connect(self._pick_color)
+
+        self._current_color = "#FF0000"
+        self._update_color_preview()
+
         form_layout = QFormLayout()
         form_layout.addRow("Category Name:", self.category_edit)
         form_layout.addRow("Key (single letter):", self.key_edit)
+        color_layout = QHBoxLayout()
+        color_layout.addWidget(self.color_preview)
+        color_layout.addWidget(self.color_button)
+        color_layout.addStretch()
+        form_layout.addRow("Color:", color_layout)
 
         button_box = QHBoxLayout()
         self.ok_button = QPushButton("OK")
@@ -225,10 +306,25 @@ class Add_Category_Dialog(QDialog):
         self.ok_button.clicked.connect(self.accept)
         self.cancel_button.clicked.connect(self.reject)
 
+    def _pick_color(self):
+        color_dialog = QColorDialog(QColor(self._current_color), self)
+        if color_dialog.exec() == QDialog.Accepted:
+            color = color_dialog.selectedColor()
+            if color.isValid():
+                self._current_color = color.name(QColor.HexArgb)
+                self._update_color_preview()
+
+    def _update_color_preview(self):
+        self.color_preview.setStyleSheet(
+            f"background-color: {self._current_color}; border: 1px solid #999;"
+        )
+
     def get_inputs(self):
         category = self.category_edit.text().strip()
         key = self.key_edit.text().strip().lower()
-        return category, key
+        color = self._current_color
+        return category, key, color
+
 
 class Annotation_Summary_Table(QtWidgets.QWidget):
     row_clicked = Signal(int)

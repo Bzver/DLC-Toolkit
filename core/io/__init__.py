@@ -1,7 +1,7 @@
 from .exporter import Exporter
 from .pred_loader import Prediction_Loader
 from .frame_loader import Frame_Extractor, Frame_Extractor_Img
-from .annot_loader import load_annotation
+from .annot_loader import load_annotation, load_onehot_csv
 from .csv_op import prediction_to_csv
 from .h5_op import save_prediction_to_existing_h5, save_predictions_to_new_h5, get_frame_list_from_h5
 from .io_helper import (
@@ -20,6 +20,7 @@ __all__ = (
     Frame_Extractor,
     Frame_Extractor_Img,
     load_annotation,
+    load_onehot_csv,
     prediction_to_csv,
     save_prediction_to_existing_h5,
     save_predictions_to_new_h5,

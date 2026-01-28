@@ -8,11 +8,11 @@ from PySide6 import QtWidgets
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QVBoxLayout, QFileDialog
 
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 
 from core.runtime import Data_Manager, Video_Manager
 from core.tool import Annotation_Config, Annotation_Summary_Table, Prediction_Plotter, get_next_frame_in_list
-from core.io import load_annotation, prediction_to_csv
+from core.io import load_annotation, prediction_to_csv, load_onehot_csv
 from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Status_Bar, Frame_List_Dialog
 from utils.track import interpolate_track_all
 from utils.helper import frame_to_pixmap, frame_to_grayscale, get_instance_count_per_frame, array_to_iterable_runs
@@ -21,20 +21,19 @@ from utils.logger import Loggerbox
 
 class Frame_Annotator:
     BEHAVIORS_MAP = {
-        "other": "o",
-        "allogrooming": "g",
-        "sniffing": "s",
-        "anogenital": "a",
-        "huddling": "h",
-        "mounting": "m",
-        "copulation": "p",
-        "proximal": "l",
-        "in-cage": "q",
-        }
+        "other": ("o", "#9BB0BB"),
+        "allogrooming": ("g", "#D50000"),
+        "sniffing": ("s", "#00BCD4"),
+        "anogenital": ("a", "#FF9800"),
+        "huddling": ("h", "#FFEB3B"),
+        "mounting": ("m", "#795548"),
+        "copulation": ("p", "#FFB3AD"),
+        "receptive": ("l", "#4CAF50"),
+        "fleeing": ("f", "#3F51B5"),
+    }
 
     COLOR_HEX_EXPANDED = (
-        "#9BB0BBFF", "#D50000", "#00BCD4", "#FF9800", "#4CAF50", "#FFB3AD", "#3F51B5",
-        "#009688", "#FFEB3B", "#FF5722", "#795548", "#2196F3", "#CDDC39", "#FFC107",
+        "#009688", "#FF5722", "#795548", "#2196F3", "#CDDC39", "#FFC107",
         "#8BC34A", "#673AB7", "#03A9F4", "#E91E63", "#00E676", "#BD34A6", "#9C27B0"
     )
 
@@ -57,19 +56,16 @@ class Frame_Annotator:
                 "buttons": [
                     ("Import Annotation From File", self._load_annotation),
                     ("Import Frame List As Annotation", self._import_frame_list),
+                    ("Import and Remap ASOID Predictions", self._load_one_hot),
+                    ("Import Config From Annotation or JSON Config", self._load_annotation_config),
                     ("Filter Out Short Bout", self._filter_short_bout),
-                ]
-            },
-            "View":{
-                "buttons": [
-                    ("Toggle Annotation Config", self._toggle_annotation_config),
                 ]
             },
             "Save":{
                 "buttons": [
                     ("Export in Text", self._export_annotation_to_text),
                     ("Export in Mat", self._export_annotation_to_mat),
-                    ("Export Truncated in BORIS", self._export_truncated_package)
+                    ("Export Truncated in BORIS", self._export_truncated_package),
                 ]
             },
         }
@@ -102,7 +98,7 @@ class Frame_Annotator:
         if hardcore:
             self.behav_map.clear()
         else:
-            self.behav_map = self.BEHAVIORS_MAP
+            self.behav_map = self.BEHAVIORS_MAP.copy()
         if hasattr(self, "annot_conf") and self.annot_conf is not None:
             self.annot_conf.sync_behaviors_map(self.behav_map)
         self.annot_array = None
@@ -110,7 +106,7 @@ class Frame_Annotator:
 
     def _setup_shortcuts(self):
         self.sc_annot.clear()
-        for category, key in self.behav_map.items():
+        for category, (key, _) in self.behav_map.items():
             if not key.strip():
                 continue
             self.sc_annot.add_shortcut(
@@ -125,10 +121,57 @@ class Frame_Annotator:
     def _load_annotation(self):
         file_dialog = QFileDialog(self.main)
         annot_path, _ = file_dialog.getOpenFileName(self.main, "Select Annotation File", "", "Text Files (*.txt);;All Files (*)")
-        if annot_path:
-            self.reset_state(True)
+        if not annot_path:
+            return
+        
+        self.reset_state(True)
+        json_path, _ = file_dialog.getOpenFileName(self.main, "Select JSON Color Map File (Optional)", "", "Json Files (*.json)")
+        if json_path:
+            behav_map, frame_dict = load_annotation(annot_path, json_path)
+        else:
             behav_map, frame_dict = load_annotation(annot_path)
-            self._frame_list_to_new_annot_cat(frame_dict.keys(), behav_map=behav_map, frame_dict=frame_dict)
+
+        self._frame_list_to_new_annot_cat(frame_dict.keys(), behav_map=behav_map, frame_dict=frame_dict)
+
+    def _load_annotation_config(self):
+        file_dialog = QFileDialog(self.main)
+        self.reset_state(True)
+        config_path, _ = file_dialog.getOpenFileName(self.main, "Select JSON Color Map File (Optional)", "", "Json Files (*.json);;Text Files (*.txt)")
+
+        if config_path.endswith(".json"):
+            with open(config_path, "r") as f:
+                meta = json.load(f)
+            behav_map = meta["behav_map"]
+            frame_dict = {}
+        else:
+            behav_map, frame_dict = load_annotation(config_path, config_only=True)
+
+        self._frame_list_to_new_annot_cat(behav_map.keys(), behav_map=behav_map, frame_dict=frame_dict)
+
+    def _load_one_hot(self):
+        file_dialog = QFileDialog(self.main)
+        csv_path, _ = file_dialog.getOpenFileName(
+            self.main, "Select One-Hot CSV File", "", "CSV Files (*.csv);;All Files (*)"
+        )
+        if not csv_path:
+            return
+
+        json_path, _ = file_dialog.getOpenFileName(
+            self.main, "Select Associated JSON Metadata", "", "Json Files (*.json)"
+        )
+        if not json_path:
+            Loggerbox.warning(self.main, "No Metadata", "JSON metadata is required for one-hot import.")
+            return
+
+        self.reset_state(True)
+
+        try:
+            behav_map, frame_dict = load_onehot_csv(csv_path, json_path)
+        except Exception as e:
+            Loggerbox.error(self.main, "Load Error", f"Failed to load one-hot annotation: {e}")
+            return
+
+        self._frame_list_to_new_annot_cat(list(frame_dict.keys()), behav_map=behav_map, frame_dict=frame_dict)
 
     def _import_frame_list(self):
         frame_categories = {
@@ -144,14 +187,14 @@ class Frame_Annotator:
         dialog.exec()
 
     def _frame_list_to_new_annot_cat(
-            self, categories:List[str], behav_map:Optional[Dict[str, str]]=None, frame_dict:Optional[Dict[str, List[int]]]=None):
+            self, categories:List[str], behav_map:Optional[Dict[str, Tuple[str, str]]]=None, frame_dict:Optional[Dict[str, List[int]]]=None):
         if self.annot_array is None:
             self.init_loaded_vid()
         if behav_map:
             self._handle_annot_key_change(behav_map)
             self.annot_conf.sync_behaviors_map(behav_map)
         for cat in categories:
-            if cat not in self.behav_map.keys():
+            if cat not in self.behav_map:
                 self.annot_conf.add_category_external(cat)
             frame_list = frame_dict[cat] if frame_dict else self.dm.get_frames(cat)
             frame_arr = np.array(frame_list)
@@ -260,20 +303,9 @@ class Frame_Annotator:
             return np.insert(np.where(np.diff(self.annot_array)!=0)[0]+1, 0, 0).tolist()
 
     ###################################################################################################################################################
-
-    def _toggle_annotation_config(self):
-        self.open_annot = not self.open_annot
-        if self.open_annot:
-            self._init_annot_config()
-            self.menu_slot_callback()
-        else:
-            self.vid_play.set_right_panel_widget(None)
-            self.menu_slot_callback()
             
     def sync_menu_state(self, close_all:bool=False):
-        self.open_annot = False
-
-    ###################################################################################################################################################
+        pass
 
     def refresh_and_display(self):
         self.refresh_ui()
@@ -290,14 +322,24 @@ class Frame_Annotator:
             color = "black"
         else:
             current_behav_idx = self.annot_array[self.dm.current_frame_idx]
-            color = self.COLOR_HEX_EXPANDED[current_behav_idx % len(self.COLOR_HEX_EXPANDED)]
+            current_behav = self.idx_to_cat[current_behav_idx]
+            color = self.behav_map.get(current_behav, ("", "#000000"))[1]
         self.vid_play.nav.set_title_color(color)
 
     def _refresh_slider(self):
         if hasattr(self, "annot_sum"):
             self.annot_sum.update_data(self.annot_array, self.behav_map, self.idx_to_cat)
         self.vid_play.sld.clear_frame_category()
-        idx_to_color = {idx:self.COLOR_HEX_EXPANDED[idx] for idx in range(len(self.cat_to_idx))}
+    
+        idx_to_color = {
+            self.cat_to_idx[cat]: color 
+            for cat, (_, color) in self.behav_map.items()
+            if cat in self.cat_to_idx
+        }
+
+        for idx in range(len(self.cat_to_idx)):
+            if idx not in idx_to_color:
+                idx_to_color[idx] = self.COLOR_HEX_EXPANDED[idx % len(self.COLOR_HEX_EXPANDED)]
         self.vid_play.sld.set_frame_category_array(self.annot_array, idx_to_color)
         self.vid_play.sld.commit_categories()
 
@@ -325,7 +367,7 @@ class Frame_Annotator:
         self._refresh_slider()
         self._auto_save()
 
-    def _handle_annot_key_change(self, new_map):
+    def _handle_annot_key_change(self, new_map: Dict[str, Tuple[str, str]]):
         self.behav_map = new_map
         self._setup_shortcuts()
         self._refresh_annot_numeric()
@@ -421,6 +463,10 @@ class Frame_Annotator:
         save_path = f"{vid_path}_annot_backup.txt"
         try:
             self._export_txt_worker(save_path)
+            json_path = save_path.replace(".txt", ".json")
+            with open(json_path, 'w') as f:
+                json.dump({"behav_map": self.behav_map}, f, indent=2)
+
         except Exception as e:
             self.status_bar.show_message(f"Failed to auto save annotation: {e}")
 
@@ -437,6 +483,10 @@ class Frame_Annotator:
 
         try:
             self._export_txt_worker(file_path)
+            json_path = file_path.replace(".txt", ".json")
+            with open(json_path, 'w') as f:
+                json.dump({"behav_map": self.behav_map}, f, indent=2)
+
             Loggerbox.info(self.main, "Export Successful", f"Annotation exported to {file_path}")
         except Exception as e:
             Loggerbox.error(self.main, "Export Error", f"Failed to export annotation: {e}", exc=e)
@@ -444,7 +494,7 @@ class Frame_Annotator:
     def _export_txt_worker(self, file_path):
         content = "Caltech Behavior Annotator - Annotation File\n\n"
         content += "Configuration file:\n"
-        for category, key in self.behav_map.items():
+        for category, (key, _) in self.behav_map.items():
             content += f"{category}\t{key}\n"
         content += "\n"
         content += "S1:\tstart\tend\ttype\n"
@@ -478,6 +528,11 @@ class Frame_Annotator:
             }
             mat_to_save = {"annotation": annotation_struct}
             sio.savemat(file_path, mat_to_save)
+
+            json_path = file_path.replace(".mat", ".json")
+            with open(json_path, 'w') as f:
+                json.dump({"behav_map": self.behav_map}, f, indent=2)
+
             Loggerbox.info(self.main, "Success", f"Successfully saved to {file_path}")
         except Exception as e:
             Loggerbox.error(self.main, "Failed", f"Failed to save {file_path}, Exception: {e}", exc=e)
@@ -537,12 +592,10 @@ class Frame_Annotator:
             json_path = file_path.replace(".csv", ".json")
             with open(json_path, 'w') as f:
                 json.dump({
-                    "original_frames": frame_list,
-                    "fps": fps,
-                    "min_duration_frames": min_duration,
-                    "max_gap_frames": max_gap,
-                    "num_instances": I,
-                    "total_exported_frames": len(frame_list)
+                    "used_frames": frame_list,
+                    "total_frames": self.dm.total_frames,
+                    "total_exported_frames": len(frame_list),
+                    "behav_map": self.behav_map,
                 }, f, indent=2)
         except Exception as e:
             Loggerbox.error(self.main, "Failed", f"Failed to save {file_path}, Exception: {e}", exc=e)
