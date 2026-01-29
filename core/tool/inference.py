@@ -1,6 +1,6 @@
 import os
 import shutil
-import tempfile
+from datetime import datetime
 import yaml
 import numpy as np
 
@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QPushButton, QDialog
 
 from typing import List, Optional, Tuple
 
-from ui import Spinbox_With_Label, Progress_Indicator_Dialog
+from ui import Spinbox_With_Label, Progress_Indicator_Dialog, Tqdm_Progress_Adapter
 from core.io import (
     Exporter, Prediction_Loader, Frame_Extractor, Frame_Extractor_Img,
     save_predictions_to_new_h5, timestamp_new_prediction,
@@ -51,8 +51,35 @@ class DLC_Inference(QDialog):
         self.mask_region = mask
         self.video_name, _ = os.path.splitext(os.path.basename(self.video_filepath))
 
-        self.temp_directory = tempfile.TemporaryDirectory()
-        self.temp_dir = self.temp_directory.name
+        temp_dir_root = os.path.join(os.path.dirname(self.video_filepath), "temp")
+        os.makedirs(temp_dir_root, exist_ok=True)
+
+        self.temp_dir = os.path.join(temp_dir_root, self.video_name)
+
+        temp_dir_derivatives = []
+        for f in os.listdir(temp_dir_root):
+            if not f.startswith(self.video_name):
+                continue
+            suffix = f[(len(self.video_name)+1):]
+            if len(suffix) == 8 and suffix.isdigit():
+                temp_dir_derivatives.append(f)
+
+        for f in temp_dir_derivatives:
+            f_path = os.path.join(temp_dir_root, f)
+            if os.path.isdir(f_path):
+                try:
+                    shutil.rmtree(f_path)
+                except PermissionError:
+                    pass
+
+        if os.path.isdir(self.temp_dir):
+            try:
+                shutil.rmtree(self.temp_dir)
+            except PermissionError:
+                timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+                self.temp_dir = f"{self.temp_dir}_{timestamp}"
+
+        os.makedirs(self.temp_dir)
         self.extractor = Frame_Extractor(self.video_filepath)
 
         layout = QVBoxLayout(self)
@@ -276,19 +303,21 @@ class DLC_Inference(QDialog):
             else:
                 Loggerbox.info(self, "Crop Region Not Set", "User cancel the ROI selection.")
                 return
+        
+        self.extractor.close()
 
         inference_video_path = None
+        use_video = False
         try:
             if len(self.frame_list)  > int(0.9 * self.total_frames) and not (self.cropping or self.masking or self.grayscaling):
                 inference_video_path = self.video_filepath
-                self.extractor_reviewer = Frame_Extractor(inference_video_path)
+                use_video = True
             elif len(self.frame_list) < max(int(0.01 * self.total_frames), 5000) and not self.model_name.startswith("CondPreNet_"):
-                self._extract_marked_frame_images()
-                self.extractor_reviewer = Frame_Extractor_Img(self.temp_dir)
+                self._extract_marked_frame_images(headless)
             else:
                 inference_video_path = os.path.join(self.temp_dir, "temp_extract.mp4")
-                self._extract_marked_frame_as_video()
-                self.extractor_reviewer = Frame_Extractor(inference_video_path)
+                self._extract_marked_frame_as_video(headless)
+                use_video = True
         except Exception as e:
             self._panic_exit(reason=f"Error during frame image extraction. Error:{e}", exception=e)
             return
@@ -301,7 +330,7 @@ class DLC_Inference(QDialog):
                 self.on_hold_dialog.show()
             self.hide()
             QtWidgets.QApplication.processEvents()
-            if inference_video_path:
+            if use_video:
                 self._analyze_frame_videos(inference_video_path)
             else:
                 self._analyze_frame_images()
@@ -311,6 +340,10 @@ class DLC_Inference(QDialog):
         
         if not headless:
             self.on_hold_dialog.accept()
+            if use_video:
+                self.extractor_reviewer = Frame_Extractor(inference_video_path)
+            else:
+                self.extractor_reviewer = Frame_Extractor_Img(self.temp_dir)
 
         self.show()
         self._process_new_pred(headless)
@@ -335,8 +368,12 @@ class DLC_Inference(QDialog):
             yaml.dump(config_org, file, default_flow_style=False, sort_keys=False)
             logger.info(f"[INFER] DeepLabCut config in {config_path} has been updated.")
 
-    def _extract_marked_frame_images(self):
-        progress = Progress_Indicator_Dialog(0, 100, "Frame Extraction", "Extracting frames from video", parent=self)
+    def _extract_marked_frame_images(self, headless:bool):
+        if headless:
+            progress = Tqdm_Progress_Adapter()
+        else:
+            progress = Progress_Indicator_Dialog(0, 100, "Frame Extraction", "Extracting frames from video", parent=self)
+    
         exporter = Exporter(
             dlc_data=self.dlc_data,
             save_folder=self.temp_dir,
@@ -351,8 +388,12 @@ class DLC_Inference(QDialog):
         if corrected_indices:
             self.frame_list = corrected_indices
 
-    def _extract_marked_frame_as_video(self):
-        progress = Progress_Indicator_Dialog(0, 100, "Frame Extraction", "Extracting frames from video", parent=self)
+    def _extract_marked_frame_as_video(self, headless:bool):
+        if headless:
+            progress = Tqdm_Progress_Adapter()
+        else:
+            progress = Progress_Indicator_Dialog(0, 100, "Frame Extraction", "Extracting frames from video", parent=self)
+            
         exporter = Exporter(
             dlc_data=self.dlc_data,
             save_folder=self.temp_dir,
@@ -418,6 +459,8 @@ class DLC_Inference(QDialog):
         video_path = os.path.dirname(self.video_filepath)
         if "image_predictions_" in temp_pred_filename:
             pred_filename = temp_pred_filename.replace("image_predictions_", self.video_name)
+        elif headless:
+            pred_filename = temp_pred_filename.replace("temp_extract", f"{self.video_name}_auto_")
         else:
             pred_filename = temp_pred_filename.replace("temp_extract", self.video_name)
 

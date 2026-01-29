@@ -1,22 +1,23 @@
 import os
+from collections import defaultdict
 import numpy as np
 import yaml
 from PySide6 import QtWidgets
 from typing import List, Tuple, Optional
 
-from core.runtime import Data_Manager, Video_Manager
+from core.runtime import Data_Manager
 from core.tool.inference import DLC_Inference
 from core.io import backup_existing_prediction, get_existing_projects, csv_op
 from utils.helper import calculate_blob_inference_intervals
 from utils.logger import logger, set_headless_mode
 
 
-MAX_FRAMES_PER_RUN = 100000
+MAX_FRAMES_PER_RUN = 10000
 
 
 def batch_to_h5(dlc_config_path: str):
     if not os.path.isfile(dlc_config_path):
-        logger.error("[BATCH] DLC config file not found: %s", dlc_config_path)
+        logger.error(f"[BATCH] DLC config file not found: {dlc_config_path}")
         return
 
     dlc_dir = os.path.dirname(dlc_config_path)
@@ -29,12 +30,12 @@ def batch_to_h5(dlc_config_path: str):
             logger.error("[BATCH] 'scorer' not found in DLC config.")
             return
     except Exception as e:
-        logger.error("[BATCH] Failed to read DLC config: %s", e)
+        logger.error(f"[BATCH] Failed to read DLC config: {e}")
         return
 
     labeled_data_dir = os.path.join(dlc_dir, "labeled-data")
     if not os.path.isdir(labeled_data_dir):
-        logger.warning("[BATCH] labeled-data directory not found: %s", labeled_data_dir)
+        logger.warning(f"[BATCH] labeled-data directory not found: {labeled_data_dir}")
         return
 
     success_count = 0
@@ -51,33 +52,33 @@ def batch_to_h5(dlc_config_path: str):
 
         if not os.path.isfile(csv_path):
             skipped.append((project_name, "CSV missing"))
-            logger.debug("[BATCH] Skipped (CSV not found): %s", csv_path)
+            logger.debug(f"[BATCH] Skipped (CSV not found): {csv_path}")
             continue
         if os.path.isfile(h5_path):
             skipped.append((project_name, "H5 already exists"))
-            logger.debug("[BATCH] Skipped (H5 already exists): %s", h5_path)
+            logger.debug(f"[BATCH] Skipped (H5 already exists): {h5_path}")
             continue
 
         try:
             csv_op.csv_to_h5(csv_path=csv_path, multi_animal=True, scorer=scorer)
             success_count += 1
-            logger.info("[BATCH] Successfully converted: %s", csv_path)
+            logger.info(f"[BATCH] Successfully converted: {csv_path}")
         except Exception as e:
             failed.append((project_name, str(e)))
-            logger.error("[BATCH] Failed to convert %s: %s", csv_path, e)
+            logger.error(f"[BATCH] Failed to convert {csv_path}: {e}")
 
     total = len([d for d in os.listdir(labeled_data_dir) if os.path.isdir(os.path.join(labeled_data_dir, d))])
-    logger.info("[BATCH] Conversion finished: %d/%d succeeded.", success_count, total)
+    logger.info(f"[BATCH] Conversion finished: {success_count}/{total} succeeded.")
 
     if skipped:
-        logger.info("[BATCH] Skipped %d projects:", len(skipped))
+        logger.info(f"[BATCH] Skipped {len(skipped)} projects:")
         for name, reason in skipped:
-            logger.info("  - %s (%s)", name, reason)
+            logger.info(f"  - {name} ({reason})")
 
     if failed:
-        logger.error("[BATCH] Failed %d projects:", len(failed))
+        logger.error(f"[BATCH] Failed {len(failed)} projects:")
         for name, err in failed:
-            logger.error("  - %s: %s", name, err)
+            logger.error(f"  - {name}: {err}")
 
 def batch_grayscale(dlc_config_path):
     success_count = 0
@@ -131,7 +132,7 @@ def batch_grayscale(dlc_config_path):
 
 def batch_kp_normalization(dlc_config_path, task, dialog):
     if not os.path.isfile(dlc_config_path):
-        logger.error("[BATCH] DLC config file not found: %s", dlc_config_path)
+        logger.error(f"[BATCH] DLC config file not found: {dlc_config_path}")
         return
 
     dlc_dir = os.path.dirname(dlc_config_path)
@@ -144,12 +145,12 @@ def batch_kp_normalization(dlc_config_path, task, dialog):
             logger.error("[BATCH] 'scorer' not found in DLC config.")
             return
     except Exception as e:
-        logger.error("[BATCH] Failed to read DLC config: %s", e)
+        logger.error(f"[BATCH] Failed to read DLC config: {e}")
         return
 
     labeled_data_dir = os.path.join(dlc_dir, "labeled-data")
     if not os.path.isdir(labeled_data_dir):
-        logger.warning("[BATCH] labeled-data directory not found: %s", labeled_data_dir)
+        logger.warning(f"[BATCH] labeled-data directory not found: {labeled_data_dir}")
         return
 
     failed = []
@@ -174,11 +175,29 @@ def batch_kp_normalization(dlc_config_path, task, dialog):
         dm.migrate_existing_project(f"{project_dir}_NM")
 
     if failed:
-        logger.error("[BATCH] Failed %d projects:", len(failed))
+        logger.error(f"[BATCH] Failed {len(failed)} projects:")
         for name, err in failed:
-            logger.error("  - %s: %s", name, err)
+            logger.error(f"  - {name}: {err}")
 
-def batch_inference(rootdir, dlc_config_path, dialog):
+
+
+def batch_inference(
+    rootdir: str, 
+    dlc_config_path: str, 
+    dialog: QtWidgets.QDialog,
+    crop: bool = False,
+    mask: bool = False,
+    grayscale: bool = False,
+    batch_size: int = 32,
+    detector_batch_size: int = 32,
+    shuffle_idx: Optional[int] = None,
+    partial_infer: bool = False,
+    partial_infer_indices: Optional[List[int]] = None,
+    blob_based_infer: bool = False,
+    infer_interval: Optional[Tuple[int, int, int, int]] = None,
+    infer_only_empty_frames: bool = False,
+    crop_region: Optional[Tuple[int, int, int, int]] = None
+):
     pkl_list = []
     for root, dirs, files in os.walk(rootdir):
         for file in files:
@@ -187,7 +206,7 @@ def batch_inference(rootdir, dlc_config_path, dialog):
 
     logger.info("[BATCH] About to batch process following workspace file.")
     for i, path in enumerate(pkl_list):
-        logger.info(f"[{i}]:{path}")
+        logger.info(f"[{i}]: {path}")
 
     success_count = 0
     failed = []
@@ -201,23 +220,31 @@ def batch_inference(rootdir, dlc_config_path, dialog):
                 workspace_file=f,
                 data_manager=dm,
                 dlc_config_path=dlc_config_path,
-                crop=True,
-                mask=True,
-                grayscale=True,
-                batch_size=32,
-                detector_batch_size=32,
+                partial_infer=partial_infer,
+                partial_infer_indices=partial_infer_indices,
+                blob_based_infer=blob_based_infer,
+                infer_interval=infer_interval,
+                infer_only_empty_frames=infer_only_empty_frames,
+                crop=crop,
+                crop_region=crop_region,
+                mask=mask,
+                grayscale=grayscale,
+                shuffle_idx=shuffle_idx,
+                batch_size=batch_size,
+                detector_batch_size=detector_batch_size,
             )
         except Exception as e:
             logger.error(f"[Batch {i}/{len(pkl_list)}] FAILED: {filename} — {e} | ")
             logger.exception(f"[Batch {i}/{len(pkl_list)}]")
             failed.append(f)
-            continue # Gliding over all
+            continue
         else:
             success_count += 1
             logger.info(f"[Batch {i}/{len(pkl_list)}] Completed: {filename}")
             backup_existing_prediction(f)
             _autoload_pred(f, dm, dlc_config_path)
             dm.save_workspace()
+            _cleanup_old_auto_predictions(os.path.dirname(f), keep=3)
             continue
 
     logger.info(f"[BATCH] Batch finished: {success_count}/{len(pkl_list)} succeeded.")
@@ -227,21 +254,21 @@ def batch_inference(rootdir, dlc_config_path, dialog):
             logger.info(f)
 
 def _inference_workspace_vid(
-        workspace_file:str,
-        data_manager:Data_Manager,
-        dlc_config_path:Optional[str]=None,
-        partial_infer:bool=False,
-        partial_infer_indices:Optional[List[int]]=None,
-        blob_based_infer:bool=False,
-        infer_interval:Optional[Tuple[int,int,int,int]]=None,
-        infer_only_empty_frames:bool=False,
-        crop:bool=False,
-        crop_region:Optional[Tuple[int,int,int,int]]=None,
-        mask:bool=False,
-        grayscale:bool=False,
-        shuffle_idx:Optional[int]=None,
-        batch_size:Optional[int]=None,
-        detector_batch_size:Optional[int]=None,
+        workspace_file: str,
+        data_manager: Data_Manager,
+        dlc_config_path: Optional[str] = None,
+        partial_infer: bool = False,
+        partial_infer_indices: Optional[List[int]] = None,
+        blob_based_infer: bool = False,
+        infer_interval: Optional[Tuple[int, int, int, int]] = None,
+        infer_only_empty_frames: bool = False,
+        crop: bool = False,
+        crop_region: Optional[Tuple[int, int, int, int]] = None,
+        mask: bool = False,
+        grayscale: bool = False,
+        shuffle_idx: Optional[int] = None,
+        batch_size: Optional[int] = None,
+        detector_batch_size: Optional[int] = None,
     ):
     assert os.path.isfile(workspace_file), f"[BATCH] Workspace file not found: {workspace_file}"
 
@@ -249,7 +276,7 @@ def _inference_workspace_vid(
     dm = data_manager
 
     dm.load_workspace(workspace_file)
-    
+
     if dlc_config_path is not None and os.path.isfile(dlc_config_path) and dm.dlc_data is None:
         dm.load_metadata_to_dm(dlc_config_path)
     else:
@@ -332,8 +359,7 @@ def _inference_workspace_vid(
         if shuffle_idx is not None:
             available_shuffles = inference_window._check_available_shuffles()
             if shuffle_idx not in available_shuffles:
-                logger.info(
-                    f"[BATCH] Supplied shuffle_idx - {shuffle_idx} not in available shuffles - {available_shuffles}, using the newest shuffle instead.")
+                logger.info(f"[BATCH] Supplied shuffle_idx - {shuffle_idx} not in available shuffles - {available_shuffles}, using the newest shuffle instead.")
             else:
                 inference_window._shuffle_spinbox_changed(shuffle_idx)
 
@@ -343,9 +369,9 @@ def _inference_workspace_vid(
 def _pseudo_callback(*arg, **kwargs):
     pass
 
-def _autoload_pred(workspace_file:str, dm:Data_Manager, dlc_config_path:Optional[str]=None):
+def _autoload_pred(workspace_file: str, dm: Data_Manager, dlc_config_path: Optional[str] = None):
     workspace_dir = os.path.dirname(workspace_file)
-    workspace_base = os.path.splitext(os.path.basename(workspace_file))[0].replace("_workspace","")
+    workspace_base = os.path.splitext(os.path.basename(workspace_file))[0].replace("_workspace", "")
 
     assert dlc_config_path or (dm.dlc_data and dm.dlc_data.pred_data_array is not None), "DLC Config Missing!"
 
@@ -376,14 +402,84 @@ def _autoload_pred(workspace_file:str, dm:Data_Manager, dlc_config_path:Optional
     else:
         logger.info("[AUTOLOAD] No matching .h5 prediction found for auto-load.")
 
+def _cleanup_old_auto_predictions(workspace_dir: str, keep: int = 3):
+    groups = defaultdict(list)
+
+    for filename in os.listdir(workspace_dir):
+        video_name, dlc_params = _parse_auto_pred_filename(filename)
+        if video_name is None:
+            continue  # Not an auto file
+
+        full_path = os.path.join(workspace_dir, filename)
+        groups[(video_name, dlc_params)].append(full_path)
+
+    total_deleted = 0
+
+    for key, file_list in groups.items():
+        if len(file_list) <= keep:
+            continue
+
+        file_list.sort(key=lambda p: os.path.getmtime(p))
+        to_delete = file_list[:-keep]
+
+        for filepath in to_delete:
+            try:
+                os.remove(filepath)
+                total_deleted += 1
+                logger.debug(f"[BATCH] Deleted old auto-pred: {os.path.basename(filepath)}")
+                csv_path = filepath.replace(".h5", ".csv")
+                if os.path.isfile(csv_path):
+                    os.remove(csv_path)
+                    logger.debug(f"[BATCH] Deleted corresponding CSV: {os.path.basename(csv_path)}")
+            except Exception as e:
+                logger.warning(f"[BATCH] Failed to delete {filepath}: {e}")
+
+    if total_deleted > 0:
+        logger.info(f"[BATCH] Cleaned up {total_deleted} old auto-prediction files.")
+
+def _parse_auto_pred_filename(filename: str):
+    if not filename.endswith(".h5"):
+        return None, None
+    if "_auto_" not in filename:
+        return None, None
+    if "_inference_" not in filename:
+        return None, None
+
+    parts = filename.split("_auto_", 1)
+    if len(parts) != 2:
+        return None, None
+
+    video_name = parts[0]
+    rest = parts[1]
+
+    if rest.endswith(".h5"):
+        rest = rest[:-3]
+
+    inference_pos = rest.rfind("_inference_")
+    if inference_pos == -1:
+        return None, None
+
+    dlc_params = rest[:inference_pos]
+    return video_name, dlc_params
+
+
 if __name__ == "__main__":
     app = QtWidgets.QApplication([])
     dialog = QtWidgets.QDialog()
     set_headless_mode(True)
-    rootdir = "D:/Project/WORKINGONIT/20251201 Marathon/"
+    rootdir = "D:/Project/WORKINGONIT/"
     dlc_config_path = "D:/Project/DLC-Models/NTD/config.yaml"
  
-    batch_inference(rootdir, dlc_config_path, dialog)
+    batch_inference(
+        rootdir,
+        dlc_config_path,
+        dialog=dialog,
+        crop=True,
+        grayscale=True,
+        batch_size=32,
+        detector_batch_size=32
+    )
+
     # batch_grayscale(dlc_config_path)
     # batch_to_h5(dlc_config_path)
 
