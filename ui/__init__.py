@@ -21,7 +21,7 @@ from .video_player import Video_Player_Widget, Nav_Widget
 from .menu_shortcut import Menu_Widget, Shortcut_Manager
 from .toggle_switch import Toggle_Switch
 from .status_message import Status_Bar
-from .progress_indicator import Progress_Indicator_Dialog
+from .progress_indicator import Progress_Indicator_Dialog, Tqdm_Progress_Adapter
 
 __all__ = (
     Slider_With_Marks,
@@ -33,6 +33,7 @@ __all__ = (
     Frame_List_Dialog,
     Head_Tail_Dialog,
     Progress_Indicator_Dialog,
+    Tqdm_Progress_Adapter,
     Inference_interval_Dialog,
     Instance_Selection_Dialog,
     Frame_Range_Dialog,
