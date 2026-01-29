@@ -268,9 +268,11 @@ class Exporter:
         frame_set = set(self.frame_list)
         extracted_indices = []
 
-        self.extractor.start_sequential_read(0)
-        logger.info("[EXPORTER] Started sequential frame read for continuous extraction.")
+        min_frame_in_list = min(self.frame_list) if self.frame_list else 0
         max_frame_in_list = max(self.frame_list) if self.frame_list else -1
+        current_frame_idx += min_frame_in_list
+        self.extractor.start_sequential_read(start=min_frame_in_list, end=max_frame_in_list+1)
+        logger.info("[EXPORTER] Started sequential frame read for continuous extraction.")
 
         while current_frame_idx <= max_frame_in_list:
             result = self.extractor.read_next_frame()
