@@ -11,7 +11,7 @@ from core.runtime import Data_Manager, Video_Manager
 from core.tool import (Outlier_Finder, Canvas, Prediction_Plotter, Uno_Stack,
                        Track_Correction_Dialog, Iteration_Review_Dialog)
 from ui import (Menu_Widget, Video_Player_Widget, Pose_Rotation_Dialog, Status_Bar, Instance_Selection_Dialog,
-                Shortcut_Manager, Progress_Indicator_Dialog, Frame_Range_Dialog)
+                Shortcut_Manager, Progress_Indicator_Dialog, Frame_Range_Dialog, Keypoint_Num_Dialog)
 from utils.pose import (
     rotate_selected_inst, generate_missing_inst, generate_missing_kp_for_inst, 
     generate_missing_kp_batch, calculate_pose_centroids, calculate_pose_rotations, outlier_removal
@@ -552,7 +552,10 @@ class Frame_Label:
         
         self._save_state_for_undo()
         min_visible_kp = self.dm.dlc_data.num_keypoint // 2
-        self.pred_data_array = generate_missing_kp_batch(self.pred_data_array, self.dm.canon_pose, min_visible_kp)
+        dialog = Keypoint_Num_Dialog(init_bp=min_visible_kp, max_bp=self.dm.dlc_data.num_keypoint )
+        if dialog.exec() == QtWidgets.QDialog.Accepted:
+            min_bodyparts = dialog.bp_spin.value()
+        self.pred_data_array = generate_missing_kp_batch(self.pred_data_array, self.dm.canon_pose, min_bodyparts)
         self.display_current_frame()
 
     def _generate_inst(self):
@@ -643,6 +646,8 @@ class Frame_Label:
         if delete:
             self._save_state_for_undo()
             self.pred_data_array = outlier_removal(self.pred_data_array, self.outlier_mask)
+            if hasattr(self, "outlier_finder"):
+                self.outlier_finder.pred_data_array = self.pred_data_array.copy()
             self.display_current_frame()
             self.dm.handle_cat_update("outlier", [])
 

@@ -14,6 +14,7 @@ from .dialog import (
     Instance_Selection_Dialog,
     ROI_Dialog,
     Mask_Dialog,
+    Keypoint_Num_Dialog,
 )
 
 from .video_slider import Slider_With_Marks, Video_Slider_Widget
@@ -40,6 +41,7 @@ __all__ = (
     Frame_Display_Dialog,
     ROI_Dialog,
     Mask_Dialog,
+    Keypoint_Num_Dialog,
     Menu_Widget,
     Shortcut_Manager,
     Video_Slider_Widget,

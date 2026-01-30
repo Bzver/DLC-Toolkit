@@ -133,7 +133,8 @@ class Progress_Indicator_Dialog(QtWidgets.QProgressDialog):
         
 
 class Tqdm_Progress_Adapter:
-    def __init__(self, maximum: int = 100, description: str = ""):
+    def __init__(self, minimum: int = 0, maximum: int = 100, description: str = ""):
+        self._minimum = minimum
         self._maximum = maximum
         self.pbar = tqdm(
             total=maximum,
@@ -142,13 +143,18 @@ class Tqdm_Progress_Adapter:
             dynamic_ncols=True
         )
 
+    def setMinimum(self, minimum: int):
+        self._minimum = minimum
+        self.pbar.total = self._maximum - minimum
+        self.pbar.refresh()
+
     def setMaximum(self, maximum: int):
         self._maximum = maximum
-        self.pbar.total = maximum
+        self.pbar.total = maximum - self._minimum
         self.pbar.refresh()
 
     def setValue(self, value: int):
-        self.pbar.n = max(0, min(value, self._maximum))
+        self.pbar.n = max(0, min(value - self._minimum, self._maximum - self._minimum))
         self.pbar.refresh()
 
     def wasCanceled(self) -> bool:

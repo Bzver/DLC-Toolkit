@@ -257,8 +257,10 @@ class Exporter:
     
     def _continuous_frame_extraction(self, to_video:bool=False) -> Optional[List[int]]:
         logger.debug(f"[EXPORTER] Entering _continuous_frame_extraction. to_video: {to_video}.")
+        min_frame_in_list = min(self.frame_list) if self.frame_list else 0
+        max_frame_in_list = max(self.frame_list) if self.frame_list else -1
         if self.progress_callback:
-            max_frame_in_list = max(self.frame_list) if self.frame_list else 0
+            self.progress_callback.setMinimum(min_frame_in_list)
             self.progress_callback.setMaximum(max_frame_in_list)
             logger.debug(f"[EXPORTER] Progress callback maximum set to {max_frame_in_list} for continuous extraction.")
 
@@ -268,8 +270,6 @@ class Exporter:
         frame_set = set(self.frame_list)
         extracted_indices = []
 
-        min_frame_in_list = min(self.frame_list) if self.frame_list else 0
-        max_frame_in_list = max(self.frame_list) if self.frame_list else -1
         current_frame_idx += min_frame_in_list
         self.extractor.start_sequential_read(start=min_frame_in_list, end=max_frame_in_list+1)
         logger.info("[EXPORTER] Started sequential frame read for continuous extraction.")

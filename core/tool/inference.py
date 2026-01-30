@@ -3,11 +3,9 @@ import shutil
 from datetime import datetime
 import yaml
 import numpy as np
-
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QPushButton, QDialog
-
 from typing import List, Optional, Tuple
 
 from ui import Spinbox_With_Label, Progress_Indicator_Dialog, Tqdm_Progress_Adapter
@@ -51,7 +49,7 @@ class DLC_Inference(QDialog):
         self.mask_region = mask
         self.video_name, _ = os.path.splitext(os.path.basename(self.video_filepath))
 
-        temp_dir_root = os.path.join(os.path.dirname(self.video_filepath), "temp")
+        temp_dir_root = os.path.join(os.path.dirname(self.video_filepath), "bvt_temp")
         os.makedirs(temp_dir_root, exist_ok=True)
 
         self.temp_dir = os.path.join(temp_dir_root, self.video_name)

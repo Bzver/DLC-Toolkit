@@ -244,7 +244,7 @@ def batch_inference(
             backup_existing_prediction(f)
             _autoload_pred(f, dm, dlc_config_path)
             dm.save_workspace()
-            _cleanup_old_auto_predictions(os.path.dirname(f), keep=3)
+            _cleanup_old_auto_predictions(os.path.dirname(dm.video_file))
             continue
 
     logger.info(f"[BATCH] Batch finished: {success_count}/{len(pkl_list)} succeeded.")
@@ -324,6 +324,8 @@ def _inference_workspace_vid(
                 inference_list = calculate_blob_inference_intervals(dm.blob_array, intervals)
         else:
             raise RuntimeError("[BATCH] Blob array has not been initialized in the workspace file!")
+    elif infer_only_empty_frames:
+        inference_list = np.where(np.all(np.isnan(dm.dlc_data.pred_data_array), axis=(1,2)))[0].tolist()
     else:
         inference_list = list(range(dm.total_frames))
 
@@ -338,6 +340,7 @@ def _inference_workspace_vid(
 
     for chunk_list in chunked_lists:
         _autoload_pred(workspace_file, dm, dlc_config_path)
+        _cleanup_old_auto_predictions(os.path.dirname(dm.video_file))
 
         logger.info(f"[BATCH] DLC_Inference instantiated with inference_list of length: {len(chunk_list)}")
 
@@ -349,6 +352,7 @@ def _inference_workspace_vid(
             mask=dm.background_mask,
             parent=dialog
         )
+        inference_window.hide()
         inference_window.cropping = crop
         inference_window.masking = mask
         inference_window.grayscaling = grayscale
@@ -402,20 +406,20 @@ def _autoload_pred(workspace_file: str, dm: Data_Manager, dlc_config_path: Optio
     else:
         logger.info("[AUTOLOAD] No matching .h5 prediction found for auto-load.")
 
-def _cleanup_old_auto_predictions(workspace_dir: str, keep: int = 3):
+def _cleanup_old_auto_predictions(video_dir: str, keep: int = 2):
     groups = defaultdict(list)
 
-    for filename in os.listdir(workspace_dir):
+    for filename in os.listdir(video_dir):
         video_name, dlc_params = _parse_auto_pred_filename(filename)
         if video_name is None:
             continue  # Not an auto file
 
-        full_path = os.path.join(workspace_dir, filename)
+        full_path = os.path.join(video_dir, filename)
         groups[(video_name, dlc_params)].append(full_path)
 
     total_deleted = 0
 
-    for key, file_list in groups.items():
+    for file_list in groups.values():
         if len(file_list) <= keep:
             continue
 
@@ -476,8 +480,9 @@ if __name__ == "__main__":
         dialog=dialog,
         crop=True,
         grayscale=True,
+        infer_only_empty_frames=True,
         batch_size=32,
-        detector_batch_size=32
+        detector_batch_size=16
     )
 
     # batch_grayscale(dlc_config_path)

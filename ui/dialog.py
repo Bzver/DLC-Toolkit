@@ -264,6 +264,7 @@ class Frame_Display_Dialog(QDialog):
 
         self.dialog_layout.addWidget(scroll_area)
 
+
 class ROI_Dialog(Frame_Display_Dialog):
     roi_reset_requested = Signal()
 
@@ -277,6 +278,7 @@ class ROI_Dialog(Frame_Display_Dialog):
     def _on_reset_request(self):
         self.roi_reset_requested.emit()
         self.accept()
+
 
 class Mask_Dialog(Frame_Display_Dialog):
     mask_painted = Signal(object)
@@ -418,6 +420,7 @@ class Mask_Dialog(Frame_Display_Dialog):
         self.mask_painted.emit(mask_out)
         self.accept()
 
+
 class Instance_Selection_Dialog(QDialog):
     inst_checked = Signal(int, bool)
     instances_selected = Signal(tuple)
@@ -469,3 +472,20 @@ class Instance_Selection_Dialog(QDialog):
     def _on_key_pressed(self, idx: int):
         checked_status = self.buttons[idx].isChecked()
         self.buttons[idx].setChecked(not checked_status)
+
+
+class Keypoint_Num_Dialog(QDialog):
+    def __init__(self, init_bp: int = 0, max_bp: int = 100, parent=None):
+        super().__init__(parent)
+
+        layout = QVBoxLayout(self)
+        self.bp_spin = Spinbox_With_Label("Minimum Number of Existing Bodyparts for Completion Attempt", (0, max_bp), init_bp)
+
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+
+        layout.addWidget(self.bp_spin)
+        layout.addWidget(button_box)
+        
+        self.setWindowTitle("Keypoint Threshold")

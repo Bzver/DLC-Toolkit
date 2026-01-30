@@ -20,7 +20,7 @@ def backup_existing_prediction(save_filepath:str):
     filename = os.path.basename(save_filepath)
     path = os.path.dirname(save_filepath)
     file, ext = filename.split(".")
-    backup_dir = os.path.join(path, "backup")
+    backup_dir = os.path.join(path, "bvt_backup")
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     os.makedirs(backup_dir, exist_ok=True)
     backup_filepath = os.path.join(backup_dir, f"{file}_{timestamp}.{ext}")
