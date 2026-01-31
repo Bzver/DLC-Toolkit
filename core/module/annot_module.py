@@ -345,7 +345,7 @@ class Frame_Annotator:
         }
 
         for idx in range(len(self.cat_to_idx)):
-            if idx not in idx_to_color:
+            if idx not in idx_to_color.keys():
                 idx_to_color[idx] = self.COLOR_HEX_EXPANDED[idx % len(self.COLOR_HEX_EXPANDED)]
         self.vid_play.sld.set_frame_category_array(self.annot_array, idx_to_color)
         self.vid_play.sld.commit_categories()

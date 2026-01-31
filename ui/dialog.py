@@ -436,7 +436,7 @@ class Instance_Selection_Dialog(QDialog):
         else:
             self.select_status = select_status
 
-        self.setWindowTitle("Select Instance")
+        self.setWindowTitle("Select Two Instances" if self.dual_selection else "Select Instance")
         layout = QHBoxLayout(self)
 
         self.buttons:List[QPushButton] = []

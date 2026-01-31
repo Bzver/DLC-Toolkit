@@ -227,7 +227,7 @@ def batch_inference(
                 infer_only_empty_frames=infer_only_empty_frames,
                 crop=crop,
                 crop_region=crop_region,
-                mask=mask,
+                use_mask=mask,
                 grayscale=grayscale,
                 shuffle_idx=shuffle_idx,
                 batch_size=batch_size,
@@ -264,7 +264,7 @@ def _inference_workspace_vid(
         infer_only_empty_frames: bool = False,
         crop: bool = False,
         crop_region: Optional[Tuple[int, int, int, int]] = None,
-        mask: bool = False,
+        use_mask: bool = False,
         grayscale: bool = False,
         shuffle_idx: Optional[int] = None,
         batch_size: Optional[int] = None,
@@ -295,7 +295,7 @@ def _inference_workspace_vid(
             except:
                 raise RuntimeError("[BATCH] ROI in workspace is malformed, fail to translate the ROI in workspace.")
             
-    if mask:
+    if use_mask:
         assert dm.background_mask is not None, "No mask is loaded in data manager when mask parameter is set to True."
 
     inference_list = []
@@ -324,7 +324,7 @@ def _inference_workspace_vid(
                 inference_list = calculate_blob_inference_intervals(dm.blob_array, intervals)
         else:
             raise RuntimeError("[BATCH] Blob array has not been initialized in the workspace file!")
-    elif infer_only_empty_frames:
+    elif infer_only_empty_frames and dm.dlc_data.pred_data_array is not None:
         inference_list = np.where(np.all(np.isnan(dm.dlc_data.pred_data_array), axis=(1,2)))[0].tolist()
     else:
         inference_list = list(range(dm.total_frames))
@@ -349,12 +349,12 @@ def _inference_workspace_vid(
             frame_list=chunk_list,
             video_filepath=dm.video_file,
             roi=crop_region,
-            mask=dm.background_mask,
+            mask=dm.background_mask if use_mask else None,
             parent=dialog
         )
         inference_window.hide()
         inference_window.cropping = crop
-        inference_window.masking = mask
+        inference_window.masking = use_mask
         inference_window.grayscaling = grayscale
         if batch_size is not None:
             inference_window._batch_size_spinbox_changed(batch_size)
@@ -367,7 +367,7 @@ def _inference_workspace_vid(
             else:
                 inference_window._shuffle_spinbox_changed(shuffle_idx)
 
-        logger.info(f"[BATCH] Inference process initiated. cropping: {crop}, masking: {dm.background_mask is not None}, grayscaling: {grayscale}")
+        logger.info(f"[BATCH] Inference process initiated. cropping: {crop}, masking: {use_mask}, grayscaling: {grayscale}")
         inference_window._inference_pipe(headless=True)
 
 def _pseudo_callback(*arg, **kwargs):
@@ -471,7 +471,7 @@ if __name__ == "__main__":
     app = QtWidgets.QApplication([])
     dialog = QtWidgets.QDialog()
     set_headless_mode(True)
-    rootdir = "D:/Project/WORKINGONIT/"
+    rootdir = r"D:\Data\Videos\20251018 Marathon\1018"
     dlc_config_path = "D:/Project/DLC-Models/NTD/config.yaml"
  
     batch_inference(
@@ -479,6 +479,7 @@ if __name__ == "__main__":
         dlc_config_path,
         dialog=dialog,
         crop=True,
+        mask=True,
         grayscale=True,
         infer_only_empty_frames=True,
         batch_size=32,
