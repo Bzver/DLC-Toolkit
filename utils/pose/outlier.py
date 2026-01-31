@@ -1,6 +1,6 @@
 import numpy as np
 from itertools import combinations
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 from .pose_analysis import calculate_pose_centroids, calculate_anatomical_centers, calculate_aligned_local
 from utils.helper import bye_bye_runtime_warning, clean_inconsistent_nans
@@ -57,63 +57,77 @@ def outlier_size(pred_data_array:np.ndarray, min_ratio:float=0.3, max_ratio:floa
 
     return np.logical_or(small_mask, large_mask)
 
-def outlier_pose(
+def outlier_bad_to_the_bone(
     pred_data_array: np.ndarray,
-    canon_pose: np.ndarray,
-    threshold_px: float = 15.0,
-    kp_mode:bool=False
+    skele_list: List[List[int]],
+    threshold_max: float = 2.0,
+    kp_mode: bool = False,
+    ignored_bones: List[List[int]] = None
 ) -> np.ndarray:
-    F, I, _ = pred_data_array.shape
-    K = canon_pose.shape[0]
-    assert pred_data_array.shape[2] == K * 3, "Keypoint count mismatch"
+    if ignored_bones is None:
+        ignored_bones = []
+
+    ignore_set = {tuple(sorted(b)) for b in ignored_bones}
+
+    active_bones = [b for b in skele_list if tuple(sorted(b)) not in ignore_set]
+
+    if len(active_bones) == 0:
+        F, I, _ = pred_data_array.shape
+        K = pred_data_array.shape[2] // 3
+        return np.zeros((F, I, K), dtype=bool) if kp_mode else np.zeros((F, I), dtype=bool)
+
+    bones = np.array(active_bones)
+    B = bones.shape[0]
+
+    F, I, D = pred_data_array.shape
+    K = D // 3
 
     data = pred_data_array.reshape(F, I, K, 3)
     xy = data[..., :2]
 
-    fully_observed = np.all(~np.isnan(xy), axis=(2, 3))
+    p1 = xy[:, :, bones[:, 0], :]
+    p2 = xy[:, :, bones[:, 1], :]
+    bone_lengths = np.linalg.norm(p2 - p1, axis=-1)
 
-    outlier_mask = np.zeros((F, I), dtype=bool)
+    valid_p1 = ~np.isnan(p1).any(axis=-1)
+    valid_p2 = ~np.isnan(p2).any(axis=-1)
+    valid_bones = valid_p1 & valid_p2
 
-    if not np.any(fully_observed):
-        return outlier_mask
+    bone_lengths_flat = bone_lengths.reshape(-1, B)
+    valid_bones_flat = valid_bones.reshape(-1, B)
+    reference_lengths = np.full(B, np.nan)
+    for b in range(B):
+        vals = bone_lengths_flat[valid_bones_flat[:, b], b]
+        if len(vals) > 0:
+            reference_lengths[b] = np.percentile(vals, 75)
+        else:
+            reference_lengths[b] = 1.0
+    reference_lengths = np.clip(reference_lengths, 1e-8, None)
 
-    N = np.sum(fully_observed)
-    xy_complete = xy[fully_observed]
-    canon_batch = np.tile(canon_pose[None, :, :], (N, 1, 1))
+    rel_lengths = bone_lengths / reference_lengths[None, None, :]
+    bad_bones = (rel_lengths > threshold_max) & valid_bones
 
-    src_mean = np.mean(canon_batch, axis=1, keepdims=True)
-    dst_mean = np.mean(xy_complete, axis=1, keepdims=True)
+    if not kp_mode:
+        return np.any(bad_bones, axis=2)
 
-    src_centered = canon_batch - src_mean
-    dst_centered = xy_complete - dst_mean
+    bones_flat = bones.ravel()
+    degree = np.bincount(bones_flat, minlength=K)
+    is_leaf = (degree == 1)
 
-    H = np.einsum('nki,nkj->nij', src_centered, dst_centered)
-    U, _, Vt = np.linalg.svd(H)
-    R = np.einsum('nij,nkj->nik', Vt, U)  # R = V @ U^T
+    bad_kp_count = np.zeros((F, I, K), dtype=int)
+    for b, (i1, i2) in enumerate(bones):
+        mask = bad_bones[:, :, b]
+        bad_kp_count[:, :, i1] += mask
+        bad_kp_count[:, :, i2] += mask
 
-    detR = np.linalg.det(R)
-    reflect_mask = detR < 0
-    if np.any(reflect_mask):
-        Vt_reflect = Vt.copy()
-        Vt_reflect[reflect_mask, 1, :] *= -1
-        R[reflect_mask] = np.einsum('nij,nkj->nik', Vt_reflect[reflect_mask], U[reflect_mask])
+    outlier_kp = np.zeros((F, I, K), dtype=bool)
+    for k in range(K):
+        if is_leaf[k]:
+            outlier_kp[:, :, k] = (bad_kp_count[:, :, k] >= 1)
+        else:
+            outlier_kp[:, :, k] = (bad_kp_count[:, :, k] >= 2)
 
-    t = dst_mean.squeeze(axis=1) - np.einsum('nij,nj->ni', R, src_mean.squeeze(axis=1))
-    transformed_canon = np.einsum('nij,nkj->nki', R, canon_batch) + t[:, None, :]
-
-    flat_indices = np.flatnonzero(fully_observed.ravel())
-
-    errors = np.linalg.norm(xy_complete - transformed_canon, axis=2)
-    if kp_mode:
-        outliers_complete_kp = errors > threshold_px
-        outlier_kp_mask_flat = np.zeros((F * I, K), dtype=bool)
-        outlier_kp_mask_flat[flat_indices] = outliers_complete_kp
-        return outlier_kp_mask_flat.reshape(F, I, K)
-
-    outlier_complete = np.mean(errors, axis=1) > threshold_px
-    outlier_mask_flat = np.zeros(F * I, dtype=bool)
-    outlier_mask_flat[flat_indices[outlier_complete]] = True
-    return outlier_mask_flat.reshape(F, I)
+    return outlier_kp
 
 def outlier_rotation(pred_data_array: np.ndarray, angle_map_data: Dict[str, int], threshold_deg: float = 10.0) -> np.ndarray:
     head_idx = angle_map_data['head_idx']
@@ -234,3 +248,15 @@ def outlier_speed(
         mask[1:] = (speed > max_speed_px) & valid
 
         return mask
+
+def outlier_flicker(pred_data_array: np.ndarray) -> np.ndarray:
+    all_x, all_y = pred_data_array[:, :, 0::3], pred_data_array[:, :, 1::3]
+    presence = np.any(~np.isnan(all_x) & ~np.isnan(all_y), axis=2)
+
+    instance_count = presence.shape[1]
+
+    prev_presence = np.concatenate([np.zeros((1, instance_count), dtype=bool), presence[:-1]], axis=0)
+    next_presence = np.concatenate([presence[1:], np.zeros((1, instance_count), dtype=bool)], axis=0)
+    flicker_mask = presence & (~prev_presence) & (~next_presence)
+
+    return flicker_mask

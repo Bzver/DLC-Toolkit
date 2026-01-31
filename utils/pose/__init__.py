@@ -20,8 +20,9 @@ from .outlier import (
     outlier_duplicate,
     outlier_size,
     outlier_rotation,
-    outlier_pose,
+    outlier_bad_to_the_bone,
     outlier_speed,
+    outlier_flicker,
 )
 from .instance_op import (
     rotate_selected_inst,
@@ -50,6 +51,7 @@ __all__ = (
     outlier_duplicate,
     outlier_size,
     outlier_rotation,
-    outlier_pose,
+    outlier_bad_to_the_bone,
     outlier_speed,
+    outlier_flicker,
 )

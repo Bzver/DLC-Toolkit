@@ -316,7 +316,10 @@ class Frame_Label:
         if self.open_outlier:
             self.menu_slot_callback()
             self.outlier_finder = Outlier_Finder(
-                self.pred_data_array, canon_pose=self.dm.canon_pose, angle_map_data=self.dm.angle_map_data, parent=self.main)
+                self.pred_data_array,
+                skele_list=self.dm.dlc_data.skeleton,
+                kp_to_idx=self.dm.dlc_data.keypoint_to_idx,
+                angle_map_data=self.dm.angle_map_data, parent=self.main)
             self.outlier_finder.mask_changed.connect(self._handle_outlier_mask_from_comp)
             self.vid_play.set_right_panel_widget(self.outlier_finder)
         else:

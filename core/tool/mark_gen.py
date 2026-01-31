@@ -10,6 +10,7 @@ from typing import Optional, Dict
 from .outlier_finder import Outlier_Container
 from utils.helper import get_instance_count_per_frame
 from utils.logger import Loggerbox
+from utils.dataclass import Loaded_DLC_Data
 
 class Mark_Generator(QGroupBox):
     clear_old = Signal(bool)
@@ -19,7 +20,7 @@ class Mark_Generator(QGroupBox):
             total_frames:int,
             pred_data_array:Optional[np.ndarray]=None,
             blob_array:Optional[np.ndarray]=None,
-            canon_pose:Optional[np.ndarray]=None,
+            dlc_data:Optional[Loaded_DLC_Data]=None,
             angle_map_data:Optional[Dict[str, int]]=None,
             parent=None
             ):
@@ -75,7 +76,7 @@ class Mark_Generator(QGroupBox):
 
         if self.pred_data_array is not None:
             self.outlier_container = Outlier_Container(
-                self.pred_data_array, canon_pose=canon_pose, angle_map_data=angle_map_data)
+                self.pred_data_array, skele_list=dlc_data.skeleton, kp_to_idx=dlc_data.keypoint_to_idx, angle_map_data=angle_map_data)
         else:
             self.outlier_container = QtWidgets.QWidget()
         

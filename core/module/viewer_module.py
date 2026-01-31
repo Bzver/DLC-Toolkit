@@ -228,7 +228,7 @@ class Frame_View:
                 total_frames=self.dm.total_frames,
                 pred_data_array=self.dm.dlc_data.pred_data_array,
                 blob_array=self.dm.blob_array,
-                canon_pose=self.dm.canon_pose,
+                dlc_data=self.dm.dlc_data,
                 angle_map_data=self.dm.angle_map_data,
                 parent=self.main)
             mark_gen.clear_old.connect(self._on_clear_old_command)

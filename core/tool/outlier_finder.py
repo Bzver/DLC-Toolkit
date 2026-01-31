@@ -1,13 +1,13 @@
 import numpy as np
 from PySide6 import QtWidgets
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QPushButton, QHBoxLayout, QVBoxLayout, QGroupBox, QLabel, QStackedWidget
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 
 from ui import Spinbox_With_Label
 from utils.pose import (
     outlier_bodypart, outlier_confidence, outlier_duplicate, outlier_speed,
-    outlier_size, outlier_rotation, outlier_pose)
+    outlier_size, outlier_rotation, outlier_bad_to_the_bone, outlier_flicker)
 from utils.logger import Loggerbox
 
 
@@ -16,12 +16,14 @@ class Outlier_Finder(QGroupBox):
 
     def __init__(self,
                 pred_data_array:np.ndarray,
-                canon_pose:Optional[np.ndarray]=None,
+                skele_list:Optional[List[List[str]]]=None,
+                kp_to_idx:Optional[Dict[str, int]]=None,
                 angle_map_data:Optional[Dict[str, int]]=None,
                 parent=None):
         super().__init__(parent)
         self.setTitle("Outlier Finder")
         self.pred_data_array = pred_data_array
+
         F, I, _ = self.pred_data_array.shape
         self.outliers = np.zeros((F, I), dtype=bool)
         
@@ -38,8 +40,8 @@ class Outlier_Finder(QGroupBox):
         layout.addLayout(mode_layout)
 
         self.outlier_stack = QStackedWidget()
-        self.instance_container = Outlier_Container(self.pred_data_array, canon_pose, angle_map_data)
-        self.keypoint_container = Outlier_Container_KP(self.pred_data_array, canon_pose, angle_map_data)
+        self.instance_container = Outlier_Container(self.pred_data_array, skele_list, kp_to_idx, angle_map_data)
+        self.keypoint_container = Outlier_Container_KP(self.pred_data_array, skele_list, kp_to_idx, angle_map_data)
         self.outlier_stack.addWidget(self.instance_container)
         self.outlier_stack.addWidget(self.keypoint_container)
 
@@ -53,7 +55,7 @@ class Outlier_Finder(QGroupBox):
         button_frame.addWidget(preview_button)
         button_frame.addWidget(delete_button)
         layout.addLayout(button_frame)
-            
+
     def _outlier_preview(self):
         self._get_outlier_mask()
         if self.outliers is not None:
@@ -80,7 +82,7 @@ class Outlier_Finder(QGroupBox):
     def _on_mode_changed(self, index: int):
         self.outlier_stack.setCurrentIndex(index)
         self._refresh_outliers_shape()
-        
+
     def _refresh_outliers_shape(self):
         F, I, D = self.pred_data_array.shape
         if self.outlier_stack.currentIndex() == 0:
@@ -92,13 +94,21 @@ class Outlier_Finder(QGroupBox):
 class Outlier_Container(QtWidgets.QWidget):
     def __init__(self,
                 pred_data_array:np.ndarray,
-                canon_pose:Optional[np.ndarray]=None,
+                skele_list:Optional[List[List[str]]]=None,
+                kp_to_idx:Optional[Dict[str, int]]=None,
                 angle_map_data:Optional[Dict[str, int]]=None,
                 parent=None):
         super().__init__(parent)
         self.pred_data_array = pred_data_array
-        self.canon_pose = canon_pose
+        self.skele_list = skele_list
+        self.kp_to_idx = kp_to_idx
         self.angle_map_data = angle_map_data
+
+        self.skele_list_idx = []
+        for kp_1, kp_2 in skele_list:
+            kp_1_idx = kp_to_idx[kp_1]
+            kp_2_idx = kp_to_idx[kp_2]
+            self.skele_list_idx.append([kp_1_idx, kp_2_idx])
 
         self.oc_layout = QVBoxLayout(self)
 
@@ -108,8 +118,9 @@ class Outlier_Container(QtWidgets.QWidget):
         self.outlier_size_gbox = self._build_outlier_size_gbox()
         self.outlier_rotation_gbox = self._build_outlier_rotation_gbox()
         self.outlier_duplicate_gbox = self._build_outlier_duplicate_gbox()
-        self.outlier_pose_gbox = self._build_outlier_pose_gbox()
+        self.outlier_bone_gbox = self._build_outlier_bone_gbox()
         self.outlier_speed_gbox = self._build_outlier_speed_gbox()
+        self.outlier_flicker_gbox = self._build_outlier_flicker_gbox()
 
         self.oc_layout.addWidget(self.logic_widget)
         self.oc_layout.addWidget(self.outlier_confidence_gbox)
@@ -117,11 +128,12 @@ class Outlier_Container(QtWidgets.QWidget):
         self.oc_layout.addWidget(self.outlier_size_gbox)
         self.oc_layout.addWidget(self.outlier_rotation_gbox)
         self.oc_layout.addWidget(self.outlier_duplicate_gbox)
-        self.oc_layout.addWidget(self.outlier_pose_gbox)
+        self.oc_layout.addWidget(self.outlier_bone_gbox)
         self.oc_layout.addWidget(self.outlier_speed_gbox)
+        self.oc_layout.addWidget(self.outlier_flicker_gbox)
 
-        if self.canon_pose is None:
-            self.outlier_pose_gbox.setEnabled(False)
+        if self.skele_list is None:
+            self.outlier_bone_gbox.setEnabled(False)
         if self.angle_map_data is None:
             self.outlier_rotation_gbox.setEnabled(False)
 
@@ -166,12 +178,17 @@ class Outlier_Container(QtWidgets.QWidget):
             )
             masks.append(mask)
 
-        if self.outlier_pose_gbox.isChecked():
-            mask = outlier_pose(
+        if self.outlier_bone_gbox.isChecked():
+            mask = outlier_bad_to_the_bone(
                 self.pred_data_array,
-                canon_pose=self.canon_pose,
-                threshold_px=self.pose_error_spinbox.value()
+                skele_list=self.skele_list_idx,
+                threshold_max=self.bone_length_spinbox.value(),
+                ignored_bones=self._get_ignored_bones_indices()
             )
+            masks.append(mask)
+
+        if self.outlier_flicker_gbox.isChecked():
+            mask = outlier_flicker(self.pred_data_array)
             masks.append(mask)
 
         if self.outlier_speed_gbox.isChecked():
@@ -226,7 +243,7 @@ class Outlier_Container(QtWidgets.QWidget):
         gbox = QGroupBox("Outlier Size")
         gbox.setCheckable(True)
         gbox.setChecked(False)
-        layout = QVBoxLayout(gbox)
+        layout = QHBoxLayout(gbox)
 
         min_frame = QHBoxLayout()
         min_label = QLabel("Min Size Ratio:")
@@ -267,16 +284,14 @@ class Outlier_Container(QtWidgets.QWidget):
         layout.addStretch()
         return gbox
 
-
-
     def _build_outlier_duplicate_gbox(self):
         gbox = QGroupBox("Outlier Duplicate")
         gbox.setCheckable(True)
         gbox.setChecked(False)
-        layout = QVBoxLayout(gbox)
+        layout = QHBoxLayout(gbox)
 
         dbp_lframe = QHBoxLayout()
-        label = QLabel("Bodypart Threshold:")
+        label = QLabel("Bodypart Ratio:")
         label.setToolTip("Fraction of overlapping keypoints required to consider two instances as duplicates.")
         self.duplicate_bp_spinbox = QtWidgets.QDoubleSpinBox()
         self.duplicate_bp_spinbox.setRange(0.0, 1.0)
@@ -294,18 +309,54 @@ class Outlier_Container(QtWidgets.QWidget):
 
         return gbox
 
-    def _build_outlier_pose_gbox(self):
-        gbox = QGroupBox("Outlier Pose")
+    def _build_outlier_bone_gbox(self):
+        gbox = QGroupBox("Outlier Bone Length")
         gbox.setCheckable(True)
         gbox.setChecked(False)
         layout = QVBoxLayout(gbox)
 
-        self.pose_error_spinbox = Spinbox_With_Label("Error Threshold:", (1, 250), 45)
-        self.pose_error_spinbox.setToolTip(
-            "Instances with mean keypoint error above this value are considered outliers. Only applied to poses with all keypoints present.")
-        layout.addWidget(self.pose_error_spinbox)
+        first_level = QHBoxLayout()
+
+        label = QLabel("Bone Length Threshold:")
+        label.setToolTip("Relative threshold for flagging abnormally long bones (e.g., 2.0 = bone > 2× typical length).")
+        self.bone_length_spinbox = QtWidgets.QDoubleSpinBox()
+        self.bone_length_spinbox.setRange(1.0, 5.0)
+        self.bone_length_spinbox.setSingleStep(0.1)
+        self.bone_length_spinbox.setValue(2.0)
+        self.bone_length_spinbox.setDecimals(2)
+        self.bone_length_spinbox.setToolTip("Flag a pose if any bone exceeds this multiple of its median length across the dataset.")
+        first_level.addWidget(label)
+        first_level.addWidget(self.bone_length_spinbox)
+
+        ignore_label = QLabel("Ignore these bones:")
+        first_level.addWidget(ignore_label)
+
+        layout.addLayout(first_level)
+
+        self.ignore_bones_list = QtWidgets.QListWidget()
+        self.ignore_bones_list.setSelectionMode(QtWidgets.QAbstractItemView.MultiSelection)
+        for [a, b] in self.skele_list:
+            item = QtWidgets.QListWidgetItem(f"{a} — {b}")
+            item.setData(Qt.ItemDataRole.UserRole, [a, b])
+            self.ignore_bones_list.addItem(item)
+        
+        layout.addWidget(self.ignore_bones_list)
 
         return gbox
+
+    def _get_ignored_bones_indices(self) -> List[List[int]]:
+        ignored = []
+        for i in range(self.ignore_bones_list.count()):
+            item = self.ignore_bones_list.item(i)
+            if item.isSelected():
+                pair = item.data(Qt.ItemDataRole.UserRole)
+                ignored.append(pair)
+        ignored_idx = []
+        for name1, name2 in ignored:
+            idx1 = self.kp_to_idx[name1]
+            idx2 = self.kp_to_idx[name2]
+            ignored_idx.append([idx1, idx2])
+        return ignored_idx
 
     def _build_outlier_speed_gbox(self):
         gbox = QGroupBox("Outlier Speed")
@@ -317,6 +368,19 @@ class Outlier_Container(QtWidgets.QWidget):
         self.speed_spinbox.setToolTip("Instances moving faster than this between frames are considered outliers.")
         layout.addWidget(self.speed_spinbox)
         layout.addStretch()
+        return gbox
+
+    def _build_outlier_flicker_gbox(self):
+        gbox = QtWidgets.QGroupBox("Outlier Flicker")
+        gbox.setCheckable(True)
+        gbox.setChecked(False)
+
+        layout = QtWidgets.QVBoxLayout()
+        no_option_label = QLabel("No option applicable for this method.")
+        layout.addWidget(no_option_label)
+
+        gbox.setLayout(layout)
+
         return gbox
 
     def _build_or_and_radio_widget(self):
@@ -347,6 +411,7 @@ class Outlier_Container_KP(Outlier_Container):
         self.outlier_bodypart_gbox.setVisible(False)
         self.outlier_size_gbox.setVisible(False)
         self.outlier_rotation_gbox.setVisible(False)
+        self.outlier_flicker_gbox.setVisible(False)
 
     def get_combined_mask(self) -> Optional[np.ndarray]:
         masks = []
@@ -368,11 +433,12 @@ class Outlier_Container_KP(Outlier_Container):
             )
             masks.append(mask)
 
-        if self.outlier_pose_gbox.isChecked():
-            mask = outlier_pose(
+        if self.outlier_bone_gbox.isChecked():
+            mask = outlier_bad_to_the_bone(
                 self.pred_data_array,
-                canon_pose=self.canon_pose,
-                threshold_px=self.pose_error_spinbox.value(),
+                skele_list=self.skele_list_idx,
+                threshold_max=self.bone_length_spinbox.value(),
+                ignored_bones=self._get_ignored_bones_indices(),
                 kp_mode=True
             )
             masks.append(mask)
