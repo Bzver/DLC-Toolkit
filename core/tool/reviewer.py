@@ -425,10 +425,12 @@ class Track_Correction_Dialog(Parallel_Review_Dialog):
         swap_box = QGroupBox("Manual Track Correction")
         swap_layout = QHBoxLayout()
 
+        self.copy_ambi_button = QPushButton("Copy Ambiguous Frames") 
         self.swap_button = QPushButton("Swap Instance (W)")
         self.big_swap_button = QPushButton("Swap Track (Shift + W)")
         self.apply_button = QPushButton("Apply Changes (Ctrl + S)")
 
+        self.copy_ambi_button.clicked.connect(self._copy_ambiguous_frames_to_clipboard) 
         self.swap_button.clicked.connect(self._swap_instance)
         self.big_swap_button.clicked.connect(self._swap_track)
         self.apply_button.clicked.connect(self._save_prediction)
@@ -436,7 +438,7 @@ class Track_Correction_Dialog(Parallel_Review_Dialog):
         self.swap_button.setToolTip("Swap current frame instance only.")
         self.big_swap_button.setToolTip("Swap current frame + all preceding frames.")
 
-        for btn in [self.swap_button, self.big_swap_button, self.apply_button]:
+        for btn in [self.copy_ambi_button, self.swap_button, self.big_swap_button, self.apply_button]:
             swap_layout.addWidget(btn)
         swap_box.setLayout(swap_layout)
 
@@ -560,7 +562,7 @@ class Track_Correction_Dialog(Parallel_Review_Dialog):
 
     def _update_button_states(self):
         pass
-    
+   
     def _refresh_slider(self):
         self.is_saved = False
         self.progress_slider.clear_frame_category()
@@ -571,6 +573,19 @@ class Track_Correction_Dialog(Parallel_Review_Dialog):
     def _save_state_for_undo(self):
         data_array = self.new_data_array
         self.uno.save_state_for_undo(data_array)
+
+    def _copy_ambiguous_frames_to_clipboard(self):
+        if not self.ambiguous_set_global:
+            Loggerbox.info(self, "No ambiguous frames to copy.", "Clipboard")
+            return
+
+        ambiguous_sorted = sorted(self.ambiguous_set_global)
+        text = ", ".join(map(str, ambiguous_sorted))
+
+        clipboard = QtGui.QGuiApplication.clipboard()
+        clipboard.setText(text)
+
+        Loggerbox.info(self, f"Copied {len(ambiguous_sorted)} ambiguous frame(s) to clipboard:\n{text}", "Export Complete")
 
     def _undo_changes(self):
         data_array = self.new_data_array

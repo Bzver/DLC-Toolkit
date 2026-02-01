@@ -17,13 +17,12 @@ class Mark_Generator(QGroupBox):
     frame_list_new = Signal(list)
 
     def __init__(self,
-            total_frames:int,
-            pred_data_array:Optional[np.ndarray]=None,
-            blob_array:Optional[np.ndarray]=None,
-            dlc_data:Optional[Loaded_DLC_Data]=None,
-            angle_map_data:Optional[Dict[str, int]]=None,
-            parent=None
-            ):
+                 total_frames: int,
+                 pred_data_array: Optional[np.ndarray] = None,
+                 blob_array: Optional[np.ndarray] = None,
+                 dlc_data: Optional[Loaded_DLC_Data] = None,
+                 angle_map_data: Optional[Dict[str, int]] = None,
+                 parent=None):
         super().__init__(parent)
         self.setTitle("Automatic Mark Generation")
         self.total_frames = total_frames
@@ -32,11 +31,12 @@ class Mark_Generator(QGroupBox):
 
         layout = QVBoxLayout(self)
 
+        # Mode selector
         self.mode_frame = QHBoxLayout()
         mode_label = QLabel("Mark Generation Mode:")
         self.mode_frame.addWidget(mode_label)
 
-        self.mode_option = QtWidgets.QComboBox() 
+        self.mode_option = QtWidgets.QComboBox()
         self.mode_option.addItems(["Random", "Stride"])
 
         if self.pred_data_array is not None:
@@ -46,6 +46,8 @@ class Mark_Generator(QGroupBox):
 
         if (self.blob_array is not None and np.any(self.blob_array[:, 0])) or self.pred_data_array is not None:
             self.mode_option.addItem("Animal Num")
+
+        self.mode_option.addItem("Clipboard")
 
         self.mode_option.setCurrentIndex(0)
         self.mode_option.currentTextChanged.connect(self._on_selection_changed)
@@ -76,20 +78,28 @@ class Mark_Generator(QGroupBox):
 
         if self.pred_data_array is not None:
             self.outlier_container = Outlier_Container(
-                self.pred_data_array, skele_list=dlc_data.skeleton, kp_to_idx=dlc_data.keypoint_to_idx, angle_map_data=angle_map_data)
+                self.pred_data_array, skele_list=dlc_data.skeleton,
+                kp_to_idx=dlc_data.keypoint_to_idx, angle_map_data=angle_map_data)
         else:
             self.outlier_container = QtWidgets.QWidget()
-        
+
         self.animal_num_container = self._build_animal_num_container()
-        
-        self.random_container.setVisible(True)
-        layout.addWidget(self.random_container)
-        self.stride_container.setVisible(False)
-        layout.addWidget(self.stride_container)
-        self.outlier_container.setVisible(False)
-        layout.addWidget(self.outlier_container)
-        self.animal_num_container.setVisible(False)
-        layout.addWidget(self.animal_num_container)
+        self.clipboard_container = self._build_clipboard_container()
+
+        self._mode_containers = []
+        self._mode_containers.append(self.random_container)
+        self._mode_containers.append(self.stride_container)
+        if self.pred_data_array is not None:
+            self._mode_containers.append(self.outlier_container)
+        if (self.blob_array is not None and np.any(self.blob_array[:, 0])) or self.pred_data_array is not None:
+            self._mode_containers.append(self.animal_num_container)
+        self._mode_containers.append(self.clipboard_container)
+
+        self.stack = QtWidgets.QStackedWidget()
+        for container in self._mode_containers:
+            self.stack.addWidget(container)
+
+        layout.addWidget(self.stack)
 
         confirm_frame = QVBoxLayout()
         self.keep_old_checkbox = QtWidgets.QCheckBox("Keep Existing Marks")
@@ -195,6 +205,36 @@ class Mark_Generator(QGroupBox):
             elif not selected_options and not (hasattr(self, 'merged_animal_checkbox') and self.merged_animal_checkbox.isChecked()):
                 Loggerbox.error(self, "No Selection", "Please select at least one animal count option.")
                 return
+            
+        elif mode == "Clipboard":
+            text = self.clipboard_textbox.toPlainText().strip()
+            if not text:
+                Loggerbox.error(self, "Empty Input", "Please enter a list of frame numbers.")
+                return
+
+            try:
+                text = text.replace('\n', ',')
+                parts = []
+                for segment in text.split(','):
+                    subparts = segment.split()
+                    parts.extend(subparts)
+
+                frame_nums = []
+                for s in parts:
+                    s = s.strip()
+                    if s:
+                        frame_nums.append(int(s))
+                        
+            except ValueError:
+                Loggerbox.error(self, "Invalid Format", "Please enter only integers separated by commas, spaces, or newlines.")
+                return
+
+            selected_frames = [f for f in frame_nums if start_frame <= f <= end_frame]
+
+            if not selected_frames:
+                Loggerbox.info(self, "No Valid Frames", f"No frames fall within the range [{start_frame}, {end_frame}].")
+                return
+
         else:
             Loggerbox.error(self, "Invalid Mode", "Unknown mode selected.")
 
@@ -218,7 +258,6 @@ class Mark_Generator(QGroupBox):
         validator = QIntValidator(1, self.total_frames)
         self.random_textbox.setValidator(validator)
         layout.addWidget(self.random_textbox)
-        container.setMaximumHeight(70)
         return container
 
     def _build_stride_container(self):
@@ -231,7 +270,6 @@ class Mark_Generator(QGroupBox):
         self.stride_textbox.setValidator(validator)
         layout.addWidget(label)
         layout.addWidget(self.stride_textbox)
-        container.setMaximumHeight(70)
         return container
 
     def _build_animal_num_container(self):
@@ -258,8 +296,7 @@ class Mark_Generator(QGroupBox):
             main_layout.addWidget(self.discrepancy_btn)
 
         main_layout.addLayout(count_layout)
-            
-        container.setMaximumHeight(100)
+
         return container
 
     def _mark_count_discrepancy_frames(self):
@@ -289,11 +326,25 @@ class Mark_Generator(QGroupBox):
         self.clear_old.emit(not self.keep_old_checkbox.isChecked())
         self.frame_list_new.emit(discrepancy_frames)
 
-    def _on_selection_changed(self):
-        """Show the appropriate container based on selected mode."""
-        mode = self.mode_option.currentText()
+    def _build_clipboard_container(self):
+        container = QGroupBox("Paste or Edit Frame List")
+        layout = QVBoxLayout(container)
 
-        self.random_container.setVisible(mode == "Random")
-        self.stride_container.setVisible(mode == "Stride")
-        self.outlier_container.setVisible(mode == "Outlier")
-        self.animal_num_container.setVisible(mode == "Animal Num")
+        self.clipboard_textbox = QtWidgets.QTextEdit()
+        self.clipboard_textbox.setPlaceholderText("Enter comma-separated frame numbers (e.g., 10, 20, 30)\nYou can also paste from Excel or a list.")
+        self.clipboard_textbox.setToolTip("Comma-separated list of frame numbers. Newlines are auto-converted to commas.")
+
+        layout.addWidget(self.clipboard_textbox)
+        return container
+
+    def _on_selection_changed(self):
+        mode = self.mode_option.currentText()
+        mode_names = ["Random", "Stride"]
+        if self.pred_data_array is not None:
+            mode_names.append("Outlier")
+        if (self.blob_array is not None and np.any(self.blob_array[:, 0])) or self.pred_data_array is not None:
+            mode_names.append("Animal Num")
+        mode_names.append("Clipboard")
+
+        index = mode_names.index(mode)
+        self.stack.setCurrentIndex(index)
