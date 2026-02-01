@@ -722,17 +722,21 @@ class Frame_Label:
         current_frame_inst = get_instances_on_current_frame(self.pred_data_array, self.dm.current_frame_idx)
         if current_frame_inst is None:
             return
+            
         if len(current_frame_inst) == 1:
             return current_frame_inst[0]
-        if self.gview.sbox is None:
-            if self.last_selected_idx is None:
-                Loggerbox.info(self.main, "No Instance Selected",
-                    "When there are more than one instance present, "
-                    "you need to click one of the instance bounding box to specify which to delete.")
-                return
-            else:
-                return self.last_selected_idx
-        return self.gview.sbox.instance_id
+
+        if self.gview.sbox is not None:
+            return self.gview.sbox.instance_id
+
+        if self.last_selected_idx is not None:
+            return self.last_selected_idx
+
+        colormap = self.plotter.get_current_color_map()
+        inst_dialog = Instance_Selection_Dialog(self.dm.dlc_data.instance_count, colormap)
+
+        if inst_dialog.exec() == QtWidgets.QDialog.Accepted:
+            return inst_dialog.select_status.index(True)
     
     def _instance_select_inverted(self) -> Optional[int]:
         current_frame_inst = get_instances_on_current_frame(self.pred_data_array, self.dm.current_frame_idx)

@@ -472,6 +472,10 @@ class Instance_Selection_Dialog(QDialog):
     def _on_key_pressed(self, idx: int):
         checked_status = self.buttons[idx].isChecked()
         self.buttons[idx].setChecked(not checked_status)
+        self.select_status[idx] = not checked_status
+
+        if not self.dual_selection:
+            self.accept()
 
 
 class Keypoint_Num_Dialog(QDialog):
