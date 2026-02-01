@@ -317,6 +317,7 @@ class Frame_Label:
             self.menu_slot_callback()
             self.outlier_finder = Outlier_Finder(
                 self.pred_data_array,
+                frame_list=self.dm.get_frames("marked"),
                 skele_list=self.dm.dlc_data.skeleton,
                 kp_to_idx=self.dm.dlc_data.keypoint_to_idx,
                 angle_map_data=self.dm.angle_map_data, parent=self.main)

@@ -1,7 +1,7 @@
 import numpy as np
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QPushButton, QHBoxLayout, QVBoxLayout, QGroupBox, QLabel, QStackedWidget
+from PySide6.QtWidgets import QPushButton, QHBoxLayout, QVBoxLayout, QGroupBox, QLabel, QStackedWidget, QCheckBox
 from typing import Optional, Dict, List
 
 from ui import Spinbox_With_Label
@@ -16,6 +16,7 @@ class Outlier_Finder(QGroupBox):
 
     def __init__(self,
                 pred_data_array:np.ndarray,
+                frame_list:Optional[List[int]]=None,
                 skele_list:Optional[List[List[str]]]=None,
                 kp_to_idx:Optional[Dict[str, int]]=None,
                 angle_map_data:Optional[Dict[str, int]]=None,
@@ -23,6 +24,7 @@ class Outlier_Finder(QGroupBox):
         super().__init__(parent)
         self.setTitle("Outlier Finder")
         self.pred_data_array = pred_data_array
+        self.frame_list = frame_list
 
         F, I, _ = self.pred_data_array.shape
         self.outliers = np.zeros((F, I), dtype=bool)
@@ -36,6 +38,16 @@ class Outlier_Finder(QGroupBox):
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         mode_layout.addWidget(mode_label)
         mode_layout.addWidget(self.mode_combo)
+
+        self.frame_range_checkbox = QCheckBox("Within Marked Frames Only:")
+        self.frame_range_checkbox.setChecked(False)
+        if self.frame_list:
+            self.frame_range_checkbox.setVisible(True)
+        else:
+            self.frame_range_checkbox.setVisible(False)
+
+        mode_layout.addWidget(self.frame_range_checkbox)
+
         mode_layout.addStretch()
         layout.addLayout(mode_layout)
 
@@ -70,14 +82,19 @@ class Outlier_Finder(QGroupBox):
         current_index = self.outlier_stack.currentIndex()
         if current_index == 0:
             outlier_mask = self.instance_container.get_combined_mask()
-            if outlier_mask is not None:
-                self.outliers = outlier_mask
-            self.mask_changed.emit(self.outliers, False)
         else:
             outlier_mask = self.keypoint_container.get_combined_mask()
-            if outlier_mask is not None:
-                self.outliers = outlier_mask
-            self.mask_changed.emit(self.outliers, False)
+
+        if outlier_mask is None:
+            self.outliers = np.zeros_like(self.outliers, dtype=bool)
+            return
+
+        if self.frame_range_checkbox.isChecked() and self.frame_list:
+            restricted_mask = np.zeros_like(outlier_mask, dtype=bool)
+            restricted_mask[self.frame_list] = outlier_mask[self.frame_list]
+            self.outliers = restricted_mask
+        else:
+            self.outliers = outlier_mask.copy()
 
     def _on_mode_changed(self, index: int):
         self.outlier_stack.setCurrentIndex(index)
@@ -90,6 +107,7 @@ class Outlier_Finder(QGroupBox):
         else:
             K = D // 3
             self.outliers = np.zeros((F, I, K), dtype=bool)
+
 
 class Outlier_Container(QtWidgets.QWidget):
     def __init__(self,
@@ -402,6 +420,7 @@ class Outlier_Container(QtWidgets.QWidget):
         logic_widget.setMaximumHeight(50)
         
         return logic_widget
+
 
 class Outlier_Container_KP(Outlier_Container):
     def __init__(self, pred_data_array, canon_pose = None, angle_map_data = None, parent=None):
