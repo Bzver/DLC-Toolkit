@@ -651,7 +651,9 @@ class Frame_Label:
             self._save_state_for_undo()
             self.pred_data_array = outlier_removal(self.pred_data_array, self.outlier_mask)
             if hasattr(self, "outlier_finder"):
-                self.outlier_finder.pred_data_array = self.pred_data_array.copy()
+                self.outlier_finder.pred_data_array = self.pred_data_array
+                self.outlier_finder.instance_container.pred_data_array = self.pred_data_array
+                self.outlier_finder.keypoint_container.pred_data_array = self.pred_data_array
             self.display_current_frame()
             self.dm.handle_cat_update("outlier", [])
 
@@ -764,7 +766,7 @@ class Frame_Label:
         self._save_state_for_undo()
 
         is_entertained = False
-        current_crp_weight = (0.75, 0.15, 0.1)
+        current_crp_weight = (0.95, 0.05, 0)
         sigma, kappa = (75, 0.2), None
         min_sim, gap_thresh = 0.10, 0.10
         used_starts = []

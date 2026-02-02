@@ -585,7 +585,7 @@ class Track_Correction_Dialog(Parallel_Review_Dialog):
         clipboard = QtGui.QGuiApplication.clipboard()
         clipboard.setText(text)
 
-        Loggerbox.info(self, f"Copied {len(ambiguous_sorted)} ambiguous frame(s) to clipboard:\n{text}", "Export Complete")
+        Loggerbox.info(self, "Export Complete", f"Copied {len(ambiguous_sorted)} ambiguous frame(s) to clipboard:\n{text}")
 
     def _undo_changes(self):
         data_array = self.new_data_array
