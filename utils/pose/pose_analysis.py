@@ -25,7 +25,7 @@ def calculate_pose_centroids(
     _, I, D = pred_data_array.shape
     K = D // 3
 
-    pred_data_array_sliced = pred_data_array[frame_idx:frame_idx+1] if frame_idx > 0 else pred_data_array
+    pred_data_array_sliced = pred_data_array[frame_idx:frame_idx+1] if frame_idx != -1 else pred_data_array
 
     x_vals = pred_data_array_sliced[..., 0::3]
     y_vals = pred_data_array_sliced[..., 1::3]

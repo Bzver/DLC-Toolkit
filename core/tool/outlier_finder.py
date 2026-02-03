@@ -338,7 +338,7 @@ class Outlier_Container(QtWidgets.QWidget):
         label = QLabel("Bone Length Threshold:")
         label.setToolTip("Relative threshold for flagging abnormally long bones (e.g., 2.0 = bone > 2× typical length).")
         self.bone_length_spinbox = QtWidgets.QDoubleSpinBox()
-        self.bone_length_spinbox.setRange(1.0, 5.0)
+        self.bone_length_spinbox.setRange(1.0, 50.0)
         self.bone_length_spinbox.setSingleStep(0.1)
         self.bone_length_spinbox.setValue(2.0)
         self.bone_length_spinbox.setDecimals(2)
