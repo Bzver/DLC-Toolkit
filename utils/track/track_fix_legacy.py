@@ -1,6 +1,5 @@
 import numpy as np
 from scipy.optimize import linear_sum_assignment
-from itertools import combinations
 
 from PySide6.QtWidgets import QProgressDialog
 from typing import Optional, Literal, List, Tuple, Optional
@@ -267,6 +266,7 @@ class Hungarian:
 class Track_Fixer:
     def __init__(self,
                 pred_data_array:np.ndarray,
+                exit_zone: Optional[np.ndarray]=None,
                 progress:Optional[QProgressDialog]=None,
                 ):
         self.progress = progress
@@ -284,11 +284,16 @@ class Track_Fixer:
         self.new_order_array = -np.ones((self.total_frames, self.instance_count), dtype=np.int8)
         self.current_frame_data = np.full_like(self.corrected_pred_data[0], np.nan)
 
-    def track_correction(self, max_dist:float=10.0, lookback_window=10) -> Tuple[np.ndarray, List[int], List[int]]:
+        self.exit_zone = exit_zone
+        self.max_tunnel_gap = 10 
+        self.tunneling_mouse_id = None 
+
+    def track_correction(self, max_dist:float=10.0, lookback_window=10, start_idx=0) -> Tuple[np.ndarray, List[int], List[int]]:
         try:
             gap_mask = np.all(np.isnan(self.corrected_pred_data), axis=(1,2))
-            self._first_pass_centroids(max_dist, lookback_window)
+            self._first_pass_centroids(max_dist, lookback_window, start_idx)
             self.new_order_array[gap_mask] = self.inst_array
+            self.new_order_array[0:start_idx+1] = self.inst_array
             if np.any(self.new_order_array == -1):
                 amogus_frames = np.where(self.new_order_array[:,0]==-1)[0]
                 self.new_order_array[amogus_frames] = self.inst_array
@@ -309,13 +314,16 @@ class Track_Fixer:
 
         return fixed_data_array, changed_frames, amogus_frames
 
-    def _first_pass_centroids(self, max_dist:float, lookback_window):
+    def _first_pass_centroids(self, max_dist:float, lookback_window, start_idx):
         last_order = self.inst_list
         ref_centroids = np.full((self.instance_count, 2), np.nan)
         ref_last_updated = np.full((self.instance_count,), -2 * lookback_window, np.int32)
         valid_ref_mask = np.zeros_like(ref_last_updated, dtype=bool)
 
         for frame_idx in range(self.total_frames):
+            if frame_idx < start_idx:
+                continue
+
             if self.progress:
                 self.progress.setValue(frame_idx)
                 if self.progress.wasCanceled():
@@ -325,12 +333,56 @@ class Track_Fixer:
 
             pred_centroids, _ = calculate_pose_centroids(self.corrected_pred_data, frame_idx)
             valid_pred_mask = np.any(~np.isnan(pred_centroids), axis=1)
+
             if not np.any(valid_pred_mask):
                 self.new_order_array[frame_idx] = self.inst_array
                 logger.debug("[TMOD] Skipping due to no prediction on current frame.")
                 continue
 
             valid_ref_mask = (ref_last_updated > frame_idx - lookback_window)
+
+            current_visible = np.sum(valid_pred_mask)
+            ref_visible = np.sum(valid_ref_mask)
+
+            if self.exit_zone is not None and self.instance_count == 2:
+                if current_visible == 1 and ref_visible == 2:
+                    visible_id = np.where(valid_pred_mask)[0][0]
+                    missing_id = 1 - visible_id
+
+                    last_pos = ref_centroids[missing_id]
+                    if np.any(np.isnan(last_pos)):
+                        logger.debug(f"[TUNNEL] Missing mouse {missing_id} has no valid last position — skipping")
+                    else:
+                        x, y = last_pos
+                        x1, y1, x2, y2 = self.exit_zone
+                        if x1 <= x <= x2 and y1 <= y <= y2:
+                            self.tunneling_mouse_id = missing_id
+                            logger.debug(f"[TUNNEL] Mouse {missing_id} entered tunnel from zone (last pos: {x:.1f},{y:.1f})")
+                        else:
+                            logger.debug(f"[TUNNEL] Mouse {missing_id} vanished outside exit zone ({x:.1f},{y:.1f}) — ignoring")
+
+                elif current_visible == 2 and self.tunneling_mouse_id is not None:
+                    x1, y1, x2, y2 = self.exit_zone
+                    scores = []
+                    for inst_id in range(2):
+                        x, y = pred_centroids[inst_id]
+                        in_zone = (x1 <= x <= x2) and (y1 <= y <= y2)
+                        scores.append(in_zone)
+
+                    if sum(scores) == 1:
+                        tunnel_returnee = scores.index(True)
+                        if tunnel_returnee != self.tunneling_mouse_id:
+                            new_order = [0, 1]
+                            new_order[self.tunneling_mouse_id] = tunnel_returnee
+                            new_order[tunnel_returnee] = self.tunneling_mouse_id
+                            self.corrected_pred_data[frame_idx] = self.corrected_pred_data[frame_idx, new_order]
+                            pred_centroids = pred_centroids[new_order]
+                            valid_pred_mask = valid_pred_mask[new_order]
+                            logger.debug(f"[TUNNEL] Reassigned ID: mouse {tunnel_returnee} → ID {self.tunneling_mouse_id}")
+                        self.tunneling_mouse_id = None
+                    else:
+                        logger.debug(f"[TUNNEL] Ambiguous reappearance: {sum(scores)} mice in zone")
+                        self.tunneling_mouse_id = None
 
             if not np.any(valid_ref_mask):
                 if np.all(np.isnan(ref_centroids)): # No ref at all, i.e. beginning of the vid

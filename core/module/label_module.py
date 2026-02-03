@@ -21,10 +21,10 @@ from utils.track import (
     )
 from utils.helper import (
     frame_to_pixmap, calculate_snapping_zoom_level, get_instances_on_current_frame,
-    get_instance_count_per_frame, clean_inconsistent_nans, frame_to_grayscale
+    get_instance_count_per_frame, clean_inconsistent_nans, frame_to_grayscale, get_roi_cv2
     )
 from utils.dataclass import Plot_Config, Plotter_Callbacks
-from utils.logger import Loggerbox
+from utils.logger import Loggerbox, QMessageBox
 
 
 class Frame_Label:
@@ -163,6 +163,7 @@ class Frame_Label:
         self.pred_data_array = None
         self.open_outlier = False
         self.outlier_mask = None
+        self.exit_zone = None
         self.reset_zoom()
             
     def init_loaded_vid(self):
@@ -771,9 +772,19 @@ class Frame_Label:
         # min_sim, gap_thresh = 0.10, 0.10
         # used_starts = []
 
-        progress = Progress_Indicator_Dialog(0, self.dm.total_frames, "Supervised Track Fixing", "", self.main)
-        tf = Track_Fixer(self.pred_data_array, progress)
-        pred_data_array, _, amongus_frames = tf.track_correction(max_dist=80, lookback_window=4)
+        if self.exit_zone is None:
+            self.exit_zone = get_roi_cv2(frame=self.vm.get_frame(self.dm.current_frame_idx))
+
+        reply = Loggerbox.question(
+            self.main, "Starting From Current Frame?", "Start correcting from current frame instead of beginning?")
+        if reply == QMessageBox.Yes:
+            start_idx = self.dm.current_frame_idx
+        else:
+            start_idx = 0
+
+        progress = Progress_Indicator_Dialog(start_idx, self.dm.total_frames, "Supervised Track Fixing", "", self.main)
+        tf = Track_Fixer(self.pred_data_array, self.exit_zone, progress)
+        pred_data_array, _, amongus_frames = tf.track_correction(max_dist=80, lookback_window=4, start_idx=start_idx)
 
         # self.tf = Track_Fixer(self.pred_data_array, self.dm.angle_map_data, progress,
         #                         crp_weight=current_crp_weight, cr_sigma=sigma, kappa=kappa, 
@@ -803,6 +814,7 @@ class Frame_Label:
         dialog = Track_Correction_Dialog(
             self.dm.dlc_data, self.vm.extractor, pred_data_array, list(range(self.dm.total_frames)), [], amongus_frames, parent=self.main)
 
+        dialog.current_frame_idx = start_idx
         dialog.pred_data_exported.connect(self._get_pred_data_from_manual_correction)
         dialog.exec()
 
