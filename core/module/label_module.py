@@ -765,17 +765,21 @@ class Frame_Label:
 
         self._save_state_for_undo()
 
-        is_entertained = False
-        current_crp_weight = (0.95, 0.05, 0)
-        sigma, kappa = (75, 0.2), None
-        min_sim, gap_thresh = 0.10, 0.10
-        used_starts = []
+        # is_entertained = False
+        # current_crp_weight = (0.95, 0.05, 0)
+        # sigma, kappa = (75, 0.2), None
+        # min_sim, gap_thresh = 0.10, 0.10
+        # used_starts = []
 
         progress = Progress_Indicator_Dialog(0, self.dm.total_frames, "Supervised Track Fixing", "", self.main)
-        self.tf = Track_Fixer(self.pred_data_array, self.dm.angle_map_data, progress,
-                                crp_weight=current_crp_weight, cr_sigma=sigma, kappa=kappa, 
-                                minimum_similarity=min_sim, gap_threshold=gap_thresh,
-                                lookback_window=3, used_starts=used_starts)
+        tf = Track_Fixer(self.pred_data_array, progress)
+        pred_data_array, _, amongus_frames = tf.track_correction(max_dist=80, lookback_window=4)
+
+        # self.tf = Track_Fixer(self.pred_data_array, self.dm.angle_map_data, progress,
+        #                         crp_weight=current_crp_weight, cr_sigma=sigma, kappa=kappa, 
+        #                         minimum_similarity=min_sim, gap_threshold=gap_thresh,
+        #                         lookback_window=3, used_starts=used_starts)
+        # pred_data_array, amongus_frames = self.tf.fit_full_video()
 
         # while not is_entertained:
 
@@ -796,7 +800,6 @@ class Frame_Label:
         #     self.tf.process_labels(corrected_pred, frame_list, status_array)
         #     current_crp_weight, sigma, min_sim, gap_thresh, kappa = self.tf.get_params()
 
-        pred_data_array, amongus_frames = self.tf.fit_full_video()
         dialog = Track_Correction_Dialog(
             self.dm.dlc_data, self.vm.extractor, pred_data_array, list(range(self.dm.total_frames)), [], amongus_frames, parent=self.main)
 

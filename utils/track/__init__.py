@@ -5,7 +5,7 @@ from .track_op import (
     interpolate_track_all,
 )
 
-from .track_fix import Track_Fixer
+from .track_fix_legacy import Track_Fixer
 
 __all__ = (
     Track_Fixer,
