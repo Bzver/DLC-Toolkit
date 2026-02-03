@@ -48,6 +48,7 @@ class DLC_Inference(QDialog):
         self.crop_coord = validate_crop_coord(roi)
         self.mask_region = mask
         self.video_name, _ = os.path.splitext(os.path.basename(self.video_filepath))
+        self.cond_or_coam = False
 
         temp_dir_root = os.path.join(os.path.dirname(self.video_filepath), "bvt_temp")
         os.makedirs(temp_dir_root, exist_ok=True)
@@ -144,6 +145,13 @@ class DLC_Inference(QDialog):
         self.grayscaling_checkbox.setChecked(self.grayscaling)
         self.grayscaling_checkbox.toggled.connect(self._grayscaling_changed)
 
+        self.to_video_checkbox = QtWidgets.QCheckBox("Process as Video |")
+        self.to_video_checkbox.setToolTip(
+            "to_video means batchable and thus noticeably faster for 10000+ frames "
+            "but performance will drop when frames are scattered (arbitrary context -> dropping valid poses during tracklet stitching). "
+            "not to_video means slower inference but better suited for post processing (rerunning outlier frames)."
+        )
+
         button_frame = QHBoxLayout()
 
         self.batch_size_changed = False
@@ -161,6 +169,8 @@ class DLC_Inference(QDialog):
         button_frame.addWidget(self.cropping_checkbox)
         button_frame.addWidget(self.masking_checkbox)
         button_frame.addWidget(self.grayscaling_checkbox)
+        button_frame.addWidget(self.to_video_checkbox)
+
         button_frame.addWidget(self.batchsize_label_spinbox)
         button_frame.addWidget(self.detector_batchsize_label_spinbox)
         button_frame.addWidget(self.start_button)
@@ -220,8 +230,10 @@ class DLC_Inference(QDialog):
         match shuffle_config["model"]["backbone"]["type"]:
             case "CondPreNet":
                 self.model_name = "CondPreNet_" + shuffle_config["model"]["backbone"]["backbone"]["model_name"]
+                self.cond_or_coam = True
             case "HRNetCoAM":
                 self.model_name = "HRNetCoAM" + shuffle_config["model"]["backbone"]["base_model_name"]
+                self.cond_or_coam = True
             case _: 
                 self.model_name = shuffle_config["model"]["backbone"]["model_name"]
             
@@ -251,6 +263,7 @@ class DLC_Inference(QDialog):
         self.shuffle_idx = value
         text, status = self._check_shuffle_metadata()
         self.shuffle_config_label.setText(text)
+
         if not status:
             self.shuffle_config_label.setStyleSheet("color: red;")
             self.start_button.setEnabled(False)
@@ -258,6 +271,12 @@ class DLC_Inference(QDialog):
             self.shuffle_config_label.setStyleSheet("color: black;")
             self.start_button.setEnabled(True)
             self._determine_det_spinbox_vis(text)
+
+        if self.cond_or_coam:
+            self.to_video_checkbox.setEnabled(False)
+            self.to_video_checkbox.setChecked(True)
+        else:
+            self.to_video_checkbox.setEnabled(True)
 
     def _individual_spinbox_changed(self, value):
         self.max_individual_val = value
@@ -305,17 +324,17 @@ class DLC_Inference(QDialog):
         self.extractor.close()
 
         inference_video_path = None
-        use_video = False
+        use_video = self.to_video_checkbox.isChecked()
+
         try:
-            if len(self.frame_list)  > int(0.9 * self.total_frames) and not (self.cropping or self.masking or self.grayscaling):
-                inference_video_path = self.video_filepath
-                use_video = True
-            elif len(self.frame_list) < max(int(0.01 * self.total_frames), 5000) and not self.model_name.startswith("CondPreNet_"):
-                self._extract_marked_frame_images(headless)
+            if use_video:
+                if len(self.frame_list)  > int(0.9 * self.total_frames) and not (self.cropping or self.masking or self.grayscaling):
+                    inference_video_path = self.video_filepath
+                else:
+                    inference_video_path = os.path.join(self.temp_dir, "temp_extract.mp4")
+                    self._extract_marked_frame_as_video(headless)
             else:
-                inference_video_path = os.path.join(self.temp_dir, "temp_extract.mp4")
-                self._extract_marked_frame_as_video(headless)
-                use_video = True
+                self._extract_marked_frame_images(headless)
         except Exception as e:
             self._panic_exit(reason=f"Error during frame image extraction. Error:{e}", exception=e)
             return
