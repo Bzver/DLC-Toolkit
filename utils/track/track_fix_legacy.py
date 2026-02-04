@@ -298,7 +298,6 @@ class Track_Fixer:
                 amogus_frames = np.where(self.new_order_array[:,0]==-1)[0]
                 self.new_order_array[amogus_frames] = self.inst_array
                 amogus_frames = amogus_frames.tolist()
-                amogus_frames = self._second_pass_disambiguation(amogus_frames, max_dist, lookback_window)
             else:
                 amogus_frames = []
         except Exception as e:
@@ -338,6 +337,65 @@ class Track_Fixer:
                 self.new_order_array[frame_idx] = self.inst_array
                 logger.debug("[TMOD] Skipping due to no prediction on current frame.")
                 continue
+
+            if (self.exit_zone is not None and self.instance_count == 2 and self.tunneling_mouse_id is not None):
+                T = self.tunneling_mouse_id
+                O = 1 - T
+                x1, y1, x2, y2 = self.exit_zone
+
+                if valid_pred_mask[T]:
+                    x, y = pred_centroids[T]
+                    in_exit_zone = (x1 <= x <= x2) and (y1 <= y <= y2)
+
+                    if in_exit_zone:
+                        logger.debug(f"[TUNNEL] Mouse {T} returned via exit zone.")
+                        self.tunneling_mouse_id = None
+
+                    elif not valid_pred_mask[O]:
+                        logger.debug(f"[TUNNEL] Only slot {T} filled (outside zone) → reassigning to slot {O}")
+                        self.corrected_pred_data[frame_idx, O] = self.corrected_pred_data[frame_idx, T].copy()
+                        self.corrected_pred_data[frame_idx, T] = np.nan
+                        pred_centroids, _ = calculate_pose_centroids(self.corrected_pred_data, frame_idx)
+                        valid_pred_mask = np.any(~np.isnan(pred_centroids), axis=1)
+
+                    else:
+                        x_O, y_O = pred_centroids[O]
+                        in_exit_zone_O = (x1 <= x_O <= x2) and (y1 <= y_O <= y2)
+
+                        if not in_exit_zone_O:
+                            logger.debug(f"[TUNNEL] Spurious detection of mouse {T} (outside zone, O present) → discarding.")
+                            self.corrected_pred_data[frame_idx, T] = np.nan
+                            pred_centroids, _ = calculate_pose_centroids(self.corrected_pred_data, frame_idx)
+                            valid_pred_mask = np.any(~np.isnan(pred_centroids), axis=1)
+
+                elif valid_pred_mask[O]:
+                    x, y = pred_centroids[O]
+                    in_exit_zone = (x1 <= x <= x2) and (y1 <= y <= y2)
+
+                    if in_exit_zone:
+                        last_O_pos = ref_centroids[O]
+                        if np.any(np.isnan(last_O_pos)):
+                            logger.debug(f"[TUNNEL] Only slot {O} in zone, no ref for O → assuming T return.")
+                            self.corrected_pred_data[frame_idx, T] = self.corrected_pred_data[frame_idx, O].copy()
+                            self.corrected_pred_data[frame_idx, O] = np.nan
+                            pred_centroids, _ = calculate_pose_centroids(self.corrected_pred_data, frame_idx)
+                            valid_pred_mask = np.any(~np.isnan(pred_centroids), axis=1)
+                            self.tunneling_mouse_id = None
+                        else:
+                            dist_from_last_O = np.linalg.norm(np.array([x, y]) - last_O_pos)
+                            gap = frame_idx - ref_last_updated[O]
+                            gap = max(1, gap)
+                            max_allowed = max_dist * np.sqrt(gap)
+
+                            if dist_from_last_O > max_allowed:
+                                logger.debug(f"[TUNNEL] Slot {O} in zone but too far from last O ({dist_from_last_O:.1f} > {max_allowed:.1f}) → assuming T return.")
+                                self.corrected_pred_data[frame_idx, T] = self.corrected_pred_data[frame_idx, O].copy()
+                                self.corrected_pred_data[frame_idx, O] = np.nan
+                                pred_centroids, _ = calculate_pose_centroids(self.corrected_pred_data, frame_idx)
+                                valid_pred_mask = np.any(~np.isnan(pred_centroids), axis=1)
+                                self.tunneling_mouse_id = None
+                            else:
+                                logger.debug(f"[TUNNEL] Slot {O} in zone, within motion bounds → treating as O loitering.")
 
             valid_ref_mask = (ref_last_updated > frame_idx - lookback_window)
 

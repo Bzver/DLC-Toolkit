@@ -852,12 +852,12 @@ class Frame_Label:
         #     self.tf.process_labels(corrected_pred, frame_list, status_array)
         #     current_crp_weight, sigma, min_sim, gap_thresh, kappa = self.tf.get_params()
 
-        dialog = Track_Correction_Dialog(
-            self.dm.dlc_data, self.vm.extractor, pred_data_array, list(range(self.dm.total_frames)), [], amongus_frames, parent=self.main)
+        # dialog = Track_Correction_Dialog(
+        #     self.dm.dlc_data, self.vm.extractor, pred_data_array, list(range(self.dm.total_frames)), [], amongus_frames, parent=self.main)
 
-        dialog.current_frame_idx = start_idx
-        dialog.pred_data_exported.connect(self._get_pred_data_from_manual_correction)
-        dialog.exec()
+        # dialog.current_frame_idx = start_idx
+        # dialog.pred_data_exported.connect(self._get_pred_data_from_manual_correction)
+        # dialog.exec()
 
     def _get_pred_data_from_manual_correction(self, pred_data_array, frame_tuple):
         self._save_state_for_undo()
