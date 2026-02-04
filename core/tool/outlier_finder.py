@@ -457,9 +457,11 @@ class Outlier_Container_KP(Outlier_Container):
             masks.append(mask)
 
         if self.outlier_speed_gbox.isChecked():
-            mask = outlier_envelop(
+            mask = outlier_speed(
                 self.pred_data_array,
-                padding=int(self.speed_spinbox.value())
+                angle_map_data=self.angle_map_data,
+                max_speed_px=self.speed_spinbox.value(),
+                kp_mode=True
             )
             masks.append(mask)
 
