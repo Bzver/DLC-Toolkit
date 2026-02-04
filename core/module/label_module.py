@@ -379,18 +379,18 @@ class Frame_Label:
         else:
             self.display_current_frame()
 
-    def _delete_track(self, selected_range:Optional[Tuple[int,int]]):
+    def _delete_track(self):
         if self.pred_data_array is None:
             return
-        selected_instance_idx = self._instance_multi_select()
+        selected_instance_idx = self._instance_multi_select(force_dialog=True)
         if selected_instance_idx is None:
             return
 
-        if selected_range is None or selected_range is False:
-            fm_dialog = Frame_Range_Dialog(self.dm.total_frames, parent=self.main)
-            fm_dialog.range_selected.connect(self._delete_track) # Recursive black magic
-            fm_dialog.exec()
-        else:
+        fm_dialog = Frame_Range_Dialog(self.dm.total_frames, parent=self.main)
+        if fm_dialog.exec() == QtWidgets.QDialog.Accepted:
+            selected_range = fm_dialog.selected_range
+            if selected_range is None:
+                return
             start, end = selected_range
             self._save_state_for_undo()
             try:
@@ -402,69 +402,109 @@ class Frame_Label:
                 self.status_bar.show_message(f"Deleted inst {selected_instance_idx} between frame {start} to {end}.")
                 self.display_current_frame()
 
-    def _swap_track_single(self, swap_target:Tuple[int,int]=None):
+    def _swap_track_single(self):
         if self.pred_data_array is None:
             return
-        if self.dm.dlc_data.instance_count > 2 and not swap_target:
-            colormap = self.plotter.get_current_color_map()
-            inst_dialog = Instance_Selection_Dialog(self.pred_data_array.shape[1], colormap, dual_selection=True)
-            inst_dialog.instances_selected.connect(self._swap_track_single)
-            inst_dialog.exec()
+        if self.dm.dlc_data.instance_count == 2:
+            swap_target = (0, 1)
         else:
-            self._save_state_for_undo()
-            try:
-                self.pred_data_array = swap_track(self.pred_data_array, self.dm.current_frame_idx, swap_target=swap_target)
-            except ValueError as e:
-                Loggerbox.error(self.main, "Swap Error", str(e), exc=e)
+            colormap = self.plotter.get_current_color_map()
+            inst_dialog = Instance_Selection_Dialog(
+                self.dm.dlc_data.instance_count, colormap, dual_selection=True, parent=self.main
+            )
+            if inst_dialog.exec() != QtWidgets.QDialog.Accepted:
                 return
-            self.display_current_frame()
-
-    def _swap_track_free(self, selected_range:Optional[Tuple[int,int]]=None):
-        if self.pred_data_array is None:
-            return
-        
-        if not selected_range:
-            fm_dialog = Frame_Range_Dialog(self.dm.total_frames, parent=self.main)
-            fm_dialog.range_selected.connect(self._swap_track_free)
-            fm_dialog.exec()
-        else:
-            self._swap_range = selected_range
-            self._swap_track_free_worker()
-
-    def _swap_track_free_worker(self, swap_target:Optional[Tuple[int,int]]=None):
-        start, end = self._swap_range
-
-        if self.dm.dlc_data.instance_count > 2 and not swap_target:
-            colormap = self.plotter.get_current_color_map()
-            inst_dialog = Instance_Selection_Dialog(self.pred_data_array.shape[1], colormap, dual_selection=True)
-            inst_dialog.instances_selected.connect(self._swap_track_free_worker)
-            inst_dialog.exec()
-        else:
-            self._save_state_for_undo()
-            try:
-                self.pred_data_array = swap_track(self.pred_data_array, self.dm.current_frame_idx, swap_range=range(start, end+1), swap_target=swap_target)
-            except ValueError as e:
-                Loggerbox.error(self.main, "Swap Error", str(e), exc=e)
-            else:
-                self.status_bar.show_message(f"Swap insts between frame {start} to {end}.")
-                self.display_current_frame()
-
-    def _swap_track_continous(self, swap_target:Optional[Tuple[int,int]]=None):
-        if self.pred_data_array is None:
-            return
-        if self.dm.dlc_data.instance_count > 2 and not swap_target:
-            colormap = self.plotter.get_current_color_map()
-            inst_dialog = Instance_Selection_Dialog(self.pred_data_array.shape[1], colormap, dual_selection=True)
-            inst_dialog.instances_selected.connect(self._swap_track_continous)
-            inst_dialog.exec()
-        else:
-            self._save_state_for_undo()
-            try:
-                self.pred_data_array = swap_track(self.pred_data_array, self.dm.current_frame_idx, swap_range=[-1], swap_target=swap_target)
-            except ValueError as e:
-                Loggerbox.error(self.main, "Swap Error", str(e), exc=e)
+            selected = [i for i, checked in enumerate(inst_dialog.select_status) if checked]
+            if len(selected) != 2:
+                Loggerbox.warning(self.main, "Invalid Selection", "Please select exactly two instances to swap.")
                 return
-            self.display_current_frame()
+            swap_target = tuple(selected)
+
+        self._save_state_for_undo()
+        try:
+            self.pred_data_array = swap_track(self.pred_data_array, self.dm.current_frame_idx, swap_target=swap_target)
+        except ValueError as e:
+            Loggerbox.error(self.main, "Swap Error", str(e), exc=e)
+            return
+        self.display_current_frame()
+
+    def _swap_track_free(self):
+        if self.pred_data_array is None:
+            return
+
+        fm_dialog = Frame_Range_Dialog(self.dm.total_frames, parent=self.main)
+        if fm_dialog.exec() != QtWidgets.QDialog.Accepted:
+            return
+        selected_range = fm_dialog.selected_range
+        if selected_range is None:
+            return
+        start, end = selected_range
+
+        if self.dm.dlc_data.instance_count == 2:
+            swap_target = (0, 1)
+        else:
+            colormap = self.plotter.get_current_color_map()
+            inst_dialog = Instance_Selection_Dialog(
+                self.dm.dlc_data.instance_count, colormap, dual_selection=True, parent=self.main
+            )
+            if inst_dialog.exec() != QtWidgets.QDialog.Accepted:
+                return
+            selected = [i for i, checked in enumerate(inst_dialog.select_status) if checked]
+            if len(selected) != 2:
+                Loggerbox.warning(self.main, "Invalid Selection", "Please select exactly two instances to swap.")
+                return
+            swap_target = tuple(selected)
+
+        self._save_state_for_undo()
+        try:
+            self.pred_data_array = swap_track(
+                self.pred_data_array,
+                self.dm.current_frame_idx,
+                swap_range=range(start, end + 1),
+                swap_target=swap_target
+            )
+        except ValueError as e:
+            Loggerbox.error(self.main, "Swap Error", str(e), exc=e)
+            return
+
+        self.status_bar.show_message(f"Swapped instances between frames {start} to {end}.")
+        self.display_current_frame()
+
+
+    def _swap_track_continous(self):
+        if self.pred_data_array is None:
+            return
+        if not self._track_edit_blocker():
+            return
+
+        if self.dm.dlc_data.instance_count == 2:
+            swap_target = (0, 1)
+        else:
+            colormap = self.plotter.get_current_color_map()
+            inst_dialog = Instance_Selection_Dialog(
+                self.dm.dlc_data.instance_count, colormap, dual_selection=True, parent=self.main
+            )
+            if inst_dialog.exec() != QtWidgets.QDialog.Accepted:
+                return
+            selected = [i for i, checked in enumerate(inst_dialog.select_status) if checked]
+            if len(selected) != 2:
+                Loggerbox.warning(self.main, "Invalid Selection", "Please select exactly two instances to swap.")
+                return
+            swap_target = tuple(selected)
+
+        self._save_state_for_undo()
+        try:
+            self.pred_data_array = swap_track(
+                self.pred_data_array,
+                self.dm.current_frame_idx,
+                swap_range=[-1],
+                swap_target=swap_target
+            )
+        except ValueError as e:
+            Loggerbox.error(self.main, "Swap Error", str(e), exc=e)
+            return
+
+        self.display_current_frame()
 
     def _copy_inst(self):
         frame_idx = self.dm.current_frame_idx
@@ -494,7 +534,7 @@ class Frame_Label:
         frame_idx = self.dm.current_frame_idx
         if self.pred_data_array is None:
             return
-        selected_instance_idx = self._instance_multi_select()
+        selected_instance_idx = self._instance_multi_select(force_dialog=True)
         if selected_instance_idx is None:
             return
         self._save_state_for_undo()
@@ -557,7 +597,7 @@ class Frame_Label:
         
         self._save_state_for_undo()
         min_visible_kp = self.dm.dlc_data.num_keypoint // 2
-        dialog = Keypoint_Num_Dialog(init_bp=min_visible_kp, max_bp=self.dm.dlc_data.num_keypoint )
+        dialog = Keypoint_Num_Dialog(init_bp=min_visible_kp, max_bp=self.dm.dlc_data.num_keypoint)
         if dialog.exec() == QtWidgets.QDialog.Accepted:
             min_bodyparts = dialog.bp_spin.value()
         self.pred_data_array = generate_missing_kp_batch(self.pred_data_array, self.dm.canon_pose, min_bodyparts)
@@ -722,19 +762,20 @@ class Frame_Label:
         self.inst_count_per_frame_pred = get_instance_count_per_frame(self.pred_data_array)
         return list(np.where(np.diff(self.inst_count_per_frame_pred)!=0)[0]+1)
 
-    def _instance_multi_select(self) -> Optional[int]:
-        current_frame_inst = get_instances_on_current_frame(self.pred_data_array, self.dm.current_frame_idx)
-        if current_frame_inst is None:
-            return
-            
-        if len(current_frame_inst) == 1:
-            return current_frame_inst[0]
+    def _instance_multi_select(self, force_dialog:bool=False) -> Optional[int]:
+        if not force_dialog:
+            current_frame_inst = get_instances_on_current_frame(self.pred_data_array, self.dm.current_frame_idx)
+            if current_frame_inst is None:
+                return None
+                
+            if len(current_frame_inst) == 1:
+                return current_frame_inst[0]
 
-        if self.gview.sbox is not None:
-            return self.gview.sbox.instance_id
+            if self.gview.sbox is not None:
+                return self.gview.sbox.instance_id
 
-        if self.last_selected_idx is not None:
-            return self.last_selected_idx
+            if self.last_selected_idx is not None:
+                return self.last_selected_idx
 
         colormap = self.plotter.get_current_color_map()
         inst_dialog = Instance_Selection_Dialog(self.dm.dlc_data.instance_count, colormap)

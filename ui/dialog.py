@@ -209,6 +209,7 @@ class Frame_Range_Dialog(QDialog):
     def __init__(self, total_frames:int, parent=None):
         super().__init__(parent)
         self.total_frames = total_frames
+        self.selected_range = None
 
         self.setWindowTitle("Set Frame Range")
         self.setMinimumWidth(300)
@@ -235,6 +236,7 @@ class Frame_Range_Dialog(QDialog):
     def _accept_input(self):
         start_idx = self.start_spin.value()
         end_idx = self.end_spin.value()
+        self.selected_range = (start_idx, end_idx)
         if end_idx >= start_idx:
             self.hide()
             self.range_selected.emit((start_idx, end_idx))
