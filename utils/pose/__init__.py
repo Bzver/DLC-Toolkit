@@ -23,6 +23,7 @@ from .outlier import (
     outlier_bad_to_the_bone,
     outlier_speed,
     outlier_flicker,
+    outlier_envelop,
 )
 from .instance_op import (
     rotate_selected_inst,
@@ -54,4 +55,5 @@ __all__ = (
     outlier_bad_to_the_bone,
     outlier_speed,
     outlier_flicker,
+    outlier_envelop,
 )

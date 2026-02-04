@@ -199,6 +199,60 @@ def outlier_duplicate(
             
     return duplicate_mask
 
+def outlier_envelop(
+    pred_data_array: np.ndarray,
+    padding: int = 20,
+):
+    F, I, D = pred_data_array.shape
+    K = D // 3
+    centroids, local_coords = calculate_pose_centroids(pred_data_array)
+    lc_reshaped = local_coords.reshape((F, I, K, 2))
+    kps_abs = pred_data_array.reshape(F, I, K, 3)[..., :2]
+
+    with bye_bye_runtime_warning():
+        radii_inst = np.nanmax(np.sqrt(lc_reshaped[..., 0]**2 + lc_reshaped[..., 1]**2), axis=-1)
+
+    scale = 1 + padding / 100
+    mask = np.zeros((F, I), dtype=bool)
+
+    for i, j in combinations(range(I), 2):
+        rad_i = radii_inst[:, i]
+        rad_j = radii_inst[:, j]
+
+        valid_i = ~np.isnan(rad_i)
+        valid_j = ~np.isnan(rad_j)
+        both_valid = valid_i & valid_j
+
+        if not np.any(both_valid):
+            continue
+
+        i_bigger = (rad_i >= rad_j) & both_valid
+        j_bigger = (rad_j > rad_i) & both_valid
+
+        if np.any(i_bigger):
+            center = centroids[:, i][:, None, :]
+            radius_thresh = (rad_i * scale)[:, None]
+            kps_of_j = kps_abs[:, j]
+
+            dist_sq = np.sum((kps_of_j - center) ** 2, axis=-1)
+            outside = dist_sq > (radius_thresh ** 2)
+            j_fully_inside = ~np.any(outside, axis=1) & i_bigger
+
+            mask[j_fully_inside, j] = True
+
+        if np.any(j_bigger):
+            center = centroids[:, j][:, None, :]
+            radius_thresh = (rad_j * scale)[:, None]
+            kps_of_i = kps_abs[:, i]
+
+            dist_sq = np.sum((kps_of_i - center) ** 2, axis=-1)
+            outside = dist_sq >(radius_thresh ** 2)
+            i_fully_inside = ~np.any(outside, axis=1) & j_bigger
+
+            mask[i_fully_inside, i] = True
+
+    return mask
+
 def outlier_speed(
     pred_data_array: np.ndarray,
     angle_map_data: Optional[Dict[str, int]]=None,

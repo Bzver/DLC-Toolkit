@@ -6,7 +6,7 @@ from typing import Optional, Dict, List
 
 from ui import Spinbox_With_Label
 from utils.pose import (
-    outlier_bodypart, outlier_confidence, outlier_duplicate, outlier_speed,
+    outlier_bodypart, outlier_confidence, outlier_duplicate, outlier_speed, outlier_envelop,
     outlier_size, outlier_rotation, outlier_bad_to_the_bone, outlier_flicker)
 from utils.logger import Loggerbox
 
@@ -210,10 +210,9 @@ class Outlier_Container(QtWidgets.QWidget):
             masks.append(mask)
 
         if self.outlier_speed_gbox.isChecked():
-            mask = outlier_speed(
+            mask = outlier_envelop(
                 self.pred_data_array,
-                angle_map_data=self.angle_map_data,
-                max_speed_px=self.speed_spinbox.value()
+                padding=self.speed_spinbox.value()
             )
             masks.append(mask)
 
@@ -377,13 +376,13 @@ class Outlier_Container(QtWidgets.QWidget):
         return ignored_idx
 
     def _build_outlier_speed_gbox(self):
-        gbox = QGroupBox("Outlier Speed")
+        gbox = QGroupBox("Outlier Nested Pose")
         gbox.setCheckable(True)
         gbox.setChecked(False)
         layout = QHBoxLayout(gbox)
 
-        self.speed_spinbox = Spinbox_With_Label("Max Speed (px/frame):", (1, 500), 50)
-        self.speed_spinbox.setToolTip("Instances moving faster than this between frames are considered outliers.")
+        self.speed_spinbox = Spinbox_With_Label("Padding (%):", (0, 100), 20)
+        self.speed_spinbox.setToolTip("Allow smaller pose to extend beyond larger pose by this percentage (e.g., 20 = 120% of radius).")
         layout.addWidget(self.speed_spinbox)
         layout.addStretch()
         return gbox
@@ -432,6 +431,20 @@ class Outlier_Container_KP(Outlier_Container):
         self.outlier_rotation_gbox.setVisible(False)
         self.outlier_flicker_gbox.setVisible(False)
 
+    def _build_outlier_speed_gbox(self):
+        gbox = QGroupBox("Outlier Jump")
+        gbox.setCheckable(True)
+        gbox.setChecked(False)
+        layout = QHBoxLayout(gbox)
+
+        self.speed_spinbox = Spinbox_With_Label("Max Jump (px):", (1, 500), 50)
+        self.speed_spinbox.setToolTip(
+            "Flag keypoints that move more than this distance relative to centroids (in pixels) between consecutive frames. This detects sudden jumps, not true speed."
+        )
+        layout.addWidget(self.speed_spinbox)
+        layout.addStretch()
+        return gbox
+
     def get_combined_mask(self) -> Optional[np.ndarray]:
         masks = []
 
@@ -444,11 +457,9 @@ class Outlier_Container_KP(Outlier_Container):
             masks.append(mask)
 
         if self.outlier_speed_gbox.isChecked():
-            mask = outlier_speed(
+            mask = outlier_envelop(
                 self.pred_data_array,
-                angle_map_data=self.angle_map_data,
-                max_speed_px=self.speed_spinbox.value(),
-                kp_mode=True
+                padding=int(self.speed_spinbox.value())
             )
             masks.append(mask)
 
