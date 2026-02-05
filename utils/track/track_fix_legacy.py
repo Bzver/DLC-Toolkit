@@ -398,49 +398,28 @@ class Track_Fixer:
                                 logger.debug(f"[TUNNEL] Slot {O} in zone, within motion bounds → treating as O loitering.")
 
             valid_ref_mask = (ref_last_updated > frame_idx - lookback_window)
-
             current_visible = np.sum(valid_pred_mask)
             ref_visible = np.sum(valid_ref_mask)
 
-            if self.exit_zone is not None and self.instance_count == 2:
-                if current_visible == 1 and ref_visible == 2:
-                    visible_id = np.where(valid_pred_mask)[0][0]
-                    missing_id = 1 - visible_id
+            if (self.exit_zone is not None and self.instance_count == 2 and current_visible == 1 and ref_visible == 2):
+                x1, y1, x2, y2 = self.exit_zone
+                candidate_tunnel_mouse = []
 
-                    last_pos = ref_centroids[missing_id]
-                    if np.any(np.isnan(last_pos)):
-                        logger.debug(f"[TUNNEL] Missing mouse {missing_id} has no valid last position — skipping")
+                for mouse_id in range(2):
+                    x, y = ref_centroids[mouse_id]
+                    if np.isnan(x) or np.isnan(y):
+                        continue
+                    if x1 <= x <= x2 and y1 <= y <= y2:
+                        candidate_tunnel_mouse.append(mouse_id)
+
+                if candidate_tunnel_mouse:
+                    if len(candidate_tunnel_mouse) == 1:
+                        self.tunneling_mouse_id = candidate_tunnel_mouse[0]
                     else:
-                        x, y = last_pos
-                        x1, y1, x2, y2 = self.exit_zone
-                        if x1 <= x <= x2 and y1 <= y <= y2:
-                            self.tunneling_mouse_id = missing_id
-                            logger.debug(f"[TUNNEL] Mouse {missing_id} entered tunnel from zone (last pos: {x:.1f},{y:.1f})")
-                        else:
-                            logger.debug(f"[TUNNEL] Mouse {missing_id} vanished outside exit zone ({x:.1f},{y:.1f}) — ignoring")
-
-                elif current_visible == 2 and self.tunneling_mouse_id is not None:
-                    x1, y1, x2, y2 = self.exit_zone
-                    scores = []
-                    for inst_id in range(2):
-                        x, y = pred_centroids[inst_id]
-                        in_zone = (x1 <= x <= x2) and (y1 <= y <= y2)
-                        scores.append(in_zone)
-
-                    if sum(scores) == 1:
-                        tunnel_returnee = scores.index(True)
-                        if tunnel_returnee != self.tunneling_mouse_id:
-                            new_order = [0, 1]
-                            new_order[self.tunneling_mouse_id] = tunnel_returnee
-                            new_order[tunnel_returnee] = self.tunneling_mouse_id
-                            self.corrected_pred_data[frame_idx] = self.corrected_pred_data[frame_idx, new_order]
-                            pred_centroids = pred_centroids[new_order]
-                            valid_pred_mask = valid_pred_mask[new_order]
-                            logger.debug(f"[TUNNEL] Reassigned ID: mouse {tunnel_returnee} → ID {self.tunneling_mouse_id}")
-                        self.tunneling_mouse_id = None
-                    else:
-                        logger.debug(f"[TUNNEL] Ambiguous reappearance: {sum(scores)} mice in zone")
-                        self.tunneling_mouse_id = None
+                        self.tunneling_mouse_id = 1 - np.where(valid_pred_mask)[0][0]
+                    logger.debug(f"[TUNNEL] Mouse {self.tunneling_mouse_id} entered tunnel (last ref pos in exit zone).")
+                else:
+                    logger.debug("[TUNNEL] One mouse vanished, but neither ref was in exit zone — ignoring.")
 
             if not np.any(valid_ref_mask):
                 if np.all(np.isnan(ref_centroids)): # No ref at all, i.e. beginning of the vid
@@ -492,7 +471,16 @@ class Track_Fixer:
 
             fixed_pred_centroids = pred_centroids[new_order] if new_order else pred_centroids
             fixed_pred_mask = valid_pred_mask[new_order] if new_order else valid_pred_mask
-            
+
+            if self.tunneling_mouse_id is not None:
+                T = self.tunneling_mouse_id
+                x1, y1, x2, y2 = self.exit_zone
+                x, y = fixed_pred_centroids[T]
+
+                if x1 <= x <= x2 and y1 <= y <= y2:
+                    self.tunneling_mouse_id = None
+                    logger.debug(f"[TUNNEL] Mouse {T} (post Hungarian correction) returned via exit zone.")
+
             ref_centroids[fixed_pred_mask] = fixed_pred_centroids[fixed_pred_mask]
             ref_last_updated[fixed_pred_mask] = frame_idx
 

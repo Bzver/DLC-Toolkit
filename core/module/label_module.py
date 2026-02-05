@@ -825,7 +825,11 @@ class Frame_Label:
 
         progress = Progress_Indicator_Dialog(start_idx, self.dm.total_frames, "Supervised Track Fixing", "", self.main)
         tf = Track_Fixer(self.pred_data_array, self.exit_zone, progress)
-        pred_data_array, _, amongus_frames = tf.track_correction(max_dist=80, lookback_window=4, start_idx=start_idx)
+        pred_data_array, _, _ = tf.track_correction(max_dist=80, lookback_window=4, start_idx=start_idx)
+
+        self.dm.dlc_data.pred_data_array = pred_data_array
+        self.pred_data_array = self.dm.dlc_data.pred_data_array
+        self.display_current_frame()
 
         # self.tf = Track_Fixer(self.pred_data_array, self.dm.angle_map_data, progress,
         #                         crp_weight=current_crp_weight, cr_sigma=sigma, kappa=kappa, 
