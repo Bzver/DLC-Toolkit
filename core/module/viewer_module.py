@@ -207,9 +207,6 @@ class Frame_View:
         for cat in frame_categories: 
             self.dm.clear_frame_cat(cat)
 
-    def _on_clear_old_command(self, clear_old:bool):
-        self.dm.clear_old_cat(clear_old)
-
     ###################################################################################################################################################
 
     def sync_menu_state(self, close_all:bool=False):
@@ -231,8 +228,10 @@ class Frame_View:
                 dlc_data=self.dm.dlc_data,
                 angle_map_data=self.dm.angle_map_data,
                 parent=self.main)
-            mark_gen.clear_old.connect(self._on_clear_old_command)
-            mark_gen.frame_list_new.connect(self._handle_frame_list_from_mark_gen)
+            mark_gen.frame_list_replace.connect(self._handle_frame_list_replace_from_mark_gen)
+            mark_gen.frame_list_combine.connect(self._handle_frame_list_combine_from_mark_gen)
+            mark_gen.frame_list_subset.connect(self._handle_frame_list_subset_from_mark_gen)
+
             self.vid_play.set_right_panel_widget(mark_gen)
         else:
             self.vid_play.set_right_panel_widget(None)
@@ -257,8 +256,20 @@ class Frame_View:
         self.dm.handle_rurun_frame_tuple(frame_tuple)
         self.display_current_frame()
 
-    def _handle_frame_list_from_mark_gen(self, frame_list):
+    def _handle_frame_list_combine_from_mark_gen(self, frame_list):
         self.dm.handle_mark_gen_list(frame_list)
+        self.display_current_frame()
+
+    def _handle_frame_list_replace_from_mark_gen(self, frame_list):
+        self.dm.clear_old_cat(True)
+        self.dm.handle_mark_gen_list(frame_list)
+        self.display_current_frame()
+
+    def _handle_frame_list_subset_from_mark_gen(self, frame_list):
+        current_frame_set = set(self.dm.get_frames("marked"))
+        new_list = [frame for frame in frame_list if frame in current_frame_set]
+        self.dm.clear_old_cat(True)
+        self.dm.handle_mark_gen_list(new_list)
         self.display_current_frame()
 
     def _handle_counter_from_counter(self, blob_array:np.ndarray):

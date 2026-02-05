@@ -13,8 +13,9 @@ from utils.logger import Loggerbox
 from utils.dataclass import Loaded_DLC_Data
 
 class Mark_Generator(QGroupBox):
-    clear_old = Signal(bool)
-    frame_list_new = Signal(list)
+    frame_list_replace = Signal(list)
+    frame_list_subset = Signal(list)
+    frame_list_combine = Signal(list)
 
     def __init__(self,
                  total_frames: int,
@@ -31,7 +32,6 @@ class Mark_Generator(QGroupBox):
 
         layout = QVBoxLayout(self)
 
-        # Mode selector
         self.mode_frame = QHBoxLayout()
         mode_label = QLabel("Mark Generation Mode:")
         self.mode_frame.addWidget(mode_label)
@@ -101,15 +101,23 @@ class Mark_Generator(QGroupBox):
 
         layout.addWidget(self.stack)
 
-        confirm_frame = QVBoxLayout()
-        self.keep_old_checkbox = QtWidgets.QCheckBox("Keep Existing Marks")
-        self.keep_old_checkbox.setChecked(True)
-        confirm_frame.addWidget(self.keep_old_checkbox)
+        mode_group = QGroupBox("Marking Behavior")
+        mode_layout = QHBoxLayout(mode_group)
+
+        self.replace_radio = QtWidgets.QRadioButton("REPLACE")
+        self.subset_radio = QtWidgets.QRadioButton("SUBSET")
+        self.combine_radio = QtWidgets.QRadioButton("COMBINE")
+
+        self.combine_radio.setChecked(True)
+
+        mode_layout.addWidget(self.replace_radio)
+        mode_layout.addWidget(self.subset_radio)
+        mode_layout.addWidget(self.combine_radio)
+        layout.addWidget(mode_group)
 
         okay_button = QPushButton("Mark Frames")
         okay_button.clicked.connect(self.find_frames_to_mark)
-        confirm_frame.addWidget(okay_button)
-        layout.addLayout(confirm_frame)
+        layout.addWidget(okay_button)
 
     def find_frames_to_mark(self):
         start_text = self.start_frame_textbox.text().strip()
@@ -246,8 +254,12 @@ class Mark_Generator(QGroupBox):
             Loggerbox.info(self, "No Frames Found", "No frames matched the selected criteria in the given range.")
             return
 
-        self.clear_old.emit(not self.keep_old_checkbox.isChecked())
-        self.frame_list_new.emit(selected_frames)
+        if self.replace_radio.isChecked():
+            self.frame_list_replace.emit(selected_frames)
+        elif self.subset_radio.isChecked():
+            self.frame_list_subset.emit(selected_frames)
+        elif self.combine_radio.isChecked():
+            self.frame_list_combine.emit(selected_frames)
 
     def _build_random_container(self):
         container = QGroupBox("Random Frame Extraction")
@@ -323,8 +335,12 @@ class Mark_Generator(QGroupBox):
             Loggerbox.info(self, "No Frames Found", "No frames matched the selected criteria in the given range.")
             return
 
-        self.clear_old.emit(not self.keep_old_checkbox.isChecked())
-        self.frame_list_new.emit(discrepancy_frames)
+        if self.replace_radio.isChecked():
+            self.frame_list_replace.emit(discrepancy_frames)
+        elif self.subset_radio.isChecked():
+            self.frame_list_subset.emit(discrepancy_frames)
+        elif self.combine_radio.isChecked():
+            self.frame_list_combine.emit(discrepancy_frames)
 
     def _build_clipboard_container(self):
         container = QGroupBox("Paste or Edit Frame List")
