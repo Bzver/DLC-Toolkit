@@ -348,8 +348,7 @@ class Track_Fixer:
                     in_exit_zone = (x1 <= x <= x2) and (y1 <= y <= y2)
 
                     if in_exit_zone:
-                        logger.debug(f"[TUNNEL] Mouse {T} returned via exit zone.")
-                        self.tunneling_mouse_id = None
+                        logger.debug(f"[TUNNEL] Mouse {T} detected in exit zone, but awaiting Hungarian assignment for identity confirmation.")
 
                     elif not valid_pred_mask[O]:
                         logger.debug(f"[TUNNEL] Only slot {T} filled (outside zone) → reassigning to slot {O}")
@@ -357,6 +356,10 @@ class Track_Fixer:
                         self.corrected_pred_data[frame_idx, T] = np.nan
                         pred_centroids, _ = calculate_pose_centroids(self.corrected_pred_data, frame_idx)
                         valid_pred_mask = np.any(~np.isnan(pred_centroids), axis=1)
+
+                    elif ref_last_updated[T] >= frame_idx - lookback_window: # Recently vanished so maybe not vanished at all?
+                        logger.debug(f"[TUNNEL] Mouse {T} possibly never entered the tunnel.")
+                        self.tunneling_mouse_id = None
 
                     else:
                         x_O, y_O = pred_centroids[O]
