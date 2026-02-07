@@ -816,16 +816,20 @@ class Frame_Label:
         if self.exit_zone is None:
             self.exit_zone = get_roi_cv2(frame=self.vm.get_frame(self.dm.current_frame_idx))
 
-        reply = Loggerbox.question(
-            self.main, "Starting From Current Frame?", "Start correcting from current frame instead of beginning?")
-        if reply == QMessageBox.Yes:
-            start_idx = self.dm.current_frame_idx
-        else:
-            start_idx = 0
+        if self.dm.get_frames("marked"):
+            reply = Loggerbox.question(
+                self.main, "Correct Marked Frames Only?", "Only perform correction for frames within marked range?")
+            if reply == QMessageBox.Yes:
+                frame_list = self.dm.get_frames("marked")
+                start_idx = min(frame_list)
+                end_idx = max(frame_list)
+            else:
+                start_idx = 0
+                end_idx = self.dm.total_frames
 
-        progress = Progress_Indicator_Dialog(start_idx, self.dm.total_frames, "Supervised Track Fixing", "", self.main)
+        progress = Progress_Indicator_Dialog(start_idx, end_idx, "Supervised Track Fixing", "", self.main)
         tf = Track_Fixer(self.pred_data_array, self.exit_zone, progress)
-        pred_data_array, _, _ = tf.track_correction(max_dist=80, lookback_window=4, start_idx=start_idx)
+        pred_data_array, _, _ = tf.track_correction(max_dist=80, lookback_window=4, start_idx=start_idx, end_idx=end_idx)
 
         self.dm.dlc_data.pred_data_array = pred_data_array
         self.pred_data_array = self.dm.dlc_data.pred_data_array

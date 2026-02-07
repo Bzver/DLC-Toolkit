@@ -15,6 +15,7 @@ from core.tool import Annotation_Config, Annotation_Summary_Table, Prediction_Pl
 from core.io import load_annotation, prediction_to_csv, load_onehot_csv
 from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Status_Bar, Frame_List_Dialog
 from utils.track import interpolate_track_all
+from utils.pose import generate_missing_kp_batch
 from utils.helper import frame_to_pixmap, frame_to_grayscale, get_instance_count_per_frame, array_to_iterable_runs
 from utils.logger import Loggerbox
 
@@ -571,7 +572,7 @@ class Frame_Annotator:
         except Exception as e:
             Loggerbox.error(self.main, "Failed", f"Failed to save {file_path}, Exception: {e}", exc=e)
 
-    def _export_truncated_package(self, min_duration:int=10, max_gap:int=2, fps:int=10):
+    def _export_truncated_package(self, min_duration:int=10, max_gap:int=3, fps:int=10):
         if self.dm.dlc_data is None or self.dm.dlc_data.pred_data_array is None:
             return
         
@@ -586,6 +587,7 @@ class Frame_Annotator:
         for inst_idx in range(I):
             pred_data_array = interpolate_track_all(pred_data_array, inst_idx, max_gap)
 
+        pred_data_array = generate_missing_kp_batch(pred_data_array, self.dm.canon_pose, 2)
         instance_array = get_instance_count_per_frame(pred_data_array)
         
         frames_to_use = np.zeros_like(instance_array, dtype=bool)
@@ -621,7 +623,7 @@ class Frame_Annotator:
             df_annot.to_csv(file_path, sep=',', index=False, float_format='%.6f')
 
             pred_path = file_path.replace(".csv", "_pred.csv")
-            prediction_to_csv(self.dm.dlc_data, truncated_pred_array, pred_path, keep_conf=True)
+            prediction_to_csv(self.dm.dlc_data, truncated_pred_array, pred_path, keep_conf=True, no_scorer_row=True)
 
             json_path = file_path.replace(".csv", ".json")
             with open(json_path, 'w') as f:

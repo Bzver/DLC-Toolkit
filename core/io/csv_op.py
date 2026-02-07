@@ -18,6 +18,7 @@ def prediction_to_csv(
         frame_list: Optional[List[int]]=None,
         keep_conf:bool=False,
         to_dlc:bool=False,
+        no_scorer_row=False
         ):
     
     pred_data_flattened = pred_data_array.reshape(pred_data_array.shape[0], -1) # [F, I, K] to [F, I*K]
@@ -31,7 +32,7 @@ def prediction_to_csv(
     frame_col = np.array(frame_list).reshape(-1, 1)
     pred_data_processed = np.concatenate((frame_col, pred_data_flattened), axis=1)
 
-    header_df, columns = construct_header_row(dlc_data, keep_conf)
+    header_df, columns = construct_header_row(dlc_data, keep_conf, no_scorer_row)
 
     labels_df = pd.DataFrame(pred_data_processed, columns=columns)
 
@@ -89,7 +90,8 @@ def csv_to_h5(
 
 def construct_header_row(
         dlc_data:Loaded_DLC_Data,
-        has_conf:bool=False
+        has_conf:bool=False,
+        no_scorer_row:bool=False,
         ) -> Tuple[np.ndarray, List[str]]:
     keypoints = dlc_data.keypoints
     num_keypoint = dlc_data.num_keypoint
@@ -126,11 +128,18 @@ def construct_header_row(
         coords_row += coords * num_keypoint
 
     scorer_row = ["scorer"] + ["machine-labeled"] * (len(columns) - 1)
-    header_df = pd.DataFrame(
-    [row for row in [scorer_row, individuals_row, bodyparts_row, coords_row] if row != individuals_row or dlc_data.multi_animal],
-        columns=columns
-    )
-    
+
+    if no_scorer_row:
+        header_df = pd.DataFrame(
+        [row for row in [individuals_row, bodyparts_row, coords_row] if row != individuals_row or dlc_data.multi_animal],
+            columns=columns
+        )
+    else:
+        header_df = pd.DataFrame(
+        [row for row in [scorer_row, individuals_row, bodyparts_row, coords_row] if row != individuals_row or dlc_data.multi_animal],
+            columns=columns
+        )
+
     return header_df, columns
 
 def guarantee_multiindex_rows(df): # Adopted from DeepLabCut

@@ -288,10 +288,10 @@ class Track_Fixer:
         self.max_tunnel_gap = 10 
         self.tunneling_mouse_id = None 
 
-    def track_correction(self, max_dist:float=10.0, lookback_window=10, start_idx=0) -> Tuple[np.ndarray, List[int], List[int]]:
+    def track_correction(self, max_dist:float=10.0, lookback_window=10, start_idx=0, end_idx=-1) -> Tuple[np.ndarray, List[int], List[int]]:
         try:
             gap_mask = np.all(np.isnan(self.corrected_pred_data), axis=(1,2))
-            self._first_pass_centroids(max_dist, lookback_window, start_idx)
+            self._first_pass_centroids(max_dist, lookback_window, start_idx, end_idx)
             self.new_order_array[gap_mask] = self.inst_array
             self.new_order_array[0:start_idx+1] = self.inst_array
             if np.any(self.new_order_array == -1):
@@ -313,13 +313,13 @@ class Track_Fixer:
 
         return fixed_data_array, changed_frames, amogus_frames
 
-    def _first_pass_centroids(self, max_dist:float, lookback_window, start_idx):
+    def _first_pass_centroids(self, max_dist:float, lookback_window, start_idx, end_idx):
         last_order = self.inst_list
         ref_centroids = np.full((self.instance_count, 2), np.nan)
         ref_last_updated = np.full((self.instance_count,), -2 * lookback_window, np.int32)
         valid_ref_mask = np.zeros_like(ref_last_updated, dtype=bool)
 
-        for frame_idx in range(self.total_frames):
+        for frame_idx in range(end_idx):
             if frame_idx < start_idx:
                 continue
 
