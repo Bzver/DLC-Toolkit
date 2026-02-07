@@ -328,7 +328,7 @@ class Mark_Generator(QGroupBox):
         dlc_count_array = dlc_count_array[:min_len]
         blob_count_array = blob_count_array[:min_len]
 
-        discrepancy_frames = np.where(dlc_count_array != blob_count_array)[0].tolist()
+        discrepancy_frames = np.where((dlc_count_array != blob_count_array) & (blob_count_array != 0))[0].tolist()
         discrepancy_frames = [f for f in discrepancy_frames if start_frame <= f <= end_frame]
 
         if not discrepancy_frames:

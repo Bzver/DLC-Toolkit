@@ -408,7 +408,9 @@ class Track_Fixer:
             current_visible = np.sum(valid_pred_mask)
             ref_visible = np.sum(valid_ref_mask)
 
-            if (self.exit_zone is not None and self.instance_count == 2 and current_visible == 1 and ref_visible == 2):
+            if (self.exit_zone is not None and self.instance_count == 2 and current_visible == 1 and ref_visible == 2
+                and np.max(self.inst_count_per_frame[frame_idx:frame_idx+lookback_window+1]) < 2):
+
                 x1, y1, x2, y2 = self.exit_zone
                 candidate_tunnel_mouse = []
 
