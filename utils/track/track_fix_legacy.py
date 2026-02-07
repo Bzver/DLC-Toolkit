@@ -391,12 +391,16 @@ class Track_Fixer:
                             max_allowed = max_dist * np.sqrt(gap)
 
                             if dist_from_last_O > max_allowed:
-                                logger.debug(f"[TUNNEL] Slot {O} in zone but too far from last O ({dist_from_last_O:.1f} > {max_allowed:.1f}) → assuming T return.")
-                                self.corrected_pred_data[frame_idx, T] = self.corrected_pred_data[frame_idx, O].copy()
-                                self.corrected_pred_data[frame_idx, O] = np.nan
-                                pred_centroids, _ = calculate_pose_centroids(self.corrected_pred_data, frame_idx)
-                                valid_pred_mask = np.any(~np.isnan(pred_centroids), axis=1)
-                                self.tunneling_mouse_id = None
+                                logger.debug(f"[TUNNEL] Slot {O} in zone but too far from last O ({dist_from_last_O:.1f} > {max_allowed:.1f}) → checking preceding inst count for potential returns.")
+
+                                if np.max(self.inst_count_per_frame[frame_idx:frame_idx+lookback_window+1]) < 2:
+                                    logger.debug(f"[TUNNEL] Inst count per frame shows that T has not returned.")
+                                else:
+                                    self.corrected_pred_data[frame_idx, T] = self.corrected_pred_data[frame_idx, O].copy()
+                                    self.corrected_pred_data[frame_idx, O] = np.nan
+                                    pred_centroids, _ = calculate_pose_centroids(self.corrected_pred_data, frame_idx)
+                                    valid_pred_mask = np.any(~np.isnan(pred_centroids), axis=1)
+                                    self.tunneling_mouse_id = None
                             else:
                                 logger.debug(f"[TUNNEL] Slot {O} in zone, within motion bounds → treating as O loitering.")
 
@@ -481,8 +485,12 @@ class Track_Fixer:
                 x, y = fixed_pred_centroids[T]
 
                 if x1 <= x <= x2 and y1 <= y <= y2:
-                    self.tunneling_mouse_id = None
-                    logger.debug(f"[TUNNEL] Mouse {T} (post Hungarian correction) returned via exit zone.")
+                    if np.max(self.inst_count_per_frame[frame_idx:frame_idx+lookback_window+2]) < 2:
+                        self.tunneling_mouse_id = 1 - T
+                        logger.debug(f"[TUNNEL] Mouse {1 - T} (post Hungarian correction) was the one exited.")
+                    else:
+                        self.tunneling_mouse_id = None
+                        logger.debug(f"[TUNNEL] Mouse {T} (post Hungarian correction) returned via exit zone.")
 
             ref_centroids[fixed_pred_mask] = fixed_pred_centroids[fixed_pred_mask]
             ref_last_updated[fixed_pred_mask] = frame_idx
