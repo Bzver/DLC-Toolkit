@@ -3,7 +3,7 @@ from itertools import combinations
 from typing import Dict, Optional, List
 
 from .pose_analysis import calculate_pose_centroids, calculate_anatomical_centers, calculate_aligned_local, calculate_pose_bbox
-from utils.helper import bye_bye_runtime_warning, clean_inconsistent_nans, get_instances_on_current_frame
+from utils.helper import bye_bye_runtime_warning, clean_inconsistent_nans
 
 
 def outlier_removal(pred_data_array:np.ndarray, outlier_mask:np.ndarray) -> np.ndarray:
@@ -203,69 +203,47 @@ def outlier_envelop(
     pred_data_array: np.ndarray,
     padding: int = 20,
 ):
+    F, I, D = pred_data_array.shape
+    K = D // 3
     ratio = padding / 100
-    total_frames, instance_count, _ = pred_data_array.shape
 
-    all_x, all_y = pred_data_array[:, :, 0::3], pred_data_array[:, :, 1::3]
-    min_x_array, min_y_array, max_x_array, max_y_array = calculate_pose_bbox(all_x, all_y)
-    size_array = (max_y_array - min_y_array) * (max_x_array - min_x_array)
-    valid_sizes = size_array[~np.isnan(size_array)]
-    bbox_length = np.sqrt(np.nanmax(valid_sizes)) 
+    envelop_mask = np.zeros((F, I), dtype=bool)
 
-    enveloped_mask = np.zeros((total_frames, instance_count), dtype=bool)
+    _, local_coords = calculate_pose_centroids(pred_data_array)
+    with bye_bye_runtime_warning():
+        local_coords_reshaped = local_coords.reshape(F, I, K, 2)
+        sizes = np.nanmax(local_coords_reshaped[..., 0]**2 + local_coords_reshaped[..., 1]**2, axis=-1)
 
-    for frame_idx in range(total_frames):
-        valid_inst = get_instances_on_current_frame(pred_data_array, frame_idx)
-        if len(valid_inst) < 2:
-            continue
+    for inst_1_idx, inst_2_idx in combinations(range(I), 2):
+        inst_1_larger = sizes[:, inst_1_idx] >= sizes[:, inst_2_idx] # (F,)
+        inst_2_larger = sizes[:, inst_1_idx] < sizes[:, inst_2_idx]
 
-        close_pairs = []
-        centroids, _ = calculate_pose_centroids(pred_data_array, frame_idx)
-        for inst_1_idx, inst_2_idx in combinations(valid_inst, 2):
-            inst_dist = np.linalg.norm(centroids[inst_2_idx] - centroids[inst_1_idx])
-            if inst_dist < bbox_length * 0.5:
-                close_pairs.append((inst_1_idx,inst_2_idx))
-        
-        if not close_pairs:
-            continue
+        inst_1_x = pred_data_array[:, inst_1_idx, 0::3]
+        inst_1_y = pred_data_array[:, inst_1_idx, 1::3]
+        inst_2_x = pred_data_array[:, inst_2_idx, 0::3]
+        inst_2_y = pred_data_array[:, inst_2_idx, 1::3]
 
-        for inst_1_idx, inst_2_idx in close_pairs:
-            inst_1_size = size_array[frame_idx, inst_1_idx]
-            inst_2_size = size_array[frame_idx, inst_2_idx]
-            if inst_1_size > inst_2_size:
-                small_inst = inst_2_idx
-                large_inst = inst_1_idx
-            else:
-                small_inst = inst_1_idx
-                large_inst = inst_2_idx
+        inst_bbox = np.zeros((F, 4))
+        inst_bbox[inst_1_larger] = np.transpose(calculate_pose_bbox(inst_1_x, inst_1_y, ratio))[inst_1_larger]
+        inst_bbox[inst_2_larger] = np.transpose(calculate_pose_bbox(inst_2_x, inst_2_y, ratio))[inst_2_larger]
 
-            small_x = all_x[frame_idx, small_inst]
-            small_y = all_y[frame_idx, small_inst]
+        inst_x = inst_1_x.copy()
+        inst_y = inst_1_y.copy()
+        inst_x[inst_1_larger] = inst_2_x[inst_1_larger]
+        inst_y[inst_1_larger] = inst_2_y[inst_1_larger]
 
-            min_x = min_x_array[frame_idx, large_inst]
-            max_x = max_x_array[frame_idx, large_inst]
-            min_y = min_y_array[frame_idx, large_inst]
-            max_y = max_y_array[frame_idx, large_inst]
-            width = max_x - min_x
-            height = max_y - min_y
-            padded_min_x = min_x - width * ratio
-            padded_max_x = max_x + width * ratio
-            padded_min_y = min_y - height * ratio
-            padded_max_y = max_y + height * ratio
+        enveloped = np.all((
+            (inst_x > inst_bbox[:, 0:1]) & (inst_y > inst_bbox[:, 1:2]) & (inst_x < inst_bbox[:, 2:3]) & (inst_y < inst_bbox[:, 3:4]) |
+            (np.isnan(inst_x) & np.isnan(inst_y))
+            ), axis=-1)
 
-            valid = np.logical_and(~np.isnan(small_x), ~np.isnan(small_y))
-            in_bbox_mask = (
-                (small_x >= padded_min_x) &
-                (small_x <= padded_max_x) &
-                (small_y >= padded_min_y) &
-                (small_y <= padded_max_y)
-            )
+        inst_1_enveloped = inst_2_larger & enveloped
+        inst_2_enveloped = inst_1_larger & enveloped
 
-            in_ratio = np.sum(in_bbox_mask & valid) / np.sum(valid)
-            if in_ratio == 1:
-                enveloped_mask[frame_idx, small_inst] = True
+        envelop_mask[inst_1_enveloped, inst_1_idx] = True
+        envelop_mask[inst_2_enveloped, inst_2_idx] = True
 
-    return enveloped_mask
+    return envelop_mask
 
 def outlier_speed(
     pred_data_array: np.ndarray,
