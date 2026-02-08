@@ -5,20 +5,17 @@ from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QTransform
 
-from typing import Optional, Tuple
+from typing import Optional
 
 from core.runtime import Data_Manager, Video_Manager
-from core.tool import (Outlier_Finder, Canvas, Prediction_Plotter, Uno_Stack,
-                       Track_Correction_Dialog, Iteration_Review_Dialog)
+from core.tool import Outlier_Finder, Canvas, Prediction_Plotter, Uno_Stack, Track_Fixer
 from ui import (Menu_Widget, Video_Player_Widget, Pose_Rotation_Dialog, Status_Bar, Instance_Selection_Dialog,
                 Shortcut_Manager, Progress_Indicator_Dialog, Frame_Range_Dialog, Keypoint_Num_Dialog)
 from utils.pose import (
     rotate_selected_inst, generate_missing_inst, generate_missing_kp_for_inst, 
     generate_missing_kp_batch, calculate_pose_centroids, calculate_pose_rotations, outlier_removal
     )
-from utils.track import (
-    Track_Fixer, interpolate_track_all, delete_track, swap_track, interpolate_track,
-    )
+from utils.track import interpolate_track_all, delete_track, swap_track, interpolate_track
 from utils.helper import (
     frame_to_pixmap, calculate_snapping_zoom_level, get_instances_on_current_frame,
     get_instance_count_per_frame, clean_inconsistent_nans, frame_to_grayscale, get_roi_cv2
@@ -807,12 +804,6 @@ class Frame_Label:
 
         self._save_state_for_undo()
 
-        # is_entertained = False
-        # current_crp_weight = (0.95, 0.05, 0)
-        # sigma, kappa = (75, 0.2), None
-        # min_sim, gap_thresh = 0.10, 0.10
-        # used_starts = []
-
         if self.exit_zone is None:
             self.exit_zone = get_roi_cv2(frame=self.vm.get_frame(self.dm.current_frame_idx))
 
@@ -827,45 +818,12 @@ class Frame_Label:
                 start_idx = 0
                 end_idx = self.dm.total_frames
 
-        progress = Progress_Indicator_Dialog(start_idx, end_idx, "Supervised Track Fixing", "", self.main)
-        tf = Track_Fixer(self.pred_data_array, self.exit_zone, progress)
-        pred_data_array, _, _ = tf.track_correction(max_dist=80, lookback_window=2, start_idx=start_idx, end_idx=end_idx)
+        self.tf = Track_Fixer(self.pred_data_array, 0, self.exit_zone, self.dm.dlc_data, self.vm.extractor, self.main)
+        pred_data_array = self.tf.track_correction(start_idx=start_idx, end_idx=end_idx)
 
         self.dm.dlc_data.pred_data_array = pred_data_array
         self.pred_data_array = self.dm.dlc_data.pred_data_array
         self.display_current_frame()
-
-        # self.tf = Track_Fixer(self.pred_data_array, self.dm.angle_map_data, progress,
-        #                         crp_weight=current_crp_weight, cr_sigma=sigma, kappa=kappa, 
-        #                         minimum_similarity=min_sim, gap_threshold=gap_thresh,
-        #                         lookback_window=3, used_starts=used_starts)
-        # pred_data_array, amongus_frames = self.tf.fit_full_video()
-
-        # while not is_entertained:
-
-        #     self.tf = Track_Fixer(self.pred_data_array, self.dm.angle_map_data, progress,
-        #                           crp_weight=current_crp_weight, cr_sigma=sigma, kappa=kappa, 
-        #                           minimum_similarity=min_sim, gap_threshold=gap_thresh,
-        #                           lookback_window=3, used_starts=used_starts)
-
-        #     pred_data_array, blasted_frames, amongus_frames, frame_list, used_starts = self.tf.iter_orchestrator()
-        #     dialog = Iteration_Review_Dialog(self.dm.dlc_data, self.vm.extractor, pred_data_array, frame_list, blasted_frames, amongus_frames, parent=self.main)
-        #     dialog.exec()
-
-        #     if dialog.was_cancelled:
-        #         return
-
-        #     corrected_pred, status_array, is_entertained = dialog.get_result()
-
-        #     self.tf.process_labels(corrected_pred, frame_list, status_array)
-        #     current_crp_weight, sigma, min_sim, gap_thresh, kappa = self.tf.get_params()
-
-        # dialog = Track_Correction_Dialog(
-        #     self.dm.dlc_data, self.vm.extractor, pred_data_array, list(range(self.dm.total_frames)), [], amongus_frames, parent=self.main)
-
-        # dialog.current_frame_idx = start_idx
-        # dialog.pred_data_exported.connect(self._get_pred_data_from_manual_correction)
-        # dialog.exec()
 
     def _get_pred_data_from_manual_correction(self, pred_data_array, frame_tuple):
         self._save_state_for_undo()

@@ -8,7 +8,8 @@ from .graphic_view import Canvas
 from .blob_counter import Blob_Counter
 from .plot_config import Adjust_Property_Dialog, Adjust_Property_Box, Plot_Config_Menu
 from .label_loader import DLC_Save_Dialog, Load_Label_Dialog, DLC_Save_Dialog_Label
-from .reviewer import Parallel_Review_Dialog, Track_Correction_Dialog, Iteration_Review_Dialog
+from .reviewer import Parallel_Review_Dialog
+from .track_fix import Track_Fixer
 from .annot_config import Annotation_Config, Annotation_Summary_Table
 from .undo_redo import Uno_Stack, Uno_Stack_Dict
 
@@ -24,14 +25,13 @@ __all__ = (
     Adjust_Property_Box,
     Plot_Config_Menu,
     Parallel_Review_Dialog,
-    Track_Correction_Dialog,
-    Iteration_Review_Dialog,
     Annotation_Config,
     Annotation_Summary_Table,
     Uno_Stack,
     Uno_Stack_Dict,
     DLC_Save_Dialog,
     Load_Label_Dialog,
+    Track_Fixer,
     DLC_Save_Dialog_Label,
     navigate_to_marked_frame,
     get_next_frame_in_list,

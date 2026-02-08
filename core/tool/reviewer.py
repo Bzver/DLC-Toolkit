@@ -5,17 +5,16 @@ from PySide6 import QtGui
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGroupBox
 
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Literal
 
 from .plot import Prediction_Plotter
-from .undo_redo import Uno_Stack, Uno_Stack_Dict
+from .undo_redo import Uno_Stack
 from .mark_nav import navigate_to_marked_frame
 from core.io import Frame_Extractor, Frame_Extractor_Img
-from ui import Clickable_Video_Label, Video_Slider_Widget, Shortcut_Manager, Instance_Selection_Dialog
+from ui import Clickable_Video_Label, Video_Slider_Widget, Shortcut_Manager
 from utils.helper import (
     frame_to_pixmap, handle_unsaved_changes_on_close, crop_coord_to_array, validate_crop_coord, indices_to_spans
     )
-from utils.track import swap_track
 from utils.dataclass import Loaded_DLC_Data, Plot_Config
 from utils.logger import Loggerbox, QMessageBox
 
@@ -379,70 +378,48 @@ class Parallel_Review_Dialog(QDialog):
 
 
 class Track_Correction_Dialog(Parallel_Review_Dialog):
-    TC_PALLETTE    = {0: "#D81687", 1: "#CF5300"}
-
     def __init__(
             self,
             dlc_data:Loaded_DLC_Data,
             extractor:Frame_Extractor,
-            new_data_array:np.ndarray,
-            frame_list: List[int],
-            blasted_frames: List[int],
-            ambiguous_frames: List[int],
-            crop_coord:Optional[Tuple[int, int, int, int]]= None,
+            pred_data_array:np.ndarray,
+            current_frame_idx:int,
+            mode: Literal["swap", "exit", "return"]="swap",
+            last_event_idx:Optional[int]=None,
             parent=None
             ):
-
-        self.frame_list = frame_list
-
-        blasted_frames_global = blasted_frames
-        ambiguous_frames_global = ambiguous_frames
-
-        blasted_set_global = set(blasted_frames_global)
-        ambiguous_set_global = set(ambiguous_frames_global)
-        frame_set = set(frame_list)
-
-        if not blasted_set_global.issubset(frame_set) or not ambiguous_set_global.issubset(frame_set):
-            blasted_frames_global = [f for f in blasted_frames_global if f in frame_set]
-            ambiguous_frames_global = [f for f in ambiguous_frames_global if f in frame_set]
-
-        self.blasted_set_global = set(blasted_frames_global)
-        self.ambiguous_set_global = set(ambiguous_frames_global)
-        
-        self.global_to_local = {g: i for i, g in enumerate(self.frame_list)}
-        self.blasted_local = [self.global_to_local[g] for g in self.blasted_set_global if g in self.global_to_local]
-        self.ambiguous_local = [self.global_to_local[g] for g in self.ambiguous_set_global if g in self.global_to_local]
-        self.list_to_nav = self.ambiguous_local if self.ambiguous_local else self.blasted_local
-
-        super().__init__(dlc_data, extractor, new_data_array, frame_list=frame_list, crop_coord=crop_coord, parent=parent)
-
-        self.nonempty_local = set(np.where(np.any(~np.isnan(new_data_array[self.frame_list]), axis=(1, 2)))[0].tolist())
+        total_frames = pred_data_array.shape[0]
+        frame_list_start = last_event_idx if last_event_idx is not None else current_frame_idx-20
+        self.frame_list = sorted(range(max(0, frame_list_start), min(current_frame_idx+21, total_frames)))
+        self.mode = mode
+        super().__init__(dlc_data, extractor, new_data_array=pred_data_array, frame_list=self.frame_list, crop_coord=None, parent=parent)
+        self.nonempty_local = set(np.where(np.any(~np.isnan(pred_data_array[self.frame_list]), axis=(1, 2)))[0].tolist())
+        self.current_frame_idx = self.frame_list.index(current_frame_idx)
 
         self.old_label.setText("Last Frame With Prediction")
         self.new_label.setText("Current Frame")
+        self._display_current_frame()
 
     def _setup_control(self):
-        swap_box = QGroupBox("Manual Track Correction")
-        swap_layout = QHBoxLayout()
+        mode_cap = self.mode.capitalize()
 
-        self.copy_ambi_button = QPushButton("Copy Ambiguous Frames") 
-        self.swap_button = QPushButton("Swap Instance (W)")
-        self.big_swap_button = QPushButton("Swap Track (Shift + W)")
-        self.apply_button = QPushButton("Apply Changes (Ctrl + S)")
+        ctrl_box = QGroupBox(f"{mode_cap} Confirmation")
+        ctrl_layout = QHBoxLayout()
 
-        self.copy_ambi_button.clicked.connect(self._copy_ambiguous_frames_to_clipboard) 
-        self.swap_button.clicked.connect(self._swap_instance)
-        self.big_swap_button.clicked.connect(self._swap_track)
-        self.apply_button.clicked.connect(self._save_prediction)
+        self.yes_button = QPushButton(f"{mode_cap}")
+        self.no_button = QPushButton(f"No {mode_cap}")
 
-        self.swap_button.setToolTip("Swap current frame instance only.")
-        self.big_swap_button.setToolTip("Swap current frame + all preceding frames.")
+        self.yes_button.clicked.connect(lambda:self._return_status(True))
+        self.no_button.clicked.connect(lambda:self._return_status(False))
 
-        for btn in [self.copy_ambi_button, self.swap_button, self.big_swap_button, self.apply_button]:
-            swap_layout.addWidget(btn)
-        swap_box.setLayout(swap_layout)
+        ctrl_layout.addWidget(self.yes_button)
+        ctrl_layout.addWidget(self.no_button)
+        ctrl_box.setLayout(ctrl_layout)
 
-        return swap_box
+        return ctrl_box
+
+    def _setup_uno(self):
+        pass
 
     def _build_shortcut(self):
         self.shortcut_man = Shortcut_Manager(self)
@@ -451,22 +428,8 @@ class Track_Correction_Dialog(Parallel_Review_Dialog):
             "next_frame":{"key": "Right", "callback": lambda: self._change_frame(1)},
             "prev_fast":{"key": "Shift+Left", "callback": lambda: self._change_frame(-10)},
             "next_fast":{"key": "Shift+Right", "callback": lambda: self._change_frame(10)},
-            "prev_mark":{"key": "Up", "callback": self._navigate_prev},
-            "next_mark":{"key": "Down", "callback": self._navigate_next},
-            "prev_mid":{"key": "Shift+Up", "callback": self._navigate_prev_mid},
-            "next_mid":{"key": "Shift+Down", "callback": self._navigate_next_mid},
             "playback":{"key": "Space", "callback": self._toggle_playback},
-            "undo": {"key": "Ctrl+Z", "callback": self._undo_changes},
-            "redo": {"key": "Ctrl+Y", "callback": self._redo_changes},
-            "save":{"key": "Ctrl+S", "callback": self._save_prediction},
-            "swap":{"key": "W", "callback": self._swap_instance},
-            "big_swap":{"key": "Shift+W", "callback": self._swap_track},
         })
-
-    def _setup_uno(self):
-        self.uno = Uno_Stack()
-        self.inst_array = np.array(range(self.dlc_data.pred_data_array.shape[1]))
-        self.uno.save_state_for_undo(self.new_data_array)
 
     def _display_current_frame(self):
         global_idx = self.frame_list[self.current_frame_idx]
@@ -503,44 +466,10 @@ class Track_Correction_Dialog(Parallel_Review_Dialog):
             self.video_labels[i].setText("")
 
         self.progress_slider.set_current_frame(self.current_frame_idx)
-        self.apply_button.setEnabled(True)
 
-    def _determine_list_to_nav(self):
-        return self.list_to_nav
-
-    def _navigate_prev_mid(self):
-        list_to_nav = self._determine_list_to_nav()
-        navigate_to_marked_frame(
-            self, list_to_nav, self.current_frame_idx, self._handle_frame_change_from_comp, "prev", midway=True)
-        
-    def _navigate_next_mid(self):
-        list_to_nav = self._determine_list_to_nav()
-        navigate_to_marked_frame(
-            self, list_to_nav, self.current_frame_idx, self._handle_frame_change_from_comp, "next", midway=True)
-
-    def _swap_instance(self, swap_target:Tuple[int,int]=None):
-        if self.dlc_data.instance_count > 2 and not swap_target:
-            colormap = self.plotter.get_current_color_map()
-            inst_dialog = Instance_Selection_Dialog(self.pred_data_array.shape[1], colormap, dual_selection=True)
-            inst_dialog.instances_selected.connect(self._swap_instance)
-            inst_dialog.exec()
-        else:
-            self._save_state_for_undo()
-            self.new_data_array = swap_track(self.new_data_array, self.frame_list[self.current_frame_idx], swap_target=swap_target)
-            self._display_current_frame()
-            self._refresh_ui()
-
-    def _swap_track(self, swap_target:Tuple[int,int]=None):
-        if self.dlc_data.instance_count > 2 and not swap_target:
-            colormap = self.plotter.get_current_color_map()
-            inst_dialog = Instance_Selection_Dialog(self.pred_data_array.shape[1], colormap, dual_selection=True)
-            inst_dialog.instances_selected.connect(self._swap_track)
-            inst_dialog.exec()
-        else:
-            self._save_state_for_undo()
-            self.new_data_array = swap_track(self.new_data_array, self.frame_list[self.current_frame_idx], swap_range=[-1], swap_target=swap_target)
-            self._display_current_frame()
-            self._refresh_ui()
+    def _return_status(self, status:bool):
+        self.user_decision = (status, self.frame_list[self.current_frame_idx])
+        self.accept()
 
     def _back_search_nonempty_frames(self, lookback_window: int = 10) -> int:
         start_local = self.current_frame_idx
@@ -550,247 +479,8 @@ class Track_Correction_Dialog(Parallel_Review_Dialog):
                 return candidate_local
         return max(0, start_local - 1)
 
-    def _navigation_title_controller(self):
-        super()._navigation_title_controller()
-        global_idx = self.frame_list[self.current_frame_idx]
-        if global_idx in self.ambiguous_set_global:
-            self.selected_frame_label.setStyleSheet(f"color: white; background-color: {self.TC_PALLETTE[1]};")
-        elif global_idx in self.blasted_set_global:
-            self.selected_frame_label.setStyleSheet(f"color: white; background-color: {self.TC_PALLETTE[0]};")
-        else:
-            self.selected_frame_label.setStyleSheet(f"color: #1E90FF; background-color: transparent;")
-
     def _update_button_states(self):
         pass
-   
-    def _refresh_slider(self):
-        self.is_saved = False
-        self.progress_slider.clear_frame_category()
-        self.progress_slider.set_frame_category("ambiguous", self.ambiguous_local, self.TC_PALLETTE[1], priority=5)
-        self.progress_slider.set_frame_category("changed", self.blasted_local, self.TC_PALLETTE[0])
-        self.progress_slider.commit_categories()
-
-    def _save_state_for_undo(self):
-        data_array = self.new_data_array
-        self.uno.save_state_for_undo(data_array)
-
-    def _copy_ambiguous_frames_to_clipboard(self):
-        if not self.ambiguous_set_global:
-            Loggerbox.info(self, "No ambiguous frames to copy.", "Clipboard")
-            return
-
-        ambiguous_sorted = sorted(self.ambiguous_set_global)
-        text = ", ".join(map(str, ambiguous_sorted))
-
-        clipboard = QtGui.QGuiApplication.clipboard()
-        clipboard.setText(text)
-
-        Loggerbox.info(self, "Export Complete", f"Copied {len(ambiguous_sorted)} ambiguous frame(s) to clipboard:\n{text}")
-
-    def _undo_changes(self):
-        data_array = self.new_data_array
-        data_array = self.uno.undo(data_array)
-        self._undo_redo_worker(data_array)
-
-    def _redo_changes(self):
-        data_array = self.new_data_array
-        data_array = self.uno.redo(data_array)
-        self._undo_redo_worker(data_array)
-
-    def _undo_redo_worker(self, data_array):
-        if data_array is None:
-            return
-        self.new_data_array = data_array.copy()
-        self._display_current_frame()
-        self._refresh_ui()
-
-    def _save_prediction(self):
-        self._refresh_slider()
-
-        self.is_saved = True
-        if self.crop_array is not None:
-            self.new_data_array += self.crop_array
-            self.pred_data_array += self.crop_array
-            self.backup_data_array += self.crop_array
-
-        self.pred_data_exported.emit(self.new_data_array, ())
-        self.accept()
 
     def closeEvent(self, event):
-        self.extractor.close()
-        handle_unsaved_changes_on_close(self, event, self.is_saved, self._save_prediction)
-
-
-class Iteration_Review_Dialog(Track_Correction_Dialog):
-    IR_PALLETTE = {0: "#959595", 1: "#2EDA04", 2: "#CF5300", 3: "#AF01A6", 4: "#4938E4"}
-
-    def __init__(self, dlc_data, extractor, new_data_array, frame_list, blasted_frames, ambi_frames, crop_coord = None, parent=None):
-        super().__init__(dlc_data, extractor, new_data_array, frame_list, blasted_frames, ambi_frames, crop_coord, parent)
-
-        self.was_cancelled = False 
-        self.is_entertained = False
-
-         # 0: skip (default approved), 1: approve, 2: reject(and swap), 3: blasted, 4: ambiguous
-        self.frame_status_array[self.blasted_local] = 3
-        self.frame_status_array[self.ambiguous_local] = 4
-        self._refresh_slider()
-
-    def get_result(self):
-        return self.new_data_array[self.frame_list], self.frame_status_array, self.is_entertained
-
-    def _setup_control(self):
-        swap_box = QGroupBox("Manual Track Correction")
-        big_layout = QVBoxLayout()
-
-        swap_layout = QHBoxLayout()
-        bottom_layout = QHBoxLayout()
-
-        self.approve_button = QPushButton("Approve Current Frame (A)")
-        self.reject_button = QPushButton("Reject and Swap Track (R)")
-        self.blast_button = QPushButton("Mark | Unmark Faulty Frame (D)")
-
-        self.approve_all_button = QPushButton("Approve All Remaining")
-        self.apply_button = QPushButton("Continue Training (Ctrl + S)")
-        self.finish_button = QPushButton("Accept Current Weight and Fit the Whole Video")
-
-        self.approve_button.clicked.connect(self._mark_approved)
-        self.reject_button.clicked.connect(self._mark_rejected_swap)
-        self.blast_button.clicked.connect(self._mark_blasted)
-        self.approve_all_button.clicked.connect(self._approve_all_remaining)
-        self.apply_button.clicked.connect(self._export_label)
-        self.finish_button.clicked.connect(self._i_am_entertained)
-
-        for btn in [self.approve_button, self.reject_button, self.blast_button]:
-            swap_layout.addWidget(btn)
-        for btn in [self.approve_all_button, self.apply_button, self.finish_button]:
-            bottom_layout.addWidget(btn)
-        
-        big_layout.addLayout(swap_layout)
-        big_layout.addLayout(bottom_layout)
-        
-        swap_box.setLayout(big_layout)
-
-        return swap_box
-
-    def _build_shortcut(self):
-        self.shortcut_man = Shortcut_Manager(self)
-        self.shortcut_man.add_shortcuts_from_config({
-            "prev_frame":{"key": "Left", "callback": lambda: self._change_frame(-1)},
-            "next_frame":{"key": "Right", "callback": lambda: self._change_frame(1)},
-            "prev_fast":{"key": "Shift+Left", "callback": lambda: self._change_frame(-10)},
-            "next_fast":{"key": "Shift+Right", "callback": lambda: self._change_frame(10)},
-            "prev_mark":{"key": "Up", "callback": self._navigate_prev},
-            "next_mark":{"key": "Down", "callback": self._navigate_next},
-            "playback":{"key": "Space", "callback": self._toggle_playback},
-            "undo": {"key": "Ctrl+Z", "callback": self._undo_changes},
-            "redo": {"key": "Ctrl+Y", "callback": self._redo_changes},
-            "save":{"key": "Ctrl+S", "callback": self._export_label},
-            "approve":{"key": "A", "callback": self._mark_approved},
-            "big_swap":{"key": "R", "callback": self._mark_rejected_swap},
-            "blast":{"key": "D", "callback": self._mark_blasted},
-        })
-
-    def _mark_approved(self):
-        if self.frame_status_array[self.current_frame_idx] == 1:
-            return
-        self._save_state_for_undo()
-        if self.frame_status_array[self.current_frame_idx] == 2:
-            self.frame_status_array[self.current_frame_idx] = 1
-            self._swap_track() 
-        else:
-            self.frame_status_array[self.current_frame_idx] = 1
-            self._refresh_ui()
-
-    def _mark_rejected_swap(self):
-        if self.frame_status_array[self.current_frame_idx] == 2:
-            return
-        self._save_state_for_undo()
-        self.frame_status_array[self.current_frame_idx] = 2
-        self._refresh_ui()
-        self._swap_track()
-
-    def _mark_blasted(self):
-        if self.frame_status_array[self.current_frame_idx] == 3:
-            return
-        self._save_state_for_undo()
-        if self.frame_status_array[self.current_frame_idx] == 2:
-            self.frame_status_array[self.current_frame_idx] = 3
-            self._swap_track()
-        else:
-            self.frame_status_array[self.current_frame_idx] = 3
-            self._refresh_ui()
-
-    def _approve_all_remaining(self):
-        self._save_state_for_undo()
-        self.frame_status_array[self.frame_status_array==0]=1
-        self._refresh_ui()
-
-    def _refresh_ui(self):
-        super()._refresh_ui()
-        self._navigation_title_controller()
-
-    def _navigation_title_controller(self):
-        super()._navigation_title_controller()
-        match self.frame_status_array[self.current_frame_idx]:
-            case 1: self.selected_frame_label.setStyleSheet(f"color: white; background-color: {self.IR_PALLETTE[1]};")
-            case 2: self.selected_frame_label.setStyleSheet(f"color: white; background-color: {self.IR_PALLETTE[2]};")
-            case 3: self.selected_frame_label.setStyleSheet(f"color: white; background-color: {self.IR_PALLETTE[3]};")
-            case 4: self.selected_frame_label.setStyleSheet(f"color: white; background-color: {self.IR_PALLETTE[4]};")
-            case _: self.selected_frame_label.setStyleSheet(f"color: #1E90FF; background-color: transparent;")
-
-    def _refresh_slider(self):
-        self.is_saved = False
-        self.progress_slider.clear_frame_category()
-        palette = self.IR_PALLETTE
-        self.progress_slider.set_frame_category_array(self.frame_status_array, palette)
-        self.progress_slider.commit_categories()
-
-    def _determine_list_to_nav(self):
-        return np.where(self.frame_status_array != 0)[0].tolist()
-
-    def _setup_uno(self):
-        self.uno = Uno_Stack_Dict()
-        self.uno.save_state_for_undo(self._compose_dict_for_uno())
-
-    def _update_button_states(self):
-        current_status = self.frame_status_array[self.current_frame_idx]
-        self.approve_button.setEnabled(current_status != 1)
-        self.reject_button.setEnabled(current_status != 2)
-
-    def _export_label(self):
-        self.is_saved = True
-        self.accept()
-
-    def _i_am_entertained(self):
-        self.is_entertained = True
-        self._export_label()
-
-    def _save_state_for_undo(self):
-        self._compose_dict_for_uno()
-        self.uno.save_state_for_undo(self._compose_dict_for_uno())
-
-    def _compose_dict_for_uno(self):
-        return {"pred": self.new_data_array, "status": self.frame_status_array}
-
-    def _undo_changes(self):
-        self._compose_dict_for_uno()
-        uno_dict = self.uno.undo(self._compose_dict_for_uno())
-        self.new_data_array = uno_dict["pred"]
-        self.frame_status_array = uno_dict["status"]
-        self._display_current_frame()
-        self._refresh_ui()
-
-    def _redo_changes(self):
-        self._compose_dict_for_uno()
-        uno_dict = self.uno.redo(self._compose_dict_for_uno())
-        self.new_data_array = uno_dict["pred"]
-        self.frame_status_array = uno_dict["status"]
-        self._display_current_frame()
-        self._refresh_ui()
-
-    def reject(self):
-        self.was_cancelled = True
-        super().reject()
-
-    def closeEvent(self, event):
-        self.reject()
+        pass

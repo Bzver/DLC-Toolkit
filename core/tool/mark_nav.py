@@ -18,7 +18,7 @@ def navigate_to_marked_frame(
     frame_list.sort()
 
     if direction == "prev":
-        dest_frame_idx = _get_prev_frame_in_list(frame_list, current_frame_idx)
+        dest_frame_idx = get_prev_frame_in_list(frame_list, current_frame_idx)
         no_frame_message = "No previous marked frame found."
     elif direction == "next":
         dest_frame_idx = get_next_frame_in_list(frame_list, current_frame_idx)
@@ -33,7 +33,7 @@ def navigate_to_marked_frame(
     else:
         change_frame_callback(dest_frame_idx)
 
-def _get_prev_frame_in_list(frame_list:List[int], current_frame_idx:int) -> Optional[int]:
+def get_prev_frame_in_list(frame_list:List[int], current_frame_idx:int) -> Optional[int]:
     try:
         current_idx_in_list = frame_list.index(current_frame_idx)
         prev_idx = current_idx_in_list - 1

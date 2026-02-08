@@ -95,11 +95,3 @@ class Blob_Config:
     @classmethod
     def from_dict(cls, data) -> "Blob_Config":
         return cls(**data)
-    
-@dataclass
-class Track_Properties:
-    centroids: NDArray
-    rotations: NDArray
-    poses: NDArray
-    last_updated: NDArray
-    validity: NDArray
