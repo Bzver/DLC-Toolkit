@@ -385,12 +385,14 @@ class Track_Correction_Dialog(Parallel_Review_Dialog):
             pred_data_array:np.ndarray,
             current_frame_idx:int,
             mode: Literal["swap", "exit", "return"]="swap",
-            last_event_idx:Optional[int]=None,
+            event_start_idx:Optional[int]=None,
+            event_end_idx:Optional[int]=None,
             parent=None
             ):
         total_frames = pred_data_array.shape[0]
-        frame_list_start = last_event_idx if last_event_idx is not None else current_frame_idx-20
-        self.frame_list = sorted(range(max(0, frame_list_start), min(current_frame_idx+21, total_frames)))
+        frame_list_start = event_start_idx if event_start_idx is not None else current_frame_idx-20
+        frame_list_end = event_end_idx if event_end_idx is not None else current_frame_idx+21
+        self.frame_list = sorted(range(max(0, frame_list_start), min(frame_list_end, total_frames)))
         self.mode = mode
         super().__init__(dlc_data, extractor, new_data_array=pred_data_array, frame_list=self.frame_list, crop_coord=None, parent=parent)
         self.nonempty_local = set(np.where(np.any(~np.isnan(pred_data_array[self.frame_list]), axis=(1, 2)))[0].tolist())
@@ -398,6 +400,7 @@ class Track_Correction_Dialog(Parallel_Review_Dialog):
 
         self.old_label.setText("Last Frame With Prediction")
         self.new_label.setText("Current Frame")
+        self._apply_mode_styling()
         self._display_current_frame()
 
     def _setup_control(self):
@@ -478,6 +481,63 @@ class Track_Correction_Dialog(Parallel_Review_Dialog):
             if candidate_local in self.nonempty_local:
                 return candidate_local
         return max(0, start_local - 1)
+
+    def _apply_mode_styling(self):
+        mode_styles = {
+            "exit": {
+                "bg_color": "#d18a95",
+                "button_color": "#cf5c6f",
+                "text_color": "#a30404",
+                "title": "EXIT CONFIRMATION"
+            },
+            "return": {
+                "bg_color": "#99da9f",
+                "button_color": "#4caf50",
+                "text_color": "#1b5e20",
+                "title": "RETURN CONFIRMATION"
+            },
+            "swap": {
+                "bg_color": "#c2b077",
+                "button_color": "#ffc107",
+                "text_color": "#ff6f00",
+                "title": "SWAP CONFIRMATION"
+            }
+        }
+
+        style = mode_styles.get(self.mode, mode_styles["swap"])
+        
+        self.approval_box.setTitle(style["title"])
+        self.approval_box.setStyleSheet(f"""
+            QGroupBox {{
+                font-weight: bold;
+                color: {style["text_color"]};
+                border: 2px solid {style["button_color"]};
+                border-radius: 6px;
+                margin-top: 12px;
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+                color: {style["text_color"]};
+            }}
+        """)
+
+        button_style = f"""
+            QPushButton {{
+                background-color: {style["button_color"]};
+                color: white;
+                font-weight: bold;
+                padding: 8px 16px;
+                border: none;
+                border-radius: 4px;
+            }}
+            QPushButton:hover {{
+                background-color: {style["text_color"]};
+            }}
+        """
+        self.yes_button.setStyleSheet(button_style)
+        self.no_button.setStyleSheet(button_style)
 
     def _update_button_states(self):
         pass
