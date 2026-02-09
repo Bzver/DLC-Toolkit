@@ -205,7 +205,6 @@ def outlier_envelop(
 ):
     F, I, D = pred_data_array.shape
     K = D // 3
-    ratio = padding / 100
 
     envelop_mask = np.zeros((F, I), dtype=bool)
 
@@ -224,8 +223,8 @@ def outlier_envelop(
         inst_2_y = pred_data_array[:, inst_2_idx, 1::3]
 
         inst_bbox = np.zeros((F, 4))
-        inst_bbox[inst_1_larger] = np.transpose(calculate_pose_bbox(inst_1_x, inst_1_y, ratio))[inst_1_larger]
-        inst_bbox[inst_2_larger] = np.transpose(calculate_pose_bbox(inst_2_x, inst_2_y, ratio))[inst_2_larger]
+        inst_bbox[inst_1_larger] = np.transpose(calculate_pose_bbox(inst_1_x, inst_1_y, padding))[inst_1_larger]
+        inst_bbox[inst_2_larger] = np.transpose(calculate_pose_bbox(inst_2_x, inst_2_y, padding))[inst_2_larger]
 
         inst_x = inst_1_x.copy()
         inst_y = inst_1_y.copy()

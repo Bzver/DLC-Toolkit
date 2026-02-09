@@ -217,9 +217,10 @@ def calculate_pose_bbox(
     - If input is 1D: returns (min_x, min_y, max_x, max_y) as scalars.
     - If input is ND (N>=2): returns arrays of shape (...,) for each bound.
     """
+    ratio = padding/100
     with bye_bye_runtime_warning():
-        min_x, min_y = np.nanmin(coords_x, axis=-1) - padding, np.nanmin(coords_y, axis=-1) - padding
-        max_x, max_y = np.nanmax(coords_x, axis=-1) + padding, np.nanmax(coords_y, axis=-1) + padding
+        min_x, min_y = np.nanmin(coords_x, axis=-1)*(1-ratio), np.nanmin(coords_y, axis=-1)*(1-ratio)
+        max_x, max_y = np.nanmax(coords_x, axis=-1)*(1+ratio), np.nanmax(coords_y, axis=-1)*(1+ratio)
     return min_x, min_y, max_x, max_y
 
 def calculate_canonical_pose(
