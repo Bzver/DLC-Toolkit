@@ -126,7 +126,6 @@ class Blob_Counter(QGroupBox):
         self.controls_layout.addWidget(self.bg_removal_label)
         self.controls_layout.addWidget(self.bg_removal_combo)
 
-        # ROI
         self.select_roi_btn = QPushButton("Select ROI")
         self.select_roi_btn.clicked.connect(self._select_roi)
         self.blb_layout.addWidget(self.select_roi_btn)
@@ -134,6 +133,12 @@ class Blob_Counter(QGroupBox):
         self.refresh_hist_btn = QPushButton("Refresh Histogram")
         self.refresh_hist_btn.clicked.connect(self._plot_blob_histogram)
         self.blb_layout.addWidget(self.refresh_hist_btn)
+
+        self.fast_mode_checkbox = QtWidgets.QCheckBox("Fast Mode")
+        self.fast_mode_checkbox.setToolTip("Processes only every 5th frame for speed. Gaps are filled with neighboring values.\n"
+                                            "Bounding box calculation is skipped.")
+        self.fast_mode_checkbox.setChecked(False)
+        self.controls_layout.addWidget(self.fast_mode_checkbox)
 
         self.count_all_btn = QPushButton("Count Animals")
         self.count_all_btn.clicked.connect(self._count_video)
@@ -224,7 +229,10 @@ class Blob_Counter(QGroupBox):
 
         progress = Progress_Indicator_Dialog(0, end_idx-start_idx, "Counting", "Blob counting...", self)
 
-        while frame_idx < self.total_frames:
+        fast_mode_active = self.fast_mode_checkbox.isChecked()
+
+        last_processed_idx = start_idx-5
+        while frame_idx <= end_idx:
             if progress.wasCanceled():
                 break
 
@@ -234,13 +242,27 @@ class Blob_Counter(QGroupBox):
             actual_idx, frame = result
             assert actual_idx == frame_idx, "Frame index mismatch!"
 
+            if frame_idx - last_processed_idx < 5 and fast_mode_active:
+                if frame_idx - last_processed_idx < 3 or frame_idx + 5 > end_idx:
+                    self.blob_array[frame_idx] = self.blob_array[last_processed_idx]
+                frame_idx += 1
+                continue
+
             contours = self._process_contour_from_frame(frame)
             count, merged = self._perform_blob_counting(contours)
-            x1, y1, x2, y2 = self._perform_bbox_calculation(contours)
+
+            if fast_mode_active:
+                x1, y1, x2, y2 = 0, 0, 0, 0
+            else:
+                x1, y1, x2, y2 = self._perform_bbox_calculation(contours)
             self._update_blob_array(frame_idx, count, merged, x1, y1, x2, y2)
+
+            if fast_mode_active and frame_idx > 1:
+                self.blob_array[frame_idx-2:frame_idx] = self.blob_array[frame_idx]
 
             progress.setValue(frame_idx-start_idx)
             QtWidgets.QApplication.processEvents()
+            last_processed_idx = frame_idx
             frame_idx += 1
 
         self.frame_extractor.finish_sequential_read()
