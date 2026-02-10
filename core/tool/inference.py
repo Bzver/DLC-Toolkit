@@ -474,12 +474,12 @@ class DLC_Inference(QDialog):
     def _process_new_pred(self, headless:bool=False):
         temp_pred_filename = self._load_and_remap_new_prediction()
         video_path = os.path.dirname(self.video_filepath)
+        video_name = f"{self.video_name}_auto_" if headless else self.video_name
+
         if "image_predictions_" in temp_pred_filename:
-            pred_filename = temp_pred_filename.replace("image_predictions_", self.video_name)
-        elif headless:
-            pred_filename = temp_pred_filename.replace("temp_extract", f"{self.video_name}_auto_")
+            pred_filename = temp_pred_filename.replace("image_predictions_", video_name)
         else:
-            pred_filename = temp_pred_filename.replace("temp_extract", self.video_name)
+            pred_filename = temp_pred_filename.replace("temp_extract", video_name)
 
         pred_filepath = os.path.join(video_path, pred_filename)
         self.save_path = timestamp_new_prediction(pred_filepath)

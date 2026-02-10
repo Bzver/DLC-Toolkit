@@ -356,6 +356,9 @@ def _inference_workspace_vid(
         inference_window.cropping = crop
         inference_window.masking = use_mask
         inference_window.grayscaling = grayscale
+
+        to_video = not any([blob_based_infer, infer_only_empty_frames, partial_infer])
+        inference_window.to_video_checkbox.setChecked(to_video)
         if batch_size is not None:
             inference_window._batch_size_spinbox_changed(batch_size)
         if detector_batch_size is not None:
@@ -471,7 +474,7 @@ if __name__ == "__main__":
     app = QtWidgets.QApplication([])
     dialog = QtWidgets.QDialog()
     set_headless_mode(True)
-    rootdir = r"D:\Data\Videos\20251018 Marathon\1018"
+    rootdir = r"D:\Data\Videos\20251117 Marathon\1118"
     dlc_config_path = "D:/Project/DLC-Models/NTD/config.yaml"
  
     batch_inference(
@@ -479,9 +482,9 @@ if __name__ == "__main__":
         dlc_config_path,
         dialog=dialog,
         crop=True,
-        mask=True,
+        mask=False,
         grayscale=True,
-        infer_only_empty_frames=True,
+        infer_only_empty_frames=False,
         batch_size=32,
         detector_batch_size=16
     )
