@@ -134,6 +134,8 @@ class Track_Fixer:
             raw_segments.append((seg_start, seg_end, val))
 
         i = 0
+        last_return_idx = None
+
         while i < len(raw_segments):
             curr_start, curr_end, curr_val = raw_segments[i]
             if curr_val != 1:
@@ -174,7 +176,12 @@ class Track_Fixer:
                     continue
 
                 logger.debug(f"[TFEX] Exit at frame {exit_frame} failed validation, requesting user review")
-                decision, confirmed_frame = self._launch_dialog(exit_frame, "exit")
+
+                decision, confirmed_frame = self._launch_dialog(
+                    frame_idx=exit_frame,
+                    mode="exit",
+                    event_start_idx=last_return_idx if last_return_idx else exit_frame-20,
+                    )
                 if not decision:
                     logger.debug(f"[TFEX] User rejected exit at frame {exit_frame}, skipping window")
                     self._log_vanishing_pos(exit_frame)
@@ -239,12 +246,14 @@ class Track_Fixer:
                         break
                     if decision:
                         self.exit_windows[curr_start:confirmed_frame] = True
+                        last_return_idx = confirmed_frame
                         logger.debug(f"[TFEX] Accepted exit window with user-confirmed return: ({curr_start}, {confirmed_frame - 1})")
                         window_accepted = True
                         break
                     else:
                         logger.debug(f"[TFEX] User rejected return at frame {return_frame}, searching for next return")
                 else:
+                    last_return_idx = return_frame
                     self.exit_windows[curr_start:return_frame] = True
                     logger.debug(f"[TFEX] Accepted exit window with auto-valid return: ({curr_start}, {return_frame - 1})")
                     window_accepted = True
