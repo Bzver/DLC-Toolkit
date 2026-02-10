@@ -17,7 +17,10 @@ class Track_Fixer:
     AMBIGUITY_THRESHOLD = 10.0
     MAX_DIST_THRESHOLD = 120.0
     KALMAN_RESET_THRESHOLD = 3
-    MIN_GAP = 10
+    MIN_GAP = 5
+    VANISH_CLUSTER_RADIUS = 200.0
+    VANISH_CLUSTER_THRESHOLD = 10  
+    MAX_REJECTION_HISTORY = 500
 
     def __init__(
         self,
@@ -49,13 +52,16 @@ class Track_Fixer:
         self.exit_windows = np.zeros((self.total_frames,), dtype=bool)
         self.exit_starts, self.exit_ends = [], []
 
-        self.ambiguous_frames: List[int] = []
+        self.ambiguous_frames = []
+        self.rejected_vanish_positions = [] 
 
     def track_correction(self, start_idx: int = 0, end_idx: int = -1) -> np.ndarray:
         if end_idx == -1:
             end_idx = self.total_frames
 
         logger.debug(f"[TF] Starting track correction from frame {start_idx} to {end_idx}")
+        x1, y1, x2, y2 = self.exit_zone
+        logger.debug(f"Exit zone: ({x1},{y1})-({x2},{y2}), persistent_idx: {self.persistent_idx}")
         
         self._detect_exit_windows(start_idx, end_idx)
         if self.exit_windows[0]:
@@ -74,20 +80,21 @@ class Track_Fixer:
             logger.debug(f"---------------- Frame {f} ----------------")
             self._enforce_exit_window_constraints(f)
 
+            logger.debug(f"[TF] Pre-correct pos: Inst 0: ({self.centroids[f,0,0]:.1f}, {self.centroids[f,0,1]:.1f}), Inst 1: ({self.centroids[f,1,0]:.1f}, {self.centroids[f,1,1]:.1f})")
             if not self.exit_windows[f]:
                 success = self._correct_frame_with_hungarian(f)
                 if not success:
                     self.ambiguous_frames.append(f)
-                    logger.debug(f"[TF] Frame {f}: Ambiguous match, added to backtrack list")
+                    logger.debug(f"[TF] Ambiguous match, added to backtrack list")
             elif not f in exit_starts_set:
                 curr_inst = get_instances_on_current_frame(self.pred_data_array, f)[0]
                 self.last_known_pos[curr_inst] = self.centroids[f, curr_inst]
                 self._update_kalman_with_observation(f, [curr_inst], [curr_inst])
-                logger.debug(f"[TF] Frame {f}: In exit window, updated Kalman for present mouse")
+                logger.debug("[TF] In exit window, updated Kalman for present mouse")
             else:
-                logger.debug(f"[TF] Frame {f}: Detected exit start, validating exited mouse")
+                logger.debug("[TF] Detected exit start, validating exited mouse")
                 self._validate_exit_and_backtrack_if_needed(f)
-                self.ambiguous_frames.clear() # This segment is over, clear existing ambiguous frames
+                self.ambiguous_frames.clear()
 
         logger.debug("Track correction completed.")
         return self.pred_data_array
@@ -161,10 +168,16 @@ class Track_Fixer:
                 valid_exit = self._is_valid_exit_at(exit_frame)
 
             if not valid_exit:
+                if self._auto_reject_check(exit_frame):
+                    logger.debug(f"[TFEX] Auto-rejecting exit at frame {exit_frame} due to false positive history.")
+                    i += 1
+                    continue
+
                 logger.debug(f"[TFEX] Exit at frame {exit_frame} failed validation, requesting user review")
                 decision, confirmed_frame = self._launch_dialog(exit_frame, "exit")
                 if not decision:
                     logger.debug(f"[TFEX] User rejected exit at frame {exit_frame}, skipping window")
+                    self._log_vanishing_pos(exit_frame)
                     i += 1
                     continue
                 exit_frame = confirmed_frame
@@ -214,7 +227,11 @@ class Track_Fixer:
                         continue
 
                 valid_return = self._is_valid_return_at(return_frame)
-                if not valid_return:
+                avg_instances = np.sum(self.inst_count_per_frame[exit_frame:return_frame])/(return_frame-exit_frame) 
+                risky_window = avg_instances > 1.5
+                logger.debug(f"[TFEX] Exit window {exit_frame}-{return_frame}: avg instances = {avg_instances:.2f}, risky = {risky_window}")
+
+                if not valid_return or risky_window:
                     logger.debug(f"[TFEX] Return candidate at frame {return_frame} failed validation, requesting user review")
                     decision, confirmed_frame = self._launch_dialog(return_frame, "return", curr_start)
                     if confirmed_frame - 1 < curr_start:
@@ -240,17 +257,97 @@ class Track_Fixer:
 
             i = j if window_accepted else i + 1
 
-    def _is_valid_exit_at(self, exit_frame:int) -> bool:
+    def _is_valid_exit_at(self, exit_frame: int) -> bool:
         if (self.inst_count_per_frame[exit_frame-1] != 2 or self.inst_count_per_frame[exit_frame] not in (0, 1)):
+            logger.debug(f"[EXIT] Frame {exit_frame}: Invalid exit conditions (pre={self.inst_count_per_frame[exit_frame-1]}, curr={self.inst_count_per_frame[exit_frame]})")
             return False
-        else:
-            return np.any(self._in_zone_check(exit_frame-1))
+        
+        vanishing_pos = self._find_vanishing_pos(exit_frame)
+        if vanishing_pos is None:
+            logger.debug(f"[EXIT] Frame {exit_frame}: Could not determine vanishing position")
+            return False
 
-    def _is_valid_return_at(self, return_frame:int) -> bool:
+        valid = self._in_zone_check_pos(vanishing_pos)
+        logger.debug(f"[EXIT] Frame {exit_frame}: Exit validation {'PASSED' if valid else 'FAILED'} - vanishing pos ({vanishing_pos[0]:.1f}, {vanishing_pos[1]:.1f})")
+        return valid
+
+    def _is_valid_return_at(self, return_frame: int) -> bool:
         if (self.inst_count_per_frame[return_frame-1] not in (0, 1) or self.inst_count_per_frame[return_frame] != 2):
+            logger.debug(f"[RETURN] Frame {return_frame}: Invalid return conditions (pre={self.inst_count_per_frame[return_frame-1]}, curr={self.inst_count_per_frame[return_frame]})")
             return False
-        else:
-            return np.any(self._in_zone_check(return_frame))
+
+        returning_pos = self._find_returning_pos(return_frame)
+        if returning_pos is None:
+            logger.debug(f"[RETURN] Frame {return_frame}: Could not determine returning position")
+            return False
+
+        valid = self._in_zone_check_pos(returning_pos)
+        logger.debug(f"[RETURN] Frame {return_frame}: Return validation {'PASSED' if valid else 'FAILED'} - returning pos ({returning_pos[0]:.1f}, {returning_pos[1]:.1f})")
+        return valid
+
+    def _log_vanishing_pos(self, exit_frame:int):
+        if exit_frame == 0 or self.inst_count_per_frame[exit_frame - 1] != 2:
+            return
+        
+        vanishing_pos = self._find_vanishing_pos(exit_frame)
+        if vanishing_pos is None:
+            return
+
+        self.rejected_vanish_positions.append(vanishing_pos.copy())
+
+        if len(self.rejected_vanish_positions) > self.MAX_REJECTION_HISTORY:
+            self.rejected_vanish_positions = self.rejected_vanish_positions[-self.MAX_REJECTION_HISTORY:]
+
+        logger.debug(f"[TFEX] Logged rejected vanish position: ({vanishing_pos[0]:.1f}, {vanishing_pos[1]:.1f})")
+
+    def _auto_reject_check(self, exit_frame: int) -> bool:
+        if len(self.rejected_vanish_positions) < self.VANISH_CLUSTER_THRESHOLD:
+            return False
+        
+        candidate_vanish_pos = self._find_vanishing_pos(exit_frame)
+        if candidate_vanish_pos is None:
+            return False
+
+        x, y = candidate_vanish_pos[0], candidate_vanish_pos[1]
+        nearby_count = 0
+
+        for rej_x, rej_y in self.rejected_vanish_positions:
+            if np.sqrt((x - rej_x)**2 + (y - rej_y)**2) <= self.VANISH_CLUSTER_RADIUS:
+                nearby_count += 1
+                if nearby_count >= self.VANISH_CLUSTER_THRESHOLD:
+                    return True
+        
+        return False
+    
+    def _find_vanishing_pos(self, exit_frame:int) -> np.ndarray | None:
+        if self.inst_count_per_frame[exit_frame] != 1:
+            return
+
+        solo_inst = get_instances_on_current_frame(self.pred_data_array, exit_frame)[0]
+        solo_pos = self.centroids[exit_frame, solo_inst]
+
+        pre_pos_0 = self.centroids[exit_frame - 1, 0]
+        pre_pos_1 = self.centroids[exit_frame - 1, 1]
+
+        dist_0 = np.linalg.norm(pre_pos_0 - solo_pos)
+        dist_1 = np.linalg.norm(pre_pos_1 - solo_pos)
+
+        return pre_pos_1 if dist_0 < dist_1 else pre_pos_0
+    
+    def _find_returning_pos(self, return_frame:int) -> np.ndarray | None:
+        if self.inst_count_per_frame[return_frame] != 2 or self.inst_count_per_frame[return_frame-1] != 1:
+            return
+        
+        solo_inst = get_instances_on_current_frame(self.pred_data_array, return_frame-1)[0]
+        solo_pos = self.centroids[return_frame-1, solo_inst]
+
+        post_pos_0 = self.centroids[return_frame, 0]
+        post_pos_1 = self.centroids[return_frame, 1]
+
+        dist_0 = np.linalg.norm(post_pos_0 - solo_pos)
+        dist_1 = np.linalg.norm(post_pos_1 - solo_pos)
+
+        return post_pos_1 if dist_0 < dist_1 else post_pos_0
 
     def _enforce_exit_window_constraints(self, frame_idx: int):
         if not self.exit_windows[frame_idx]:
@@ -322,11 +419,14 @@ class Track_Fixer:
 
     def _in_zone_check(self, frame_idx:int) -> np.ndarray:
         in_zone_status = np.zeros((2,), dtype=bool)
-        xmin, ymin, xmax, ymax = self.exit_zone
         for inst_idx in range(2):
-            x, y = self.centroids[frame_idx, inst_idx]
-            in_zone_status[inst_idx] = (xmin <= x <= xmax) and (ymin <= y <= ymax)
+            in_zone_status[inst_idx] = self._in_zone_check_pos(self.centroids[frame_idx, inst_idx])
         return in_zone_status
+    
+    def _in_zone_check_pos(self, pos:np.ndarray) -> bool:
+        xmin, ymin, xmax, ymax = self.exit_zone
+        x, y = pos
+        return (xmin <= x <= xmax) and (ymin <= y <= ymax)
 
     def _clear_instance_at_frame(self, frame_idx: int, inst_idx: int):
         self.pred_data_array[frame_idx, inst_idx, :] = np.nan
@@ -550,14 +650,15 @@ class Track_Fixer:
 
     def _backtrack_ambiguous_frames(self, exit_start: int):
         candidates = sorted(set([f for f in self.ambiguous_frames if f < exit_start]))
-        candidates.sort(reverse=True)
 
         if not candidates:
             logger.debug("Backtrack candidate list is empty, showing full segment.")
+            seg_start = get_prev_frame_in_list(self.exit_ends, exit_start-2)
+            event_start_idx = seg_start - 10 if seg_start is not None else exit_start - 20
             decision, confirmed_frame = self._launch_dialog(
-                frame_idx=exit_start-1,
+                frame_idx=seg_start if seg_start is not None else event_start_idx + 10,
                 mode="swap",
-                event_start_idx=get_prev_frame_in_list(self.exit_ends, exit_start-2)-10,
+                event_start_idx=event_start_idx,
                 event_end_idx=exit_start+11
                 )
 
@@ -573,10 +674,12 @@ class Track_Fixer:
 
             for frame_idx in candidates:
                 logger.debug(f"[BK] Reviewing ambiguous frame {frame_idx} for potential swap")
+                seg_start = get_prev_frame_in_list(self.exit_ends, frame_idx)
+                event_start_idx = seg_start - 10 if seg_start is not None else frame_idx - 20
                 decision, confirmed_frame = self._launch_dialog(
                     frame_idx=frame_idx,
                     mode="swap", 
-                    event_start_idx=get_prev_frame_in_list(self.exit_ends, frame_idx)-10,
+                    event_start_idx=event_start_idx,
                     event_end_idx=exit_start+11)
                 if decision:
                     logger.info(f"[BK] User confirmed swap at frame {confirmed_frame}, applying bulk swap")
