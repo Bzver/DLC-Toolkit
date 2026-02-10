@@ -807,6 +807,8 @@ class Frame_Label:
         if self.exit_zone is None:
             self.exit_zone = get_roi_cv2(frame=self.vm.get_frame(self.dm.current_frame_idx))
 
+        start_idx = 0
+        end_idx = self.dm.total_frames
         if self.dm.get_frames("marked"):
             reply = Loggerbox.question(
                 self.main, "Correct Marked Frames Only?", "Only perform correction for frames within marked range?")
@@ -814,9 +816,6 @@ class Frame_Label:
                 frame_list = self.dm.get_frames("marked")
                 start_idx = min(frame_list)
                 end_idx = max(frame_list)
-            else:
-                start_idx = 0
-                end_idx = self.dm.total_frames
 
         self.tf = Track_Fixer(self.pred_data_array, 0, self.exit_zone, self.dm.dlc_data, self.vm.extractor, self.main)
         pred_data_array = self.tf.track_correction(start_idx=start_idx, end_idx=end_idx)
