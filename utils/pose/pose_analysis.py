@@ -219,9 +219,11 @@ def calculate_pose_bbox(
     """
     ratio = padding/100
     with bye_bye_runtime_warning():
-        min_x, min_y = np.nanmin(coords_x, axis=-1)*(1-ratio), np.nanmin(coords_y, axis=-1)*(1-ratio)
-        max_x, max_y = np.nanmax(coords_x, axis=-1)*(1+ratio), np.nanmax(coords_y, axis=-1)*(1+ratio)
-    return min_x, min_y, max_x, max_y
+        min_x, min_y = np.nanmin(coords_x, axis=-1), np.nanmin(coords_y, axis=-1)
+        max_x, max_y = np.nanmax(coords_x, axis=-1), np.nanmax(coords_y, axis=-1)
+    w = max_x - min_x
+    h = max_y - min_y
+    return min_x - ratio*w, min_y - ratio*h, max_x + ratio*w, max_y + ratio*h
 
 def calculate_canonical_pose(
         pred_data_array:np.ndarray,

@@ -382,12 +382,12 @@ class Blob_Counter(QGroupBox):
         if total_frames == 0:
             return
         
-        sample_segment_count = min(100, total_frames//500)
+        sample_segment_count = min(100, total_frames//100)
         frame_indices = np.unique(np.linspace(0, total_frames - 1, sample_segment_count, dtype=int))
         if len(frame_indices) == 1:
-            sample_segment_length = min(500, total_frames)
+            sample_segment_length = min(100, total_frames)
         else:
-            sample_segment_length = min(frame_indices[1] - frame_indices[0], 500)
+            sample_segment_length = min(frame_indices[1] - frame_indices[0], 100)
 
         areas = []
         progress_dialog = Progress_Indicator_Dialog(0, len(frame_indices), "Blob Analysis", "Analyzing blob sizes...", self)
@@ -670,6 +670,13 @@ class Blob_Histogram(QVBoxLayout):
         self.histogram_label.setText("Blob Size Distribution (drag red line to set '2-animal' threshold)")
 
     def _on_histogram_click(self, event):
+        _, xlim_max = self.ax.get_xlim()
+        if self.double_blob_area_threshold > xlim_max:
+            new_lim = int(xlim_max*0.9)
+            self.double_blob_area_threshold = new_lim
+            self.threshold_changed.emit(new_lim)
+            self.threshold_line.set_xdata([new_lim, new_lim])
+            self.canvas.draw()
         if event.inaxes != self.ax or event.button != 1:
             return
         if self.threshold_line and abs(event.xdata - self.double_blob_area_threshold) < (max(self.blob_areas) - min(self.blob_areas)) / 20:
