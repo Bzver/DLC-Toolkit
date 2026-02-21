@@ -68,6 +68,7 @@ class Frame_Label:
                             ("Delete Selected Instance On Current Frame (X)", self._delete_inst),
                             ("Delete Selected Instance On Frames Between Seleted Range", self._delete_track),
                             ("Delete All Prediction Inside Selected Area", self._designate_no_mice_zone),
+                            ("Delete All Prediction Inside Masked Area", self._delete_predictions_mask),
                         ]
                     },
                     {
@@ -361,6 +362,36 @@ class Frame_Label:
         self.gview.is_drawing_zone = True
         self._save_state_for_undo()
         Loggerbox.info(self.main, "Designate No Mice Zone", "Click and drag on the video to select a zone. Release to apply.")
+
+    def _delete_predictions_mask(self):
+        if self.dm.background_mask is None:
+            Loggerbox.warning(self.main, "No Mask Detected", "No mask has been painted.")
+
+        self._save_state_for_undo()
+        F, I, D = self.pred_data_array.shape
+        K = D // 3
+
+        poses = self.pred_data_array.reshape(F, I, K, 3)
+        
+        poses_no_nan = np.nan_to_num(poses, nan=-1.0)
+        xs = poses_no_nan[..., 0].astype(int)
+        ys = poses_no_nan[..., 1].astype(int)
+        
+        mask_array = self.dm.background_mask[..., 0]
+        mask_bool = mask_array != 0
+        
+        H, W = mask_bool.shape
+
+        xs[xs < 0] = 0
+        xs[xs >= W] = W - 1
+        ys[ys < 0] = 0
+        ys[ys >= H] = H - 1
+
+        in_mask_region = mask_bool[ys, xs]
+        poses[in_mask_region, :] = np.nan
+
+        self.pred_data_array = poses.reshape(F, I, D)
+        self.display_current_frame()
 
     def _delete_inst(self):
         if self.pred_data_array is None:
