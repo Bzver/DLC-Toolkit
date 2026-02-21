@@ -87,10 +87,12 @@ class Track_Fixer:
                     self.ambiguous_frames.append(f)
                     logger.debug(f"[TF] Ambiguous match, added to backtrack list")
             elif not f in exit_starts_set:
-                curr_inst = get_instances_on_current_frame(self.pred_data_array, f)[0]
-                self.last_known_pos[curr_inst] = self.centroids[f, curr_inst]
-                self._update_kalman_with_observation(f, [curr_inst], [curr_inst])
-                logger.debug("[TF] In exit window, updated Kalman for present mouse")
+                curr_inst_list = get_instances_on_current_frame(self.pred_data_array, f)
+                if curr_inst_list:
+                    curr_inst = curr_inst_list[0]
+                    self.last_known_pos[curr_inst] = self.centroids[f, curr_inst]
+                    self._update_kalman_with_observation(f, [curr_inst], [curr_inst])
+                    logger.debug("[TF] In exit window, updated Kalman for present mouse")
             else:
                 logger.debug("[TF] Detected exit start, validating exited mouse")
                 self._validate_exit_and_backtrack_if_needed(f)

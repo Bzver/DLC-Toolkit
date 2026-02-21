@@ -381,8 +381,7 @@ class Outlier_Container(QtWidgets.QWidget):
         gbox.setChecked(False)
         layout = QHBoxLayout(gbox)
 
-        self.speed_spinbox = Spinbox_With_Label("Padding (%):", (0, 100), 20)
-        self.speed_spinbox.setToolTip("Allow smaller pose to extend beyond larger pose by this percentage (e.g., 20 = 120% of radius).")
+        self.speed_spinbox = Spinbox_With_Label("Padding (%):", (0, 100), 5)
         layout.addWidget(self.speed_spinbox)
         layout.addStretch()
         return gbox
