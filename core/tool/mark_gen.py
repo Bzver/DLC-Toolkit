@@ -190,7 +190,6 @@ class Mark_Generator(QGroupBox):
         elif mode == "Animal Num":
             if self.blob_array is not None:
                 animal_count_array = self.blob_array[:, 0]
-                merged_array = self.blob_array[:, 1]
 
             if self.pred_data_array is not None:
                 animal_count_array = get_instance_count_per_frame(self.pred_data_array)
@@ -202,15 +201,17 @@ class Mark_Generator(QGroupBox):
                 selected_options.append(1)
             if self.two_plus_animal_checkbox.isChecked():
                 selected_options.extend(range(2, int(np.max(animal_count_array)) + 1))
-            if hasattr(self, 'merged_animal_checkbox') and self.merged_animal_checkbox.isChecked():
-                merged_frames = np.where(merged_array == 1)[0]
+            
+            has_merged = hasattr(self, 'merged_animal_checkbox') and self.merged_animal_checkbox.isChecked()
+            if has_merged:
+                merged_frames = np.where(self.blob_array[:, 1] == 1)[0]
                 selected_frames.extend(merged_frames.tolist())
 
-            if selected_options and not (hasattr(self, 'merged_animal_checkbox') and self.merged_animal_checkbox.isChecked()):
+            if selected_options:
                 mask = np.isin(animal_count_array, selected_options)
                 count_frames = np.where(mask)[0]
                 selected_frames.extend(count_frames.tolist())
-            elif not selected_options and not (hasattr(self, 'merged_animal_checkbox') and self.merged_animal_checkbox.isChecked()):
+            elif not selected_options and not has_merged:
                 Loggerbox.error(self, "No Selection", "Please select at least one animal count option.")
                 return
             
@@ -287,7 +288,21 @@ class Mark_Generator(QGroupBox):
     def _build_animal_num_container(self):
         container = QGroupBox("Animal Count Selection")
         main_layout = QVBoxLayout(container)
-        
+
+        btn_layout = QVBoxLayout()
+
+        if self.pred_data_array is not None:
+            self.short_seg_btn = QPushButton("Find Animal Count Change Frames")
+            self.short_seg_btn.clicked.connect(self._mark_count_change_frames)
+            btn_layout.addWidget(self.short_seg_btn)
+
+            if self.blob_array is not None:
+                self.discrepancy_btn = QPushButton("Find DLC-Blob Discrepancy")
+                self.discrepancy_btn.clicked.connect(self._mark_count_discrepancy_frames)
+                btn_layout.addWidget(self.discrepancy_btn)
+
+        main_layout.addLayout(btn_layout)
+
         count_layout = QHBoxLayout()
         self.zero_animal_checkbox = QCheckBox("0 Animal")
         self.one_animal_checkbox = QCheckBox("1 Animal")  
@@ -301,12 +316,6 @@ class Mark_Generator(QGroupBox):
             self.merged_animal_checkbox = QCheckBox("Merged Animal")
             count_layout.addWidget(self.merged_animal_checkbox)
         
-        if self.pred_data_array is not None and self.blob_array is not None:
-            self.discrepancy_btn = QPushButton("Find DLC-Blob Discrepancy")
-            self.discrepancy_btn.clicked.connect(self._mark_count_discrepancy_frames)
-
-            main_layout.addWidget(self.discrepancy_btn)
-
         main_layout.addLayout(count_layout)
 
         return container
@@ -341,6 +350,56 @@ class Mark_Generator(QGroupBox):
             self.frame_list_subset.emit(discrepancy_frames)
         elif self.combine_radio.isChecked():
             self.frame_list_combine.emit(discrepancy_frames)
+
+    def _mark_count_change_frames(self):
+        if self.pred_data_array is None:
+            Loggerbox.error(self, "No Data", "DLC prediction data is required to find count changes.")
+            return
+
+        animal_count_array = get_instance_count_per_frame(self.pred_data_array)
+
+        start_text = self.start_frame_textbox.text().strip()
+        end_text = self.end_frame_textbox.text().strip()
+        
+        try:
+            range_start = int(start_text) if start_text else 0
+            range_end = int(end_text) if end_text else self.total_frames - 1
+        except ValueError:
+            range_start, range_end = 0, self.total_frames - 1
+
+        range_start = max(0, range_start)
+        range_end = min(self.total_frames - 1, range_end)
+
+        marked_frames = set()
+        buffer_size = 2  # -2 to +2
+
+        changes = np.diff(animal_count_array) != 0
+        change_indices = np.where(changes)[0] + 1
+
+        if len(change_indices) == 0:
+            Loggerbox.info(self, "No Changes Found", "Animal count remained constant throughout the video.")
+            return
+
+        for idx in change_indices:
+            start_buf = max(0, idx - buffer_size)
+            end_buf = min(self.total_frames - 1, idx + buffer_size)
+            
+            for f in range(start_buf, end_buf + 1):
+                marked_frames.add(f)
+
+        selected_frames = sorted(list(marked_frames))
+        selected_frames = [f for f in selected_frames if range_start <= f <= range_end]
+
+        if not selected_frames:
+            Loggerbox.info(self, "No Frames in Range", "Count changes were found, but none (including their buffers) fall within the specified frame range.")
+            return
+
+        if self.replace_radio.isChecked():
+            self.frame_list_replace.emit(selected_frames)
+        elif self.subset_radio.isChecked():
+            self.frame_list_subset.emit(selected_frames)
+        elif self.combine_radio.isChecked():
+            self.frame_list_combine.emit(selected_frames)
 
     def _build_clipboard_container(self):
         container = QGroupBox("Paste or Edit Frame List")
