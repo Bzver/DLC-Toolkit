@@ -59,8 +59,13 @@ class Frame_Annotator:
                     ("Import Frame List As Annotation", self._import_frame_list),
                     ("Import and Remap ASOID Predictions", self._load_one_hot),
                     ("Import Config From Annotation or JSON Config", self._load_annotation_config),
-                    ("Filter Out Short Bout", self._filter_short_bout),
                 ]
+            },
+            "Analyze":{
+                "buttons": [
+                    ("Filter Out Short Bout", self._filter_short_bout),
+                    ("Toggle Viewing Selected Beavior", self._toggle_category_nav_mode)
+                ]   
             },
             "Save":{
                 "buttons": [
@@ -104,6 +109,8 @@ class Frame_Annotator:
         if hasattr(self, "annot_conf") and self.annot_conf is not None:
             self.annot_conf.sync_behaviors_map(self.behav_map)
         self.annot_array = None
+        self.cat_nav_enabled = False
+        self.cat_nav_target = None
         self._refresh_annot_numeric()
 
     def _setup_shortcuts(self):
@@ -141,8 +148,12 @@ class Frame_Annotator:
 
     def _load_annotation_config(self):
         file_dialog = QFileDialog(self.main)
-        self.reset_state(True)
         config_path, _ = file_dialog.getOpenFileName(self.main, "Select JSON Color Map File (Optional)", "", "Json Files (*.json);;Text Files (*.txt)")
+
+        if not config_path:
+            return
+
+        self.reset_state(True)
 
         if config_path.endswith(".json"):
             with open(config_path, "r") as f:
@@ -298,7 +309,7 @@ class Frame_Annotator:
         change_locs = np.where(diffs != 0)[0] + 1
         total_frames = self.vm.get_frame_counts()
         if not np.any(change_locs):
-            return total_frames # Intentional, total_frames = last_frame + 1, used for array slicing
+            return total_frames 
         
         next_change = get_next_frame_in_list(change_locs.tolist(), self.dm.current_frame_idx)
         if not next_change:
@@ -306,9 +317,37 @@ class Frame_Annotator:
         else:
             return next_change
 
+    def _toggle_category_nav_mode(self):
+        if not self.cat_nav_enabled:
+            categories = list(self.behav_map.keys())
+            if not categories:
+                self.status_bar.show_message("No categories available", 2000)
+                return
+            
+            selected, ok = QtWidgets.QInputDialog.getItem(
+                self.main, 
+                "Select Category for Navigation", 
+                "Choose a behavior category to navigate:", 
+                categories, 
+                0, 
+                False
+            )
+            if not ok or not selected:
+                return
+            self.cat_nav_enabled = True
+            self.cat_nav_target = self.cat_to_idx[selected]
+        else:
+            self.cat_nav_enabled = False
+            self.cat_nav_target = None
+            self.status_bar.show_message("Category navigation mode disabled", 1500)
+            self.refresh_ui()
+
     def determine_list_to_nav(self):
+        diff_mask = np.concatenate([[True], np.diff(self.annot_array)!=0])
+        if self.cat_nav_enabled:
+            return np.where((self.annot_array == self.cat_nav_target) & diff_mask)[0].tolist()
         if self.annot_array is not None:
-            return np.insert(np.where(np.diff(self.annot_array)!=0)[0]+1, 0, 0).tolist()
+            return np.where(diff_mask)[0].tolist()
 
     ###################################################################################################################################################
             
