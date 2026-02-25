@@ -199,13 +199,17 @@ class Frame_Label:
         pixmap_item = self.gview.gscene.addPixmap(pixmap)
         pixmap_item.setZValue(-1)
         self.gview.gscene.setSceneRect(0, 0, w, h)
-        current_frame_data = self.pred_data_array[self.dm.current_frame_idx]
 
         view_width, view_height = self.gview.get_graphic_scene_dim()
         actual_width, actual_height = self.gview.get_canvas_dim()
-        
+
         self.gview.zoom_factor = min(actual_width / view_width, actual_height / view_height)
         self.gview.centerOn(view_width / 2, view_height / 2)
+
+        if self.pred_data_array is not None:
+            current_frame_data = self.pred_data_array[self.dm.current_frame_idx]
+        else:
+            current_frame_data = np.full(1, np.nan)
 
         if self.dm.plot_config.auto_snapping and not np.all(np.isnan(current_frame_data)):
             new_zoom, center_x, center_y = calculate_zoom_snap(current_frame_data, view_width, view_height)

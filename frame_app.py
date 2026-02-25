@@ -231,6 +231,12 @@ class Frame_App(QMainWindow):
         self.dm.total_frames = self.vm.get_frame_counts()
         self.vid_play.set_total_frames(self.dm.total_frames)
         self.vid_play.nav.set_current_video_name(self.dm.video_name)
+
+        vid_dim = self.vm.get_frame_dim()
+        max_res = max(vid_dim)
+        if max_res < 900:
+            self.dm.set_low_res_plot_conf()
+
         self.at.init_loaded_vid()
         self.at.refresh_and_display()
         self.status_bar.show_message(f"Video loaded: {self.dm.video_file}", duration_ms=2000)

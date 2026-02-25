@@ -115,6 +115,10 @@ class Data_Manager:
             self.load_labeled_overlay(self.label_file)
         self._init_canon_pose()
 
+    def set_low_res_plot_conf(self):
+        if self.plot_config.point_size > 3.0:
+            self.plot_config.point_size = 3.0
+
     def auto_loader_workspace(self):
         video_folder = os.path.dirname(self.video_file)
 
