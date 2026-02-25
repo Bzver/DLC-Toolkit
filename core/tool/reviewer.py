@@ -236,8 +236,13 @@ class Parallel_Review_Dialog(Dual_Video_Dialog):
             all_pred_array = np.concatenate(all_pred, axis=0) if all_pred else np.full(1, np.nan)
             
             view_width, view_height = canvas.get_graphic_scene_dim()
-            canvas.zoom_factor = max(720 / view_width, 540 / view_height)
-            canvas.centerOn(view_width / 2, view_height / 2)
+            if view_height != 0 and view_width != 0:
+                canvas.zoom_factor = max(720 / view_width, 540 / view_height)
+                canvas.centerOn(view_width / 2, view_height / 2)
+            elif frame is not None:
+                canvas.zoom_factor = 720 / max(frame.shape)
+            else:
+                canvas.zoom_factor = 1.0
 
             if not np.all(np.isnan(all_pred_array)):
                 new_zoom, center_x, center_y = calculate_zoom_snap(all_pred_array, view_width, view_height, padding_perc=50)
@@ -540,8 +545,13 @@ class Track_Correction_Dialog(Dual_Video_Dialog):
 
         for canvas in self.video_canvases:
             view_width, view_height = canvas.get_graphic_scene_dim()
-            canvas.zoom_factor = max(720 / view_width, 540 / view_height)
-            canvas.centerOn(view_width / 2, view_height / 2)
+            if view_height != 0 and view_width != 0:
+                canvas.zoom_factor = max(720 / view_width, 540 / view_height)
+                canvas.centerOn(view_width / 2, view_height / 2)
+            elif frame is not None:
+                canvas.zoom_factor = 720 / max(frame.shape)
+            else:
+                canvas.zoom_factor = 1.0
 
             if not np.all(np.isnan(all_pred_array)):
                 new_zoom, center_x, center_y = calculate_zoom_snap(all_pred_array, view_width, view_height, padding_perc=50)
