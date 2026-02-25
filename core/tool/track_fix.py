@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Tuple, List
+from typing import Tuple, List, Literal
 
 from .reviewer import Track_Correction_Dialog
 from .mark_nav import get_prev_frame_in_list
@@ -20,16 +20,18 @@ class Track_Fixer:
     MIN_GAP = 5
     VANISH_CLUSTER_RADIUS = 200.0
     VANISH_CLUSTER_THRESHOLD = 10  
-    MAX_REJECTION_HISTORY = 500
+    MAX_REJECTION_HISTORY = 100
+    USER_DIALOG_COOLDOWN = 20
 
     def __init__(
         self,
         pred_data_array: np.ndarray,
         persistent_idx: int,
-        exit_zone: Tuple[int, int, int, int],
+        exit_zone: Tuple[int, int, int, int] | None,
         dlc_data: Loaded_DLC_Data,
         extractor: Frame_Extractor,
         parent: object,
+        avtomat: bool = False,
     ):
         if pred_data_array.shape[1] != 2:
             raise NotImplementedError("Track_Fixer supports exactly 2 instances.")
@@ -40,6 +42,7 @@ class Track_Fixer:
         self.dlc_data = dlc_data
         self.extractor = extractor
         self.main = parent
+        self.avtomat = avtomat 
 
         self.total_frames = self.pred_data_array.shape[0]
         self.centroids, _ = calculate_pose_centroids(self.pred_data_array)
@@ -49,17 +52,39 @@ class Track_Fixer:
         self.last_known_pos = np.full((2, 2), np.nan)
         self.kalman_failure_count = [0, 0]
 
+        self.skip_exit_segment = self.exit_zone is None
+
         self.exit_windows = np.zeros((self.total_frames,), dtype=bool)
         self.exit_starts, self.exit_ends = [], []
 
         self.ambiguous_frames = []
         self.rejected_vanish_positions = [] 
+        self.last_exit_frame_shown = self.last_return_frame_shown = -self.USER_DIALOG_COOLDOWN
 
     def track_correction(self, start_idx: int = 0, end_idx: int = -1) -> np.ndarray:
         if end_idx == -1:
             end_idx = self.total_frames
 
-        logger.debug(f"[TF] Starting track correction from frame {start_idx} to {end_idx}")
+        logger.info(f"[TF] Starting track correction from frame {start_idx} to {end_idx}")
+
+        if self.skip_exit_segment:
+            logger.info(f"Skipping segmenting based on exit/return events.")
+            last_amb = start_idx
+            for f in range(start_idx, end_idx):
+                logger.debug(f"---------------- Frame {f} ----------------")
+                logger.debug(f"[TF] Pre-correct pos: Inst 0: ({self.centroids[f,0,0]:.1f}, {self.centroids[f,0,1]:.1f}), Inst 1: ({self.centroids[f,1,0]:.1f}, {self.centroids[f,1,1]:.1f})")
+                if self._correct_frame_with_hungarian(f):
+                    continue
+                decision, confirmed_frame = self._launch_dialog(
+                    frame_idx=f,
+                    mode="swap", 
+                    event_start_idx=last_amb,
+                    event_end_idx=f+1)
+                if decision:
+                    logger.info(f"[TF] User confirmed swap at frame {confirmed_frame}, applying bulk swap")
+                    self._bulk_swap_from_frame(confirmed_frame)
+
+
         x1, y1, x2, y2 = self.exit_zone
         logger.debug(f"Exit zone: ({x1},{y1})-({x2},{y2}), persistent_idx: {self.persistent_idx}")
         
@@ -329,7 +354,7 @@ class Track_Fixer:
                     return True
         
         return False
-    
+
     def _find_vanishing_pos(self, exit_frame:int) -> np.ndarray | None:
         if self.inst_count_per_frame[exit_frame] != 1:
             return
@@ -517,7 +542,6 @@ class Track_Fixer:
                 cost_1 = np.linalg.norm(refs[1] - observation)
 
             min_cost = min(cost_0, cost_1)
-
         elif n_obs == 2:
             cost_no_swap = cost_swap = 0.0
             cost_no_swap += np.linalg.norm(refs[0] - obs[0]) if not np.isnan(refs[0]).any() else 1e6
@@ -525,6 +549,8 @@ class Track_Fixer:
             cost_swap += np.linalg.norm(refs[0] - obs[1]) if not np.isnan(refs[0]).any() else 1e6
             cost_swap += np.linalg.norm(refs[1] - obs[0]) if not np.isnan(refs[1]).any() else 1e6
             min_cost = min(cost_no_swap, cost_swap)
+        else:
+            return 1e6
 
         return min_cost
 
@@ -719,7 +745,31 @@ class Track_Fixer:
         self.kalman_filters.reverse()
         self.kalman_failure_count.reverse()
 
-    def _launch_dialog(self, frame_idx: int, mode: str, event_start_idx=None, event_end_idx=None) -> Tuple[bool, int]:
+    def _launch_dialog(
+            self,
+            frame_idx: int,
+            mode: Literal["swap", "exit", "return"],
+            event_start_idx=None,
+            event_end_idx=None
+            ) -> Tuple[bool, int]:
+
+        if self.avtomat:
+            if mode in ("exit", "return"):
+                logger.debug(f"[AUTO] Auto-rejecting {mode} at frame {frame_idx}")
+                return False, frame_idx
+            elif mode == "swap":
+                logger.debug(f"[AUTO] Auto-swapping at frame {frame_idx}")
+                return True, frame_idx
+
+        if mode != "swap":
+            last_frame_shown = self.last_exit_frame_shown if mode == "exit" else self.last_return_frame_shown
+            frames_since_last = frame_idx - last_frame_shown
+            if frames_since_last < self.USER_DIALOG_COOLDOWN:
+                logger.info(
+                    f"[DIALOG] Cooldown active for {mode} at frame {frame_idx} (last: {last_frame_shown}, cooldown: {self.USER_DIALOG_COOLDOWN}."
+                )
+                return False, frame_idx
+    
         dialog = Track_Correction_Dialog(
             dlc_data=self.dlc_data,
             extractor=self.extractor,
@@ -732,7 +782,15 @@ class Track_Fixer:
         )
         dialog.exec()
 
+        if dialog.user_decision is None:
+            raise RuntimeError(f"Track correction cancelled by user ({mode}) at frame {frame_idx}")
+
         decision, confirmed_frame = dialog.user_decision
+
+        match mode:
+            case "exit": self.last_exit_frame_shown = frame_idx
+            case "return": self.last_return_frame_shown = frame_idx
+        
         logger.debug(f"Dialog result for {mode} at frame {frame_idx}: decision={decision}, confirmed_frame={confirmed_frame}")
         return decision, confirmed_frame
 
