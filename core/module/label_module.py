@@ -10,18 +10,18 @@ from typing import Optional
 from core.runtime import Data_Manager, Video_Manager
 from core.tool import Outlier_Finder, Canvas, Prediction_Plotter, Uno_Stack, Track_Fixer
 from ui import (Menu_Widget, Video_Player_Widget, Pose_Rotation_Dialog, Status_Bar, Instance_Selection_Dialog,
-                Shortcut_Manager, Frame_Range_Dialog, Keypoint_Num_Dialog)
+                Shortcut_Manager, Frame_Range_Dialog, Keypoint_Num_Dialog, Track_Fix_Config_Dialog)
 from utils.pose import (
     rotate_selected_inst, generate_missing_inst, generate_missing_kp_for_inst, 
     generate_missing_kp_batch, calculate_pose_centroids, calculate_pose_rotations, outlier_removal
     )
 from utils.track import interpolate_track_all, delete_track, swap_track, interpolate_track
 from utils.helper import (
-    frame_to_pixmap, calculate_snapping_zoom_level, get_instances_on_current_frame,
-    get_instance_count_per_frame, clean_inconsistent_nans, frame_to_grayscale, get_roi_cv2
+    frame_to_pixmap, calculate_zoom_snap, get_instances_on_current_frame,
+    get_instance_count_per_frame, clean_inconsistent_nans, frame_to_grayscale
     )
 from utils.dataclass import Plot_Config, Plotter_Callbacks
-from utils.logger import Loggerbox, QMessageBox
+from utils.logger import Loggerbox, logger
 
 
 class Frame_Label:
@@ -44,12 +44,6 @@ class Frame_Label:
         self.main = parent
 
         self.labeler_menu_config = {
-            "Zoom":{
-                "buttons": [
-                    ("Toggle Zoom Mode (Z)", self._toggle_zoom_mode, {"checkable": True, "checked": False}),
-                    ("Reset Zoom", self.reset_zoom),
-                ]
-            },
             "Refine": {
                 "buttons": [
                     ("Open Outlier Cleaning Menu", self._call_outlier_finder),
@@ -93,6 +87,7 @@ class Frame_Label:
             },
             "Edit": {
                 "buttons": [
+                    ("Toggle Zoom Mode (Z)", self._toggle_zoom_mode, {"checkable": True, "checked": False}),
                     ("Direct Keypoint Edit (Q)", self._direct_keypoint_edit),
                     ("Mark Current Frame As Unrefined", self._toggle_frame_status),
                     ("Mark All As Refined", self._mark_all_as_refined),
@@ -162,10 +157,9 @@ class Frame_Label:
         self.open_outlier = False
         self.outlier_mask = None
         self.exit_zone = None
-        self.reset_zoom()
             
     def init_loaded_vid(self):
-        self.reset_zoom()
+        pass
 
     def _init_gview(self):
         self.gview = Canvas(parent=self.main)
@@ -205,15 +199,18 @@ class Frame_Label:
         pixmap_item = self.gview.gscene.addPixmap(pixmap)
         pixmap_item.setZValue(-1)
         self.gview.gscene.setSceneRect(0, 0, w, h)
-        
         current_frame_data = self.pred_data_array[self.dm.current_frame_idx]
+
+        view_width, view_height = self.gview.get_graphic_scene_dim()
+        actual_width, actual_height = self.gview.get_canvas_dim()
         
-        if self.dm.plot_config.auto_snapping:
-            view_width, view_height = self.gview.get_graphic_scene_dim()
-            if not np.all(np.isnan(current_frame_data)):
-                self.gview.zoom_factor, center_x, center_y = \
-                    calculate_snapping_zoom_level(current_frame_data, view_width, view_height)
-                self.gview.centerOn(center_x, center_y)
+        self.gview.zoom_factor = min(actual_width / view_width, actual_height / view_height)
+        self.gview.centerOn(view_width / 2, view_height / 2)
+
+        if self.dm.plot_config.auto_snapping and not np.all(np.isnan(current_frame_data)):
+            new_zoom, center_x, center_y = calculate_zoom_snap(current_frame_data, view_width, view_height)
+            self.gview.centerOn(center_x, center_y)
+            self.gview.zoom_factor *= new_zoom
 
         new_transform = QTransform()
         new_transform.scale(self.gview.zoom_factor, self.gview.zoom_factor)
@@ -236,9 +233,6 @@ class Frame_Label:
     def refresh_and_display(self):
         self.refresh_ui()
         self.display_current_frame()
-
-    def reset_zoom(self):
-        self.gview.reset_zoom()
 
     def refresh_ui(self):
         self.navigation_title_controller()
@@ -300,8 +294,6 @@ class Frame_Label:
 
     def sync_menu_state(self, close_all:bool=False):
         self.open_outlier = False
-        if close_all:
-            self.reset_zoom()
 
     def _call_outlier_finder(self):
         if not self.vm.check_status_msg():
@@ -310,7 +302,6 @@ class Frame_Label:
             return
         
         self.open_outlier = not self.open_outlier
-        self.reset_zoom()
 
         if self.open_outlier:
             self.menu_slot_callback()
@@ -602,7 +593,6 @@ class Frame_Label:
         self._save_state_for_undo()
         self.pred_data_array = interpolate_track_all(self.pred_data_array, self.gview.sbox.instance_id, max_gap_allowed)
         self.display_current_frame()
-        self.reset_zoom()
 
     def _interpolate_missing_kp(self):
         if self.pred_data_array is None:
@@ -835,25 +825,47 @@ class Frame_Label:
 
         self._save_state_for_undo()
 
-        if self.exit_zone is None:
-            self.exit_zone = get_roi_cv2(frame=self.vm.get_frame(self.dm.current_frame_idx))
+        config_dlg = Track_Fix_Config_Dialog(
+            current_frame=self.vm.get_frame(self.dm.current_frame_idx),
+            initial_exit_zone=self.exit_zone,
+            has_marked_frames=bool(self.dm.get_frames("marked")),
+            parent=self.main
+        )
+        
+        if config_dlg.exec() != QtWidgets.QDialog.Accepted:
+            logger.info("Track correction configuration cancelled by user")
+            return
+
+        self.exit_zone = config_dlg.confirmed_exit_zone
+        correct_marked_only = config_dlg.correct_marked_only
+        avtomat = config_dlg.avtomat
 
         start_idx = 0
         end_idx = self.dm.total_frames
-        if self.dm.get_frames("marked"):
-            reply = Loggerbox.question(
-                self.main, "Correct Marked Frames Only?", "Only perform correction for frames within marked range?")
-            if reply == QMessageBox.Yes:
-                frame_list = self.dm.get_frames("marked")
-                start_idx = min(frame_list)
-                end_idx = max(frame_list)
+        
+        if correct_marked_only and self.dm.get_frames("marked"):
+            frame_list = self.dm.get_frames("marked")
+            start_idx = min(frame_list)
+            end_idx = max(frame_list) + 1
+            logger.info(f"Correcting marked frame range: {start_idx}–{end_idx-1}")
 
-        self.tf = Track_Fixer(self.pred_data_array, 0, self.exit_zone, self.dm.dlc_data, self.vm.extractor, self.main)
+        self.tf = Track_Fixer(
+            pred_data_array=self.pred_data_array,
+            persistent_idx=0,
+            exit_zone=self.exit_zone,
+            dlc_data=self.dm.dlc_data,
+            extractor=self.vm.extractor,
+            parent=self.main,
+            avtomat=avtomat
+        )
+        
         pred_data_array = self.tf.track_correction(start_idx=start_idx, end_idx=end_idx)
 
         self.dm.dlc_data.pred_data_array = pred_data_array
         self.pred_data_array = self.dm.dlc_data.pred_data_array
         self.display_current_frame()
+        
+        logger.info(f"Track correction completed (avtomat={avtomat}, range={start_idx}-{end_idx-1})")
 
     def _get_pred_data_from_manual_correction(self, pred_data_array, frame_tuple):
         self._save_state_for_undo()

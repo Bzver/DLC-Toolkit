@@ -15,6 +15,7 @@ from .dialog import (
     ROI_Dialog,
     Mask_Dialog,
     Keypoint_Num_Dialog,
+    Track_Fix_Config_Dialog,
 )
 
 from .video_slider import Slider_With_Marks, Video_Slider_Widget
@@ -37,6 +38,7 @@ __all__ = (
     Tqdm_Progress_Adapter,
     Inference_interval_Dialog,
     Instance_Selection_Dialog,
+    Track_Fix_Config_Dialog,
     Frame_Range_Dialog,
     Frame_Display_Dialog,
     ROI_Dialog,

@@ -255,7 +255,6 @@ class Frame_App(QMainWindow):
             Loggerbox.error(self, "Error Loading Prediction", f"Unexpected error during prediction loading: {e}.", exc=e)
         
         self.at.display_current_frame()
-        self.flabel.reset_zoom()
 
     def _load_dlc_label_data(self):
         if self.dm.dlc_data is None:
@@ -539,8 +538,6 @@ class Frame_App(QMainWindow):
 
     def _handle_config_from_config(self, new_config:Plot_Config):
         self.dm.plot_config = new_config
-        if not self.dm.plot_config.auto_snapping:
-            self.flabel.reset_zoom()
         self.at.refresh_and_display()
 
     def _handle_right_panel_menu_change(self):
@@ -582,7 +579,6 @@ class Frame_App(QMainWindow):
                 self._open_plot_config_menu()
 
         self.at.refresh_and_display()
-        self.flabel.reset_zoom()
 
     def _on_save_folder_return(self, save_folder):
         try:
@@ -610,7 +606,7 @@ class Frame_App(QMainWindow):
 
     def changeEvent(self, event):
         if event.type() == QEvent.Type.WindowStateChange:
-            self.flabel.reset_zoom()
+            self.flabel.display_current_frame()
         super().changeEvent(event)
 
 #######################################################################################################################################################

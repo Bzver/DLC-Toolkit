@@ -11,6 +11,7 @@ from typing import List, Dict, Tuple, Optional
 
 from .component import Spinbox_With_Label
 from .menu_shortcut import Shortcut_Manager
+from utils.helper import get_roi_cv2, plot_roi, frame_to_pixmap
 from utils.logger import Loggerbox
 
 
@@ -296,7 +297,7 @@ class Mask_Dialog(Frame_Display_Dialog):
             self.current_mask = QImage(image.size(), QImage.Format_ARGB32)
             self.current_mask.fill(Qt.transparent)
 
-        self.brush_size = 50
+        self.brush_size = 10
         self.current_tool = "white"  # 'white', 'black', or 'eraser'
         self.drawing = False
         self.last_pos = QPoint()
@@ -495,3 +496,107 @@ class Keypoint_Num_Dialog(QDialog):
         layout.addWidget(button_box)
         
         self.setWindowTitle("Keypoint Threshold")
+
+
+
+class Track_Fix_Config_Dialog(QDialog):
+    def __init__(self, current_frame:np.ndarray, initial_exit_zone=None, has_marked_frames=False, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Track Correction Configuration")
+        self.setModal(True)
+        self.resize(500, 400)
+        
+        self.frame = current_frame
+        self.exit_zone = initial_exit_zone
+        self.has_marked_frames = has_marked_frames
+
+        self.confirmed_exit_zone = None
+        self.correct_marked_only = False
+        self.no_exit = False
+        self.avtomat = False 
+        
+        self._init_ui()
+        
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+
+        roi_group = QGroupBox("Exit Zone (ROI)")
+        roi_group.setToolTip("Define the area where one of the two mice is expected to vanish.")
+        roi_layout = QVBoxLayout()
+        
+        self.roi_preview = QLabel("No Exit Zone selected")
+        self.roi_preview.setAlignment(Qt.AlignCenter)
+        self.roi_preview.setStyleSheet("background: #f0f0f0; border: 1px dashed #999;")
+        self.roi_preview.setFixedSize(400, 250)
+        roi_layout.addWidget(self.roi_preview)
+
+        roi_btn_layout = QHBoxLayout()
+        self.btn_select_roi = QPushButton("Select ROI from Current Frame")
+        self.btn_select_roi.clicked.connect(self._launch_roi_picker)
+        roi_btn_layout.addWidget(self.btn_select_roi)
+        
+        if self.exit_zone is not None:
+            self._update_roi_preview()
+            self.btn_select_roi.setText("Change ROI")
+
+        roi_layout.addLayout(roi_btn_layout)
+        roi_group.setLayout(roi_layout)
+        layout.addWidget(roi_group)
+
+        opts_group = QGroupBox("Correction Options")
+        opts_layout = QVBoxLayout()
+        
+        self.chk_no_exit = QCheckBox("No exit zone")
+        self.chk_no_exit.setToolTip("Check this if both mice are present at all times.")
+        self.chk_no_exit.toggled.connect(self._validate)
+        opts_layout.addWidget(self.chk_no_exit)
+
+        self.chk_marked_only = QCheckBox("Correct marked frames only")
+        self.chk_marked_only.setEnabled(self.has_marked_frames)
+        self.chk_marked_only.setToolTip("Limit correction to the range of user-marked frames")
+        opts_layout.addWidget(self.chk_marked_only)
+        
+        self.chk_avtomat = QCheckBox("Auto mode")
+        self.chk_avtomat.setToolTip("Auto-reject exit/return events. Auto-accept ID swaps.")
+        opts_layout.addWidget(self.chk_avtomat)
+        
+        opts_group.setLayout(opts_layout)
+        layout.addWidget(opts_group)
+
+        btn_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btn_box.accepted.connect(self._on_accept)
+        btn_box.rejected.connect(self.reject)
+        layout.addWidget(btn_box)
+
+        self._validate()
+        
+    def _launch_roi_picker(self):
+        roi = get_roi_cv2(self.frame)
+        
+        if roi is not None:
+            self.exit_zone = roi
+            self._update_roi_preview()
+            self.btn_select_roi.setText("Change ROI")
+            self._validate()
+            
+    def _update_roi_preview(self):
+        if self.exit_zone:
+            roi_frame = plot_roi(self.frame, self.exit_zone)
+            pixmap = frame_to_pixmap(roi_frame)
+            scaled_pixmap = pixmap.scaled(self.roi_preview.size(),  Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.roi_preview.setPixmap(scaled_pixmap)
+            self.roi_preview.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        else:
+            self.roi_preview.setText("No ROI selected")
+            self.roi_preview.setStyleSheet("background: #f0f0f0; border: 1px dashed #999;")
+            
+    def _validate(self):
+        ok_btn = self.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok)
+        ok_btn.setEnabled(self.exit_zone is not None or self.chk_no_exit.isChecked())
+        
+    def _on_accept(self):
+        self.confirmed_exit_zone = self.exit_zone if not self.chk_no_exit.isChecked() else None
+        self.correct_marked_only = self.chk_marked_only.isChecked()
+        self.avtomat = self.chk_avtomat.isChecked()
+        self.accept()
