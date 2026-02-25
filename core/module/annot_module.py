@@ -173,9 +173,15 @@ class Frame_Annotator:
         if not csv_path:
             return
 
-        json_path, _ = file_dialog.getOpenFileName(
-            self.main, "Select Associated JSON Metadata", "", "Json Files (*.json)"
-        )
+        csv_name = os.path.basename(csv_path).split("_pred_annotated_")[0]
+        video_dir = os.path.dirname(self.dm.video_file)
+
+        auto_path = os.path.join(video_dir, f"{csv_name}.json")
+        if os.path.isfile(auto_path):
+            json_path = auto_path
+        else:
+            json_path, _ = file_dialog.getOpenFileName(self.main, "Select Associated JSON Metadata", "", "Json Files (*.json)")
+
         if not json_path:
             Loggerbox.warning(self.main, "No Metadata", "JSON metadata is required for one-hot import.")
             return
