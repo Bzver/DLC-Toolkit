@@ -276,43 +276,24 @@ def handle_unsaved_changes_on_close(
 
 ###########################################################################################
 
-def calculate_snapping_zoom_level(
+def calculate_zoom_snap(
         current_frame_data:np.ndarray,
         view_width:float,
-        view_height:float
+        view_height:float,
+        padding_perc: int=25,
         )->Tuple[float,float,float]:
-    """
-    Calculates an optimal zoom level and center position to fit all visible keypoints 
-    in the current frame within the view, with padding.
+    xs = current_frame_data[:, 0::3]
+    ys = current_frame_data[:, 1::3]
 
-    The function computes the bounding box of all non-NaN 2D keypoint coordinates, 
-    applies uniform padding, and determines the maximum zoom level that fits the padded 
-    box within the given view dimensions. The result centers the keypoints in the view.
-
-    Args:
-        current_frame_data (np.ndarray): Array of shape (num_instances * num_keypoints, 3) 
-            containing flattened x, y, confidence values for all keypoints in the frame.
-        view_width (float): Width of the target view (e.g., graphics scene or display window).
-        view_height (float): Height of the target view.
-
-    Returns:
-        Tuple[float, float, float]:
-            - new_zoom_level (float): Scaling factor to apply (clamped between 0.1 and 10.0).
-            - center_x (float): X-coordinate of the center of the bounding box.
-            - center_y (float): Y-coordinate of the center of the bounding box.
-    """
-    x_vals_current_frame = current_frame_data[:, 0::3]
-    y_vals_current_frame = current_frame_data[:, 1::3]
-
-    if np.all(np.isnan(x_vals_current_frame)):
+    if np.all(np.isnan(xs)):
         return
     
-    min_x = np.nanmin(x_vals_current_frame)
-    max_x = np.nanmax(x_vals_current_frame)
-    min_y = np.nanmin(y_vals_current_frame)
-    max_y = np.nanmax(y_vals_current_frame)
+    min_x = np.nanmin(xs)
+    max_x = np.nanmax(xs)
+    min_y = np.nanmin(ys)
+    max_y = np.nanmax(ys)
 
-    padding_factor = 1.25 # 25% padding
+    padding_factor = 1 + padding_perc / 100
     width = max(1.0, max_x - min_x)
     height = max(1.0, max_y - min_y)
     padded_width = width * padding_factor
@@ -320,7 +301,6 @@ def calculate_snapping_zoom_level(
     center_x = (min_x + max_x) / 2
     center_y = (min_y + max_y) / 2
 
-    # Calculate new zoom level
     if padded_width > 0 and padded_height > 0:
         zoom_x = view_width / padded_width
         zoom_y = view_height / padded_height
@@ -328,8 +308,7 @@ def calculate_snapping_zoom_level(
     else:
         new_zoom_level = 1.0
 
-    # Apply zoom limits
-    new_zoom_level = max(0.1, min(new_zoom_level, 10.0))
+    new_zoom_level = max(0.1, min(new_zoom_level, 3.0))
 
     return new_zoom_level, center_x, center_y
 

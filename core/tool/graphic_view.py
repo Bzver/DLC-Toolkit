@@ -47,11 +47,10 @@ class Canvas(QGraphicsView):
         else:
             self.sbox = None
 
-    def reset_zoom(self):
-        if self.zoom_factor == 1.0: # Don't do anything when there has not been any zoom in/out yet
-            return
-        self.zoom_factor = 1.0
-        self.fitInView(self.gscene.sceneRect(), Qt.KeepAspectRatio)
+    def enforce_zoom_mode(self):
+        self.is_zoom_mode = True
+        self.setDragMode(QGraphicsView.ScrollHandDrag)
+        self.wheelEvent = self._mouse_wheel_event
 
     def toggle_zoom_mode(self):
         self.is_zoom_mode = not self.is_zoom_mode
@@ -72,6 +71,9 @@ class Canvas(QGraphicsView):
 
     def clear_graphic_scene(self):
         self.gscene.clear()
+
+    def get_canvas_dim(self):
+        return self.width(), self.height()
 
     def get_graphic_scene_dim(self):
         view_width = self.gscene.sceneRect().width()

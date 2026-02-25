@@ -1,19 +1,20 @@
 import numpy as np
-import cv2
 
 from PySide6 import QtGui
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGroupBox, QWidget
+from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGroupBox, QWidget, QGraphicsTextItem
+from PySide6.QtGui import QFont, QColor, QTransform
 
 from typing import List, Tuple, Optional, Literal
 
+from .graphic_view import Canvas
 from .plot import Prediction_Plotter
 from .undo_redo import Uno_Stack
 from .mark_nav import navigate_to_marked_frame
 from core.io import Frame_Extractor, Frame_Extractor_Img
-from ui import Clickable_Video_Label, Video_Slider_Widget, Shortcut_Manager
+from ui import Video_Slider_Widget, Shortcut_Manager
 from utils.helper import (
-    frame_to_pixmap, handle_unsaved_changes_on_close, crop_coord_to_array, validate_crop_coord, indices_to_spans
+    frame_to_pixmap, handle_unsaved_changes_on_close, crop_coord_to_array, validate_crop_coord, indices_to_spans, calculate_zoom_snap
 )
 from utils.dataclass import Loaded_DLC_Data, Plot_Config
 from utils.logger import Loggerbox, QMessageBox
@@ -31,7 +32,7 @@ class Dual_Video_Dialog(QDialog):
         self.old_label = QLabel()
         self.new_label = QLabel()
 
-        self.video_labels: List[Clickable_Video_Label] = []
+        self.video_canvases: List[Canvas] = []
         self.video_layout = QHBoxLayout()
         self._setup_video_display()
 
@@ -42,6 +43,8 @@ class Dual_Video_Dialog(QDialog):
         self.layout_reviewer.addLayout(video_label_layout)
         self.layout_reviewer.addLayout(self.video_layout)
         self.layout_reviewer.addWidget(self.progress_slider)
+
+        self.blank_pixmap = frame_to_pixmap(np.full((540, 720, 3), 0, dtype=np.uint8))
 
     def _setup_frame_info_labels(self):
         font = QtGui.QFont()
@@ -61,13 +64,11 @@ class Dual_Video_Dialog(QDialog):
             label.setStyleSheet("color: #4B4B4B; background: #F0F0F0; padding: 6px; border-radius: 4px;")
             label.setFixedHeight(30)
 
-        for col in range(2):
-            label = Clickable_Video_Label(col, self)
-            label.setAlignment(Qt.AlignCenter)
-            label.setFixedSize(720, 540)
-            label.setStyleSheet("border: 1px solid gray;")
-            self.video_labels.append(label)
-            self.video_layout.addWidget(label)
+        for _ in range(2):
+            canvas = Canvas(self)
+            canvas.setFixedSize(720, 540)
+            self.video_canvases.append(canvas)
+            self.video_layout.addWidget(canvas)
 
     def _build_ui_layouts(self):
         frame_info_layout = QHBoxLayout()
@@ -81,6 +82,19 @@ class Dual_Video_Dialog(QDialog):
         video_label_layout.addWidget(self.new_label)
 
         return frame_info_layout, video_label_layout
+
+    def _get_placeholder_text(self, canvas:Canvas, frame_idx:int) -> QGraphicsTextItem:
+        view_width, view_height = canvas.get_graphic_scene_dim()
+        text_item = QGraphicsTextItem(f"Frame {frame_idx} unavailable")
+        font = QFont("Arial", 16, QFont.Bold)
+        text_item.setFont(font)
+        text_item.setDefaultTextColor(QColor("#FFFFFF"))
+        text_rect = text_item.boundingRect()
+        x_pos = (view_width - text_rect.width()) / 2
+        y_pos = (view_height - text_rect.height()) / 2
+        text_item.setPos(x_pos, y_pos)
+        text_item.setZValue(10)
+        return text_item
 
 class Parallel_Review_Dialog(Dual_Video_Dialog):
     pred_data_exported = Signal(object, tuple)
@@ -129,7 +143,7 @@ class Parallel_Review_Dialog(Dual_Video_Dialog):
             plot_opacity=0.7, point_size=6.0, confidence_cutoff=0.0, hide_text_labels=False, edit_mode=False,
             plot_labeled=True, plot_pred=True, navigate_labeled=False, auto_snapping=False, navigate_roi=False
         )
-        self.plotter = Prediction_Plotter(dlc_data=self.dlc_data, plot_config=plot_config)
+        self.plotter = Prediction_Plotter(dlc_data=self.dlc_data, plot_config=plot_config, fast_mode=False)
 
         self.layout_reviewer.addLayout(self.video_layout)
 
@@ -196,27 +210,45 @@ class Parallel_Review_Dialog(Dual_Video_Dialog):
         frame = self.extractor.get_frame(self.current_frame_idx)
 
         if frame is None:
-            for i, label in enumerate(self.video_labels):
-                label.setText(f"Frame {global_idx} unavailable")
-                label.setPixmap(QtGui.QPixmap())
+            for canvas in self.video_canvases:
+                text_item = self._get_placeholder_text(canvas, global_idx)
+                canvas.clear_graphic_scene()
+                canvas.gscene.addPixmap(self.blank_pixmap)
+                canvas.gscene.addItem(text_item)
             return
 
         for i in range(2):
-            view = frame.copy()
+            canvas = self.video_canvases[i]
+            canvas.clear_graphic_scene()
             pred_data = None
+            all_pred = []
             if i == 0 and self.pred_data_array is not None:
                 pred_data = self.pred_data_array[global_idx]
             elif i == 1 and self.new_data_array is not None:
                 pred_data = self.new_data_array[global_idx]
+            if pred_data is not None:
+                all_pred.append(pred_data)
 
+            canvas.gscene.addPixmap(frame_to_pixmap(frame))
             if pred_data is not None and not np.all(np.isnan(pred_data)):
-                view = self.plotter.plot_predictions(view, pred_data)
+                self.plotter.plot_predictions(self.video_canvases[i].gscene, pred_data)
 
-            h, w = self.video_labels[i].height(), self.video_labels[i].width()
-            resized = cv2.resize(view, (w, h), interpolation=cv2.INTER_AREA)
-            pixmap = frame_to_pixmap(resized)
-            self.video_labels[i].setPixmap(pixmap)
-            self.video_labels[i].setText("")
+            all_pred_array = np.concatenate(all_pred, axis=0) if all_pred else np.full(1, np.nan)
+            
+            view_width, view_height = canvas.get_graphic_scene_dim()
+            canvas.zoom_factor = max(720 / view_width, 540 / view_height)
+            canvas.centerOn(view_width / 2, view_height / 2)
+
+            if not np.all(np.isnan(all_pred_array)):
+                new_zoom, center_x, center_y = calculate_zoom_snap(all_pred_array, view_width, view_height, padding_perc=50)
+                canvas.centerOn(center_x, center_y)
+                canvas.zoom_factor *= new_zoom
+
+            new_transform = QTransform()
+            new_transform.scale(canvas.zoom_factor, canvas.zoom_factor)
+            canvas.setTransform(new_transform)
+
+            canvas.enforce_zoom_mode()
 
         self.progress_slider.set_current_frame(self.current_frame_idx)
         self._update_button_states()
@@ -422,7 +454,7 @@ class Track_Correction_Dialog(Dual_Video_Dialog):
             plot_opacity=0.7, point_size=6.0, confidence_cutoff=0.0, hide_text_labels=False, edit_mode=False,
             plot_labeled=True, plot_pred=True, navigate_labeled=False, auto_snapping=False, navigate_roi=False
         )
-        self.plotter = Prediction_Plotter(dlc_data=self.dlc_data, plot_config=plot_config)
+        self.plotter = Prediction_Plotter(dlc_data=self.dlc_data, plot_config=plot_config, fast_mode=False)
 
         self.old_label.setText("Last Frame With Prediction")
         self.new_label.setText("Current Frame")
@@ -475,28 +507,52 @@ class Track_Correction_Dialog(Dual_Video_Dialog):
 
         last_frame = self.extractor.get_frame(last_frame_global)
         if frame is None:
-            self.video_labels[1].setText(f"Frame {global_idx} unavailable")
-            return
+            canvas = self.video_canvases[1]
+            text_item = self._get_placeholder_text(canvas, global_idx)
+            canvas.clear_graphic_scene()
+            canvas.gscene.addPixmap(self.blank_pixmap)
+            canvas.gscene.addItem(text_item)
         if last_frame is None:
-            self.video_labels[0].setText(f"Frame {last_frame_global} unavailable")
+            canvas = self.video_canvases[0]
+            text_item = self._get_placeholder_text(canvas, last_frame_global)
+            canvas.clear_graphic_scene()
+            canvas.gscene.addPixmap(self.blank_pixmap)
+            canvas.gscene.addItem(text_item)
 
         pred_data_now = self.pred_data_array[global_idx]
         pred_data_last = self.pred_data_array[last_frame_global] if global_idx != 0 else None
 
+        all_pred = []
         if pred_data_now is not None:
-            frame = self.plotter.plot_predictions(frame, pred_data_now)
+            all_pred.append(pred_data_now)
+            canvas = self.video_canvases[1]
+            canvas.clear_graphic_scene()
+            canvas.gscene.addPixmap(frame_to_pixmap(frame))
+            self.plotter.plot_predictions(canvas.gscene, pred_data_now)
         if pred_data_last is not None:
-            last_frame = self.plotter.plot_predictions(last_frame, pred_data_last)
+            all_pred.append(pred_data_last)
+            canvas = self.video_canvases[0]
+            canvas.clear_graphic_scene()
+            canvas.gscene.addPixmap(frame_to_pixmap(last_frame))
+            self.plotter.plot_predictions(canvas.gscene, pred_data_last)
 
-        for i in range(2):
-            view = frame if i == 1 else last_frame
-            if view is None:
-                continue
-            h, w = self.video_labels[i].height(), self.video_labels[i].width()
-            resized = cv2.resize(view, (w, h), interpolation=cv2.INTER_AREA)
-            pixmap = frame_to_pixmap(resized)
-            self.video_labels[i].setPixmap(pixmap)
-            self.video_labels[i].setText("")
+        all_pred_array = np.concatenate(all_pred, axis=0) if all_pred else np.full(1, np.nan)
+
+        for canvas in self.video_canvases:
+            view_width, view_height = canvas.get_graphic_scene_dim()
+            canvas.zoom_factor = max(720 / view_width, 540 / view_height)
+            canvas.centerOn(view_width / 2, view_height / 2)
+
+            if not np.all(np.isnan(all_pred_array)):
+                new_zoom, center_x, center_y = calculate_zoom_snap(all_pred_array, view_width, view_height, padding_perc=50)
+                canvas.centerOn(center_x, center_y)
+                canvas.zoom_factor *= new_zoom
+
+            new_transform = QTransform()
+            new_transform.scale(canvas.zoom_factor, canvas.zoom_factor)
+            canvas.setTransform(new_transform)
+
+            canvas.enforce_zoom_mode()
 
         self.progress_slider.set_total_frames(len(self.frame_list))
         self.progress_slider.set_current_frame(self.current_frame_idx)
