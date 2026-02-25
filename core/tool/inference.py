@@ -398,7 +398,7 @@ class DLC_Inference(QDialog):
             frame_list=self.frame_list,
             progress_callback=progress,
             crop_coord=self.crop_coord if self.cropping else None,
-            mask=self.mask_region,
+            mask=self.mask_region if self.masking else None,
             grayscaling=self.grayscaling
             )
         corrected_indices = exporter.export_data_to_DLC(frame_only=True)
@@ -418,7 +418,7 @@ class DLC_Inference(QDialog):
             frame_list=self.frame_list,
             progress_callback=progress,
             crop_coord=self.crop_coord if self.cropping else None,
-            mask=self.mask_region,
+            mask=self.mask_region if self.masking else None,
             grayscaling=self.grayscaling
             )
         corrected_indices = exporter.export_frame_to_video()
