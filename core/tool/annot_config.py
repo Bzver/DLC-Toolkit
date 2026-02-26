@@ -236,7 +236,8 @@ class Annotation_Config(QtWidgets.QWidget):
         layout = QVBoxLayout(dialog)
 
         label = QLabel(f"Category '{category_to_remove}' will be removed.\n"
-                       "Which category should receive its annotated frames?")
+                       "Which category should receive its annotated frames?"
+                       "WARNING: This action is irreversible.\n")
         layout.addWidget(label)
 
         combo = QComboBox()
@@ -311,7 +312,7 @@ class Add_Category_Dialog(QDialog):
         if color_dialog.exec() == QDialog.Accepted:
             color = color_dialog.selectedColor()
             if color.isValid():
-                self._current_color = color.name(QColor.HexArgb)
+                self._current_color = color.name(QColor.HexRgb)
                 self._update_color_preview()
 
     def _update_color_preview(self):

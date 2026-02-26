@@ -71,7 +71,8 @@ class Frame_Annotator:
                 "buttons": [
                     ("Export in Text", self._export_annotation_to_text),
                     ("Export in Mat", self._export_annotation_to_mat),
-                    ("Export Truncated in BORIS", self._export_truncated_package),
+                    ("Export in One-Hot", self._export_truncated_package),
+                    ("Export Truncated One-Hot for ASOID", self._export_truncated_package),
                 ]
             },
         }
@@ -383,7 +384,7 @@ class Frame_Annotator:
         if hasattr(self, "annot_sum"):
             self.annot_sum.update_data(self.annot_array, self.behav_map, self.idx_to_cat)
         self.vid_play.sld.clear_frame_category()
-    
+
         idx_to_color = {
             self.cat_to_idx[cat]: color 
             for cat, (_, color) in self.behav_map.items()
@@ -419,6 +420,7 @@ class Frame_Annotator:
         src_idx = self.cat_to_idx[src_category]
         self.annot_array[self.annot_array == src_idx] = dest_idx
         self.annot_array[self.annot_array > src_idx] -= 1
+        self._refresh_annot_numeric()
         self._refresh_slider()
         self._auto_save()
 
@@ -426,6 +428,7 @@ class Frame_Annotator:
         self.behav_map = new_map
         self._setup_shortcuts()
         self._refresh_annot_numeric()
+        self._refresh_slider()
         self.annot_sum.update_data(self.annot_array, self.behav_map, self.idx_to_cat)
         self._auto_save()
 
@@ -530,10 +533,13 @@ class Frame_Annotator:
             return
         vid_path, _ = os.path.splitext(self.dm.video_file)
         annot_path = f"{vid_path}_annot_backup.txt"
+        annot_config_path = f"{vid_path}_annot_backup.json"
         if os.path.isfile(annot_path):
             self.reset_state(True)
-            behav_map, frame_dict = load_annotation(annot_path)
+            behav_map, frame_dict = load_annotation(annot_path, annot_config_path)
             self._frame_list_to_new_annot_cat(frame_dict.keys(), behav_map=behav_map, frame_dict=frame_dict)
+
+        self._auto_save()
 
     def _auto_save(self):
         if self.annot_array is None:
@@ -617,12 +623,62 @@ class Frame_Annotator:
         except Exception as e:
             Loggerbox.error(self.main, "Failed", f"Failed to save {file_path}, Exception: {e}", exc=e)
 
+    def _export_annotation_to_onehot(self, fps:int=10):
+        if self.dm.dlc_data is None:
+            return
+        
+        file_dialog = QFileDialog(self.main)
+        file_path, _ = file_dialog.getSaveFileName(self.main, "Export Annotation to BORIS Onehot Format", "", "CSV Files (*.csv);;All Files (*)")
+
+        behavior_list = [b for b in self.idx_to_cat.values()]
+        onehot_array = np.zeros((self.dm.total_frames, len(behavior_list)))
+        onehot_array[np.arange(self.dm.total_frames), self.annot_array] = 1
+
+        df_annot = pd.DataFrame(onehot_array, columns=behavior_list)
+        if "other" in behavior_list:
+            behavior_cols = [col for col in df_annot.columns if col != "other"]
+            new_column_order = behavior_cols + ["other"]
+            df_annot = df_annot[new_column_order]
+
+        df_annot.insert(0, "time", np.arange(self.dm.total_frames) / fps)
+
+        try:
+            df_annot.to_csv(file_path, sep=',', index=False, float_format='%.6f')
+
+            json_path = file_path.replace(".csv", ".json")
+
+            if os.path.isfile(json_path):
+                with open(json_path, 'r') as f:
+                    frame_list = f["used_frames"]
+
+            if frame_list:
+                with open(json_path, 'w') as f:
+                    json.dump({
+                        "used_frames": frame_list,
+                        "total_frames": self.dm.total_frames,
+                        "total_exported_frames": len(frame_list),
+                        "behav_map": self.behav_map,
+                    }, f, indent=2)
+            else:
+                with open(json_path, 'w') as f:
+                    json.dump({
+                        "total_frames": self.dm.total_frames,
+                        "behav_map": self.behav_map,
+                    }, f, indent=2) 
+
+            pred_path = file_path.replace(".csv", "_pred.csv")
+            prediction_to_csv(self.dm.dlc_data, self.dm.dlc_data.pred_data_array, pred_path, keep_conf=True, no_scorer_row=True)
+        except Exception as e:
+            Loggerbox.error(self.main, "Failed", f"Failed to save {file_path}, Exception: {e}", exc=e)
+        else:
+            Loggerbox.info(self.main, "Success", f"Successfully saved to {file_path}")
+
     def _export_truncated_package(self, min_duration:int=10, max_gap:int=3, fps:int=10):
         if self.dm.dlc_data is None or self.dm.dlc_data.pred_data_array is None:
             return
         
         file_dialog = QFileDialog(self.main)
-        file_path, _ = file_dialog.getSaveFileName(self.main, "Export Truncated Annotation to BORIS Format", "", "CSV Files (*.csv);;All Files (*)")
+        file_path, _ = file_dialog.getSaveFileName(self.main, "Export Truncated Annotation For ASOID Analysis", "", "CSV Files (*.csv);;All Files (*)")
 
         if not file_path:
             return

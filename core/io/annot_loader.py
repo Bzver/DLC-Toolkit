@@ -140,7 +140,9 @@ def load_onehot_csv(
             continue
         active_series = df[behav]
         active_mask = (active_series.values == 1)
-        active_mask = np.concatenate([[False], active_mask])
+
+        if len(used_frames) == len(active_mask) + 1:
+            active_mask = np.concatenate([[False], active_mask])
     
         active_original_frames = used_frames[active_mask].tolist()
         frame_dict[behav] = sorted(active_original_frames)
