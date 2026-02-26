@@ -71,7 +71,7 @@ class Frame_Annotator:
                 "buttons": [
                     ("Export in Text", self._export_annotation_to_text),
                     ("Export in Mat", self._export_annotation_to_mat),
-                    ("Export in One-Hot", self._export_truncated_package),
+                    ("Export in One-Hot", self._export_annotation_to_onehot),
                     ("Export Truncated One-Hot for ASOID", self._export_truncated_package),
                 ]
             },
