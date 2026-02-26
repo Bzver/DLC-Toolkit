@@ -93,7 +93,7 @@ class Frame_Annotator:
     def deactivate(self, menu_widget:Menu_Widget):
         for menu in self.annot_menu_config.keys():
             menu_widget.remove_entire_menu(menu)
-        self.vid_play.set_right_panel_widget(None)
+        self.vid_play.set_left_panel_widget(None)
         if self.vid_play.sld.is_zoom_slider_shown:
             self.vid_play.sld.toggle_zoom_slider()
         self.open_annot = False
@@ -241,7 +241,7 @@ class Frame_Annotator:
         combined_layout.addWidget(self.annot_sum)
 
         if self.open_annot:
-            self.vid_play.set_right_panel_widget(self.combined_annot)
+            self.vid_play.set_left_panel_widget(self.combined_annot)
 
     ###################################################################################################################################################
 
@@ -280,7 +280,7 @@ class Frame_Annotator:
         self._plot_current_frame(frame)
     
     def _plot_current_frame(self, frame, count=None):
-        if self.dm.dlc_data is not None and self.dm.dlc_data.pred_data_array is not None:
+        if self.dm.dlc_data is not None and self.dm.dlc_data.pred_data_array is not None and self.plotter.plot_config.plot_pred:
             frame = self.plotter.plot_predictions(frame, self.dm.dlc_data.pred_data_array[self.dm.current_frame_idx,:,:])
 
         pixmap = frame_to_pixmap(frame)

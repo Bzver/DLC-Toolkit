@@ -8,7 +8,7 @@ from utils.dataclass import Plot_Config
 class Plot_Config_Menu(QGroupBox):
     config_changed = Signal(object)
 
-    def __init__(self, plot_config:Plot_Config, label_mode=False, parent=None):
+    def __init__(self, plot_config:Plot_Config, label_mode=False, annot_mode=False, parent=None):
         super().__init__(parent)
         self.setTitle("Plot Config Menu")
         self.plot_config = plot_config
@@ -59,6 +59,9 @@ class Plot_Config_Menu(QGroupBox):
             self.auto_snap.setVisible(True)
             layout.addWidget(self.roi_nav)
             self.roi_nav.setVisible(True)
+        elif annot_mode:
+            layout.addWidget(self.pred_plot)
+            self.pred_plot.setVisible(True)
         else:
             layout.addWidget(self.label_plot)
             self.label_plot.setVisible(True)
