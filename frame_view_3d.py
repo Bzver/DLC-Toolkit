@@ -17,13 +17,14 @@ from PySide6.QtWidgets import QMessageBox
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
-from utils import helper as duh, utils3d as utls3
-from utils.dataclass import Plot_Config, Nav_Callback
+from core.io import Prediction_Loader, determine_save_path, save_prediction_to_existing_h5
+from core.tool import Adjust_Property_Dialog, Prediction_Plotter
 from ui import (
     Menu_Widget, Video_Slider_Widget, Nav_Widget, Clickable_Video_Label, Progress_Indicator_Dialog, Status_Bar
     )
-from core.io import Prediction_Loader, determine_save_path, save_prediction_to_existing_h5
-from core.tool import Adjust_Property_Dialog, Prediction_Plotter, navigate_to_marked_frame
+from utils import utils3d as utls3
+from utils.helper import handle_unsaved_changes_on_close, navigate_to_marked_frame
+from utils.dataclass import Plot_Config, Nav_Callback
 
 import traceback
 
@@ -38,7 +39,7 @@ class Frame_View_3D(QtWidgets.QMainWindow):
         super().__init__()
 
         self.is_debug = True
-        self.setWindowTitle(duh.format_title("Frame Viewer 3D", self.is_debug))
+        self.setWindowTitle("Frame Viewer 3D")
         self.setGeometry(100, 100, 1600, 960)
 
         self.menu_widget = Menu_Widget(self)
@@ -1135,7 +1136,7 @@ class Frame_View_3D(QtWidgets.QMainWindow):
             for cap in self.cap_list:
                 if cap and cap.isOpened():
                     cap.release()
-        duh.handle_unsaved_changes_on_close(self, event, self.is_saved, self.save_workspace)
+        handle_unsaved_changes_on_close(self, event, self.is_saved, self.save_workspace)
 
 ###################################################################################################################################################
 

@@ -2,10 +2,9 @@ import numpy as np
 from typing import Tuple, List, Literal
 
 from .reviewer import Track_Correction_Dialog
-from .mark_nav import get_prev_frame_in_list
 from core.io import Frame_Extractor
 from utils.pose import calculate_pose_centroids
-from utils.helper import get_instance_count_per_frame, get_instances_on_current_frame
+from utils.helper import get_instance_count_per_frame, get_instances_on_current_frame, get_prev_frame_in_list
 from utils.logger import logger
 from utils.dataclass import Loaded_DLC_Data
 

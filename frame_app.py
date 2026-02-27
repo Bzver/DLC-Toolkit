@@ -5,9 +5,9 @@ from PySide6.QtWidgets import QMainWindow, QVBoxLayout, QHBoxLayout, QApplicatio
 
 from core.runtime import Data_Manager, Video_Manager
 from core.module import Frame_View, Frame_Label, Frame_Annotator
-from core.tool import Canonical_Pose_Dialog, Plot_Config_Menu, DLC_Save_Dialog, Load_Label_Dialog, DLC_Save_Dialog_Label, navigate_to_marked_frame
+from core.tool import Canonical_Pose_Dialog, Plot_Config_Menu, DLC_Save_Dialog, Load_Label_Dialog, DLC_Save_Dialog_Label
 from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Toggle_Switch, Status_Bar, Frame_List_Dialog, ROI_Dialog, Mask_Dialog
-from utils.helper import frame_to_qimage, mask_to_qimage, get_roi_cv2, plot_roi, validate_crop_coord
+from utils.helper import frame_to_qimage, mask_to_qimage, get_roi_cv2, plot_roi, validate_crop_coord, navigate_to_marked_frame
 from utils.logger import Loggerbox, QMessageBox
 from utils.dataclass import Nav_Callback, Plot_Config
 

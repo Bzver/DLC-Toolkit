@@ -3,6 +3,7 @@ from typing import Optional, Callable, List, Literal
 
 from utils.logger import Loggerbox
 
+
 def navigate_to_marked_frame(
         parent,
         frame_list:List[int],
