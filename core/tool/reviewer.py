@@ -7,12 +7,11 @@ from PySide6.QtGui import QFont, QColor, QTransform
 
 from typing import List, Tuple, Optional, Literal
 
-from .graphic_view import Canvas
 from .plot import Prediction_Plotter
 from .undo_redo import Uno_Stack
 from .mark_nav import navigate_to_marked_frame
 from core.io import Frame_Extractor, Frame_Extractor_Img
-from ui import Video_Slider_Widget, Shortcut_Manager
+from ui import Video_Slider_Widget, Shortcut_Manager, Canvas
 from utils.helper import (
     frame_to_pixmap, handle_unsaved_changes_on_close, crop_coord_to_array, validate_crop_coord, indices_to_spans, calculate_zoom_snap
 )

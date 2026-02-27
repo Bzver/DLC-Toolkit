@@ -3,7 +3,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QGraphicsRectItem, QGraphicsView, QGraphicsScene, QFrame
 from PySide6.QtGui import QPainter, QColor, QPen, QTransform
 
-from ui import Draggable_Keypoint, Selectable_Instance
+from .component import Draggable_Keypoint, Selectable_Instance
 
 class Canvas(QGraphicsView):
     instance_selected = Signal(int)

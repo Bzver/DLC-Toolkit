@@ -3,7 +3,7 @@ from PySide6.QtWidgets import QVBoxLayout, QDialog, QLabel
 from PySide6.QtGui import QTransform
 
 from .plot import Prediction_Plotter
-from .graphic_view import Canvas
+from ui import Canvas
 from utils.helper import frame_to_pixmap
 from utils.dataclass import Loaded_DLC_Data
 

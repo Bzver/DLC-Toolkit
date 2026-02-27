@@ -8,9 +8,9 @@ from PySide6.QtGui import QTransform
 from typing import Optional
 
 from core.runtime import Data_Manager, Video_Manager
-from core.tool import Outlier_Finder, Canvas, Prediction_Plotter, Uno_Stack, Track_Fixer
+from core.tool import Outlier_Finder, Prediction_Plotter, Uno_Stack, Track_Fixer
 from ui import (Menu_Widget, Video_Player_Widget, Pose_Rotation_Dialog, Status_Bar, Instance_Selection_Dialog,
-                Shortcut_Manager, Frame_Range_Dialog, Keypoint_Num_Dialog, Track_Fix_Config_Dialog)
+                Shortcut_Manager, Frame_Range_Dialog, Keypoint_Num_Dialog, Track_Fix_Config_Dialog, Canvas)
 from utils.pose import (
     rotate_selected_inst, generate_missing_inst, generate_missing_kp_for_inst, 
     generate_missing_kp_batch, calculate_pose_centroids, calculate_pose_rotations, outlier_removal

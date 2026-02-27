@@ -4,7 +4,6 @@ from .inference import DLC_Inference
 from .mark_nav import navigate_to_marked_frame, get_next_frame_in_list
 from .mark_gen import Mark_Generator
 from .outlier_finder import Outlier_Finder
-from .graphic_view import Canvas
 from .blob_counter import Blob_Counter
 from .plot_config import Adjust_Property_Dialog, Adjust_Property_Box, Plot_Config_Menu
 from .label_loader import DLC_Save_Dialog, Load_Label_Dialog, DLC_Save_Dialog_Label
@@ -14,25 +13,24 @@ from .annot_config import Annotation_Config, Annotation_Summary_Table
 from .undo_redo import Uno_Stack, Uno_Stack_Dict
 
 __all__ = (
+    Annotation_Summary_Table,
+    Parallel_Review_Dialog,
+    Adjust_Property_Dialog,
     Canonical_Pose_Dialog,
+    DLC_Save_Dialog_Label,
+    Adjust_Property_Box,
     Prediction_Plotter,
-    DLC_Inference,
-    Blob_Counter,
+    Load_Label_Dialog,
+    Annotation_Config,
+    Plot_Config_Menu,
+    DLC_Save_Dialog,
     Outlier_Finder,
     Mark_Generator,
-    Canvas,
-    Adjust_Property_Dialog,
-    Adjust_Property_Box,
-    Plot_Config_Menu,
-    Parallel_Review_Dialog,
-    Annotation_Config,
-    Annotation_Summary_Table,
-    Uno_Stack,
     Uno_Stack_Dict,
-    DLC_Save_Dialog,
-    Load_Label_Dialog,
+    DLC_Inference,
+    Blob_Counter,
     Track_Fixer,
-    DLC_Save_Dialog_Label,
+    Uno_Stack,
     navigate_to_marked_frame,
     get_next_frame_in_list,
 )
