@@ -474,6 +474,12 @@ class Track_Correction_Dialog(Dual_Video_Dialog):
         self.progress_slider.set_current_frame(self.current_frame_idx)
         self.progress_slider.frame_changed.connect(self._handle_frame_change_from_comp)
 
+        match self.mode:
+            case "exit": self.clr = "#cf5c6f"
+            case "return": self.clr = "#4caf50"
+            case "swap": self.clr = "#ffc107"
+        self.entry_frame = self.current_frame_idx
+
         self._display_current_frame()
         self._navigation_title_controller()
 
@@ -564,8 +570,9 @@ class Track_Correction_Dialog(Dual_Video_Dialog):
 
             canvas.enforce_zoom_mode()
 
-        self.progress_slider.set_total_frames(len(self.frame_list))
         self.progress_slider.set_current_frame(self.current_frame_idx)
+        self.progress_slider.set_frame_category("entry", [self.entry_frame], self.clr)
+        self.progress_slider.commit_categories()
 
     def _return_status(self, status: bool):
         self.user_decision = (status, self.frame_list[self.current_frame_idx])
@@ -653,6 +660,10 @@ class Track_Correction_Dialog(Dual_Video_Dialog):
         total = len(self.frame_list)
         self.global_frame_label.setText(f"Global: {global_idx}")
         self.selected_frame_label.setText(f"Selected: {self.current_frame_idx} / {total - 1}")
+        if self.current_frame_idx == self.entry_frame:
+            self.selected_frame_label.setStyleSheet(f"color: {self.clr}")
+        else:
+            self.selected_frame_label.setStyleSheet(f"color: black")
 
     def _toggle_playback(self):
         self.progress_slider.toggle_playback()

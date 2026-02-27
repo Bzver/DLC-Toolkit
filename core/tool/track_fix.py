@@ -79,11 +79,11 @@ class Track_Fixer:
                     frame_idx=f,
                     mode="swap", 
                     event_start_idx=last_amb,
-                    event_end_idx=f+1)
+                    event_end_idx=f+10)
                 if decision:
-                    logger.info(f"[TF] User confirmed swap at frame {confirmed_frame}, applying bulk swap")
-                    self._bulk_swap_from_frame(confirmed_frame)
-
+                    logger.info(f"[TF] User confirmed swap at frame {confirmed_frame}, applying swap for this frame only.")
+                    self._swap_ids_in_frame(frame_idx=confirmed_frame)
+                    last_amb = f
 
         x1, y1, x2, y2 = self.exit_zone
         logger.debug(f"Exit zone: ({x1},{y1})-({x2},{y2}), persistent_idx: {self.persistent_idx}")

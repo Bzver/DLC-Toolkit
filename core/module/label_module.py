@@ -17,7 +17,7 @@ from utils.pose import (
     )
 from utils.track import interpolate_track_all, delete_track, swap_track, interpolate_track
 from utils.helper import (
-    frame_to_pixmap, calculate_zoom_snap, get_instances_on_current_frame,
+    frame_to_pixmap, calculate_zoom_snap, get_instances_on_current_frame, validate_crop_coord,
     get_instance_count_per_frame, clean_inconsistent_nans, frame_to_grayscale
     )
 from utils.dataclass import Plot_Config, Plotter_Callbacks
@@ -63,6 +63,7 @@ class Frame_Label:
                             ("Delete Selected Instance On Frames Between Seleted Range", self._delete_track),
                             ("Delete All Prediction Inside Selected Area", self._designate_no_mice_zone),
                             ("Delete All Prediction Inside Masked Area", self._delete_predictions_mask),
+                            ("Delete All Prediction Outside of ROI", self._delete_outside_pred),
                         ]
                     },
                     {
@@ -386,6 +387,29 @@ class Frame_Label:
         poses[in_mask_region, :] = np.nan
 
         self.pred_data_array = poses.reshape(F, I, D)
+        self.display_current_frame()
+
+    def _delete_outside_pred(self):
+        roi = validate_crop_coord(self.dm.roi)
+        if roi is None:
+            Loggerbox.warning(self.main, "No ROI Detected", "No ROI has been designated.")
+
+        self._save_state_for_undo()
+        F, I, D = self.pred_data_array.shape
+        K = D // 3
+
+        poses = self.pred_data_array.reshape(F, I, K, 3)
+        xs = poses[..., 0]
+        ys = poses[..., 1]
+        
+        x1, y1, x2, y2 = roi
+
+        xs[xs < x1] = np.nan
+        xs[xs >= x2] = np.nan
+        ys[ys < y1] = np.nan
+        ys[ys >= y2] = np.nan
+
+        self.pred_data_array = clean_inconsistent_nans(poses.reshape(F, I, D))
         self.display_current_frame()
 
     def _delete_inst(self):

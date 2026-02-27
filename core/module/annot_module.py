@@ -196,6 +196,7 @@ class Frame_Annotator:
             return
 
         self._frame_list_to_new_annot_cat(list(frame_dict.keys()), behav_map=behav_map, frame_dict=frame_dict)
+        self._auto_save()
 
     def _import_frame_list(self):
         frame_categories = {
@@ -500,6 +501,7 @@ class Frame_Annotator:
             dialog.adjustSize()
             dialog.exec()
 
+            self._auto_save()
             self.refresh_ui()
 
     def _save_state_for_undo(self):
@@ -644,28 +646,6 @@ class Frame_Annotator:
 
         try:
             df_annot.to_csv(file_path, sep=',', index=False, float_format='%.6f')
-
-            json_path = file_path.replace(".csv", ".json")
-
-            if os.path.isfile(json_path):
-                with open(json_path, 'r') as f:
-                    frame_list = f["used_frames"]
-
-            if frame_list:
-                with open(json_path, 'w') as f:
-                    json.dump({
-                        "used_frames": frame_list,
-                        "total_frames": self.dm.total_frames,
-                        "total_exported_frames": len(frame_list),
-                        "behav_map": self.behav_map,
-                    }, f, indent=2)
-            else:
-                with open(json_path, 'w') as f:
-                    json.dump({
-                        "total_frames": self.dm.total_frames,
-                        "behav_map": self.behav_map,
-                    }, f, indent=2) 
-
             pred_path = file_path.replace(".csv", "_pred.csv")
             prediction_to_csv(self.dm.dlc_data, self.dm.dlc_data.pred_data_array, pred_path, keep_conf=True, no_scorer_row=True)
         except Exception as e:
