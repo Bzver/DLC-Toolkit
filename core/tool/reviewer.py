@@ -5,14 +5,16 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QGroupBox, QWidget, QGraphicsTextItem
 from PySide6.QtGui import QFont, QColor, QTransform
 
-from typing import List, Tuple, Optional, Literal
+from typing import List, Tuple, Optional
 
 from .plot import Prediction_Plotter
 from .undo_redo import Uno_Stack
 from core.io import Frame_Extractor, Frame_Extractor_Img
 from ui import Video_Slider_Widget, Shortcut_Manager, Canvas
+from utils.track import swap_track
 from utils.helper import (
-    frame_to_pixmap, handle_unsaved_changes_on_close, crop_coord_to_array, validate_crop_coord, indices_to_spans, calculate_zoom_snap, navigate_to_marked_frame
+    frame_to_pixmap, handle_unsaved_changes_on_close, crop_coord_to_array, validate_crop_coord,
+    indices_to_spans, calculate_zoom_snap, navigate_to_marked_frame
 )
 from utils.dataclass import Loaded_DLC_Data, Plot_Config
 from utils.logger import Loggerbox, QMessageBox
@@ -422,14 +424,14 @@ class Parallel_Review_Dialog(Dual_Video_Dialog):
         handle_unsaved_changes_on_close(self, event, self.is_saved, self._save_prediction)
 
 
-class Track_Correction_Dialog(Dual_Video_Dialog):
+class Exit_Reentry_Dialog(Dual_Video_Dialog):
     def __init__(
         self,
         dlc_data: Loaded_DLC_Data,
         extractor: Frame_Extractor,
         pred_data_array: np.ndarray,
         current_frame_idx: int,
-        mode: Literal["swap", "exit", "return"] = "swap",
+        exit_mode: bool = True,
         event_start_idx: Optional[int] = None,
         event_end_idx: Optional[int] = None,
         parent=None
@@ -439,7 +441,7 @@ class Track_Correction_Dialog(Dual_Video_Dialog):
         self.dlc_data = dlc_data
         self.extractor = extractor
         self.pred_data_array = pred_data_array
-        self.mode = mode
+        self.exit_mode = exit_mode
 
         total_frames = pred_data_array.shape[0]
         frame_list_start = event_start_idx if event_start_idx is not None else current_frame_idx - 20
@@ -454,7 +456,7 @@ class Track_Correction_Dialog(Dual_Video_Dialog):
         self.user_decision = None
 
         plot_config = Plot_Config(
-            plot_opacity=0.7, point_size=6.0, confidence_cutoff=0.0, hide_text_labels=False, edit_mode=False,
+            plot_opacity=0.7, point_size=5.0, confidence_cutoff=0.0, hide_text_labels=False, edit_mode=False,
             plot_labeled=True, plot_pred=True, navigate_labeled=False, auto_snapping=False, navigate_roi=False
         )
         self.plotter = Prediction_Plotter(dlc_data=self.dlc_data, plot_config=plot_config, fast_mode=False)
@@ -472,22 +474,19 @@ class Track_Correction_Dialog(Dual_Video_Dialog):
         self.progress_slider.set_current_frame(self.current_frame_idx)
         self.progress_slider.frame_changed.connect(self._handle_frame_change_from_comp)
 
-        match self.mode:
-            case "exit": self.clr = "#cf5c6f"
-            case "return": self.clr = "#4caf50"
-            case "swap": self.clr = "#ffc107"
+        self.clr = "#cf5c6f" if self.exit_mode else "#4caf50"
         self.entry_frame = self.current_frame_idx
 
         self._display_current_frame()
         self._navigation_title_controller()
 
     def _setup_control(self):
-        mode_cap = self.mode.capitalize()
-        ctrl_box = QGroupBox(f"{mode_cap} Confirmation")
+        mode = "Exit" if self.exit_mode else "Return"
+        ctrl_box = QGroupBox(f"{mode} Confirmation")
         ctrl_layout = QHBoxLayout()
 
-        self.yes_button = QPushButton(f"{mode_cap}")
-        self.no_button = QPushButton(f"No {mode_cap}")
+        self.yes_button = QPushButton(f"{mode}")
+        self.no_button = QPushButton(f"No {mode}")
 
         self.yes_button.clicked.connect(lambda: self._return_status(True))
         self.no_button.clicked.connect(lambda: self._return_status(False))
@@ -529,7 +528,7 @@ class Track_Correction_Dialog(Dual_Video_Dialog):
             canvas.gscene.addItem(text_item)
 
         pred_data_now = self.pred_data_array[global_idx]
-        pred_data_last = self.pred_data_array[last_frame_global] if global_idx != 0 else None
+        pred_data_last = self.pred_data_array[last_frame_global] if self.current_frame_idx != self.frame_list[0] else None
 
         all_pred = []
         if pred_data_now is not None:
@@ -585,28 +584,11 @@ class Track_Correction_Dialog(Dual_Video_Dialog):
         return max(0, start_local - 1)
 
     def _apply_mode_styling(self):
-        mode_styles = {
-            "exit": {
-                "bg_color": "#d18a95",
-                "button_color": "#cf5c6f",
-                "text_color": "#a30404",
-                "title": "EXIT CONFIRMATION"
-            },
-            "return": {
-                "bg_color": "#99da9f",
-                "button_color": "#4caf50",
-                "text_color": "#1b5e20",
-                "title": "RETURN CONFIRMATION"
-            },
-            "swap": {
-                "bg_color": "#c2b077",
-                "button_color": "#ffc107",
-                "text_color": "#ff6f00",
-                "title": "SWAP CONFIRMATION"
+        style = {
+            "bg_color": "#d18a95", "button_color": "#cf5c6f", "text_color": "#a30404", "title": "EXIT CONFIRMATION"
+            } if self.exit_mode else {
+            "bg_color": "#99da9f", "button_color": "#4caf50", "text_color": "#1b5e20", "title": "RETURN CONFIRMATION"
             }
-        }
-
-        style = mode_styles.get(self.mode, mode_styles["swap"])
 
         self.control_box.setTitle(style["title"])
         self.control_box.setStyleSheet(f"""
@@ -668,3 +650,271 @@ class Track_Correction_Dialog(Dual_Video_Dialog):
 
     def closeEvent(self, event):
         event.accept()
+
+
+class Swap_Correction_Dialog(Dual_Video_Dialog):
+    AMBIGUOUS_CLR = "#ffc107"
+    CORRECTED_CLR = "#4caf50"
+
+    def __init__(
+        self,
+        dlc_data: Loaded_DLC_Data,
+        extractor: Frame_Extractor,
+        pred_data_array: np.ndarray,
+        current_frame_idx: int,
+        ambiguous_frames: List[int],
+        event_start_idx: Optional[int] = None,
+        event_end_idx: Optional[int] = None,
+        parent=None
+    ):
+        super().__init__(parent)
+
+        self.dlc_data = dlc_data
+        self.extractor = extractor
+        self.pred_data_array = pred_data_array
+
+        total_frames = pred_data_array.shape[0]
+        frame_list_start = event_start_idx if event_start_idx is not None else current_frame_idx - 20
+        frame_list_end = event_end_idx if event_end_idx is not None else current_frame_idx + 21
+
+        actual_start = max(0, frame_list_start)
+        actual_end = min(frame_list_end, total_frames)
+
+        self.preview_change_array = pred_data_array[actual_start:actual_end].copy()
+        self.frame_list = sorted(range(actual_start, actual_end))
+        self.current_frame_idx = self.frame_list.index(current_frame_idx)
+
+        self.amb_frames_local = [frame - actual_start for frame in ambiguous_frames]
+        self.corr_frames = []
+
+        self.nonempty_local = set(
+            np.where(np.any(~np.isnan(self.preview_change_array), axis=(1, 2)))[0].tolist()
+        )
+
+        plot_config = Plot_Config(
+            plot_opacity=0.7, point_size=5.0, confidence_cutoff=0.0, hide_text_labels=False, edit_mode=False,
+            plot_labeled=True, plot_pred=True, navigate_labeled=False, auto_snapping=False, navigate_roi=False
+        )
+        self.plotter = Prediction_Plotter(dlc_data=self.dlc_data, plot_config=plot_config, fast_mode=False)
+
+        self.old_label.setText("Last Frame With Prediction")
+        self.new_label.setText("Current Frame")
+
+        self.control_box = self._setup_control()
+        self.layout_reviewer.addWidget(self.control_box)
+
+        self._apply_mode_styling()
+        self._build_shortcut()
+
+        self.progress_slider.set_total_frames(len(self.frame_list))
+        self.progress_slider.set_current_frame(self.current_frame_idx)
+        self.progress_slider.frame_changed.connect(self._handle_frame_change_from_comp)
+
+        self.user_decisions = []
+
+        self._display_current_frame()
+        self._navigation_title_controller()
+
+    def _setup_control(self):
+        ctrl_box = QGroupBox("Swap Correction")
+        ctrl_layout = QHBoxLayout()
+
+        self.single_swap = QPushButton("Swap Instance")
+        self.bulk_swap = QPushButton("Swap Track")
+        self.accept_btn = QPushButton("Finish")
+
+        self.single_swap.clicked.connect(self._on_instance_swap)
+        self.bulk_swap.clicked.connect(self._on_track_swap)
+        self.accept_btn.clicked.connect(self._submit_changes)
+
+        ctrl_layout.addWidget(self.single_swap)
+        ctrl_layout.addWidget(self.bulk_swap)
+        ctrl_layout.addWidget(self.accept_btn)
+        ctrl_box.setLayout(ctrl_layout)
+        return ctrl_box
+
+    def _build_shortcut(self):
+        self.shortcut_man = Shortcut_Manager(self)
+        self.shortcut_man.add_shortcuts_from_config({
+            "prev_frame":{"key": "Left", "callback": lambda: self._change_frame(-1)},
+            "next_frame":{"key": "Right", "callback": lambda: self._change_frame(1)},
+            "prev_fast":{"key": "Shift+Left", "callback": lambda: self._change_frame(-10)},
+            "next_fast":{"key": "Shift+Right", "callback": lambda: self._change_frame(10)},
+            "playback":{"key": "Space", "callback": self._toggle_playback},
+            "prev_mark":{"key": "Up", "callback": self._navigate_prev},
+            "next_mark":{"key": "Down", "callback": self._navigate_next},
+        })
+
+    def _display_current_frame(self):
+        global_idx = self.frame_list[self.current_frame_idx]
+        frame = self.extractor.get_frame(global_idx)
+
+        last_frame_local = self._back_search_nonempty_frames()
+        last_frame_global = self.frame_list[last_frame_local]
+
+        last_frame = self.extractor.get_frame(last_frame_global)
+        if frame is None:
+            canvas = self.video_canvases[1]
+            text_item = self._get_placeholder_text(canvas, global_idx)
+            canvas.clear_graphic_scene()
+            canvas.gscene.addPixmap(self.blank_pixmap)
+            canvas.gscene.addItem(text_item)
+        if last_frame is None:
+            canvas = self.video_canvases[0]
+            text_item = self._get_placeholder_text(canvas, last_frame_global)
+            canvas.clear_graphic_scene()
+            canvas.gscene.addPixmap(self.blank_pixmap)
+            canvas.gscene.addItem(text_item)
+
+        pred_data_now = self.preview_change_array[self.current_frame_idx]
+        pred_data_last = self.preview_change_array[last_frame_local] if self.current_frame_idx != self.frame_list[0] else None
+
+        all_pred = []
+        if pred_data_now is not None:
+            all_pred.append(pred_data_now)
+            canvas = self.video_canvases[1]
+            canvas.clear_graphic_scene()
+            canvas.gscene.addPixmap(frame_to_pixmap(frame))
+            self.plotter.plot_predictions(canvas.gscene, pred_data_now)
+        if pred_data_last is not None:
+            all_pred.append(pred_data_last)
+            canvas = self.video_canvases[0]
+            canvas.clear_graphic_scene()
+            canvas.gscene.addPixmap(frame_to_pixmap(last_frame))
+            self.plotter.plot_predictions(canvas.gscene, pred_data_last)
+
+        all_pred_array = np.concatenate(all_pred, axis=0) if all_pred else np.full(1, np.nan)
+
+        for canvas in self.video_canvases:
+            view_width, view_height = canvas.get_graphic_scene_dim()
+            if view_height != 0 and view_width != 0:
+                canvas.zoom_factor = max(720 / view_width, 540 / view_height)
+                canvas.centerOn(view_width / 2, view_height / 2)
+            elif frame is not None:
+                canvas.zoom_factor = 720 / max(frame.shape)
+            else:
+                canvas.zoom_factor = 1.0
+
+            if not np.all(np.isnan(all_pred_array)):
+                new_zoom, center_x, center_y = calculate_zoom_snap(all_pred_array, view_width, view_height, padding_perc=50)
+                canvas.centerOn(center_x, center_y)
+                canvas.zoom_factor *= new_zoom
+
+            new_transform = QTransform()
+            new_transform.scale(canvas.zoom_factor, canvas.zoom_factor)
+            canvas.setTransform(new_transform)
+
+            canvas.enforce_zoom_mode()
+        
+        self._refresh_slider()
+
+    def _back_search_nonempty_frames(self, lookback_window: int = 10) -> int:
+        start_local = self.current_frame_idx
+        for offset in range(1, min(lookback_window + 1, start_local + 1)):
+            candidate_local = start_local - offset
+            if candidate_local in self.nonempty_local:
+                return candidate_local
+        return max(0, start_local - 1)
+
+    def _refresh_slider(self):
+        self.progress_slider.set_current_frame(self.current_frame_idx)
+        self.progress_slider.set_frame_category("ambiguous", self.amb_frames_local, self.AMBIGUOUS_CLR, priority=0)
+        self.progress_slider.set_frame_category("corrected", self.corr_frames, self.CORRECTED_CLR, priority=10)
+        self.progress_slider.commit_categories()
+
+    def _on_instance_swap(self):
+        self._update_user_decisions("i")
+        self.preview_change_array = swap_track(self.preview_change_array, self.current_frame_idx)
+        self._display_current_frame()
+
+    def _on_track_swap(self):
+        self._update_user_decisions("t")
+        self.preview_change_array = swap_track(self.preview_change_array, self.current_frame_idx, swap_range=[-1])
+        self._display_current_frame()
+
+    def _update_user_decisions(self, decision:str):
+        if self.current_frame_idx not in self.corr_frames:
+            self.corr_frames.append(self.current_frame_idx)
+        global_idx = self.frame_list[self.current_frame_idx]
+        item = (global_idx, decision)
+        if item in self.user_decisions:
+            self.user_decisions.remove(item)
+        else:
+            self.user_decisions.append(item)
+
+    def _navigate_prev(self):
+        navigate_to_marked_frame(
+            self, self.amb_frames_local, self.current_frame_idx, self._handle_frame_change_from_comp, "prev")
+
+    def _navigate_next(self):
+        navigate_to_marked_frame(
+            self, self.amb_frames_local, self.current_frame_idx, self._handle_frame_change_from_comp, "next")
+
+    def _apply_mode_styling(self):
+        style = {"bg_color": "#c2b077", "button_color": "#ffc107", "text_color": "#ff6f00", "title": "SWAP CORRECTION"}
+        self.control_box.setTitle(style["title"])
+        self.control_box.setStyleSheet(f"""
+            QGroupBox {{
+                font-weight: bold;
+                color: {style["text_color"]};
+                border: 2px solid {style["button_color"]};
+                border-radius: 6px;
+                margin-top: 12px;
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+                color: {style["text_color"]};
+            }}
+        """)
+
+        button_style = f"""
+            QPushButton {{
+                background-color: {style["button_color"]};
+                color: white;
+                font-weight: bold;
+                padding: 8px 16px;
+                border: none;
+                border-radius: 4px;
+            }}
+            QPushButton:hover {{
+                background-color: {style["text_color"]};
+            }}
+        """
+        self.single_swap.setStyleSheet(button_style)
+        self.bulk_swap.setStyleSheet(button_style)
+        self.accept_btn.setStyleSheet(button_style)
+
+    def _handle_frame_change_from_comp(self, new_frame_idx: int):
+        self.current_frame_idx = new_frame_idx
+        self._display_current_frame()
+        self._navigation_title_controller()
+
+    def _change_frame(self, delta):
+        new_frame_idx = self.current_frame_idx + delta
+        if 0 <= new_frame_idx < len(self.frame_list):
+            self.current_frame_idx = new_frame_idx
+            self._display_current_frame()
+            self._navigation_title_controller()
+
+    def _navigation_title_controller(self):
+        global_idx = self.frame_list[self.current_frame_idx]
+        total = len(self.frame_list)
+        self.global_frame_label.setText(f"Global: {global_idx}")
+        self.selected_frame_label.setText(f"Selected: {self.current_frame_idx} / {total - 1}")
+        if self.current_frame_idx in self.corr_frames:
+            self.selected_frame_label.setStyleSheet(f"color: {self.CORRECTED_CLR}")
+        elif self.current_frame_idx in self.amb_frames_local:
+            self.selected_frame_label.setStyleSheet(f"color: {self.AMBIGUOUS_CLR}")
+        else:
+            self.selected_frame_label.setStyleSheet(f"color: black")
+
+    def _submit_changes(self):
+        self.accept()
+
+    def _toggle_playback(self):
+        self.progress_slider.toggle_playback()
+
+    def closeEvent(self, event):
+        handle_unsaved_changes_on_close(self, event, False, self._submit_changes)

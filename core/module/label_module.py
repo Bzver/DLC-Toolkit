@@ -8,7 +8,7 @@ from PySide6.QtGui import QTransform
 from typing import Optional
 
 from core.runtime import Data_Manager, Video_Manager
-from core.tool import Outlier_Finder, Prediction_Plotter, Uno_Stack, Track_Fixer
+from core.tool import Outlier_Finder, Prediction_Plotter, Uno_Stack, Track_Fixer, Track_Fixer_No_Exit
 from ui import (Menu_Widget, Video_Player_Widget, Pose_Rotation_Dialog, Status_Bar, Instance_Selection_Dialog,
                 Shortcut_Manager, Frame_Range_Dialog, Keypoint_Num_Dialog, Track_Fix_Config_Dialog, Canvas)
 from utils.pose import (
@@ -877,22 +877,31 @@ class Frame_Label:
             end_idx = max(frame_list) + 1
             logger.info(f"Correcting marked frame range: {start_idx}–{end_idx-1}")
 
-        self.tf = Track_Fixer(
-            pred_data_array=self.pred_data_array,
-            persistent_idx=0,
-            exit_zone=self.exit_zone,
-            dlc_data=self.dm.dlc_data,
-            extractor=self.vm.extractor,
-            parent=self.main,
-            avtomat=avtomat
-        )
-        
+        if self.exit_zone is None:
+            self.tf = Track_Fixer_No_Exit(
+                pred_data_array=self.pred_data_array,
+                dlc_data=self.dm.dlc_data,
+                extractor=self.vm.extractor,
+                avtomat=avtomat,
+                parent=self.main,
+            )
+        else:
+            self.tf = Track_Fixer(
+                pred_data_array=self.pred_data_array,
+                persistent_idx=0,
+                exit_zone=self.exit_zone,
+                dlc_data=self.dm.dlc_data,
+                extractor=self.vm.extractor,
+                avtomat=avtomat,
+                parent=self.main,
+            )
+
         pred_data_array = self.tf.track_correction(start_idx=start_idx, end_idx=end_idx)
 
         self.dm.dlc_data.pred_data_array = pred_data_array
         self.pred_data_array = self.dm.dlc_data.pred_data_array
         self.display_current_frame()
-        
+
         logger.info(f"Track correction completed (avtomat={avtomat}, range={start_idx}-{end_idx-1})")
 
     def _get_pred_data_from_manual_correction(self, pred_data_array, frame_tuple):

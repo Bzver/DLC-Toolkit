@@ -1,15 +1,14 @@
 import numpy as np
 from typing import Tuple, List, Literal
 
-from .reviewer import Track_Correction_Dialog
+from .reviewer import Swap_Correction_Dialog, Exit_Reentry_Dialog
 from core.io import Frame_Extractor
+from utils.track import Kalman
 from utils.pose import calculate_pose_centroids
 from utils.helper import get_instance_count_per_frame, get_instances_on_current_frame, get_prev_frame_in_list
 from utils.logger import logger
 from utils.dataclass import Loaded_DLC_Data
 
-
-DEBUG = False
 
 class Track_Fixer:
     KALMAN_MAX_ERROR = 80.0
@@ -29,8 +28,8 @@ class Track_Fixer:
         exit_zone: Tuple[int, int, int, int] | None,
         dlc_data: Loaded_DLC_Data,
         extractor: Frame_Extractor,
-        parent: object,
         avtomat: bool = False,
+        parent = None,
     ):
         if pred_data_array.shape[1] != 2:
             raise NotImplementedError("Track_Fixer supports exactly 2 instances.")
@@ -40,8 +39,8 @@ class Track_Fixer:
         self.exit_zone = exit_zone
         self.dlc_data = dlc_data
         self.extractor = extractor
+        self.avtomat = avtomat
         self.main = parent
-        self.avtomat = avtomat 
 
         self.total_frames = self.pred_data_array.shape[0]
         self.centroids, _ = calculate_pose_centroids(self.pred_data_array)
@@ -51,13 +50,10 @@ class Track_Fixer:
         self.last_known_pos = np.full((2, 2), np.nan)
         self.kalman_failure_count = [0, 0]
 
-        self.skip_exit_segment = self.exit_zone is None
-
         self.exit_windows = np.zeros((self.total_frames,), dtype=bool)
         self.exit_starts, self.exit_ends = [], []
 
-        self.ambiguous_frames = []
-        self.rejected_vanish_positions = [] 
+        self.rejected_vanish_positions = []
         self.last_exit_frame_shown = self.last_return_frame_shown = -self.USER_DIALOG_COOLDOWN
 
     def track_correction(self, start_idx: int = 0, end_idx: int = -1) -> np.ndarray:
@@ -65,24 +61,6 @@ class Track_Fixer:
             end_idx = self.total_frames
 
         logger.info(f"[TF] Starting track correction from frame {start_idx} to {end_idx}")
-
-        if self.skip_exit_segment:
-            logger.info(f"Skipping segmenting based on exit/return events.")
-            last_amb = start_idx
-            for f in range(start_idx, end_idx):
-                logger.debug(f"---------------- Frame {f} ----------------")
-                logger.debug(f"[TF] Pre-correct pos: Inst 0: ({self.centroids[f,0,0]:.1f}, {self.centroids[f,0,1]:.1f}), Inst 1: ({self.centroids[f,1,0]:.1f}, {self.centroids[f,1,1]:.1f})")
-                if self._correct_frame_with_hungarian(f):
-                    continue
-                decision, confirmed_frame = self._launch_dialog(
-                    frame_idx=f,
-                    mode="swap", 
-                    event_start_idx=last_amb,
-                    event_end_idx=f+10)
-                if decision:
-                    logger.info(f"[TF] User confirmed swap at frame {confirmed_frame}, applying swap for this frame only.")
-                    self._swap_ids_in_frame(frame_idx=confirmed_frame)
-                    last_amb = f
 
         x1, y1, x2, y2 = self.exit_zone
         logger.debug(f"Exit zone: ({x1},{y1})-({x2},{y2}), persistent_idx: {self.persistent_idx}")
@@ -99,7 +77,7 @@ class Track_Fixer:
 
         logger.debug(f"[TF] All exit window frames: \n {sorted(np.where(self.exit_windows)[0])}")
 
-        self.ambiguous_frames = []
+        ambiguous_frames = []
         for f in range(start_idx, end_idx):
             logger.debug(f"---------------- Frame {f} ----------------")
             self._enforce_exit_window_constraints(f)
@@ -108,8 +86,8 @@ class Track_Fixer:
             if not self.exit_windows[f]:
                 success = self._correct_frame_with_hungarian(f)
                 if not success:
-                    self.ambiguous_frames.append(f)
-                    logger.debug(f"[TF] Ambiguous match, added to backtrack list")
+                    ambiguous_frames.append(f)
+                    logger.debug(f"[TF] Ambiguous match, added to the list")
             elif not f in exit_starts_set:
                 curr_inst_list = get_instances_on_current_frame(self.pred_data_array, f)
                 if curr_inst_list:
@@ -119,32 +97,16 @@ class Track_Fixer:
                     logger.debug("[TF] In exit window, updated Kalman for present mouse")
             else:
                 logger.debug("[TF] Detected exit start, validating exited mouse")
-                self._validate_exit_and_backtrack_if_needed(f)
-                self.ambiguous_frames.clear()
+
+                if self._validate_at_exit(f):
+                    logger.warning(f"Frame {f}: Persistent mouse (ID {self.persistent_idx}) appears to have exited! Triggering reviewing.")
+                    self._review_ambiguous_frames(ambiguous_frames, f)
+                ambiguous_frames.clear()
 
         logger.debug("Track correction completed.")
         return self.pred_data_array
 
     def _detect_exit_windows(self, start_idx: int, end_idx: int):
-        if DEBUG:
-            exit_list = input("Paste in an existing exit window list, type 0 if don't skip:")
-            exit_list = exit_list.replace('[', '').replace(']', '').replace('\n', ',')
-
-            parts = []
-            for segment in exit_list.split(','):
-                subparts = segment.split()
-                parts.extend(subparts)
-
-            frame_nums = []
-            for s in parts:
-                s = s.strip()
-                if s:
-                    frame_nums.append(int(s))
-
-            if len(frame_nums) != 1 or frame_nums[0] != 0:
-                self.exit_windows[frame_nums] = True
-                return
-
         logger.debug("[TF] Starting exit window detection")
         adjusted_count = self.inst_count_per_frame.copy()
         adjusted_count[adjusted_count == 0] = 1
@@ -203,7 +165,7 @@ class Track_Fixer:
 
                 logger.debug(f"[TFEX] Exit at frame {exit_frame} failed validation, requesting user review")
 
-                decision, confirmed_frame = self._launch_dialog(
+                decision, confirmed_frame = self._launch_dialog_exit_return(
                     frame_idx=exit_frame,
                     mode="exit",
                     event_start_idx=last_return_idx if last_return_idx else exit_frame-20,
@@ -266,7 +228,7 @@ class Track_Fixer:
 
                 if not valid_return or risky_window:
                     logger.debug(f"[TFEX] Return candidate at frame {return_frame} failed validation, requesting user review")
-                    decision, confirmed_frame = self._launch_dialog(return_frame, "return", curr_start)
+                    decision, confirmed_frame = self._launch_dialog_exit_return(return_frame, "return", curr_start)
                     if confirmed_frame - 1 < curr_start:
                         logger.debug(f"[TFEX] User denied the existence of an exit to begin with, aborting return search for this window.")
                         break
@@ -670,64 +632,35 @@ class Track_Fixer:
                     kf.update(z)
                     self.kalman_failure_count[global_idx] = 0
 
-    def _validate_exit_and_backtrack_if_needed(self, exit_start: int):
+    def _validate_at_exit(self, exit_start: int) -> bool:
         if exit_start == 0:
-            return
+            return False
 
         curr_valid = ~np.isnan(self.centroids[exit_start, :, 0])
 
         if not np.sum(curr_valid) == 1:
-            return
+            return False
 
         vanished_idx = int(np.where(~curr_valid)[0][0])
-        if vanished_idx == self.persistent_idx:
-            logger.warning(f"Frame {exit_start}: Persistent mouse (ID {self.persistent_idx}) appears to have exited! Triggering backtracking.")
-            self._backtrack_ambiguous_frames(exit_start)
+        return vanished_idx == self.persistent_idx
 
-    def _backtrack_ambiguous_frames(self, exit_start: int):
-        candidates = sorted(set([f for f in self.ambiguous_frames if f < exit_start]))
+    def _review_ambiguous_frames(self, ambiguous_frames: List[int], exit_start: int):
+        candidates = sorted(set([f for f in ambiguous_frames if f < exit_start]))
 
-        if not candidates:
-            logger.debug("Backtrack candidate list is empty, showing full segment.")
-            seg_start = get_prev_frame_in_list(self.exit_ends, exit_start-2)
-            event_start_idx = seg_start - 10 if seg_start is not None else exit_start - 20
-            decision, confirmed_frame = self._launch_dialog(
-                frame_idx=seg_start if seg_start is not None else event_start_idx + 10,
-                mode="swap",
-                event_start_idx=event_start_idx,
-                event_end_idx=exit_start+11
-                )
+        seg_start = get_prev_frame_in_list(self.exit_ends, exit_start-2)
+        event_start_idx = seg_start - 10 if seg_start is not None else exit_start - 20
+        swap_orders = self._launch_dialog_swap(
+            ambiguous_list=candidates,
+            event_start_idx=event_start_idx,
+            event_end_idx=exit_start+11
+            )
 
-            if decision:
-                logger.info(f"[BK] User confirmed swap at frame {confirmed_frame}, applying bulk swap")
-                self._bulk_swap_from_frame(confirmed_frame)
-                new_vanished = self._get_vanished_idx_at(exit_start)
-                if new_vanished != self.persistent_idx:
-                    logger.info(f"[BK] Backtracking successful: exited mouse is now ID {new_vanished} (not persistent)")
-                    return
-        else:
-            logger.debug(f"[BK] Backtracking from exit start {exit_start} with candidate frames: {candidates}")
-
-            for frame_idx in candidates:
-                logger.debug(f"[BK] Reviewing ambiguous frame {frame_idx} for potential swap")
-                seg_start = get_prev_frame_in_list(self.exit_ends, frame_idx)
-                event_start_idx = seg_start - 10 if seg_start is not None else frame_idx - 20
-                decision, confirmed_frame = self._launch_dialog(
-                    frame_idx=frame_idx,
-                    mode="swap", 
-                    event_start_idx=event_start_idx,
-                    event_end_idx=exit_start+11)
-                if decision:
-                    logger.info(f"[BK] User confirmed swap at frame {confirmed_frame}, applying bulk swap")
-                    self._bulk_swap_from_frame(confirmed_frame)
-                    new_vanished = self._get_vanished_idx_at(exit_start)
-                    if new_vanished != self.persistent_idx:
-                        logger.info(f"[BK] Backtracking successful: exited mouse is now ID {new_vanished} (not persistent)")
-                        return
-                    else:
-                        logger.warning(f"[BK] Backtracking at frame {confirmed_frame} did not resolve issue, trying earlier frame")
-
-        logger.error(f"[BK] Backtracking failed for exit at {exit_start}: persistent mouse still appears to exit")
+        if swap_orders:
+            for frame_idx, order in swap_orders:
+                if order == "i":
+                    self._swap_ids_in_frame(frame_idx)
+                else:
+                    self._bulk_swap_from_frame(frame_idx)
 
     def _get_vanished_idx_at(self, exit_start: int) -> int:
         curr_valid = ~np.isnan(self.centroids[exit_start, :, 0])
@@ -736,7 +669,6 @@ class Track_Fixer:
         return -1
     
     def _bulk_swap_from_frame(self, start_frame: int):
-        """Flip IDs for all frames from start_frame to end."""
         logger.debug(f"[BK] Bulk swapping IDs from frame {start_frame} to end")
         self.pred_data_array[start_frame:] = self.pred_data_array[start_frame:, ::-1]
         self.centroids[start_frame:] = self.centroids[start_frame:, ::-1]
@@ -744,84 +676,98 @@ class Track_Fixer:
         self.kalman_filters.reverse()
         self.kalman_failure_count.reverse()
 
-    def _launch_dialog(
+    def _launch_dialog_exit_return(
             self,
             frame_idx: int,
-            mode: Literal["swap", "exit", "return"],
+            mode:Literal["exit", "return"],
             event_start_idx=None,
             event_end_idx=None
             ) -> Tuple[bool, int]:
-
         if self.avtomat:
-            if mode in ("exit", "return"):
-                logger.debug(f"[AUTO] Auto-rejecting {mode} at frame {frame_idx}")
-                return False, frame_idx
-            elif mode == "swap":
-                logger.debug(f"[AUTO] Auto-swapping at frame {frame_idx}")
-                return True, frame_idx
+            return False, frame_idx
 
-        if mode != "swap":
-            last_frame_shown = self.last_exit_frame_shown if mode == "exit" else self.last_return_frame_shown
-            frames_since_last = frame_idx - last_frame_shown
-            if frames_since_last < self.USER_DIALOG_COOLDOWN:
-                logger.info(
-                    f"[DIALOG] Cooldown active for {mode} at frame {frame_idx} (last: {last_frame_shown}, cooldown: {self.USER_DIALOG_COOLDOWN}."
-                )
-                return False, frame_idx
+        last_frame_shown = self.last_exit_frame_shown if mode == "exit" else self.last_return_frame_shown
+        frames_since_last = frame_idx - last_frame_shown
+        if frames_since_last < self.USER_DIALOG_COOLDOWN:
+            logger.info(
+                f"[DIALOG] Cooldown active for {mode} at frame {frame_idx} (last: {last_frame_shown}, cooldown: {self.USER_DIALOG_COOLDOWN}."
+            )
+            return False, frame_idx
     
-        dialog = Track_Correction_Dialog(
+        dialog = Exit_Reentry_Dialog(
             dlc_data=self.dlc_data,
             extractor=self.extractor,
             pred_data_array=self.pred_data_array,
             current_frame_idx=frame_idx,
-            mode=mode,
+            exit_mode=mode=="exit",
             event_start_idx=event_start_idx,
             event_end_idx=event_end_idx,
             parent=self.main
         )
         dialog.exec()
 
-        if dialog.user_decision is None:
-            raise RuntimeError(f"Track correction cancelled by user ({mode}) at frame {frame_idx}")
-
         decision, confirmed_frame = dialog.user_decision
 
         match mode:
             case "exit": self.last_exit_frame_shown = frame_idx
             case "return": self.last_return_frame_shown = frame_idx
-        
-        logger.debug(f"Dialog result for {mode} at frame {frame_idx}: decision={decision}, confirmed_frame={confirmed_frame}")
+
         return decision, confirmed_frame
 
+    def _launch_dialog_swap(
+            self,
+            ambiguous_list:List[int],
+            event_start_idx=None,
+            event_end_idx=None
+            ) -> List[Tuple[bool, int]]:
+        if self.avtomat and ambiguous_list:
+            return [(ambiguous_list[0], "t")]
 
-class Kalman:
-    def __init__(self, initial_state, dt: float = 1.0):
-        self.dt = dt
-        self.F = np.array([[1, 0, dt, 0],
-                           [0, 1, 0, dt],
-                           [0, 0, 1, 0],
-                           [0, 0, 0, 1]], dtype=float)
-        self.H = np.array([[1, 0, 0, 0],
-                           [0, 1, 0, 0]], dtype=float)
-        q = 0.8
-        dt2 = dt ** 2
-        self.Q = np.array([[dt2*dt2/4, 0, dt2*dt/2, 0],
-                           [0, dt2*dt2/4, 0, dt2*dt/2],
-                           [dt2*dt/2, 0, dt2, 0],
-                           [0, dt2*dt/2, 0, dt2]], dtype=float) * q
-        self.R = np.eye(2) * 0.7
-        self.x = np.array(initial_state).reshape(4, 1)
-        self.P = np.eye(4) * 50
+        dialog = Swap_Correction_Dialog(
+            dlc_data=self.dlc_data,
+            extractor=self.extractor,
+            pred_data_array=self.pred_data_array,
+            current_frame_idx=ambiguous_list[0] if ambiguous_list else event_start_idx + 10,
+            ambiguous_frames=ambiguous_list,
+            event_start_idx=event_start_idx,
+            event_end_idx=event_end_idx,
+            parent=self.main
+        )
+        dialog.exec()
 
-    def predict(self):
-        self.x = self.F @ self.x
-        self.P = self.F @ self.P @ self.F.T + self.Q
-        return self.x.flatten()
+        return dialog.user_decisions
 
-    def update(self, z):
-        z = np.array(z).reshape(2, 1)
-        y = z - self.H @ self.x
-        S = self.H @ self.P @ self.H.T + self.R
-        K = self.P @ self.H.T @ np.linalg.inv(S)
-        self.x = self.x + K @ y
-        self.P = (np.eye(4) - K @ self.H) @ self.P
+
+class Track_Fixer_No_Exit(Track_Fixer):
+    def __init__(self, pred_data_array, dlc_data, extractor, avtomat = False, parent=None):
+        super().__init__(pred_data_array, 0, None, dlc_data, extractor, avtomat, parent)
+
+    def track_correction(self, start_idx = 0, end_idx = -1):
+        ambiguous_frames = []
+        for f in range(start_idx, end_idx):
+            logger.debug(f"---------------- Frame {f} ----------------")
+
+            logger.debug(f"[TF] Pre-correct pos: Inst 0: ({self.centroids[f,0,0]:.1f}, {self.centroids[f,0,1]:.1f}), Inst 1: ({self.centroids[f,1,0]:.1f}, {self.centroids[f,1,1]:.1f})")
+
+            success = self._correct_frame_with_hungarian(f)
+            if not success:
+                ambiguous_frames.append(f)
+                logger.debug(f"[TF] Ambiguous match, added to backtrack list")
+
+        self._review_ambiguous_frames(ambiguous_frames)
+
+        return self.pred_data_array
+    
+    def _review_ambiguous_frames(self, ambiguous_frames: List[int]):
+        swap_orders = self._launch_dialog_swap(
+            ambiguous_list=ambiguous_frames,
+            event_start_idx=0,
+            event_end_idx=self.total_frames - 1
+            )
+
+        if swap_orders:
+            for frame_idx, order in swap_orders:
+                if order == "i":
+                    self._swap_ids_in_frame(frame_idx)
+                else:
+                    self._bulk_swap_from_frame(frame_idx)
