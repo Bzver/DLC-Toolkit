@@ -14,7 +14,7 @@ from core.io import (
 from ui import Head_Tail_Dialog
 from utils.helper import (
     infer_head_tail_indices, build_angle_map, crop_coord_to_array, frame_to_grayscale, get_smart_bg_masking)
-from utils.pose import calculate_canonical_pose, calculate_pose_bbox
+from utils.pose import calculate_canonical_pose
 from utils.logger import logger, Loggerbox
 from utils.dataclass import Plot_Config, Blob_Config, Loaded_DLC_Data
 
@@ -339,16 +339,6 @@ class Data_Manager:
 
         self.canon_pose, _ = calculate_canonical_pose(self.dlc_data.pred_data_array, head_idx, tail_idx)
         self.angle_map_data = build_angle_map(self.canon_pose, head_idx, tail_idx)
-
-    def get_crop_coords_from_pred(self, frame_list:List[int], max_x:int, max_y:int) -> np.ndarray:
-        coords_x = self.dlc_data.pred_data_array[frame_list, :, 0::3]
-        coords_y = self.dlc_data.pred_data_array[frame_list, :, 1::3]
-        x1_array, y1_array, x2_array, y2_array = calculate_pose_bbox(coords_x, coords_y, 30)
-        crop_coords = np.column_stack(
-            (np.nanmin(x1_array, axis=1), np.nanmin(y1_array, axis=1), np.nanmax(x2_array, axis=1), np.nanmax(y2_array, axis=1))
-            )
-        crop_coords = np.clip(crop_coords, 0, [max_x, max_y, max_x, max_y]).astype(int)
-        return crop_coords
 
     def get_mask_from_blob_config(self, frame_batch:np.ndarray):
         if not self.blob_config:

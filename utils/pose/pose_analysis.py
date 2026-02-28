@@ -5,10 +5,12 @@ from .pose_worker import pose_alignment_worker
 from utils.helper import bye_bye_runtime_warning
 
 
+ArrayOrFloat = Union[np.ndarray, float]
+
 def calculate_pose_centroids(
         pred_data_array:np.ndarray,
         frame_idx:int=-1,
-        )-> Tuple[np.ndarray, np.ndarray]:
+)-> Tuple[np.ndarray, np.ndarray]:
     """
     Calculate the centroid (mean x, mean y) of pose keypoints for each instance and frame,
     and compute the relative position of each keypoint with respect to the centroid.
@@ -76,6 +78,26 @@ def calculate_anatomical_centers(
     centers[valid, 1] = center_y[valid]
 
     return centers
+
+def calculate_pose_array_rotations(
+    pred_data_array: np.ndarray,
+    angle_map_data: Dict[str, int],
+) -> np.ndarray:
+
+    """
+    Calculate rotation angle (in radians) representing the orientation of a pose array.
+
+    Args:
+    - pred_data_array: (F, I, K*3)
+        angle_map_data: dict with 'head_idx', 'tail_idx', 'center_idx'
+
+    Returns:
+    - angle_array: (F, I,)
+    """
+    _, local_coords = calculate_pose_centroids(pred_data_array)
+    local_x = local_coords[..., 0::2]
+    local_y = local_coords[..., 1::2]
+    return calculate_pose_rotations(local_x, local_y, angle_map_data)
 
 def calculate_pose_rotations(
     local_x: np.ndarray,
@@ -199,12 +221,32 @@ def calculate_pose_rotations(
     else:
         return angles
 
+def calculate_pose_array_bbox(
+        pred_data_array:np.ndarray,
+        padding:float=10.0,
+) -> np.ndarray:
+    """
+    Calculate bounding box (with padding) around pose coordinates, using full pose array.
+
+    Args:
+    - pred_data_array: (F, I, K*3)
+    - padding: Padding to add around the bounding box (default: 10.0).
+
+    Returns:
+    - bbox_array (F, I, 4)
+    """
+    coords_x = pred_data_array[:, :, 0::3]
+    coords_y = pred_data_array[:, :, 1::3]
+    x1_array, y1_array, x2_array, y2_array = calculate_pose_bbox(coords_x, coords_y, padding)
+    bbox_array = np.stack([x1_array, y1_array, x2_array, y2_array], axis=2)
+
+    return bbox_array
+
 def calculate_pose_bbox(
         coords_x:np.ndarray,
         coords_y:np.ndarray,
         padding:float=10.0
-        ) -> Union[Tuple[float, float, float, float],\
-                   Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
+) -> Tuple[ArrayOrFloat, ArrayOrFloat, ArrayOrFloat, ArrayOrFloat]:
     """
     Calculate bounding box (with padding) around pose coordinates.
 
@@ -229,7 +271,7 @@ def calculate_canonical_pose(
         pred_data_array:np.ndarray,
         head_idx:int,
         tail_idx:int
-        ) -> Tuple[np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray]:
     """
     Compute a canonical (aligned and averaged) pose by aligning individual animal poses to a common orientation
     based on the head-to-tail body axis.
@@ -267,7 +309,7 @@ def calculate_canonical_pose(
 def calculate_aligned_local(
         pred_data_array: np.ndarray,
         angle_map_data: Dict[str, int]
-        ) -> np.ndarray:
+) -> np.ndarray:
     """
     Compute centroid-centered and rotation-normalized (canonical) pose coordinates 
     for all frames and instances in a single vectorized pass.
