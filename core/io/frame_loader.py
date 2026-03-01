@@ -63,7 +63,10 @@ class Frame_Extractor:
         else:
             logger.warning(f"[FLOADER] OpenCV failed to read frame {frame_index}.")
             return None
-        
+
+    def get_video_filepath(self):
+        return self.video_path
+
     def sample_frames(self, frame_count:int=100):
         logger.info(f"[FLOADER] Randomly sampling {frame_count} frames from video.")
         if self.total_frames < frame_count:

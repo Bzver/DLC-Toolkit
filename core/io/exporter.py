@@ -10,13 +10,13 @@ from .io_helper import append_new_video_to_dlc_config, generate_crop_coord_notat
 from .frame_loader import Frame_Extractor, Frame_Extractor_Img
 from utils.helper import crop_coord_to_array, validate_crop_coord, frame_to_grayscale
 from utils.logger import logger
-from utils.dataclass import Loaded_DLC_Data
+from utils.dataclass import Loaded_DLC_Data, Blob_Config
 
+
+Frame_CV2 = np.ndarray
 
 class Exporter:
     """A class to handle saving or merging predictions back to DLC"""
-    Frame_CV2 = np.ndarray
-
     def __init__(
             self,
             dlc_data: Loaded_DLC_Data,
@@ -346,3 +346,239 @@ class Exporter:
             logger.error(f"[EXPORTER] Frame count mismatch! Extracted frames: {len(extracted_set)} | Expected: {len(frame_set)}"
                          f"\nThe following frames are not extracted: {missing}")
             return sorted(extracted_indices)
+        
+
+class Cutout_Exporter:
+    def __init__(
+            self,
+            save_folder:str,
+            video_filepath: str,
+            frame_list: List[int],
+            centroids:np.ndarray,
+            cutout_dim:int,
+            angle_array:Optional[np.ndarray]=None,
+            blob_config:Optional[Blob_Config]=None,
+            grayscaling:bool=False,
+            progress_callback:Optional[QProgressDialog]=None,
+            ):
+        logger.info(f"[CUTEXP] Initializing Exporter for save path: {save_folder}")
+        self.save_folder = save_folder
+        self.video_filepath = video_filepath
+
+        self.frame_list = frame_list
+        self.centroids = centroids
+        self.angle_array = angle_array
+        self.bc = blob_config
+        self.progress_callback = progress_callback
+
+        self.cutout_dim = cutout_dim + 1 if cutout_dim % 2 else cutout_dim
+
+        self.video_name, _ = os.path.splitext(os.path.basename(self.video_filepath))
+        self.grayscaling = grayscaling
+
+        if os.path.isfile(self.video_filepath):
+            self.extractor = Frame_Extractor(self.video_filepath)
+        elif os.path.isdir(self.video_filepath):
+            self.extractor = Frame_Extractor_Img(self.video_filepath)
+        else:
+            raise RuntimeError(f"Invalid video filepath: {self.video_filepath}")
+
+        os.makedirs(self.save_folder, exist_ok=True)
+
+    def extract_frame(self) -> Optional[List[int]]:
+        total_video_frames = self.extractor.get_total_frames()
+        logger.info(f"[CUTEXP] Total frames in video: {total_video_frames}")
+
+        if not self.frame_list:
+            logger.warning("[EXPORTER] Frame list is empty. No cutouts to extract.")
+            return []
+
+        if len(self.frame_list) < total_video_frames // 100: # sparse extraction
+            logger.info(f"[CUTEXP] Performing sparse cutout extraction for {len(self.frame_list)} frames.")
+            corrected_indices = self._sparse_frame_extraction()
+        else:
+            logger.info(f"[CUTEXP] Performing continuous cutout extraction for {len(self.frame_list)} frames.")
+            corrected_indices = self._continuous_frame_extraction()
+
+        if self.progress_callback:
+            self.progress_callback.close()
+
+        return corrected_indices
+
+    def _sparse_frame_extraction(self) -> Optional[List[int]]:
+        if self.progress_callback:
+            self.progress_callback.setMaximum(len(self.frame_list))
+
+        extracted_indices = []
+
+        for i, frame_idx in enumerate(self.frame_list):
+            if self.progress_callback:
+                self.progress_callback.setValue(i)
+                if self.progress_callback.wasCanceled():
+                    logger.warning("[CUTEXP] Sparse frame extraction canceled by user.")
+                    self.progress_callback.close()
+                    raise RuntimeWarning("Frame extraction canceled by user.")
+
+            logger.debug(f"[CUTEXP] Attempting to extract sparse frame {frame_idx}.")
+            frame = self.extractor.get_frame(frame_idx)
+            if frame is None:
+                logger.warning(f"[CUTEXP] Frame {frame_idx} not found during sparse extraction. Skipping.")
+                continue
+
+            self._frame_export_worker(frame, frame_idx)
+            extracted_indices.append(frame_idx)
+
+        extracted_set = set(extracted_indices)
+        frame_set = set(self.frame_list)
+        missing = sorted(frame_set - extracted_set)
+
+        if missing:
+            logger.error(f"[CUTEXP] Frame count mismatch! Extracted frames: {len(extracted_set)} | Expected: {len(frame_set)}"
+                         f"\nThe following frames are not extracted: {missing}")
+            return list(extracted_indices)
+    
+    def _continuous_frame_extraction(self) -> Optional[List[int]]:
+        min_frame_in_list = min(self.frame_list) if self.frame_list else 0
+        max_frame_in_list = max(self.frame_list) if self.frame_list else -1
+        if self.progress_callback:
+            self.progress_callback.setMinimum(min_frame_in_list)
+            self.progress_callback.setMaximum(max_frame_in_list)
+
+        empty_count = 0
+        current_frame_idx = 0
+        frame_set = set(self.frame_list)
+        extracted_indices = []
+
+        current_frame_idx += min_frame_in_list
+        self.extractor.start_sequential_read(start=min_frame_in_list, end=max_frame_in_list+1)
+        logger.info("[CUTEXP] Started sequential frame read for continuous extraction.")
+
+        while current_frame_idx <= max_frame_in_list:
+            result = self.extractor.read_next_frame()
+            if result is None:
+                logger.warning(f"[CUTEXP] End of video stream reached at frame {current_frame_idx} during continuous extraction.")
+                break
+
+            idx, frame = result
+            if idx != current_frame_idx:
+                self.extractor.finish_sequential_read()
+                logger.critical(f"[CUTEXP] Mismatch between frame indices: Expected {current_frame_idx}, Got {idx}. Aborting continuous extraction.")
+                raise RuntimeError(f"Mismatch between frame indices: {idx} != {current_frame_idx}")
+            
+            if frame is None:
+                frame = np.zeros((*self.extractor.get_frame_dim(), 3), dtype=np.uint8)
+                empty_count += 1
+                logger.warning(f"[CUTEXP] Frame {current_frame_idx} is empty during continuous extraction. Substituted with placeholder.")
+
+            if current_frame_idx in frame_set:
+                self._frame_export_worker(frame, current_frame_idx)
+                extracted_indices.append(current_frame_idx)
+
+            if self.progress_callback:
+                self.progress_callback.setValue(current_frame_idx)
+                if self.progress_callback.wasCanceled():
+                    logger.warning("[CUTEXP] Continuous frame extraction canceled by user.")
+                    self.extractor.finish_sequential_read()
+                    self.progress_callback.close()
+                    raise RuntimeError("Frame extraction canceled by user.")
+
+            current_frame_idx += 1
+
+        self.extractor.finish_sequential_read()
+        logger.info("[CUTEXP] Finished sequential frame read after continuous extraction.")
+
+        extracted_set = set(extracted_indices)
+
+        if empty_count:
+            logger.warning(f"[CUTEXP] {empty_count} frames are empty and substituded with placeholders.")
+
+        missing = sorted(frame_set - extracted_set)
+
+        if missing:
+            logger.error(f"[CUTEXP] Frame count mismatch! Extracted frames: {len(extracted_set)} | Expected: {len(frame_set)}"
+                         f"\nThe following frames are not extracted: {missing}")
+            return sorted(extracted_indices)
+        
+    def _frame_export_worker(self, frame:Frame_CV2, frame_idx:int):
+        if self.grayscaling:
+            frame = frame_to_grayscale(frame, keep_as_bgr=True)
+
+        if self.bc is not None:
+            frame = self._cv2_contour_masking(frame)
+
+        for inst_idx in range(self.centroids.shape[1]):
+            frame_inst = frame.copy()
+
+            x, y = self.centroids[frame_idx, inst_idx]
+            x = int(x)
+            y = int(y)
+
+            if self.angle_array is not None:
+                angle = self.angle_array[frame_idx, inst_idx]
+                frame_inst = self._rotate(frame_inst, angle, (x, y))
+                h_rot, w_rot = frame_inst.shape[:2]
+                x = w_rot // 2
+                y = h_rot // 2
+
+            x1 = x - self.cutout_dim // 2
+            x2 = x + self.cutout_dim // 2
+            y1 = y - self.cutout_dim // 2
+            y2 = y + self.cutout_dim // 2
+
+            frame_inst = frame_inst[y1:y2, x1:x2]
+
+            image_output_path = os.path.join(self.save_folder, f"{frame_idx}_{inst_idx}.png")
+            cv2.imwrite(image_output_path, frame_inst)
+            logger.debug(f"[CUTEXP] Wrote {inst_idx} on frame {frame_idx} to {image_output_path}.")
+
+    def _cv2_contour_masking(self, frame:Frame_CV2):
+        frame_to_process = frame
+        gray_frame = cv2.cvtColor(frame_to_process, cv2.COLOR_BGR2GRAY)
+        processed_frame = gray_frame
+
+        if self.bc.bg_removal_method != "None":
+            bg = self.bc.background_frames[self.bc.bg_removal_method]
+            bg_gray = cv2.cvtColor(bg, cv2.COLOR_BGR2GRAY) if len(bg.shape) == 3 else bg
+            bg_gray = bg_gray.astype(gray_frame.dtype)
+            diff = gray_frame.astype(np.int16) - bg_gray.astype(np.int16)
+
+            if self.bc.blob_type == "Dark Blobs":
+                thresh = (diff < -self.bc.threshold).astype(np.uint8) * 255
+            else:  # Light Blobs
+                thresh = (diff > self.bc.threshold).astype(np.uint8) * 255
+        else:
+            if self.bc.blob_type == "Dark Blobs":
+                _, thresh = cv2.threshold(processed_frame, self.bc.threshold, 255, cv2.THRESH_BINARY_INV)
+            else:  # Light Blobs (Max)
+                _, thresh = cv2.threshold(processed_frame, self.bc.threshold, 255, cv2.THRESH_BINARY)
+
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        filtered_contours = []
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area > self.bc.min_blob_area:
+                filtered_contours.append(cnt)
+
+        mask = np.zeros(frame.shape[:2], dtype=np.uint8)
+        cv2.drawContours(mask, filtered_contours, -1, 255, cv2.FILLED)
+        return cv2.bitwise_and(frame, frame, mask=mask)
+
+    @staticmethod
+    def _rotate(frame:Frame_CV2, angle, center=None, scale=1.0):
+        (h, w) = frame.shape[:2]
+        if not center:
+            center = (w / 2, h / 2)
+
+        rotation_matrix = cv2.getRotationMatrix2D(center, angle, scale)
+
+        cos = np.abs(rotation_matrix[0, 0])
+        sin = np.abs(rotation_matrix[0, 1])
+        new_w = int((h * sin) + (w * cos))
+        new_h = int((h * cos) + (w * sin))
+
+        rotation_matrix[0, 2] += (new_w / 2) - center[0]
+        rotation_matrix[1, 2] += (new_h / 2) - center[1]
+
+        rotated = cv2.warpAffine(frame, rotation_matrix, (new_w, new_h))
+
+        return rotated
