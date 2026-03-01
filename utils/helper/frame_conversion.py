@@ -1,10 +1,15 @@
 import numpy as np
 import cv2
+from io import BytesIO
+from PIL import Image
 from PySide6 import QtGui
+from PySide6.QtGui import QImage
 from typing import Union, Tuple, Literal
 
+from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+from PySide6.QtGui import QPixmap
 
-def frame_to_qimage(frame:np.ndarray, request_dim=False) -> Union[QtGui.QImage, Tuple[QtGui.QImage, int, int]]:
+def frame_to_qimage(frame:np.ndarray, request_dim=False) -> Union[QImage, Tuple[QImage, int, int]]:
     if frame is None or frame.size == 0:
         raise ValueError("Input frame is empty")
 
@@ -13,15 +18,15 @@ def frame_to_qimage(frame:np.ndarray, request_dim=False) -> Union[QtGui.QImage, 
     if frame.ndim == 3 and frame.shape[2] == 4: # BGRA → RGBA
         rgba = cv2.cvtColor(frame, cv2.COLOR_BGRA2RGBA)
         bytes_per_line = 4 * w
-        qt_image = QtGui.QImage(rgba.data, w, h, bytes_per_line, QtGui.QImage.Format_RGBA8888)
+        qt_image = QImage(rgba.data, w, h, bytes_per_line, QImage.Format_RGBA8888)
     elif frame.ndim == 3 and frame.shape[2] == 3: # BGR → RGB
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         bytes_per_line = 3 * w
-        qt_image = QtGui.QImage(rgb.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
+        qt_image = QImage(rgb.data, w, h, bytes_per_line, QImage.Format_RGB888)
     elif frame.ndim == 2: # Grayscale
         gray = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
         bytes_per_line = 3 * w
-        qt_image = QtGui.QImage(gray.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
+        qt_image = QImage(gray.data, w, h, bytes_per_line, QImage.Format_RGB888)
     else:
         raise ValueError(f"Unsupported frame shape: {frame.shape}")
 
@@ -32,9 +37,9 @@ def frame_to_qimage(frame:np.ndarray, request_dim=False) -> Union[QtGui.QImage, 
     else:
         return qt_image
 
-def frame_to_pixmap(frame, request_dim=False) -> QtGui.QPixmap | Tuple[QtGui.QPixmap, int, int]:
+def frame_to_pixmap(frame, request_dim=False) -> QPixmap | Tuple[QPixmap, int, int]:
     qt_image, w, h = frame_to_qimage(frame, request_dim=True)
-    pixmap = QtGui.QPixmap.fromImage(qt_image)
+    pixmap = QPixmap.fromImage(qt_image)
     if request_dim:
         return pixmap, w, h
     else:
@@ -100,3 +105,20 @@ def frame_to_grayscale(frame:np.ndarray, keep_as_bgr:bool=False):
         return cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
     else:
         return gray
+
+def fig_to_pixmap(fig, dpi=150):
+    canvas = FigureCanvas(fig)
+    canvas.draw()
+
+    buf = BytesIO()
+    fig.savefig(buf, format='png', dpi=dpi, bbox_inches='tight', facecolor=fig.get_facecolor())
+    buf.seek(0)
+
+    img = Image.open(buf).convert('RGB')
+    img_data = np.array(img)
+
+    height, width, _ = img_data.shape
+    bytes_per_line = 3 * width
+    qimg = QImage(img_data.tobytes(), width, height, bytes_per_line, QImage.Format_RGB888)
+
+    return QPixmap.fromImage(qimg)

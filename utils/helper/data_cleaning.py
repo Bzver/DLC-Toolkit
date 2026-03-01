@@ -113,7 +113,7 @@ def indices_to_spans(indices: Union[np.ndarray, List[int]]) -> List[Tuple[int, i
     chunks = np.split(indices, split_at)
     return [(int(chunk[0]), int(chunk[-1])) for chunk in chunks]
 
-def array_to_iterable_runs(arr:np.ndarray) -> Iterable[Tuple[int, int, np.ndarray]]:
+def array_to_iterable_runs(arr:np.ndarray) -> Iterable[Tuple[int, int, int]]:
     if len(arr) == 0:
         return zip([], [], [])
     change_points = np.where(arr[1:] != arr[:-1])[0] + 1 

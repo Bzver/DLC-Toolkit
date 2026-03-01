@@ -12,6 +12,7 @@ from .frame_conversion import (
     frame_to_qimage, 
     frame_to_pixmap,
     mask_to_qimage,
+    fig_to_pixmap,
 )
 from .instance_count import get_instances_on_current_frame, get_instance_count_per_frame
 from .mark_nav import navigate_to_marked_frame, get_prev_frame_in_list, get_next_frame_in_list
@@ -41,6 +42,7 @@ __all__ = (
     frame_to_qimage, 
     frame_to_pixmap,
     mask_to_qimage,
+    fig_to_pixmap,
     get_roi_cv2,
     plot_roi,
 )

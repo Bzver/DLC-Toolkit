@@ -612,7 +612,7 @@ class Frame_App(QMainWindow):
         self._save_prediction(to_dlc=True)
 
     def changeEvent(self, event):
-        if event.type() == QEvent.Type.WindowStateChange:
+        if event.type() == QEvent.Type.WindowStateChange and self.at == self.flabel:
             self.flabel.display_current_frame()
         super().changeEvent(event)
 
