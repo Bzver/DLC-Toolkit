@@ -12,12 +12,12 @@ from core.tool import Outlier_Finder, Prediction_Plotter, Uno_Stack, Track_Fixer
 from ui import (Menu_Widget, Video_Player_Widget, Pose_Rotation_Dialog, Status_Bar, Instance_Selection_Dialog,
                 Shortcut_Manager, Frame_Range_Dialog, Keypoint_Num_Dialog, Track_Fix_Config_Dialog, Canvas)
 from utils.pose import (
-    rotate_selected_inst, generate_missing_inst, generate_missing_kp_for_inst, 
+    rotate_selected_inst, generate_missing_inst, generate_missing_kp_for_inst, calculate_zoom_snap,
     generate_missing_kp_batch, calculate_pose_centroids, calculate_pose_rotations, outlier_removal
     )
 from utils.track import interpolate_track_all, delete_track, swap_track, interpolate_track
 from utils.helper import (
-    frame_to_pixmap, calculate_zoom_snap, get_instances_on_current_frame, validate_crop_coord,
+    frame_to_pixmap, get_instances_on_current_frame, validate_crop_coord,
     get_instance_count_per_frame, clean_inconsistent_nans, frame_to_grayscale
     )
 from utils.dataclass import Plot_Config, Plotter_Callbacks
@@ -882,6 +882,7 @@ class Frame_Label:
                 pred_data_array=self.pred_data_array,
                 dlc_data=self.dm.dlc_data,
                 extractor=self.vm.extractor,
+                anglemap=self.dm.angle_map_data,
                 avtomat=avtomat,
                 parent=self.main,
             )

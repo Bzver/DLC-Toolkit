@@ -7,6 +7,7 @@ from .pose_analysis import (
     calculate_anatomical_centers,
     calculate_pose_array_bbox,
     calculate_pose_array_rotations,
+    calculate_zoom_snap,
 )
 
 from .pose_average import get_average_pose
@@ -50,6 +51,7 @@ __all__ = (
     pose_rotation_worker,
     rotate_selected_inst,
     calculate_pose_bbox,
+    calculate_zoom_snap,
     outlier_confidence,
     outlier_duplicate,
     outlier_bodypart,

@@ -348,3 +348,39 @@ def calculate_aligned_local(
     ouput_array[..., 2::3] = pred_data_array[:, :, 2::3]
     
     return ouput_array
+
+def calculate_zoom_snap(
+        current_frame_data:np.ndarray,
+        view_width:float,
+        view_height:float,
+        padding_perc: int=25,
+        )->Tuple[float,float,float]:
+    xs = current_frame_data[:, 0::3]
+    ys = current_frame_data[:, 1::3]
+
+    if np.all(np.isnan(xs)):
+        return
+    
+    min_x = np.nanmin(xs)
+    max_x = np.nanmax(xs)
+    min_y = np.nanmin(ys)
+    max_y = np.nanmax(ys)
+
+    padding_factor = 1 + padding_perc / 100
+    width = max(1.0, max_x - min_x)
+    height = max(1.0, max_y - min_y)
+    padded_width = width * padding_factor
+    padded_height = height * padding_factor
+    center_x = (min_x + max_x) / 2
+    center_y = (min_y + max_y) / 2
+
+    if padded_width > 0 and padded_height > 0:
+        zoom_x = view_width / padded_width
+        zoom_y = view_height / padded_height
+        new_zoom_level = min(zoom_x, zoom_y)
+    else:
+        new_zoom_level = 1.0
+
+    new_zoom_level = max(0.1, min(new_zoom_level, 3.0))
+
+    return new_zoom_level, center_x, center_y

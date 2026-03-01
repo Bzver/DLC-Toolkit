@@ -12,9 +12,10 @@ from .undo_redo import Uno_Stack
 from core.io import Frame_Extractor, Frame_Extractor_Img
 from ui import Video_Slider_Widget, Shortcut_Manager, Canvas
 from utils.track import swap_track
+from utils.pose import calculate_zoom_snap
 from utils.helper import (
     frame_to_pixmap, handle_unsaved_changes_on_close, crop_coord_to_array, validate_crop_coord,
-    indices_to_spans, calculate_zoom_snap, navigate_to_marked_frame
+    indices_to_spans, navigate_to_marked_frame
 )
 from utils.dataclass import Loaded_DLC_Data, Plot_Config
 from utils.logger import Loggerbox, QMessageBox

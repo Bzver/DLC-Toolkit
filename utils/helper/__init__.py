@@ -8,7 +8,6 @@ from .data_cleaning import (
     )
 from .frame_conversion import (
     get_smart_bg_masking,
-    calculate_zoom_snap,
     frame_to_grayscale,
     frame_to_qimage, 
     frame_to_pixmap,
@@ -36,7 +35,6 @@ __all__ = (
     get_smart_bg_masking,
     validate_crop_coord,
     crop_coord_to_array,
-    calculate_zoom_snap,
     frame_to_grayscale,
     indices_to_spans,
     build_angle_map,
