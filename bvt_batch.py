@@ -7,7 +7,8 @@ from typing import List, Tuple, Optional
 
 from core.runtime import Data_Manager
 from core.tool.inference import DLC_Inference
-from core.io import backup_existing_prediction, get_existing_projects, csv_op
+from core.tool.track_fix import Track_Fixer_No_Exit
+from core.io import backup_existing_prediction, get_existing_projects, csv_op, Frame_Extractor
 from utils.helper import calculate_blob_inference_intervals
 from utils.logger import logger, set_headless_mode
 
@@ -209,6 +210,9 @@ def batch_create_pkl(
         dm = Data_Manager(init_vid_callback=_pseudo_callback, refresh_callback=_pseudo_callback, parent=dialog)
         try:
             dm.update_video_path(video_path=f)
+            extractor = Frame_Extractor(f)
+            dm.total_frames = extractor.get_total_frames()
+            extractor.close()
             dm.load_metadata_to_dm(dlc_config_path)
             dm.save_workspace()
         except Exception as e:
@@ -222,6 +226,50 @@ def batch_create_pkl(
             continue
 
 
+def batch_id_correction(
+    rootdir: str, 
+    dialog: QtWidgets.QDialog,
+):
+    pkl_list = []
+    for root, _, files in os.walk(rootdir):
+        for file in files:
+            if file.endswith(".pkl") and "backup" not in root:
+                pkl_list.append(os.path.join(root, file))
+
+    logger.info("[BATCH] About to batch process following workspace file.")
+    for i, path in enumerate(pkl_list):
+        logger.info(f"[{i}]: {path}")
+
+    success_count = 0
+    failed = []
+
+    for i, f in enumerate(pkl_list, 1):
+        filename = os.path.basename(f)
+        logger.info(f"\n[Batch {i}/{len(pkl_list)}] Starting: {filename}")
+        dm = Data_Manager(init_vid_callback=_pseudo_callback, refresh_callback=_pseudo_callback, parent=dialog)
+        dm.load_workspace(f)
+        try:
+            extractor = Frame_Extractor(dm.video_file)
+            if dm.angle_map_data is None:
+                dm._init_canon_pose()
+            tf = Track_Fixer_No_Exit(dm.dlc_data.pred_data_array, dm.dlc_data, extractor, dm.angle_map_data, avtomat=True)
+            dm.dlc_data.pred_data_array = tf.track_correction()
+        except Exception as e:
+            logger.error(f"[Batch {i}/{len(pkl_list)}] FAILED: {filename} — {e} | ")
+            logger.exception(f"[Batch {i}/{len(pkl_list)}]")
+            failed.append(f)
+            continue
+        else:
+            success_count += 1
+            logger.info(f"[Batch {i}/{len(pkl_list)}] Completed: {filename}")
+            dm.save_workspace()
+            continue
+
+    logger.info(f"[BATCH] Batch finished: {success_count}/{len(pkl_list)} succeeded.")
+    if failed:
+        logger.info(f"[BATCH] Failed videos:")
+        for f in failed:
+            logger.info(f)
 
 #################################################################################################################################
 
@@ -391,6 +439,7 @@ def _inference_workspace_vid(
 
         inference_window = DLC_Inference(
             dlc_data=dm.dlc_data,
+            video_length=dm.total_frames,
             frame_list=chunk_list,
             video_filepath=dm.video_file,
             roi=crop_region,

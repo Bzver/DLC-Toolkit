@@ -1,13 +1,17 @@
+import os
 import numpy as np
-from typing import Tuple, List, Literal
+from sklearn.cluster import KMeans
+from typing import Tuple, List, Literal, Dict, Optional
 
 from .reviewer import Swap_Correction_Dialog, Exit_Reentry_Dialog
-from core.io import Frame_Extractor
-from utils.track import Kalman
-from utils.pose import calculate_pose_centroids
-from utils.helper import get_instance_count_per_frame, get_instances_on_current_frame, get_prev_frame_in_list
+from core.io import Frame_Extractor, Cutout_Exporter, Cutout_Dataloader
+from ui import Progress_Indicator_Dialog
+from utils.track import Kalman, swap_track
+from utils.embedding import Crop_Dataset, Embedding_Visualizer, Contrastive_Trainer
+from utils.pose import calculate_pose_centroids, outlier_rotation, calculate_pose_array_rotations, calculate_pose_array_bbox
+from utils.helper import get_instance_count_per_frame, get_instances_on_current_frame, get_prev_frame_in_list, indices_to_spans
+from utils.dataclass import Loaded_DLC_Data, Blob_Config
 from utils.logger import logger
-from utils.dataclass import Loaded_DLC_Data
 
 
 class Track_Fixer:
@@ -75,7 +79,7 @@ class Track_Fixer:
         if self.exit_windows[self.total_frames-1]:
             self.exit_ends.append(self.total_frames-1)
 
-        logger.debug(f"[TF] All exit window frames: \n {sorted(np.where(self.exit_windows)[0])}")
+        logger.debug(f"[TF] All exit window frames:   {sorted(np.where(self.exit_windows)[0])}")
 
         ambiguous_frames = []
         for f in range(start_idx, end_idx):
@@ -719,7 +723,7 @@ class Track_Fixer:
             ambiguous_list:List[int],
             event_start_idx=None,
             event_end_idx=None
-            ) -> List[Tuple[bool, int]]:
+            ) -> List[Tuple[int, str]] | str:
         if self.avtomat and ambiguous_list:
             return [(ambiguous_list[0], "t")]
 
@@ -727,7 +731,6 @@ class Track_Fixer:
             dlc_data=self.dlc_data,
             extractor=self.extractor,
             pred_data_array=self.pred_data_array,
-            current_frame_idx=ambiguous_list[0] if ambiguous_list else event_start_idx + 10,
             ambiguous_frames=ambiguous_list,
             event_start_idx=event_start_idx,
             event_end_idx=event_end_idx,
@@ -735,39 +738,169 @@ class Track_Fixer:
         )
         dialog.exec()
 
-        return dialog.user_decisions
+        if dialog.cancelled:
+            return "exit"
+        else:
+            return dialog.user_decisions
 
 
 class Track_Fixer_No_Exit(Track_Fixer):
-    def __init__(self, pred_data_array, dlc_data, extractor, avtomat = False, parent=None):
+    def __init__(
+            self,
+            pred_data_array:np.ndarray,
+            dlc_data:Loaded_DLC_Data,
+            extractor:Frame_Extractor,
+            anglemap:Dict[str, int],
+            blob_config:Optional[Blob_Config]=None,
+            avtomat:bool = False,
+            parent=None
+            ):
         super().__init__(pred_data_array, 0, None, dlc_data, extractor, avtomat, parent)
+        self.anglemap = anglemap
+        self.blob_config = blob_config
+        self.eligible_frames = []
 
-    def track_correction(self, start_idx = 0, end_idx = -1):
+        self.temp_dir = os.path.join(
+            self.extractor.get_video_dir(), "bvt_temp", self.extractor.get_video_name(no_ext=True))
+        os.makedirs(self.temp_dir, exist_ok=True)
+
+    def track_correction(self, start_idx = 0, end_idx = -1): 
+        if end_idx == -1:
+            end_idx = self.pred_data_array.shape[0]
+            print(end_idx)
+
         ambiguous_frames = []
         for f in range(start_idx, end_idx):
-            logger.debug(f"---------------- Frame {f} ----------------")
-
-            logger.debug(f"[TF] Pre-correct pos: Inst 0: ({self.centroids[f,0,0]:.1f}, {self.centroids[f,0,1]:.1f}), Inst 1: ({self.centroids[f,1,0]:.1f}, {self.centroids[f,1,1]:.1f})")
-
             success = self._correct_frame_with_hungarian(f)
             if not success:
                 ambiguous_frames.append(f)
                 logger.debug(f"[TF] Ambiguous match, added to backtrack list")
 
-        self._review_ambiguous_frames(ambiguous_frames)
+        self._find_eligible_frames()
+
+        eligible_in_range = [f for f in self.eligible_frames if f >= start_idx and f < end_idx]
+        self.eligible_frames = eligible_in_range
+
+        self._run_contrain_magic(ambiguous_frames)
 
         return self.pred_data_array
-    
-    def _review_ambiguous_frames(self, ambiguous_frames: List[int]):
-        swap_orders = self._launch_dialog_swap(
-            ambiguous_list=ambiguous_frames,
-            event_start_idx=0,
-            event_end_idx=self.total_frames - 1
-            )
 
-        if swap_orders:
-            for frame_idx, order in swap_orders:
-                if order == "i":
-                    self._swap_ids_in_frame(frame_idx)
+    def _find_eligible_frames(self, inst_dist_threshold:float=1.2, twist_angle_threshold:float=10.0):
+        full_mask = np.zeros(self.total_frames, dtype=bool)
+
+        instance_count = get_instance_count_per_frame(self.pred_data_array)
+        two_inst_mask = instance_count==2
+
+        if not np.any(two_inst_mask):
+            return np.zeros(self.total_frames, dtype=bool)
+
+        two_inst_array = self.pred_data_array[two_inst_mask]
+        centroids_two_inst = self.centroids[two_inst_mask]
+
+        head_idx = self.anglemap["head_idx"]
+        all_head = self.pred_data_array[..., head_idx*3:head_idx*3+2]
+
+        tail_idx = self.anglemap["tail_idx"]
+        all_tail = self.pred_data_array[..., tail_idx*3:tail_idx*3+2]
+
+        mice_length = np.nanmedian(np.linalg.norm(all_head - all_tail, axis=-1))
+
+        dists = np.linalg.norm(centroids_two_inst[:, 1, :] - centroids_two_inst[:, 0, :], axis=-1)
+        dist_mask = dists > inst_dist_threshold * mice_length
+
+        outlier_twist = outlier_rotation(two_inst_array, self.anglemap, twist_angle_threshold)
+        angle_mask = ~np.any(outlier_twist, axis=-1)
+
+        full_mask[two_inst_mask] = dist_mask & angle_mask
+
+        self.eligible_frames = np.where(full_mask)[0].tolist()
+    
+    def _crop_rotate_and_export(self):
+        I = self.pred_data_array.shape[1]
+        angles = np.zeros((self.total_frames, I))
+
+        crop_coords = calculate_pose_array_bbox(self.pred_data_array[self.eligible_frames], padding=15).astype(np.uint16)
+        cutout_dim = int(np.percentile(crop_coords[..., 2:4] - crop_coords[..., 0:2], 90))
+        angles[self.eligible_frames] = np.rad2deg(calculate_pose_array_rotations(self.pred_data_array[self.eligible_frames], self.anglemap)) # (F, I)
+        progress = Progress_Indicator_Dialog(0, 100, "Cutout Extraction", "Extracting cutouts from video", parent=self.main)
+
+        co = Cutout_Exporter(
+            save_folder=self.temp_dir,
+            video_filepath=self.extractor.get_video_filepath(),
+            frame_list=self.eligible_frames,
+            centroids=self.centroids,
+            cutout_dim=cutout_dim,
+            angle_array=angles,
+            grayscaling=True,
+            blob_config=None,
+            progress_callback=progress,
+        )
+        co.extract_frame()
+
+    def _run_contrain_magic(self, ambiguous_frames:List[int]):
+        embedding_filepath = os.path.join(self.temp_dir, 'embeddings.npz')
+        if os.path.isfile(embedding_filepath):
+            logger.info(f"Auto loading embedding file at {embedding_filepath}")
+            cache = np.load(embedding_filepath)
+            embeddings = cache['embeddings']
+            motion_ids = cache['motion_ids'].tolist()
+            frame_indices = cache['frame_indices'].tolist()
+        else:
+            self._crop_rotate_and_export()
+            loader = Cutout_Dataloader(self.temp_dir)
+            crops, motion_ids, frame_indices, _, _ = loader.load_paired_tracks(n_mice=2)
+            if len(crops) == 0:
+                raise FileNotFoundError("[TF] No crops loaded. Check your folder path and filename format.")
+            cds = Crop_Dataset(crops, motion_ids, frame_indices)
+            trainer = Contrastive_Trainer()
+            trainer.train(cds, epochs=10, warmup_epochs=5)
+            embeddings = trainer.extract_embeddings(cds)
+            np.savez(embedding_filepath, embeddings=embeddings,
+                     motion_ids=motion_ids, frame_indices=frame_indices)
+
+        kmeans = KMeans(n_clusters=2, random_state=42)
+        visual_labels = kmeans.fit_predict(embeddings)
+        
+        vis = Embedding_Visualizer(embeddings, motion_ids, frame_indices, visual_labels)
+        tsne_pix = vis.plot_tsne_combined()
+
+        agreement_pix, stable_swap_candidates = vis.plot_agreement_timeline()
+
+        tsne_pix.save(os.path.join(self.temp_dir, "tsne_combined.png"))
+        agreement_pix.save(os.path.join(self.temp_dir, "agreement_timeline.png"))
+
+        stable_spans = indices_to_spans(stable_swap_candidates)
+
+        for start, end in stable_spans:
+            if (start == 0) or (end == self.total_frames - 1):
+                continue
+
+            amb_in_range = [f for f in ambiguous_frames if f >= start and f < end]
+
+            if self.avtomat:
+                swap_orders = []
+                if not amb_in_range:
+                    swap_orders.append((start, "t"))
+                    swap_orders.append((end, "t"))
                 else:
-                    self._bulk_swap_from_frame(frame_idx)
+                    swap_orders.append((amb_in_range[0], "t"))
+                    if len(amb_in_range) >= 2:
+                        swap_orders.append((amb_in_range[-1], "t"))
+                    else:
+                        swap_orders.append((end, "t"))
+            else:
+               swap_orders = self._launch_dialog_swap(amb_in_range, start-10, end+11)
+
+            if swap_orders == "exit":
+                return
+            else:
+                for frame_idx, order in swap_orders:
+                    if order == "i":
+                        self.pred_data_array = swap_track(self.pred_data_array, frame_idx)
+                    else:
+                        self.pred_data_array = swap_track(
+                            self.pred_data_array, frame_idx, swap_range=list(range(frame_idx, end+11)))
+
+        self.centroids, _ = calculate_pose_centroids(self.pred_data_array)
+        if os.path.isfile(embedding_filepath):
+            os.remove(embedding_filepath)

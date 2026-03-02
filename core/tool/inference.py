@@ -27,6 +27,7 @@ class DLC_Inference(QDialog):
     def __init__(
         self,
         dlc_data:Loaded_DLC_Data,
+        video_length:int,
         frame_list:List[int],
         video_filepath:str,
         roi:Optional[np.ndarray]=None,
@@ -36,6 +37,7 @@ class DLC_Inference(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Run Predictions in DLC")
         self.dlc_data = dlc_data
+        self.vid_len = video_length
         self.frame_list = frame_list
         self.video_filepath = video_filepath
         self.setFixedWidth(600)
@@ -193,7 +195,7 @@ class DLC_Inference(QDialog):
         return iteration_idx, iteration_folder
 
     def _check_available_shuffles(self):
-        available_shuffles = [f.split("shuffle")[1] for f in os.listdir(self.iteration_folder) if "shuffle" in f]
+        available_shuffles = [int(f.split("shuffle")[1]) for f in os.listdir(self.iteration_folder) if "shuffle" in f]
         if not available_shuffles:
             return None
 
@@ -452,7 +454,7 @@ class DLC_Inference(QDialog):
         
         temp_data_array = loaded_data.pred_data_array
         new_data_array = np.full(
-            (self.dlc_data.pred_frame_count, temp_data_array.shape[1], temp_data_array.shape[2]), np.nan)
+            (self.vid_len, temp_data_array.shape[1], temp_data_array.shape[2]), np.nan)
 
         if self.crop_coord is not None:
             coords_array = crop_coord_to_array(self.crop_coord, temp_data_array.shape)
