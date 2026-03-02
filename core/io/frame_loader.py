@@ -73,9 +73,9 @@ class Frame_Extractor:
     def get_video_name(self, no_ext:bool=False):
         video_name = os.path.basename(self.video_path)
         if no_ext:
-            return video_name
-        else:
             return os.path.splitext(video_name)[0]
+        else:
+            return video_name
 
     def sample_frames(self, frame_count:int=100):
         logger.info(f"[FLOADER] Randomly sampling {frame_count} frames from video.")

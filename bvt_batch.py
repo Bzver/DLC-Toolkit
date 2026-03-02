@@ -179,6 +179,51 @@ def batch_kp_normalization(dlc_config_path, task, dialog):
         for name, err in failed:
             logger.error(f"  - {name}: {err}")
 
+def batch_create_pkl(
+    rootdir: str, 
+    dlc_config_path: str, 
+    dialog: QtWidgets.QDialog,
+):
+    vid_list = []
+    for root, _, files in os.walk(rootdir):
+        for file in files:
+            if "bvt_temp" in root or "backup" in root:
+                continue
+            if not file.endswith((".mp4", ".avi", ".mkv")):
+                continue
+            
+            file_noext = os.path.splitext(file)[0]
+            if not os.path.isfile(os.path.join(root, f"{file_noext}_workspace.pkl")):
+                vid_list.append(os.path.join(root, file))
+    
+    logger.info("[BATCH] About to batch create pkl project for following videos.")
+    for i, path in enumerate(vid_list):
+        logger.info(f"[{i}]: {path}")
+
+    success_count = 0
+    failed = []
+
+    for i, f in enumerate(vid_list, 1):
+        filename = os.path.basename(f)
+        logger.info(f"\n[Batch {i}/{len(vid_list)}] Starting: {filename}")
+        dm = Data_Manager(init_vid_callback=_pseudo_callback, refresh_callback=_pseudo_callback, parent=dialog)
+        try:
+            dm.update_video_path(video_path=f)
+            dm.load_metadata_to_dm(dlc_config_path)
+            dm.save_workspace()
+        except Exception as e:
+            logger.error(f"[Batch {i}/{len(vid_list)}] FAILED: {filename} — {e} | ")
+            logger.exception(f"[Batch {i}/{len(vid_list)}]")
+            failed.append(f)
+            continue
+        else:
+            success_count += 1
+            logger.info(f"[Batch {i}/{len(vid_list)}] Completed: {filename}")
+            continue
+
+
+
+#################################################################################################################################
 
 
 def batch_inference(
@@ -477,17 +522,19 @@ if __name__ == "__main__":
     rootdir = r"D:\Data\Videos\20251117 Marathon\1118"
     dlc_config_path = "D:/Project/DLC-Models/NTD/config.yaml"
  
-    batch_inference(
-        rootdir,
-        dlc_config_path,
-        dialog=dialog,
-        crop=True,
-        mask=False,
-        grayscale=True,
-        infer_only_empty_frames=False,
-        batch_size=32,
-        detector_batch_size=16
-    )
+    batch_create_pkl(rootdir, dlc_config_path, dialog)
+
+    # batch_inference(
+    #     rootdir,
+    #     dlc_config_path,
+    #     dialog=dialog,
+    #     crop=True,
+    #     mask=False,
+    #     grayscale=True,
+    #     infer_only_empty_frames=False,
+    #     batch_size=32,
+    #     detector_batch_size=16
+    # )
 
     # batch_grayscale(dlc_config_path)
     # batch_to_h5(dlc_config_path)
