@@ -529,7 +529,7 @@ class Exit_Reentry_Dialog(Dual_Video_Dialog):
             canvas.gscene.addItem(text_item)
 
         pred_data_now = self.pred_data_array[global_idx]
-        pred_data_last = self.pred_data_array[last_frame_global] if self.current_frame_idx != self.frame_list[0] else None
+        pred_data_last = self.pred_data_array[last_frame_global] if self.current_frame_idx > 0 else None
 
         all_pred = []
         if pred_data_now is not None:
@@ -662,10 +662,9 @@ class Swap_Correction_Dialog(Dual_Video_Dialog):
         dlc_data: Loaded_DLC_Data,
         extractor: Frame_Extractor,
         pred_data_array: np.ndarray,
-        current_frame_idx: int,
         ambiguous_frames: List[int],
-        event_start_idx: Optional[int] = None,
-        event_end_idx: Optional[int] = None,
+        event_start_idx: int,
+        event_end_idx: int,
         parent=None
     ):
         super().__init__(parent)
@@ -675,22 +674,28 @@ class Swap_Correction_Dialog(Dual_Video_Dialog):
         self.pred_data_array = pred_data_array
 
         total_frames = pred_data_array.shape[0]
-        frame_list_start = event_start_idx if event_start_idx is not None else current_frame_idx - 20
-        frame_list_end = event_end_idx if event_end_idx is not None else current_frame_idx + 21
+        frame_list_start = event_start_idx
+        frame_list_end = event_end_idx
 
         actual_start = max(0, frame_list_start)
         actual_end = min(frame_list_end, total_frames)
 
         self.preview_change_array = pred_data_array[actual_start:actual_end].copy()
         self.frame_list = sorted(range(actual_start, actual_end))
-        self.current_frame_idx = self.frame_list.index(current_frame_idx)
 
-        self.amb_frames_local = [frame - actual_start for frame in ambiguous_frames]
-        self.corr_frames = []
+        self.amb_frames_local = []
+        for frame_idx in ambiguous_frames:
+            if (frame_idx >= actual_start) and (frame_idx < actual_end):
+                self.amb_frames_local.append(frame_idx - actual_start)
 
-        self.nonempty_local = set(
-            np.where(np.any(~np.isnan(self.preview_change_array), axis=(1, 2)))[0].tolist()
-        )
+        self.current_frame_idx = self.amb_frames_local[0] if self.amb_frames_local else 0
+
+        self.cancelled = False
+
+        self.status_array = np.zeros((actual_end - actual_start))
+        self.corr_list = []
+
+        self.nonempty_local = set(np.where(np.any(~np.isnan(self.preview_change_array), axis=(1, 2)))[0].tolist())
 
         plot_config = Plot_Config(
             plot_opacity=0.7, point_size=5.0, confidence_cutoff=0.0, hide_text_labels=False, edit_mode=False,
@@ -741,6 +746,8 @@ class Swap_Correction_Dialog(Dual_Video_Dialog):
             "next_frame":{"key": "Right", "callback": lambda: self._change_frame(1)},
             "prev_fast":{"key": "Shift+Left", "callback": lambda: self._change_frame(-10)},
             "next_fast":{"key": "Shift+Right", "callback": lambda: self._change_frame(10)},
+            "swp_trk_sg": {"key": "W", "callback": self._on_instance_swap},
+            "swp_trk_ct": {"key": "Shift+W", "callback": self._on_track_swap},
             "playback":{"key": "Space", "callback": self._toggle_playback},
             "prev_mark":{"key": "Up", "callback": self._navigate_prev},
             "next_mark":{"key": "Down", "callback": self._navigate_next},
@@ -818,24 +825,27 @@ class Swap_Correction_Dialog(Dual_Video_Dialog):
         return max(0, start_local - 1)
 
     def _refresh_slider(self):
+        self.progress_slider.clear_frame_category()
+        self.progress_slider.set_frame_category("corrected", self.corr_list, self.CORRECTED_CLR, priority=5)
+        self.progress_slider.set_frame_category("ambiguous", self.amb_frames_local, self.AMBIGUOUS_CLR, priority=10)
+        self.progress_slider.commit_categories(force_update=True)
         self.progress_slider.set_current_frame(self.current_frame_idx)
-        self.progress_slider.set_frame_category("ambiguous", self.amb_frames_local, self.AMBIGUOUS_CLR, priority=0)
-        self.progress_slider.set_frame_category("corrected", self.corr_frames, self.CORRECTED_CLR, priority=10)
-        self.progress_slider.commit_categories()
 
     def _on_instance_swap(self):
         self._update_user_decisions("i")
+        self.status_array[self.current_frame_idx] = 1 - self.status_array[self.current_frame_idx]
+        self.corr_list = np.where(self.status_array==1)[0].tolist()
         self.preview_change_array = swap_track(self.preview_change_array, self.current_frame_idx)
         self._display_current_frame()
 
     def _on_track_swap(self):
         self._update_user_decisions("t")
+        self.status_array[self.current_frame_idx:] = 1 - self.status_array[self.current_frame_idx:]
+        self.corr_list = np.where(self.status_array==1)[0].tolist()
         self.preview_change_array = swap_track(self.preview_change_array, self.current_frame_idx, swap_range=[-1])
         self._display_current_frame()
 
     def _update_user_decisions(self, decision:str):
-        if self.current_frame_idx not in self.corr_frames:
-            self.corr_frames.append(self.current_frame_idx)
         global_idx = self.frame_list[self.current_frame_idx]
         item = (global_idx, decision)
         if item in self.user_decisions:
@@ -869,7 +879,6 @@ class Swap_Correction_Dialog(Dual_Video_Dialog):
                 color: {style["text_color"]};
             }}
         """)
-
         button_style = f"""
             QPushButton {{
                 background-color: {style["button_color"]};
@@ -904,10 +913,10 @@ class Swap_Correction_Dialog(Dual_Video_Dialog):
         total = len(self.frame_list)
         self.global_frame_label.setText(f"Global: {global_idx}")
         self.selected_frame_label.setText(f"Selected: {self.current_frame_idx} / {total - 1}")
-        if self.current_frame_idx in self.corr_frames:
-            self.selected_frame_label.setStyleSheet(f"color: {self.CORRECTED_CLR}")
-        elif self.current_frame_idx in self.amb_frames_local:
+        if self.current_frame_idx in self.amb_frames_local:
             self.selected_frame_label.setStyleSheet(f"color: {self.AMBIGUOUS_CLR}")
+        elif self.status_array[self.current_frame_idx] == 1:
+            self.selected_frame_label.setStyleSheet(f"color: {self.CORRECTED_CLR}")
         else:
             self.selected_frame_label.setStyleSheet(f"color: black")
 
@@ -918,4 +927,5 @@ class Swap_Correction_Dialog(Dual_Video_Dialog):
         self.progress_slider.toggle_playback()
 
     def closeEvent(self, event):
-        handle_unsaved_changes_on_close(self, event, False, self._submit_changes)
+        self.cancelled = True
+        self.reject()

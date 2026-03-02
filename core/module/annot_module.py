@@ -98,7 +98,6 @@ class Frame_Annotator:
             self.vid_play.sld.toggle_zoom_slider()
         self.open_annot = False
         self.annot_conf = None
-        self.uno_stack = None
         self.sc_annot.clear()
 
     def reset_state(self, hardcore=False):

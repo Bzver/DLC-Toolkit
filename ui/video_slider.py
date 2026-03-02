@@ -14,7 +14,7 @@ class Video_Slider_Widget(QtWidgets.QWidget):
 
     def __init__(self):
         super().__init__()
-        self.total_frames, self.current_frame_idx, self.current_behav_idx = 0, 0, 0
+        self.total_frames, self.current_frame_idx, self.current_behav_idx = 0, 0, 1
         self.category_array, self.priority_array = None, None
         self.idx_to_color = {}
         self.is_playing = False
@@ -87,7 +87,7 @@ class Video_Slider_Widget(QtWidgets.QWidget):
     def clear_frame_category(self):
         self.category_array = np.full((self.total_frames,), 255, dtype=np.uint8)
         self.priority_array = np.zeros_like(self.category_array, dtype=np.uint8)
-        self.current_behav_idx = 0
+        self.current_behav_idx = 1
         self.idx_to_color.clear()
         self.progress_slider.reset_category()
 
@@ -107,8 +107,8 @@ class Video_Slider_Widget(QtWidgets.QWidget):
         self.category_array = category_array
         self.idx_to_color = idx_to_color.copy()
 
-    def commit_categories(self):
-        self.progress_slider.set_frame_category(self.category_array, self.idx_to_color)
+    def commit_categories(self, force_update:bool=False):
+        self.progress_slider.set_frame_category(self.category_array, self.idx_to_color, force_update)
         self.zoom_slider.set_full_categories(self.category_array, self.idx_to_color)
         if self.is_zoom_slider_shown:
             self.zoom_slider.set_center_frame(self.current_frame_idx, self.total_frames)

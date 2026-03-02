@@ -3,7 +3,7 @@ import numpy as np
 import random
 import cv2
 from PIL import Image
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from typing import Optional, Tuple
 
 from utils.logger import logger
@@ -66,6 +66,16 @@ class Frame_Extractor:
 
     def get_video_filepath(self):
         return self.video_path
+
+    def get_video_dir(self):
+        return os.path.dirname(self.video_path)
+
+    def get_video_name(self, no_ext:bool=False):
+        video_name = os.path.basename(self.video_path)
+        if no_ext:
+            return video_name
+        else:
+            return os.path.splitext(video_name)[0]
 
     def sample_frames(self, frame_count:int=100):
         logger.info(f"[FLOADER] Randomly sampling {frame_count} frames from video.")
@@ -217,3 +227,71 @@ class Frame_Extractor_Img:
     def close(self):
         logger.info("[FLOADER] Closing Frame_Extractor_Img.")
         pass
+
+
+class Cutout_Dataloader:
+    def __init__(self, folder_path):
+        self.folder_path = folder_path
+        
+    def load_all_crops(self):
+        files = [f for f in os.listdir(self.folder_path) if f.endswith(".png")]
+        
+        if not files:
+            raise ValueError(f"No images found in {self.folder_path}")
+        
+        data = []
+        
+        for f in files:
+            f_deext = os.path.splitext(f)[0]
+            parts = f_deext.split("_")
+            
+            try:
+                frame_idx = int(parts[0])
+                mouse_idx = int(parts[1])
+            except ValueError:
+                pass
+            else:
+                data.append({"filename": f, "motion_id": mouse_idx, "frame_idx": frame_idx})
+    
+        data.sort(key=lambda x: x["frame_idx"])
+        
+        crops = []
+        motion_ids = []
+        frame_indices = []
+        
+        for item in data:
+            path = os.path.join(self.folder_path, item["filename"])
+            img = cv2.imread(path)
+            
+            if img is None:
+                logger.warning(f"[EMBLOAD]: Could not load image {path}")
+                continue
+                
+            crops.append(img)
+            motion_ids.append(item["motion_id"])
+            frame_indices.append(item["frame_idx"])
+            
+        logger.info(f"Loaded {len(crops)} total crops from {self.folder_path}")
+        return crops, motion_ids, frame_indices
+
+    def load_paired_tracks(self, n_mice=2):
+        all_crops, all_ids, all_frames = self.load_all_crops()
+
+        frame_dict = defaultdict(dict)
+        for crop, m_id, f_idx in zip(all_crops, all_ids, all_frames):
+            frame_dict[f_idx][m_id] = crop
+
+        valid_frames = sorted([f for f, mice in frame_dict.items() if len(mice) == n_mice])
+        
+        paired_crops = []
+        paired_ids = []
+        paired_frames = []
+        
+        for f_idx in valid_frames:
+            for m_id in range(n_mice):
+                paired_crops.append(frame_dict[f_idx][m_id])
+                paired_ids.append(m_id)
+                paired_frames.append(f_idx)
+                
+        logger.info(f"Loaded {len(valid_frames)} valid frames (both mice present).")
+        return paired_crops, paired_ids, paired_frames, frame_dict, valid_frames
