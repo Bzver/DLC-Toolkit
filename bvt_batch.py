@@ -8,8 +8,8 @@ from typing import List, Tuple, Optional
 from core.runtime import Data_Manager
 from core.tool.inference import DLC_Inference
 from core.tool.track_fix import Track_Fixer_No_Exit
-from core.io import backup_existing_prediction, get_existing_projects, csv_op, Frame_Extractor
-from utils.helper import calculate_blob_inference_intervals
+from core.io import backup_existing_prediction, get_existing_projects, csv_op, prediction_to_csv, Frame_Extractor
+from utils.helper import calculate_blob_inference_intervals, get_instance_count_per_frame
 from utils.logger import logger, set_headless_mode
 
 
@@ -224,6 +224,68 @@ def batch_create_pkl(
             success_count += 1
             logger.info(f"[Batch {i}/{len(vid_list)}] Completed: {filename}")
             continue
+
+
+def batch_export_csv(
+    rootdir: str,
+    dialog: QtWidgets.QDialog,
+    with_conf:bool=True,
+    animal_num_filtering:bool=False,
+    min_animal_num:int=2,
+    frame_count_filtering:bool=False,
+    frame_count_max:int=6000,
+    no_scorer_header:bool=False,
+):
+    pkl_list = []
+    for root, _, files in os.walk(rootdir):
+        for file in files:
+            if file.endswith(".pkl") and "backup" not in root:
+                pkl_list.append(os.path.join(root, file))
+    
+    logger.info("[BATCH] About to batch process following workspace file.")
+    for i, path in enumerate(pkl_list):
+        logger.info(f"[{i}]: {path}")
+
+    success_count = 0
+    failed = []
+    
+    for i, f in enumerate(pkl_list, 1):
+        filename = os.path.basename(f)
+        logger.info(f"\n[Batch {i}/{len(pkl_list)}] Starting: {filename}")
+        dm = Data_Manager(init_vid_callback=_pseudo_callback, refresh_callback=_pseudo_callback, parent=dialog)
+        dm.load_workspace(f)
+        try:
+            pred_data_array = dm.dlc_data.pred_data_array
+            if animal_num_filtering:
+                instance_count = get_instance_count_per_frame(pred_data_array)
+                pred_filtered = pred_data_array[instance_count >= min_animal_num]
+                pred_data_array = pred_filtered
+
+            if frame_count_filtering:
+                pred_data_array = pred_data_array[:frame_count_max]
+
+            prediction_to_csv(
+                dm.dlc_data,
+                pred_data_array,
+                save_path=f.replace("_workspace.pkl", "_auto_export.csv"),
+                keep_conf=with_conf,
+                no_scorer_row=no_scorer_header,
+                )
+        except Exception as e:
+            logger.error(f"[Batch {i}/{len(pkl_list)}] FAILED: {filename} — {e} | ")
+            logger.exception(f"[Batch {i}/{len(pkl_list)}]")
+            failed.append(f)
+            continue
+        else:
+            success_count += 1
+            logger.info(f"[Batch {i}/{len(pkl_list)}] Completed: {filename}")
+            continue
+
+    logger.info(f"[BATCH] Batch finished: {success_count}/{len(pkl_list)} succeeded.")
+    if failed:
+        logger.info(f"[BATCH] Failed videos:")
+        for f in failed:
+            logger.info(f)
 
 
 def batch_id_correction(
@@ -571,7 +633,7 @@ if __name__ == "__main__":
     rootdir = r"D:\Data\Videos\20251117 Marathon\1118"
     dlc_config_path = "D:/Project/DLC-Models/NTD/config.yaml"
  
-    batch_create_pkl(rootdir, dlc_config_path, dialog)
+    # batch_create_pkl(rootdir, dlc_config_path, dialog)
 
     # batch_inference(
     #     rootdir,
@@ -586,6 +648,18 @@ if __name__ == "__main__":
     # )
 
     # batch_grayscale(dlc_config_path)
+
+    batch_export_csv(
+        rootdir,
+        dialog,
+        with_conf=True,
+        no_scorer_header=True,
+        animal_num_filtering=True,
+        min_animal_num=2,
+        frame_count_filtering=True,
+        frame_count_max=6000,
+        )
+
     # batch_to_h5(dlc_config_path)
 
     # task = [(11, 7, 9), (10, 6, 8), (13, 9, 3), (12, 8, 3)]
