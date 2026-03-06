@@ -1,4 +1,6 @@
 import numpy as np
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
 from sklearn.metrics.pairwise import cosine_similarity
 
 import torch
@@ -144,7 +146,18 @@ class Contrastive_Trainer:
 
         return triplet_loss + var_weight * var_penalty
         
-    def train(self, dataset:Crop_Dataset, epochs=30, batch_size=64, lr=1e-5, warmup_epochs=10, hard_mine_interval=5):
+    def train(
+            self,
+            dataset:Crop_Dataset,
+            batch_size=64,
+            lr=1e-5,
+            epochs=20,
+            warmup_epochs=10,
+            hard_mine_interval=5,
+            sil_check_interval=5,
+            sil_threshold=0.4,
+            sil_subsampling=1000,
+            ):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
 
         logger.info("[CONTRAIN] Warm-up training with easy triplets...")
@@ -263,15 +276,38 @@ class Contrastive_Trainer:
 
             logger.info(f"[CONTRAIN] Epoch {epoch+1}/{epochs}, Loss: {total_loss/num_batches:.4f}")
 
-            if (epoch - warmup_epochs + 1) % hard_mine_interval == 0 and epoch < epochs - 1:
-                logger.info(f"[CONTRAIN] Updating hard triplets at epoch {epoch+1}...")
+            hardmining_needed = (epoch - warmup_epochs + 1) % hard_mine_interval == 0
+            silhouette_eval_needed = (epoch - warmup_epochs + 1) % sil_check_interval == 0
+
+            if (hardmining_needed or silhouette_eval_needed) and epoch < epochs - 1:
                 self.model.eval()
                 embeddings = self.extract_embeddings(dataset)
-                hard_triplets = self.mine_hard_triplets_adaptive(dataset, embeddings,
-                                                                pos_threshold=pos_threshold,
-                                                                neg_threshold=neg_threshold,
-                                                                max_triplets=5000)
-                logger.info(f"[CONTRAIN] Re-mined {len(hard_triplets)} hard triplets")
+
+                if silhouette_eval_needed:
+                    with torch.no_grad():
+                        if len(embeddings) > sil_subsampling:
+                            indices = np.random.choice(len(embeddings), sil_subsampling, replace=False)
+                            sample_embs = embeddings[indices]
+                        else:
+                            sample_embs = embeddings
+
+                        kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
+                        labels = kmeans.fit_predict(sample_embs)
+                        score = silhouette_score(sample_embs, labels)
+                        logger.info(f"[SILHOUETTE] Epoch {epoch+1}: Score = {score:.3f}")
+        
+                        if score > sil_threshold:
+                            logger.info(f"[SILHOUETTE] Threshold {sil_threshold} reached. Stopping training early.")
+                            break
+
+                if hardmining_needed:   
+                    logger.info(f"[CONTRAIN] Updating hard triplets at epoch {epoch+1}...")
+                    hard_triplets = self.mine_hard_triplets_adaptive(dataset, embeddings,
+                                                                    pos_threshold=pos_threshold,
+                                                                    neg_threshold=neg_threshold,
+                                                                    max_triplets=5000)
+                    logger.info(f"[CONTRAIN] Re-mined {len(hard_triplets)} hard triplets")
+
                 self.model.train()
         
         self.model.eval()

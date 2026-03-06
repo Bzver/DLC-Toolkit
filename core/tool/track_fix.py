@@ -4,10 +4,9 @@ from sklearn.cluster import KMeans
 from typing import Tuple, List, Literal, Dict, Optional
 
 from .reviewer import Swap_Correction_Dialog, Exit_Reentry_Dialog
-from core.io import Frame_Extractor, Cutout_Exporter, Cutout_Dataloader
+from core.io import Frame_Extractor
 from ui import Progress_Indicator_Dialog
 from utils.track import Kalman, swap_track
-from utils.embedding import Crop_Dataset, Embedding_Visualizer, Contrastive_Trainer
 from utils.pose import calculate_pose_centroids, outlier_rotation, calculate_pose_array_rotations, calculate_pose_array_bbox
 from utils.helper import get_instance_count_per_frame, get_instances_on_current_frame, get_prev_frame_in_list, indices_to_spans
 from utils.dataclass import Loaded_DLC_Data, Blob_Config
@@ -752,11 +751,18 @@ class Track_Fixer_No_Exit(Track_Fixer):
             extractor:Frame_Extractor,
             anglemap:Dict[str, int],
             blob_config:Optional[Blob_Config]=None,
+            max_epochs:int=30,
+            warmup_epochs:int=5,
             avtomat:bool = False,
             parent=None
             ):
+        
+
+
         super().__init__(pred_data_array, 0, None, dlc_data, extractor, avtomat, parent)
         self.anglemap = anglemap
+        self.epochs = max_epochs
+        self.warmup_epochs = warmup_epochs
         self.blob_config = blob_config
         self.eligible_frames = []
 
@@ -816,6 +822,9 @@ class Track_Fixer_No_Exit(Track_Fixer):
         self.eligible_frames = np.where(full_mask)[0].tolist()
     
     def _crop_rotate_and_export(self):
+        
+        from core.io import Cutout_Exporter
+
         I = self.pred_data_array.shape[1]
         angles = np.zeros((self.total_frames, I))
 
@@ -838,6 +847,9 @@ class Track_Fixer_No_Exit(Track_Fixer):
         co.extract_frame()
 
     def _run_contrain_magic(self, ambiguous_frames:List[int]):
+        
+        from utils.embedding import Crop_Dataset, Embedding_Visualizer, Contrastive_Trainer
+
         embedding_filepath = os.path.join(self.temp_dir, 'embeddings.npz')
         if os.path.isfile(embedding_filepath):
             logger.info(f"Auto loading embedding file at {embedding_filepath}")
@@ -846,6 +858,9 @@ class Track_Fixer_No_Exit(Track_Fixer):
             motion_ids = cache['motion_ids'].tolist()
             frame_indices = cache['frame_indices'].tolist()
         else:
+
+            from core.io import Cutout_Dataloader
+
             self._crop_rotate_and_export()
             loader = Cutout_Dataloader(self.temp_dir)
             crops, motion_ids, frame_indices, _, _ = loader.load_paired_tracks(n_mice=2)
@@ -853,7 +868,7 @@ class Track_Fixer_No_Exit(Track_Fixer):
                 raise FileNotFoundError("[TF] No crops loaded. Check your folder path and filename format.")
             cds = Crop_Dataset(crops, motion_ids, frame_indices)
             trainer = Contrastive_Trainer()
-            trainer.train(cds, epochs=10, warmup_epochs=5)
+            trainer.train(cds, epochs=self.epochs, warmup_epochs=self.warmup_epochs)
             embeddings = trainer.extract_embeddings(cds)
             np.savez(embedding_filepath, embeddings=embeddings,
                      motion_ids=motion_ids, frame_indices=frame_indices)
