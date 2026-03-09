@@ -884,6 +884,8 @@ class Frame_Label:
                 extractor=self.vm.extractor,
                 anglemap=self.dm.angle_map_data,
                 avtomat=avtomat,
+                max_epochs=20,
+                warmup_epochs=20,
                 parent=self.main,
             )
         else:

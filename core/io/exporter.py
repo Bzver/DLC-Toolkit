@@ -376,10 +376,12 @@ class Cutout_Exporter:
         self.video_name, _ = os.path.splitext(os.path.basename(self.video_filepath))
         self.grayscaling = grayscaling
 
+        self.load_label_mode = False
         if os.path.isfile(self.video_filepath):
             self.extractor = Frame_Extractor(self.video_filepath)
         elif os.path.isdir(self.video_filepath):
             self.extractor = Frame_Extractor_Img(self.video_filepath)
+            self.load_label_mode = True
         else:
             raise RuntimeError(f"Invalid video filepath: {self.video_filepath}")
 
@@ -393,7 +395,7 @@ class Cutout_Exporter:
             logger.warning("[EXPORTER] Frame list is empty. No cutouts to extract.")
             return []
 
-        if len(self.frame_list) < total_video_frames // 100: # sparse extraction
+        if len(self.frame_list) < total_video_frames // 100 or self.load_label_mode: # sparse extraction
             logger.info(f"[CUTEXP] Performing sparse cutout extraction for {len(self.frame_list)} frames.")
             corrected_indices = self._sparse_frame_extraction()
         else:

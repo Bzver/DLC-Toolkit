@@ -81,7 +81,11 @@ class DLC_Inference(QDialog):
                 self.temp_dir = f"{self.temp_dir}_{timestamp}"
 
         os.makedirs(self.temp_dir)
-        self.extractor = Frame_Extractor(self.video_filepath)
+        if os.path.isfile(self.video_filepath):
+            self.extractor = Frame_Extractor(self.video_filepath)
+        else:
+            self.extractor = Frame_Extractor_Img(self.video_filepath)
+            
 
         layout = QVBoxLayout(self)
         setup_container = self._build_setup_container()

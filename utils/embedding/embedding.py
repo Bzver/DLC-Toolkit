@@ -169,7 +169,7 @@ class Contrastive_Trainer:
             total_loss = 0
             np.random.shuffle(easy_triplets)
     
-            num_batches = len(easy_triplets) // batch_size
+            num_batches = max(1, len(easy_triplets) // batch_size)
             for batch_idx in range(num_batches):
                 start = batch_idx * batch_size
                 end = start + batch_size
@@ -202,7 +202,7 @@ class Contrastive_Trainer:
                 loss.backward()
                 optimizer.step()
                 total_loss += loss.item()
-            
+
             logger.info(f"[CONTRAIN] Epoch {epoch+1}/{warmup_epochs}, Loss: {total_loss/num_batches:.4f}")
 
         logger.info("[CONTRAIN] Mining hard triplets from trained embeddings...")
@@ -240,7 +240,7 @@ class Contrastive_Trainer:
             total_loss = 0
             np.random.shuffle(hard_triplets)
 
-            num_batches = len(hard_triplets) // batch_size
+            num_batches = max(1, len(hard_triplets) // batch_size)
             for batch_idx in range(num_batches):
                 start = batch_idx * batch_size
                 end = start + batch_size

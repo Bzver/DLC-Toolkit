@@ -176,6 +176,8 @@ class Frame_Extractor:
 class Frame_Extractor_Img:
     def __init__(self, img_folder: str):
         logger.info(f"[FLOADER] Initializing Frame_Extractor_Img for folder: {img_folder}")
+
+        self.img_folder = img_folder
         if not os.path.isdir(img_folder):
             raise FileNotFoundError(f"Image folder not found: {img_folder}")
 
@@ -196,6 +198,30 @@ class Frame_Extractor_Img:
     
     def get_frame_dim(self) -> Tuple[int, int]:
         return self.height, self.width
+
+    def get_video_filepath(self):
+        return self.img_folder
+
+    def get_video_dir(self):
+        return self.img_folder
+
+    def get_video_name(self, no_ext:bool=False):
+        return os.path.basename(self.img_folder)
+
+    def sample_frames(self, frame_count:int=100):
+        logger.info(f"[FLOADER] Randomly sampling {frame_count} frames from video.")
+        if self.total_frames < frame_count:
+            frame_count = self.total_frames        
+        
+        frames_to_sample = set(random.sample(range(self.total_frames), frame_count)) # Convert to set for efficient seeking
+        frame_batched_array = np.zeros((frame_count, self.height, self.width, 3), dtype=np.uint8)
+
+        for i, frame_idx in enumerate(frames_to_sample):
+            frame = self.get_frame(frame_idx)
+            if frame is not None:
+                frame_batched_array[i] = frame
+        
+        return frame_batched_array
 
     def get_frame(self, frame_index: int) -> Optional[np.ndarray]:
         logger.debug(f"[FLOADER] Attempting to get image frame {frame_index}")

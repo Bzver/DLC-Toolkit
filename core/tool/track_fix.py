@@ -756,9 +756,6 @@ class Track_Fixer_No_Exit(Track_Fixer):
             avtomat:bool = False,
             parent=None
             ):
-        
-
-
         super().__init__(pred_data_array, 0, None, dlc_data, extractor, avtomat, parent)
         self.anglemap = anglemap
         self.epochs = max_epochs
@@ -782,7 +779,10 @@ class Track_Fixer_No_Exit(Track_Fixer):
                 ambiguous_frames.append(f)
                 logger.debug(f"[TF] Ambiguous match, added to backtrack list")
 
-        self._find_eligible_frames()
+        if self.total_frames > 1000:
+            self._find_eligible_frames()
+        else:
+            self.eligible_frames = np.where(self.inst_count_per_frame==2)[0].tolist()
 
         eligible_in_range = [f for f in self.eligible_frames if f >= start_idx and f < end_idx]
         self.eligible_frames = eligible_in_range
