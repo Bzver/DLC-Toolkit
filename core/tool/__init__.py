@@ -7,7 +7,7 @@ from .blob_counter import Blob_Counter
 from .plot_config import Adjust_Property_Dialog, Adjust_Property_Box, Plot_Config_Menu
 from .label_loader import DLC_Save_Dialog, Load_Label_Dialog, DLC_Save_Dialog_Label
 from .reviewer import Parallel_Review_Dialog, Exit_Reentry_Dialog, Swap_Correction_Dialog
-from .track_fix import Track_Fixer, Track_Fixer_No_Exit
+from .track_fix import Track_Fixer
 from .annot_config import Annotation_Config, Annotation_Summary_Table
 from .undo_redo import Uno_Stack, Uno_Stack_Dict
 
@@ -19,7 +19,6 @@ __all__ = (
     Swap_Correction_Dialog,
     Canonical_Pose_Dialog,
     DLC_Save_Dialog_Label,
-    Track_Fixer_No_Exit,
     Adjust_Property_Box,
     Exit_Reentry_Dialog,
     Prediction_Plotter,

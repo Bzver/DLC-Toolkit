@@ -8,7 +8,7 @@ from PySide6.QtGui import QTransform
 from typing import Optional
 
 from core.runtime import Data_Manager, Video_Manager
-from core.tool import Outlier_Finder, Prediction_Plotter, Uno_Stack, Track_Fixer, Track_Fixer_No_Exit
+from core.tool import Outlier_Finder, Prediction_Plotter, Uno_Stack, Track_Fixer
 from ui import (Menu_Widget, Video_Player_Widget, Pose_Rotation_Dialog, Status_Bar, Instance_Selection_Dialog,
                 Shortcut_Manager, Frame_Range_Dialog, Keypoint_Num_Dialog, Track_Fix_Config_Dialog, Canvas)
 from utils.pose import (
@@ -81,7 +81,7 @@ class Frame_Label:
                             ("Paste Inst On Current Frame (Ctrl + V)", self._paste_inst),
                         ]
                     },
-                    ("Semi Automatic Track Correction", self._temporal_track_correct),
+                    ("Track Correction", self._call_track_fixer),
                     ("Generate Instance (G)", self._generate_inst),
                     ("Rotate Selected Instance (R)", self._rotate_inst),
                 ]
@@ -157,7 +157,6 @@ class Frame_Label:
         self.pred_data_array = None
         self.open_outlier = False
         self.outlier_mask = None
-        self.exit_zone = None
             
     def init_loaded_vid(self):
         pass
@@ -847,26 +846,23 @@ class Frame_Label:
 
     ##############################################################################################
 
-    def _temporal_track_correct(self):
+    def _call_track_fixer(self):
         if not self._track_edit_blocker():
             return
 
         self._save_state_for_undo()
 
-        config_dlg = Track_Fix_Config_Dialog(
-            current_frame=self.vm.get_frame(self.dm.current_frame_idx),
-            initial_exit_zone=self.exit_zone,
-            has_marked_frames=bool(self.dm.get_frames("marked")),
-            parent=self.main
-        )
+        config_dlg = Track_Fix_Config_Dialog(has_marked_frames=bool(self.dm.get_frames("marked")), parent=self.main)
         
         if config_dlg.exec() != QtWidgets.QDialog.Accepted:
             logger.info("Track correction configuration cancelled by user")
             return
 
-        self.exit_zone = config_dlg.confirmed_exit_zone
         correct_marked_only = config_dlg.correct_marked_only
+        skip_sweep = config_dlg.skip_motion_sweep
         avtomat = config_dlg.avtomat
+        max_epochs = config_dlg.max_epochs
+        warmup_epochs = config_dlg.warmup_epochs
 
         start_idx = 0
         end_idx = self.dm.total_frames
@@ -877,27 +873,17 @@ class Frame_Label:
             end_idx = max(frame_list) + 1
             logger.info(f"Correcting marked frame range: {start_idx}–{end_idx-1}")
 
-        if self.exit_zone is None:
-            self.tf = Track_Fixer_No_Exit(
-                pred_data_array=self.pred_data_array,
-                dlc_data=self.dm.dlc_data,
-                extractor=self.vm.extractor,
-                anglemap=self.dm.angle_map_data,
-                avtomat=avtomat,
-                max_epochs=20,
-                warmup_epochs=20,
-                parent=self.main,
-            )
-        else:
-            self.tf = Track_Fixer(
-                pred_data_array=self.pred_data_array,
-                persistent_idx=0,
-                exit_zone=self.exit_zone,
-                dlc_data=self.dm.dlc_data,
-                extractor=self.vm.extractor,
-                avtomat=avtomat,
-                parent=self.main,
-            )
+        self.tf = Track_Fixer(
+            pred_data_array=self.pred_data_array,
+            dlc_data=self.dm.dlc_data,
+            extractor=self.vm.extractor,
+            anglemap=self.dm.angle_map_data,
+            skip_sweep=skip_sweep,
+            avtomat=avtomat,
+            max_epochs=max_epochs,
+            warmup_epochs=warmup_epochs,
+            parent=self.main,
+        )
 
         pred_data_array = self.tf.track_correction(start_idx=start_idx, end_idx=end_idx)
 
@@ -905,10 +891,4 @@ class Frame_Label:
         self.pred_data_array = self.dm.dlc_data.pred_data_array
         self.display_current_frame()
 
-        logger.info(f"Track correction completed (avtomat={avtomat}, range={start_idx}-{end_idx-1})")
-
-    def _get_pred_data_from_manual_correction(self, pred_data_array, frame_tuple):
-        self._save_state_for_undo()
-        self.dm.dlc_data.pred_data_array = pred_data_array
-        self.pred_data_array = self.dm.dlc_data.pred_data_array
-        self.display_current_frame()
+        logger.info(f"Track correction completed (avtomat={avtomat}, range={start_idx}-{end_idx-1}, epochs={max_epochs}/{warmup_epochs})")
