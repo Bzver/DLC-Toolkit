@@ -848,7 +848,7 @@ class Track_Fixer_No_Exit(Track_Fixer):
 
     def _run_contrain_magic(self, ambiguous_frames:List[int]):
         
-        from utils.embedding import Crop_Dataset, Embedding_Visualizer, Contrastive_Trainer
+        from utils.torch import Crop_Dataset, Embedding_Visualizer, Contrastive_Trainer
 
         embedding_filepath = os.path.join(self.temp_dir, 'embeddings.npz')
         if os.path.isfile(embedding_filepath):
