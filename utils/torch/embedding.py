@@ -96,28 +96,39 @@ class Contrastive_Trainer:
     
         return triplets
 
-    def mine_hard_triplets_adaptive(self, dataset:Crop_Dataset, embeddings, pos_threshold=0.5, neg_threshold=0.3, max_triplets=5000):
+    def mine_hard_triplets_adaptive(self, dataset:Crop_Dataset, embeddings, pos_threshold=0.5, neg_threshold=0.3, max_triplets=5000, subsample_size=None):
+        if subsample_size is None:
+            subsample_size = 4 * max_triplets
+        
+        if len(embeddings) > subsample_size:
+            indices = np.random.choice(len(embeddings), subsample_size, replace=False)
+            embeddings = embeddings[indices]
+            motion_ids = np.array(dataset.motion_ids)[indices]
+            frame_indices = np.array(dataset.frame_indices)[indices]
+        else:
+            motion_ids = np.array(dataset.motion_ids)
+            frame_indices = np.array(dataset.frame_indices)
+        
         sim_matrix = cosine_similarity(embeddings)
         triplets = []
         
         for i in range(len(embeddings)):
-            anchor_id = dataset.motion_ids[i]
-            frame_idx = dataset.frame_indices[i]
+            anchor_id = motion_ids[i]
+            frame_idx = frame_indices[i]
 
-            same_mouse_mask = np.array(dataset.motion_ids) == anchor_id
+            same_mouse_mask = motion_ids == anchor_id
             same_mouse_sims = sim_matrix[i].copy()
             same_mouse_sims[~same_mouse_mask] = 2.0
             same_mouse_sims[i] = 2.0
 
-            frame_indices_arr = np.array(dataset.frame_indices)
-            distant_mask = np.abs(frame_indices_arr - frame_idx) >= self.slide_window
+            distant_mask = np.abs(frame_indices - frame_idx) >= self.slide_window
             same_mouse_sims[distant_mask] = 2.0
 
             if np.any(same_mouse_mask):
                 hard_pos_candidates = np.where(same_mouse_sims < pos_threshold)[0]
                 if len(hard_pos_candidates) > 0:
                     hardest_pos_idx = hard_pos_candidates[np.argmin(same_mouse_sims[hard_pos_candidates])]
-    
+        
                     diff_mouse_mask = ~same_mouse_mask
                     diff_mouse_sims = sim_matrix[i].copy()
                     diff_mouse_sims[~diff_mouse_mask] = -2.0
@@ -206,7 +217,7 @@ class Contrastive_Trainer:
             logger.info(f"[CONTRAIN] Epoch {epoch+1}/{warmup_epochs}, Loss: {total_loss/num_batches:.4f}")
 
         logger.info("[CONTRAIN] Mining hard triplets from trained embeddings...")
-        self.model.eval()
+
         embeddings = self.extract_embeddings(dataset)
         sim_matrix = cosine_similarity(embeddings)
         
@@ -280,7 +291,7 @@ class Contrastive_Trainer:
             silhouette_eval_needed = (epoch - warmup_epochs + 1) % sil_check_interval == 0
 
             if (hardmining_needed or silhouette_eval_needed) and epoch < epochs - 1:
-                self.model.eval()
+
                 embeddings = self.extract_embeddings(dataset)
 
                 if silhouette_eval_needed:
@@ -313,12 +324,21 @@ class Contrastive_Trainer:
         self.model.eval()
         return self.model
 
-    def extract_embeddings(self, dataset):
+    def extract_embeddings(self, dataset, batch_size=128):
         embeddings = []
+        self.model.eval()
+        
         with torch.no_grad():
-            for i in range(len(dataset)):
-                crop, _, _, _ = dataset[i]
-                tensor = self.transform(crop).unsqueeze(0).to(self.device)
-                emb = self.model(tensor).squeeze().cpu().numpy()
-                embeddings.append(emb)
+            for i in range(0, len(dataset), batch_size):
+                batch_indices = range(i, min(i + batch_size, len(dataset)))
+                
+                anchor_imgs = []
+                for idx in batch_indices:
+                    crop, _, _, _ = dataset[idx]
+                    anchor_imgs.append(self.transform(crop))
+                
+                batch_tensors = torch.stack(anchor_imgs).to(self.device)
+                embs = self.model(batch_tensors).cpu().numpy()
+                embeddings.append(embs)
+        
         return np.vstack(embeddings)
