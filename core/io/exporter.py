@@ -255,14 +255,12 @@ class Frame_Exporter_Threaded:
                     last_probe = "d"
                     chunks.append((start, end))
             else: # Normie
-                if end_idx - self.frame_list[last_start] < self.segment_size:
-                    if last_probe == "d" or last_probe == "s":
-                        chunks.pop()
-                        chunks.append((last_start, end))
-                        continue
-    
-                last_start = start
-                chunks.append((last_start, end))
+                if end_idx - self.frame_list[last_start] < self.segment_size and len(chunks) > 1:
+                    chunks.pop()
+                    chunks.append((last_start, end))
+                else:
+                    last_start = start
+                    chunks.append((last_start, end))
         
         chunked_list = [self.frame_list[start:end] for start, end in chunks]
             
