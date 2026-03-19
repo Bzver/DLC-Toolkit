@@ -164,8 +164,7 @@ class Contrastive_Trainer:
             lr=1e-5,
             epochs=20,
             warmup_epochs=10,
-            hard_mine_interval=5,
-            sil_check_interval=5,
+            hard_mine_interval=10,
             sil_threshold=0.4,
             sil_subsampling=1000,
             ):
@@ -216,33 +215,26 @@ class Contrastive_Trainer:
 
             logger.info(f"[CONTRAIN] Epoch {epoch+1}/{warmup_epochs}, Loss: {total_loss/num_batches:.4f}")
 
-        logger.info("[CONTRAIN] Mining hard triplets from trained embeddings...")
-
         embeddings = self.extract_embeddings(dataset)
-        sim_matrix = cosine_similarity(embeddings)
         
-        same_mouse_sims = []
-        diff_mouse_sims = []
-        for i in range(len(embeddings)):
-            for j in range(i+1, len(embeddings)):
-                if dataset.frame_indices[j] - dataset.frame_indices[i] > self.slide_window:
-                    continue
-                if dataset.motion_ids[i] == dataset.motion_ids[j]:
-                    same_mouse_sims.append(sim_matrix[i, j])
-                else:
-                    diff_mouse_sims.append(sim_matrix[i, j])
-        
+        same_mouse_sims, diff_mouse_sims = self._estimate_thresholds_subsampled(dataset, embeddings)
         pos_threshold = np.percentile(same_mouse_sims, 20)
         neg_threshold = np.percentile(diff_mouse_sims, 80)
         
         logger.info(f"[CONTRAIN] Same-mouse: {np.mean(same_mouse_sims):.3f} ± {np.std(same_mouse_sims):.3f}")
         logger.info(f"[CONTRAIN] Diff-mouse: {np.mean(diff_mouse_sims):.3f} ± {np.std(diff_mouse_sims):.3f}")
         logger.info(f"[CONTRAIN] pos<{pos_threshold:.3f}, neg>{neg_threshold:.3f}")
+
+        score = self._silhouette_eval(embeddings, sil_subsampling)
+        logger.info(f"[SILHOUETTE] Epoch {epoch+1}: Score = {score:.3f}")
+        if score > sil_threshold:
+            self.model.eval()
+            return self.model
         
-        hard_triplets = self.mine_hard_triplets_adaptive(dataset, embeddings, 
-                                                        pos_threshold=pos_threshold, 
-                                                        neg_threshold=neg_threshold,
-                                                        max_triplets=5000)
+
+        logger.info("[CONTRAIN] Mining hard triplets from trained embeddings...")
+
+        hard_triplets = self.mine_hard_triplets_adaptive(dataset, embeddings, pos_threshold=pos_threshold, neg_threshold=neg_threshold, max_triplets=5000)
         logger.info(f"[CONTRAIN] Mined {len(hard_triplets)} hard triplets")
 
         logger.info("\n[CONTRAIN] Training on hard triplets...")
@@ -288,36 +280,20 @@ class Contrastive_Trainer:
             logger.info(f"[CONTRAIN] Epoch {epoch+1}/{epochs}, Loss: {total_loss/num_batches:.4f}")
 
             hardmining_needed = (epoch - warmup_epochs + 1) % hard_mine_interval == 0
-            silhouette_eval_needed = (epoch - warmup_epochs + 1) % sil_check_interval == 0
 
-            if (hardmining_needed or silhouette_eval_needed) and epoch < epochs - 1:
-
+            if hardmining_needed and epoch < epochs - 1:
                 embeddings = self.extract_embeddings(dataset)
 
-                if silhouette_eval_needed:
-                    with torch.no_grad():
-                        if len(embeddings) > sil_subsampling:
-                            indices = np.random.choice(len(embeddings), sil_subsampling, replace=False)
-                            sample_embs = embeddings[indices]
-                        else:
-                            sample_embs = embeddings
+                score = self._silhouette_eval(embeddings, sil_subsampling)
+                logger.info(f"[SILHOUETTE] Epoch {epoch+1}: Score = {score:.3f}")
 
-                        kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
-                        labels = kmeans.fit_predict(sample_embs)
-                        score = silhouette_score(sample_embs, labels)
-                        logger.info(f"[SILHOUETTE] Epoch {epoch+1}: Score = {score:.3f}")
-        
-                        if score > sil_threshold:
-                            logger.info(f"[SILHOUETTE] Threshold {sil_threshold} reached. Stopping training early.")
-                            break
+                if score > sil_threshold:
+                    logger.info(f"[SILHOUETTE] Threshold {sil_threshold} reached. Stopping training early.")
+                    break
 
-                if hardmining_needed:   
-                    logger.info(f"[CONTRAIN] Updating hard triplets at epoch {epoch+1}...")
-                    hard_triplets = self.mine_hard_triplets_adaptive(dataset, embeddings,
-                                                                    pos_threshold=pos_threshold,
-                                                                    neg_threshold=neg_threshold,
-                                                                    max_triplets=5000)
-                    logger.info(f"[CONTRAIN] Re-mined {len(hard_triplets)} hard triplets")
+                logger.info(f"[CONTRAIN] Updating hard triplets at epoch {epoch+1}...")
+                hard_triplets = self.mine_hard_triplets_adaptive(dataset, embeddings, pos_threshold=pos_threshold, neg_threshold=neg_threshold, max_triplets=5000)
+                logger.info(f"[CONTRAIN] Re-mined {len(hard_triplets)} hard triplets")
 
                 self.model.train()
         
@@ -342,3 +318,48 @@ class Contrastive_Trainer:
                 embeddings.append(embs)
         
         return np.vstack(embeddings)
+
+    def _estimate_thresholds_subsampled(self, dataset, embeddings, subsample_size=5000, n_runs=3):
+        motion_ids_arr = np.array(dataset.motion_ids)
+        frame_indices_arr = np.array(dataset.frame_indices)
+        
+        pos_sims, neg_sims = [], []
+        
+        for _ in range(n_runs):
+            if len(embeddings) > subsample_size:
+                indices = np.random.choice(len(embeddings), subsample_size, replace=False)
+                sub_embs = embeddings[indices]
+                sub_motion = motion_ids_arr[indices]
+                sub_frames = frame_indices_arr[indices]
+            else:
+                sub_embs = embeddings
+                sub_motion = motion_ids_arr
+                sub_frames = frame_indices_arr
+
+            sim_sub = cosine_similarity(sub_embs)
+            n_sub = len(sub_embs)
+
+            i_idx, j_idx = np.triu_indices(n_sub, k=1)
+            frame_diffs = np.abs(sub_frames[j_idx] - sub_frames[i_idx])
+            valid_mask = frame_diffs <= self.slide_window
+
+            valid_sims = sim_sub[i_idx[valid_mask], j_idx[valid_mask]]
+            same_mouse = sub_motion[i_idx[valid_mask]] == sub_motion[j_idx[valid_mask]]
+
+            pos_sims.extend(valid_sims[same_mouse].tolist())
+            neg_sims.extend(valid_sims[~same_mouse].tolist())
+        
+        return pos_sims, neg_sims
+
+    @staticmethod
+    def _silhouette_eval(embeddings, sil_subsampling):
+        with torch.no_grad():
+            if len(embeddings) > sil_subsampling:
+                indices = np.random.choice(len(embeddings), sil_subsampling, replace=False)
+                sample_embs = embeddings[indices]
+            else:
+                sample_embs = embeddings
+
+            kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
+            labels = kmeans.fit_predict(sample_embs)
+            return silhouette_score(sample_embs, labels)
