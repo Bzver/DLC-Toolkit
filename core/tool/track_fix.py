@@ -2,9 +2,10 @@ import os
 import numpy as np
 from sklearn.cluster import KMeans
 from typing import Tuple, List, Dict
+
 from .reviewer import Swap_Correction_Dialog
-from core.io import Frame_Extractor
-from ui import Progress_Indicator_Dialog
+from core.io import Frame_Extractor, Temp_Manager
+from ui import Progress_Indicator_Dialog, Dual_Pixmap_Dialog
 from utils.track import Kalman, swap_track
 from utils.pose import calculate_pose_centroids, outlier_rotation, calculate_pose_array_rotations, calculate_pose_array_bbox
 from utils.helper import get_instance_count_per_frame, get_instances_on_current_frame, indices_to_spans
@@ -12,16 +13,17 @@ from utils.dataclass import Loaded_DLC_Data
 from utils.logger import logger
 
 class Track_Fixer:
-    KALMAN_MAX_ERROR = 80.0
-    AMBIGUITY_THRESHOLD = 20.0
-    MAX_DIST_THRESHOLD = 120.0
     KALMAN_RESET_THRESHOLD = 3
     USER_DIALOG_COOLDOWN = 20
+    AMBIGUITY_THRESHOLD = 20.0
+    MAX_DIST_THRESHOLD = 120.0
+    KALMAN_MAX_ERROR = 80.0
 
     def __init__(
         self,
         pred_data_array: np.ndarray,
         dlc_data: Loaded_DLC_Data,
+        tm: Temp_Manager,
         extractor: Frame_Extractor,
         anglemap: Dict[str, int],
         max_epochs: int = 30,
@@ -35,6 +37,7 @@ class Track_Fixer:
         self.pred_data_array = pred_data_array.copy()
         self.dlc_data = dlc_data
         self.extractor = extractor
+        self.temp_dir = tm.create("track")
         self.anglemap = anglemap
         self.epochs = max_epochs
         self.warmup_epochs = warmup_epochs
@@ -49,8 +52,6 @@ class Track_Fixer:
         self.kalman_failure_count = [0, 0]
         
         self.eligible_frames = []
-        self.temp_dir = os.path.join(self.extractor.get_video_dir(), "bvt_temp", self.extractor.get_video_name(no_ext=True))
-        os.makedirs(self.temp_dir, exist_ok=True)
 
     def track_correction(self, start_idx: int = 0, end_idx: int = -1) -> np.ndarray:
         if end_idx == -1:
@@ -145,10 +146,12 @@ class Track_Fixer:
         agreement_pix, stable_swap_candidates = vis.plot_agreement_timeline()
         tsne_pix.save(os.path.join(self.temp_dir, "tsne_combined.png"))
         agreement_pix.save(os.path.join(self.temp_dir, "agreement_timeline.png"))
+        pix_dialog = Dual_Pixmap_Dialog(agreement_pix, tsne_pix, max_height=480, parent=self.main)
+        pix_dialog.show()
         stable_spans = indices_to_spans(stable_swap_candidates)
         for start, end in stable_spans:
-            if (start == 0) or (end == self.total_frames - 1):
-                continue
+            start_idx = max(0, start - 10)
+            fin_idx = min(end + 11, self.total_frames-1)
             amb_in_range = [f for f in ambiguous_frames if f >= start and f < end]
             if self.avtomat:
                 swap_orders = []
@@ -162,7 +165,8 @@ class Track_Fixer:
                     else:
                         swap_orders.append((end, "t"))
             else:
-                swap_orders = self._launch_dialog_swap(amb_in_range, start - 10, end + 11)
+                swap_orders = self._launch_dialog_swap(amb_in_range, start_idx, fin_idx)
+
             if swap_orders == "exit":
                 return
             else:
@@ -170,8 +174,9 @@ class Track_Fixer:
                     if order == "i":
                         self.pred_data_array = swap_track(self.pred_data_array, frame_idx)
                     else:
-                        self.pred_data_array = swap_track(
-                            self.pred_data_array, frame_idx, swap_range=list(range(frame_idx, end + 11)))
+                        self.pred_data_array = swap_track(self.pred_data_array, frame_idx,
+                                                          swap_range=list(range(frame_idx, fin_idx)))
+
         self.centroids, _ = calculate_pose_centroids(self.pred_data_array)
         if os.path.isfile(embedding_filepath):
             os.remove(embedding_filepath)

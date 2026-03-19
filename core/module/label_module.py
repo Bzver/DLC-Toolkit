@@ -876,6 +876,7 @@ class Frame_Label:
         self.tf = Track_Fixer(
             pred_data_array=self.pred_data_array,
             dlc_data=self.dm.dlc_data,
+            tm=self.dm.tm,
             extractor=self.vm.extractor,
             anglemap=self.dm.angle_map_data,
             skip_sweep=skip_sweep,

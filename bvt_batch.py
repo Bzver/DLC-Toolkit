@@ -501,6 +501,7 @@ def _inference_workspace_vid(
 
         inference_window = DLC_Inference(
             dlc_data=dm.dlc_data,
+            tm=dm.tm,
             video_length=dm.total_frames,
             frame_list=chunk_list,
             video_filepath=dm.video_file,

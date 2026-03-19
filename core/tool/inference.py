@@ -10,7 +10,7 @@ from typing import List, Optional, Tuple
 
 from ui import Spinbox_With_Label, Progress_Indicator_Dialog, Tqdm_Progress_Adapter
 from core.io import (
-    Exporter, Prediction_Loader, Frame_Extractor, Frame_Extractor_Img,
+    Exporter, Prediction_Loader, Frame_Extractor, Frame_Extractor_Img, Temp_Manager,
     save_predictions_to_new_h5, timestamp_new_prediction,
     )
 from .reviewer import Parallel_Review_Dialog
@@ -27,6 +27,7 @@ class DLC_Inference(QDialog):
     def __init__(
         self,
         dlc_data:Loaded_DLC_Data,
+        tm:Temp_Manager,
         video_length:int,
         frame_list:List[int],
         video_filepath:str,
@@ -52,35 +53,8 @@ class DLC_Inference(QDialog):
         self.video_name, _ = os.path.splitext(os.path.basename(self.video_filepath))
         self.cond_or_coam = False
 
-        temp_dir_root = os.path.join(os.path.dirname(self.video_filepath), "bvt_temp")
-        os.makedirs(temp_dir_root, exist_ok=True)
+        self.temp_dir = tm.create("infer")
 
-        self.temp_dir = os.path.join(temp_dir_root, self.video_name)
-
-        temp_dir_derivatives = []
-        for f in os.listdir(temp_dir_root):
-            if not f.startswith(self.video_name):
-                continue
-            suffix = f[(len(self.video_name)+1):]
-            if len(suffix) == 8 and suffix.isdigit():
-                temp_dir_derivatives.append(f)
-
-        for f in temp_dir_derivatives:
-            f_path = os.path.join(temp_dir_root, f)
-            if os.path.isdir(f_path):
-                try:
-                    shutil.rmtree(f_path)
-                except PermissionError:
-                    pass
-
-        if os.path.isdir(self.temp_dir):
-            try:
-                shutil.rmtree(self.temp_dir)
-            except PermissionError:
-                timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-                self.temp_dir = f"{self.temp_dir}_{timestamp}"
-
-        os.makedirs(self.temp_dir)
         if os.path.isfile(self.video_filepath):
             self.extractor = Frame_Extractor(self.video_filepath)
         else:

@@ -8,7 +8,7 @@ from typing import Callable, Tuple, List, Optional, Dict
 
 from .frame_man import Frame_Manager
 from core.io import (
-    Prediction_Loader, Exporter,
+    Prediction_Loader, Exporter, Temp_Manager,
     backup_existing_prediction, save_predictions_to_new_h5, get_frame_list_from_h5,
     prediction_to_csv, remove_confidence_score, append_new_video_to_dlc_config)
 from ui import Head_Tail_Dialog
@@ -39,6 +39,7 @@ class Data_Manager:
         self.video_file, self.video_name = None, None
         self.dlc_data, self.label_file, self.canon_pose = None, None, None
         self.dlc_label_mode = False
+        self.tm = None
 
         self.plot_config = Plot_Config(
             plot_opacity =1.0, point_size = 6.0, confidence_cutoff = 0.0, hide_text_labels = False, edit_mode = False,
@@ -60,6 +61,7 @@ class Data_Manager:
     def update_video_path(self, video_path:str):
         self.video_file = video_path
         self.video_name = os.path.splitext(os.path.basename(self.video_file))[0]
+        self.tm = Temp_Manager(video_path)
 
     def load_pred_to_dm(self, dlc_config_path:str, prediction_path:str):
         data_loader = Prediction_Loader(dlc_config_path, prediction_path)
@@ -405,7 +407,7 @@ class Data_Manager:
             'video_name': self.video_name,
             'dlc_data': self.dlc_data.to_dict()if self.dlc_data is not None else None,
             'canon_pose': self.canon_pose,
-            'label_file': self.label_file, # corresponding DLC labels
+            'label_file': self.label_file,
             'frame_store': self.fm.to_dict(),
             'plot_config': self.plot_config.to_dict(),
             'blob_config': self.blob_config.to_dict() if self.blob_config is not None else None,
@@ -426,7 +428,6 @@ class Data_Manager:
         with open(file_path, 'rb') as f:
             workspace_state = pickle.load(f)
 
-        # Restore all attributes
         self.dlc_label_mode = workspace_state.get('dlc_label_mode', False)
         self.total_frames = workspace_state.get('total_frames', 0)
         self.current_frame_idx = workspace_state.get('current_frame_idx', 0)
@@ -440,21 +441,8 @@ class Data_Manager:
         self.roi = workspace_state.get('roi')
         self.background_mask = workspace_state.get('bg_mask')
 
-        if 'frame_store' in workspace_state.keys():
-            self.fm = Frame_Manager.from_dict(workspace_state.get('frame_store'), self.refresh_callback)
-            self.fm.move_category("animal_n", "animal_2")
-        else: # For backward compatibility 
-            self.fm = Frame_Manager(self.refresh_callback)
-            self.fm.add_frames("marked", workspace_state.get('frame_list', []))
-            self.fm.add_frames("refined", workspace_state.get('refined_frame_list', []))
-            self.fm.add_frames("approved", workspace_state.get('approved_frame_list', []))
-            self.fm.add_frames("rejected", workspace_state.get('rejected_frame_list', []))
-            self.fm.add_frames("animal_0", workspace_state.get('animal_0_list', []))
-            self.fm.add_frames("animal_1", workspace_state.get('animal_1_list', []))
-            self.fm.add_frames("animal_n", workspace_state.get('animal_n_list', []))
-            self.fm.add_frames("blob_merged", workspace_state.get('blob_merged_list', []))
-            self.fm.add_frames("roi_change", workspace_state.get('roi_frame_list', []))
-            self.fm.add_frames("outlier", workspace_state.get('outlier_frame_list', []))
+        self.fm = Frame_Manager.from_dict(workspace_state.get('frame_store'), self.refresh_callback)
+        self.fm.move_category("animal_n", "animal_2")
 
         dlc_data = workspace_state.get('dlc_data')
         self.dlc_data = Loaded_DLC_Data.from_dict(dlc_data) if isinstance(dlc_data, dict) else dlc_data
