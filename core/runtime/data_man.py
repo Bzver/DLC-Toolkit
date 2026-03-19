@@ -8,7 +8,7 @@ from typing import Callable, Tuple, List, Optional, Dict
 
 from .frame_man import Frame_Manager
 from core.io import (
-    Prediction_Loader, Exporter, Temp_Manager,
+    Prediction_Loader, DLC_Exporter, Temp_Manager,
     backup_existing_prediction, save_predictions_to_new_h5, get_frame_list_from_h5,
     prediction_to_csv, remove_confidence_score, append_new_video_to_dlc_config)
 from ui import Head_Tail_Dialog
@@ -571,7 +571,7 @@ class Data_Manager:
             pred_data_to_use = self.dlc_data.pred_data_array
 
         try:
-            exporter = Exporter(
+            exporter = DLC_Exporter(
                 self.dlc_data, save_folder, self.video_file, frame_list, pred_data_array=pred_data_to_use, crop_coord=crop_coord, grayscaling=grayscaling)
             exporter.export_data_to_DLC()
         except Exception as e:

@@ -1,9 +1,9 @@
 from time import time
-from tqdm import tqdm
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt
 
 from utils.logger import logger
+
 
 class Progress_Indicator_Dialog(QtWidgets.QProgressDialog):
     def __init__(self, min_val, max_val, title, text, parent=None):
@@ -130,41 +130,3 @@ class Progress_Indicator_Dialog(QtWidgets.QProgressDialog):
             return f"{rate / 1_000:.1f} kit/s"
         else:
             return f"{rate / 1_000_000:.1f} Mit/s"
-        
-
-class Tqdm_Progress_Adapter:
-    def __init__(self, minimum: int = 0, maximum: int = 100, description: str = ""):
-        self._minimum = minimum
-        self._maximum = maximum
-        self.pbar = tqdm(
-            total=maximum,
-            desc=description,
-            unit="frame",
-            dynamic_ncols=True
-        )
-
-    def setMinimum(self, minimum: int):
-        self._minimum = minimum
-        self.pbar.total = self._maximum - minimum
-        self.pbar.refresh()
-
-    def setMaximum(self, maximum: int):
-        self._maximum = maximum
-        self.pbar.total = maximum - self._minimum
-        self.pbar.refresh()
-
-    def setValue(self, value: int):
-        self.pbar.n = max(0, min(value - self._minimum, self._maximum - self._minimum))
-        self.pbar.refresh()
-
-    def wasCanceled(self) -> bool:
-        return False
-
-    def close(self):
-        self.pbar.close()
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        self.close()

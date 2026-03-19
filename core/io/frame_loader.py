@@ -11,7 +11,6 @@ from utils.logger import logger
 
 class Frame_Extractor:
     def __init__(self, video_path: str):
-        logger.info(f"[FLOADER] Initializing Frame_Extractor for video: {video_path}")
         self.video_path = os.path.abspath(video_path)
         if not os.path.isfile(self.video_path):
             logger.error(f"[FLOADER] Video file not found: {self.video_path}")
@@ -21,7 +20,6 @@ class Frame_Extractor:
         if not self.cap.isOpened():
             logger.error(f"[FLOADER] Failed to open video with OpenCV: {self.video_path}")
             raise RuntimeError(f"Failed to open video with OpenCV: {self.video_path}")
-        logger.info(f"[FLOADER] Video {self.video_path} opened successfully.")
 
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.fps = self.cap.get(cv2.CAP_PROP_FPS)
@@ -105,7 +103,7 @@ class Frame_Extractor:
             return frame_batched_array
 
     def start_sequential_read(self, start: int = 0, end: Optional[int] = None):
-        logger.info(f"[FLOADER] Starting sequential read from frame {start} to {end}.")
+        logger.debug(f"[FLOADER] Starting sequential read from frame {start} to {end}.")
         if end is None:
             end = self.total_frames
         if not (0 <= start < self.total_frames):
@@ -115,7 +113,7 @@ class Frame_Extractor:
             logger.warning(f"[FLOADER] End frame {end} is less than or equal to start frame {start}. Adjusting end to {start + 1}.")
             end = start + 1
         end = min(end, self.total_frames)
-        logger.info(f"[FLOADER] Actual sequential read range: {start} to {end}.")
+        logger.debug(f"[FLOADER] Actual sequential read range: {start} to {end}.")
 
         if self._seq_cap is not None:
             logger.debug("[FLOADER] Releasing existing sequential capture.")
@@ -125,7 +123,6 @@ class Frame_Extractor:
         if not self._seq_cap.isOpened():
             logger.error(f"[FLOADER] Failed to open video for sequential reading: {self.video_path}")
             raise RuntimeError("Failed to open video for sequential reading")
-        logger.info(f"[FLOADER] Sequential capture for {self.video_path} opened successfully.")
 
         self._seq_cap.set(cv2.CAP_PROP_POS_FRAMES, start)
         self._seq_next_index = start
@@ -149,18 +146,16 @@ class Frame_Extractor:
         return idx, frame
 
     def finish_sequential_read(self):
-        logger.info("[FLOADER] Finishing sequential read.")
         if self._seq_cap is not None:
             self._seq_cap.release()
             self._seq_cap = None
             logger.debug("[FLOADER] Sequential capture released.")
 
     def clear_cache(self):
-        logger.info("[FLOADER] Clearing frame cache.")
+        logger.debug("[FLOADER] Clearing frame cache.")
         self._frame_cache.clear()
 
     def close(self):
-        logger.info("[FLOADER] Closing Frame_Extractor.")
         self.clear_cache()
         if self.cap:
             self.cap.release()
@@ -237,7 +232,6 @@ class Frame_Extractor_Img:
             return None
 
     def get_largest_dim(self) -> Tuple[int, int]:
-        logger.info("[FLOADER] Calculating largest image dimensions.")
         max_x, max_y = 0, 0
         for path in self.img_files:
             try:
@@ -251,73 +245,63 @@ class Frame_Extractor_Img:
         return int(max_x), int(max_y)
     
     def close(self):
-        logger.info("[FLOADER] Closing Frame_Extractor_Img.")
         pass
 
 
 class Cutout_Dataloader:
-    def __init__(self, folder_path):
+    def __init__(self, folder_path: str):
         self.folder_path = folder_path
+        self.data = None
+        self.merged = False
+
+    def _load_chunks(self) -> dict:
+        chunks = [os.path.join(self.folder_path, f) for f in os.listdir(self.folder_path)
+                  if f.startswith("chunk_") and f.endswith(".npz")]
+        if not chunks:
+            raise FileNotFoundError(f"No NPZ chunks found in {self.folder_path}.")
+
+        all_images, all_frames = [], []
         
-    def load_all_crops(self):
-        files = [f for f in os.listdir(self.folder_path) if f.endswith(".png")]
+        for chunk_path in chunks:
+            logger.debug(f"[CLOAD] Loading {chunk_path}")
+            with np.load(chunk_path, allow_pickle=True) as f:
+                images = f["images"]
+                frames = f["frame_indices"]
+                all_images.append(images)
+                all_frames.append(frames)
+
+        merged_images = np.concatenate(all_images, axis=0)
+        merged_frames = np.concatenate(all_frames, axis=0)
         
-        if not files:
-            raise ValueError(f"No images found in {self.folder_path}")
-        
-        data = []
-        
-        for f in files:
-            f_deext = os.path.splitext(f)[0]
-            parts = f_deext.split("_")
-            
-            try:
-                frame_idx = int(parts[0])
-                mouse_idx = int(parts[1])
-            except ValueError:
-                pass
-            else:
-                data.append({"filename": f, "motion_id": mouse_idx, "frame_idx": frame_idx})
-    
-        data.sort(key=lambda x: x["frame_idx"])
-        
-        crops = []
-        motion_ids = []
-        frame_indices = []
-        
-        for item in data:
-            path = os.path.join(self.folder_path, item["filename"])
-            img = cv2.imread(path)
-            
-            if img is None:
-                logger.warning(f"[EMBLOAD]: Could not load image {path}")
-                continue
-                
-            crops.append(img)
-            motion_ids.append(item["motion_id"])
-            frame_indices.append(item["frame_idx"])
-            
-        logger.info(f"Loaded {len(crops)} total crops from {self.folder_path}")
-        return crops, motion_ids, frame_indices
+        return {"images": merged_images, "frame_indices": merged_frames, "n_chunks": len(chunks)}
 
     def load_paired_tracks(self, n_mice=2):
-        all_crops, all_ids, all_frames = self.load_all_crops()
-
+        logger.info(f"[CLOAD] Loading cutouts from {self.folder_path}")
+        self.data = self._load_chunks()
+        logger.info(f"[CLOAD] Loaded {self.data['images'].shape[0]} frames × "
+                    f"{self.data['images'].shape[1]} instances from "
+                    f"{self.data['n_chunks']} chunk(s)")
+        images = self.data["images"]
+        f_idxs = self.data["frame_indices"]
+        
         frame_dict = defaultdict(dict)
-        for crop, m_id, f_idx in zip(all_crops, all_ids, all_frames):
-            frame_dict[f_idx][m_id] = crop
-
-        valid_frames = sorted([f for f, mice in frame_dict.items() if len(mice) == n_mice])
+        for fid, frame_crops in zip(f_idxs, images):
+            for mid, crop in enumerate(frame_crops):
+                frame_dict[fid][mid] = crop
         
-        paired_crops = []
-        paired_ids = []
-        paired_frames = []
+        valid = sorted([f for f, mice in frame_dict.items() if len(mice) == n_mice])
         
-        for f_idx in valid_frames:
-            for m_id in range(n_mice):
-                paired_crops.append(frame_dict[f_idx][m_id])
-                paired_ids.append(m_id)
-                paired_frames.append(f_idx)
-                
-        logger.info(f"Loaded {len(valid_frames)} valid frames (both mice present).")
-        return paired_crops, paired_ids, paired_frames, frame_dict, valid_frames
+        paired_imgs, paired_mids, paired_fids = [], [], []
+        for fid in valid:
+            for mid in range(n_mice):
+                frame_array:np.ndarray = frame_dict[fid][mid]
+                if frame_array.ndim == 2:
+                    frame = np.repeat(frame_array[:, :, np.newaxis], 3, axis=2)
+                else:
+                    frame = frame_array
+                paired_imgs.append(frame)
+                paired_mids.append(mid)
+                paired_fids.append(fid)
+        
+        logger.info(f"[CLOAD] {len(valid)} valid paired frames from {self.data['n_chunks']} chunk(s).")
+        return paired_imgs, paired_mids, paired_fids, frame_dict, valid

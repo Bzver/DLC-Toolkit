@@ -4,12 +4,12 @@ from sklearn.cluster import KMeans
 from typing import Tuple, List, Dict
 
 from .reviewer import Swap_Correction_Dialog
-from core.io import Frame_Extractor, Temp_Manager
-from ui import Progress_Indicator_Dialog, Dual_Pixmap_Dialog
+from core.io import Frame_Extractor, Temp_Manager, Frame_Exporter_Threaded
+from ui import Dual_Pixmap_Dialog
 from utils.track import Kalman, swap_track
 from utils.pose import calculate_pose_centroids, outlier_rotation, calculate_pose_array_rotations, calculate_pose_array_bbox
 from utils.helper import get_instance_count_per_frame, get_instances_on_current_frame, indices_to_spans
-from utils.dataclass import Loaded_DLC_Data
+from utils.dataclass import Loaded_DLC_Data, Cutout_Augments
 from utils.logger import logger
 
 class Track_Fixer:
@@ -37,6 +37,7 @@ class Track_Fixer:
         self.pred_data_array = pred_data_array.copy()
         self.dlc_data = dlc_data
         self.extractor = extractor
+        self.tm = tm
         self.temp_dir = tm.create("track")
         self.anglemap = anglemap
         self.epochs = max_epochs
@@ -96,24 +97,29 @@ class Track_Fixer:
         return np.where(full_mask)[0].tolist()
 
     def _crop_rotate_and_export(self):
-        from core.io import Cutout_Exporter
         I = self.pred_data_array.shape[1]
         angles = np.zeros((self.total_frames, I))
         crop_coords = calculate_pose_array_bbox(self.pred_data_array[self.eligible_frames], padding=15).astype(np.uint16)
         cutout_dim = int(np.percentile(crop_coords[..., 2:4] - crop_coords[..., 0:2], 90))
+
+        if cutout_dim % 2:
+            cutout_dim += 1
+
         angles[self.eligible_frames] = np.rad2deg(calculate_pose_array_rotations(self.pred_data_array[self.eligible_frames], self.anglemap))  # (F, I)
-        progress = Progress_Indicator_Dialog(0, 100, "Cutout Extraction", "Extracting cutouts from video", parent=self.main)
-        co = Cutout_Exporter(
-            save_folder=self.temp_dir,
-            video_filepath=self.extractor.get_video_filepath(),
-            frame_list=self.eligible_frames,
+
+        ca = Cutout_Augments(
             centroids=self.centroids,
             cutout_dim=cutout_dim,
             angle_array=angles,
-            grayscaling=True,
-            progress_callback=progress,
+            grayscaling=True
+            )
+        co = Frame_Exporter_Threaded(
+            video_filepath=self.extractor.get_video_filepath(),
+            tm=self.tm,
+            output_folder=self.temp_dir,
+            frame_list=self.eligible_frames,
         )
-        co.extract_frame()
+        co.extract_frames(ca)
 
     def _run_contrain_magic(self, ambiguous_frames: List[int]):
 

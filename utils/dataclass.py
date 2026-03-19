@@ -95,3 +95,21 @@ class Blob_Config:
     @classmethod
     def from_dict(cls, data) -> "Blob_Config":
         return cls(**data)
+    
+
+@dataclass
+class Exporter_Augments:
+    crop_coord: Optional[Tuple[int, int, int, int]] = None
+    mask: Optional[NDArray] = None
+    grayscaling: bool = False
+    mode: str="ea"
+
+
+@dataclass
+class Cutout_Augments:
+    cutout_dim: int
+    centroids: NDArray
+    angle_array: NDArray
+    grayscaling: bool = False
+    to_image: bool = False
+    mode: str="ca"

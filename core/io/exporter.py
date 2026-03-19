@@ -1,63 +1,56 @@
 import os
 import numpy as np
 import cv2
+import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from tqdm import tqdm
 
 from typing import List, Optional
-from PySide6.QtWidgets import QProgressDialog
 
 from .csv_op import prediction_to_csv, csv_to_h5
 from .io_helper import append_new_video_to_dlc_config, generate_crop_coord_notations, remove_confidence_score
 from .frame_loader import Frame_Extractor, Frame_Extractor_Img
+from .helper_temp import Temp_Manager
 from utils.helper import crop_coord_to_array, validate_crop_coord, frame_to_grayscale
 from utils.logger import logger
-from utils.dataclass import Loaded_DLC_Data, Blob_Config
+from utils.dataclass import Loaded_DLC_Data, Exporter_Augments, Cutout_Augments
 
 
-Frame_CV2 = np.ndarray
-
-class Exporter:
-    """A class to handle saving or merging predictions back to DLC"""
+class DLC_Exporter:
     def __init__(
             self,
-            dlc_data: Loaded_DLC_Data,
+            dlc_data:Loaded_DLC_Data,
+            tm:Temp_Manager,
             save_folder:str,
-            video_filepath: str,
-            frame_list: List[int],
+            video_filepath:str,
+            frame_list:List[int],
             pred_data_array:Optional[np.ndarray]=None,
-            progress_callback:Optional[QProgressDialog]=None,
             crop_coord:Optional[np.ndarray]=None,
             mask:Optional[np.ndarray]=None,
             grayscaling:bool=False,
             ):
+
         logger.info(f"[EXPORTER] Initializing Exporter for save path: {save_folder}")
         self.dlc_data = dlc_data
         self.save_folder = save_folder
+        self.tm = tm
         self.video_filepath = video_filepath
-
         self.frame_list = frame_list
         self.pred_data_array = pred_data_array
-        self.progress_callback = progress_callback
+
+        if not os.path.exists(self.video_filepath):
+            raise FileNotFoundError(f"Invalid video filepath: {self.video_filepath}")
 
         self.video_name, _ = os.path.splitext(os.path.basename(self.video_filepath))
 
-        self.mask = mask
-        if self.mask is not None:
-            self.mask_pos = (self.mask == 255)
-            self.mask_neg = (self.mask == -255)
-    
-        self.crop_coord = validate_crop_coord(crop_coord)
-        self.grayscaling = grayscaling
-
-        if os.path.isfile(self.video_filepath):
-            self.extractor = Frame_Extractor(self.video_filepath)
-        elif os.path.isdir(self.video_filepath):
-            self.extractor = Frame_Extractor_Img(self.video_filepath)
-        else:
-            raise RuntimeError(f"Invalid video filepath: {self.video_filepath}")
+        self.ea = Exporter_Augments(
+            crop_coord = validate_crop_coord(crop_coord),
+            mask = mask, grayscaling = grayscaling
+        )
 
         os.makedirs(self.save_folder, exist_ok=True)
 
-    def export_data_to_DLC(self, frame_only:bool=False) -> Optional[List[int]]:
+    def export_data_to_DLC(self) -> Optional[List[int]]:
         corrected_indices = self._extract_frame()
         if corrected_indices:
             self.frame_list = corrected_indices
@@ -65,33 +58,12 @@ class Exporter:
         else:
             logger.debug("[EXPORTER] No corrected indices returned from frame extraction.")
 
-        if frame_only:
-            return corrected_indices
-
         self._extract_pred()
         logger.info("[EXPORTER] Prediction data extracted successfully.")
         return corrected_indices
 
-    def export_frame_to_video(self):
-        logger.info("[EXPORTER] Starting frame export to video.")
-        total_frames = self.extractor.get_total_frames()
-
-        if len(self.frame_list) <  total_frames // 100 :
-            logger.info("[EXPORTER] Using sparse extraction for video export.")
-            return self._sparse_frame_extraction(to_video=True)
-        else:
-            logger.info("[EXPORTER] Using continuous extraction for video export.")
-            return self._continuous_frame_extraction(to_video=True)
-
     def _extract_frame(self) -> Optional[List[int]]:
         logger.debug(f"[EXPORTER] Entering _extract_frame. Video filepath: {self.video_filepath}")
-        if os.path.isdir(self.video_filepath): # Loading DLC labels
-            logger.info("[EXPORTER] Video filepath detected as a directory. Extracting DLC labels.")
-            self._extract_dlc_label()
-            return None
-
-        total_video_frames = self.extractor.get_total_frames()
-        logger.info(f"[EXPORTER] Total frames in video: {total_video_frames}")
         if os.path.dirname(self.dlc_data.dlc_config_filepath) in self.save_folder:
             append_new_video_to_dlc_config(self.dlc_data.dlc_config_filepath, os.path.basename(self.save_folder))
             logger.info(f"[EXPORTER] Appended new video '{os.path.basename(self.save_folder)}' to DLC config.")
@@ -102,35 +74,23 @@ class Exporter:
             logger.warning("[EXPORTER] Frame list is empty. No frames to extract.")
             return []
 
-        if len(self.frame_list) < total_video_frames // 100: # sparse extraction
-            logger.info(f"[EXPORTER] Performing sparse frame extraction for {len(self.frame_list)} frames.")
-            corrected_indices = self._sparse_frame_extraction()
-        else:
-            logger.info(f"[EXPORTER] Performing continuous frame extraction for {len(self.frame_list)} frames.")
-            corrected_indices = self._continuous_frame_extraction()
-
-        return corrected_indices
+        fp = Frame_Exporter_Threaded(self.video_filepath, self.tm, self.save_folder, self.frame_list)
+        return fp.extract_frames(self.ea)
 
     def _extract_pred(self):
         logger.debug("[EXPORTER] Entering _extract_pred.")
         if self.pred_data_array is None:
             pred_data_array = self.dlc_data.pred_data_array[self.frame_list, :, :]
-            logger.debug("[EXPORTER] Using dlc_data.pred_data_array for predictions.")
         else:
-            pred_data_array = self.pred_data_array[self.frame_list, :, :] # (F, I, K*3)
-            logger.debug("[EXPORTER] Using provided pred_data_array for predictions.")
+            pred_data_array = self.pred_data_array[self.frame_list, :, :]
 
-        if self.crop_coord is not None:
-            logger.info(f"[EXPORTER] Applying crop coordinates {self.crop_coord} to prediction data.")
-            coords_array = crop_coord_to_array(self.crop_coord, pred_data_array.shape)
+        if self.ea.crop_coord is not None:
+            logger.debug(f"[EXPORTER] Applying crop coordinates {self.ea.crop_coord} to prediction data.")
+            coords_array = crop_coord_to_array(self.ea.crop_coord, pred_data_array.shape)
             pred_data_array = pred_data_array - coords_array
-            x1, y1, _, _ = self.crop_coord
+            x1, y1, _, _ = self.ea.crop_coord
             generate_crop_coord_notations((x1, y1), self.save_folder, self.frame_list)
-            logger.debug("[EXPORTER] Generated crop coordinate notations.")
-        else:
-            logger.debug("[EXPORTER] No crop coordinates to apply to prediction data.")
 
-        logger.info("[EXPORTER] Removing confidence scores from prediction data.")
         pred_data_array = remove_confidence_score(pred_data_array)
 
         csv_name = f"CollectedData_{self.dlc_data.scorer}.csv"
@@ -142,137 +102,464 @@ class Exporter:
 
         csv_to_h5(save_path, self.dlc_data.multi_animal, self.dlc_data.scorer)
         logger.info("[EXPORTER] Converted CSV to H5 format.")
+
+
+class Frame_Exporter_Threaded:
+    def __init__(
+            self,
+            video_filepath:str,
+            tm:Temp_Manager,
+            output_folder:str,
+            frame_list:List[int],
+            max_workers: int = 8,
+            max_segment_size: int=5000
+            ):
+        self.video_filepath = video_filepath
+        self.save_folder = output_folder
+        self.frame_list = sorted(frame_list)
+        self.max_workers = max_workers
+        self.segment_size = max_segment_size
+
+        assert self.video_filepath != self.save_folder, "Invalid destination."
+        self.worker_zero = None
+
+        if os.path.isdir(self.video_filepath) or len(frame_list) < max_segment_size:
+            self.worker_zero = Frame_Exporter(video_filepath, output_folder, frame_list)
+
+        self.temp_dir = tm.create("export")
+
+    def extract_frames(self, aug):
+        if self.worker_zero:
+            return self.worker_zero.extract_frames(aug)
+
+        segments = self._task_splitter()
+        all_indices = []
+        try:
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                futures = {
+                    executor.submit(self._worker_process_segment, idx, chunk, aug, self.temp_dir, to_video=False): idx
+                    for idx, chunk in enumerate(segments)
+                }
+                for future in as_completed(futures):
+                    try:
+                        result = future.result()
+                        if result:
+                            indices = result
+                            all_indices.extend(indices)
+                    except Exception as e:
+                        logger.error(f"[THREAD_EXP] Segment failed: {e}")
+            
+            logger.info(f"[THREAD_EXP] Image extraction complete. {len(all_indices)} frames.")
+            return sorted(all_indices)
+
+        except Exception as e:
+            logger.error(f"[THREAD_EXP] Critical failure: {e}")
+
+    def extract_frames_into_video(self, ea, video_name:str="temp_extract.mp4"):
+        if self.worker_zero:
+            return self.worker_zero.extract_frames_into_video(ea, video_name)
+        if not self._check_ffmpeg():
+            fe = Frame_Exporter(self.video_filepath, self.save_folder, self.frame_list)
+            return fe.extract_frames_into_video(ea, video_name)
         
-    def _apply_filter(self, frame:Frame_CV2):
-        if self.mask is not None:
+        video_output_path = os.path.join(self.save_folder, video_name)
+        segments = self._task_splitter()
+        all_indices = []
+
+        try:
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                futures = {
+                    executor.submit(self._worker_process_segment, idx, chunk, ea, self.temp_dir, to_video=True): idx
+                    for idx, chunk in enumerate(segments)
+                }
+                for future in as_completed(futures):
+                    try:
+                        result = future.result()
+                        if result:
+                            indices = result
+                            all_indices.extend(indices)
+                    except Exception as e:
+                        logger.error(f"[THREAD_EXP] Segment failed: {e}")
+
+                self._concat_videos(video_output_path)
+
+        except Exception as e:
+            logger.error(f"[THREAD_EXP] Critical failure: {e}")
+
+    def _worker_process_segment(
+            self, 
+            seg_idx: int, 
+            frame_list: List[int], 
+            aug: Exporter_Augments|Cutout_Augments,
+            temp_dir: str,
+            to_video: bool
+    ) -> Optional[List[int]]:
+
+        pbar = tqdm(
+            total=len(frame_list),
+            desc=f"Segment {seg_idx} [{min(frame_list)}-{max(frame_list)}]",
+            leave=False, 
+            ncols=200
+        )
+        worker_fe = Frame_Exporter(self.video_filepath, temp_dir if to_video else self.save_folder, frame_list, pbar)
+        try:
+            if to_video:
+                seg_filename = f"batch_extract_{seg_idx:04d}.mp4"
+                indices = worker_fe.extract_frames_into_video(aug, video_name=seg_filename)
+                return indices
+            else:
+                indices = worker_fe.extract_frames(aug)
+                return indices
+        except Exception as e:
+            logger.warning(f"[WORKER_{seg_idx}] Failed: {e}")
+            pbar.set_description(f"Segment {seg_idx} FAILED")
+            pbar.close()
+            if to_video:
+                seg_path = os.path.join(temp_dir, seg_filename)
+                os.remove(seg_path)
+
+                actual_h, actual_w = worker_fe.get_vid_dim_to_export(aug)
+                if self._generate_black_placeholder(seg_path, actual_w, actual_h, fps=10, frame_count=len(frame_list)):
+                    logger.warning(f"[WORKER_{seg_idx}] Substituting failed segment with placeholder.")
+                else:
+                    logger.error(f"[WORKER_{seg_idx}] Failed to generate placeholder.")
+        finally:
+            pbar.close()
+
+    def _task_splitter(self, probe_length:int=100) -> List[List[int]]:
+        num_probe = (len(self.frame_list) - 1) // probe_length + 1
+
+        chunks = []
+        last_probe = "s" 
+        last_start = 0
+        for i in range(num_probe):
+            start = i*probe_length
+            end = min((i+1)*probe_length, len(self.frame_list))
+
+            end_idx = self.frame_list[end - 1]
+
+            if end_idx - self.frame_list[start] >= 10 * probe_length: # Very sparse
+                if last_probe == "s" and end_idx - self.frame_list[last_start] < self.segment_size:
+                    chunks.pop()
+                    chunks.append((last_start, end))
+                else:
+                    last_start = start
+                    last_probe = "s"
+                    chunks.append((start, end))
+            elif end_idx - self.frame_list[start] < 2 * probe_length: # Very dense
+                if last_probe == "d" and end_idx - self.frame_list[last_start] < self.segment_size:
+                    chunks.pop()
+                    chunks.append((last_start, end))
+                else:
+                    last_start = start
+                    last_probe = "d"
+                    chunks.append((start, end))
+            else: # Normie
+                if end_idx - self.frame_list[last_start] < self.segment_size:
+                    if last_probe == "d" or last_probe == "s":
+                        chunks.pop()
+                        chunks.append((last_start, end))
+                        continue
+    
+                last_start = start
+                chunks.append((last_start, end))
+        
+        chunked_list = [self.frame_list[start:end] for start, end in chunks]
+            
+        return chunked_list
+
+    def _concat_videos(self, video_output_path):
+        all_vid = []
+        for f in os.listdir(self.temp_dir):
+            if f.startswith("batch_extract") and f.endswith(".mp4"):
+                f_path = os.path.join(self.temp_dir, f)
+                if os.path.getsize(f_path) > 0:
+                    all_vid.append(f_path)
+                else:
+                    logger.warning(f"[CONCAT] Skipping empty/corrupt segment: {f}")
+
+        all_vid.sort()
+
+        if not all_vid:
+            return None
+    
+        logger.info(f"[CONCAT] About to concat {len(all_vid)} segments.")
+        list_file = os.path.join(self.temp_dir, 'concat_list.txt')
+        try:
+            with open(list_file, 'w', encoding='utf-8') as f:
+                for video in all_vid:
+                    path = video.replace('\\', '/')
+                    f.write(f"file '{path}'\n")
+
+            cmd = ['ffmpeg', '-f', 'concat', '-safe', '0', '-i', list_file, '-c', 'copy', '-y', video_output_path]
+            subprocess.run(
+                cmd, check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            )
+        except subprocess.CalledProcessError as e:
+            stderr_msg = e.stderr.decode('utf-8', errors='replace') if e.stderr else "Unknown FFmpeg error"
+            raise RuntimeError(f"FFmpeg failed in {self.temp_dir}:\n{stderr_msg}")
+        finally:
+            if os.path.exists(list_file):
+                try:
+                    os.remove(list_file)
+                except Exception:
+                    pass
+
+    def _generate_black_placeholder(
+        self, 
+        output_path: str, 
+        width: int, 
+        height: int, 
+        fps: int, 
+        frame_count: int
+    ) -> bool:
+        duration = frame_count / fps
+        cmd = [
+            'ffmpeg', '-y', '-f', 'lavfi',
+            '-i', f'color=c=black:s={width}x{height}:r={fps}:d={duration}',
+            '-c:v', 'mpeg4', '-pix_fmt', 'yuv420p',
+            '-q:v', '5', '-preset', 'ultrafast',
+            '-an', output_path
+        ]
+        try:
+            subprocess.run(
+                cmd,
+                check=True, 
+                stdout=subprocess.DEVNULL, 
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Failed to generate black placeholder: {e}")
+            return False
+
+    @staticmethod
+    def _check_ffmpeg():
+        try:
+            subprocess.run(["ffmpeg", "-version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return False
+
+
+class Frame_Exporter:
+    def __init__(
+            self,
+            video_filepath:str,
+            output_folder:str,
+            frame_list:List[int],
+            progress_bar:tqdm=None
+            ):
+        self.video_filepath = video_filepath
+        self.save_folder = output_folder
+        self.frame_list = frame_list
+
+        self.homegrown_pbar = progress_bar is None
+        if self.homegrown_pbar:
+            self.pbar = tqdm(total=len(frame_list), desc=f"Extracting [{min(frame_list)}-{max(frame_list)}]", leave=False, ncols=200)
+        else:
+            self.pbar = progress_bar
+
+        assert self.video_filepath != self.save_folder, "Invalid destination."
+
+        self.label_mode = os.path.isdir(video_filepath)
+        self.extractor = Frame_Extractor_Img(video_filepath) if self.label_mode else Frame_Extractor(video_filepath)
+        self.extracted_indices = []
+
+    def extract_frames(self, aug:Exporter_Augments|Cutout_Augments):
+        if aug.mode == "ea":
+            self._process_frame_mask(aug.mask)
+        elif aug.mode == "ca" and not aug.to_image:
+            d = aug.cutout_dim
+            f = len(self.frame_list)
+            i = aug.centroids.shape[1]
+            if aug.grayscaling:
+                self.cutout_images = np.zeros((f, i, d, d), dtype=np.uint8)
+            else:
+                self.cutout_images = np.zeros((f, i, d, d, 3), dtype=np.uint8)
+            self.cutout_frames = np.array(sorted(self.frame_list))
+            self.frame_to_arr_idx = {fid: idx for idx, fid in enumerate(self.cutout_frames)}
+
+        sparse_mode = self._determine_continous_or_sparse()
+        if sparse_mode or self.label_mode:
+            self._sparse_frame_extraction(aug)
+        else:
+            self._continuous_frame_extraction(aug)
+
+        self._validate_extracted_indices()
+
+        if hasattr(self, "cutout_images"):
+            chunk_path = os.path.join(self.save_folder, f"chunk_{self.frame_list[0]:08d}.npz")
+            np.savez_compressed(
+                chunk_path,
+                images=self.cutout_images,
+                frame_indices=self.cutout_frames
+            )
+
+        if self.homegrown_pbar:
+            self.pbar.close()
+
+        return self.extracted_indices
+
+    def extract_frames_into_video(
+            self,
+            ea:Exporter_Augments,
+            video_name:str="temp_extract.mp4"
+            ):
+        assert ea.mode == "ea", "Invalid augmentation."
+
+        self._process_frame_mask(ea.mask)
+        video_output_path = os.path.join(self.save_folder, video_name)
+
+        actual_h, actual_w = self.get_vid_dim_to_export(ea)
+
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        writer = cv2.VideoWriter(video_output_path, fourcc, fps=10.0, frameSize=(actual_w, actual_h))
+        if not writer.isOpened():
+            logger.error(f"[EXPORTER] Failed to open VideoWriter for {video_output_path}.")
+        logger.debug(f"[EXPORTER] VideoWriter opened for {video_output_path} (size: {actual_w}x{actual_h}).")
+
+        sparse_mode = self._determine_continous_or_sparse()
+
+        try:
+            if sparse_mode:
+                self._sparse_frame_extraction(ea, writer=writer)
+            else:
+                self._continuous_frame_extraction(ea, writer=writer)
+        finally:
+            writer.release()
+
+        logger.debug(f"[EXPORTER] Video saved to {video_output_path}")
+
+        self._validate_extracted_indices()
+        if self.homegrown_pbar:
+            self.pbar.close()
+        return self.extracted_indices
+
+    def get_vid_dim_to_export(self, ea:Exporter_Augments):
+        h, w = self.extractor.get_frame_dim()
+        if ea.crop_coord is not None:
+            x1, y1, x2, y2 = ea.crop_coord
+            if x2 > w or y2 > h or x1 < 0 or y1 < 0:
+                logger.warning(
+                    f"Crop coordinates out of bounds: ({x1}, {y1}, {x2}, {y2}) for frame size ({w}, {h})")
+                x1 = max(0, min(x1, w))
+                y1 = max(0, min(y1, h))
+                x2 = max(0, min(x2, w))
+                y2 = max(0, min(y2, h))
+
+            actual_h = y2 - y1
+            actual_w = x2 - x1
+        else:
+            actual_h = h
+            actual_w = w
+        return actual_h, actual_w
+
+    def _process_frame_mask(self, mask:np.ndarray|None):
+        if mask is not None:
+            self.mask_pos = (mask == 255)
+            self.mask_neg = (mask == -255)
+        else:
+            self.mask_neg = self.mask_pos = None
+
+    def _determine_continous_or_sparse(self):
+        f = self.frame_list
+        return max(f) - min(f) > 50 * len(f)
+
+    def _validate_extracted_indices(self):
+        extracted_set = set(self.extracted_indices)
+        frame_set = set(self.frame_list)
+        missing = sorted(frame_set - extracted_set)
+
+        if missing:
+            logger.warning(f"[EXPORTER] Frame count mismatch! Extracted frames: {len(extracted_set)} | Expected: {len(frame_set)}"
+                         f"\nThe following frames are not extracted: {missing}")
+
+    def _export_augmentation(self, ea:Exporter_Augments, frame:np.ndarray, frame_idx:int, writer:Optional[cv2.VideoWriter]=None):
+        if ea.mask is not None:
             frame[self.mask_pos] = 255
             frame[self.mask_neg] = 0
 
-        if self.crop_coord is not None:
+        if ea.crop_coord is not None:
             try:
-                x1, y1, x2, y2 = self.crop_coord
+                x1, y1, x2, y2 = ea.crop_coord
                 frame = frame[y1:y2, x1:x2]
             except Exception as e:
-                logger.error(f"[EXPORTER] Error applying crop {self.crop_coord} to frame. Error: {e}")
+                logger.error(f"[EXPORTER] Error applying crop {ea.crop_coord} to frame. Error: {e}")
 
-        if self.grayscaling:
+        if ea.grayscaling:
             frame = frame_to_grayscale(frame, keep_as_bgr=True)
 
-        return frame
-    
-    def _extract_dlc_label(self):
-        logger.debug("[EXPORTER] Entering _extract_dlc_label.")
-        if self.save_folder == self.video_filepath:
-            self.video_filepath += "_cropped"
-            logger.warning(f"[EXPORTER] Save path is same as video filepath. Appending '_cropped'. New video path: {self.video_filepath}")
-
-        image_folder = self.video_filepath
-        img_exts = ('.png', '.jpg')
-        image_files = sorted([
-                os.path.join(image_folder,f) for f in os.listdir(image_folder)
-                if f.lower().endswith(img_exts) and f.startswith("img")
-            ])
-        logger.info(f"[EXPORTER] Found {len(image_files)} image files in {image_folder} for DLC label extraction.")
-
-        for i, frame_idx in enumerate(self.frame_list):
-            image_output_path = os.path.join(self.save_folder, f"img{str(int(frame_idx)).zfill(8)}.png")
-            image_input_path = image_files[i]
-            logger.debug(f"[EXPORTER] Processing DLC labeled frame {frame_idx} from {image_input_path}.")
-            frame = cv2.imread(image_input_path)
-            if frame is None:
-                logger.warning(f"[EXPORTER] Failed to read image: {image_input_path}. Skipping frame {frame_idx}.")
-                continue
-            frame = self._apply_filter(frame)
-
+        if writer:
+            writer.write(frame)
+        else:
+            image_path = f"img{str(frame_idx).zfill(8)}.png"
+            image_output_path = os.path.join(self.save_folder, image_path)
             cv2.imwrite(image_output_path, frame)
-            logger.debug(f"[EXPORTER] Wrote cropped DLC labeled image to {image_output_path}.")
-        
-        append_new_video_to_dlc_config(self.dlc_data.dlc_config_filepath, os.path.basename(self.save_folder))
-        logger.info(f"[EXPORTER] Appended video '{os.path.basename(self.save_folder)}' to DLC config after DLC label extraction.")
 
-    def _sparse_frame_extraction(self, to_video: bool = False):
-        logger.debug(f"[EXPORTER] Entering _sparse_frame_extraction for {len(self.frame_list)} frames. to_video={to_video}")
-        if self.progress_callback:
-            self.progress_callback.setMaximum(len(self.frame_list))
-            logger.debug(f"[EXPORTER] Progress callback maximum set to {len(self.frame_list)} for sparse extraction.")
+        self.pbar.update(1)
+        self.extracted_indices.append(frame_idx)
 
-        extracted_indices = []
-        writer = None
-        video_output_path = None
+    def _cutout_augmentation(self, ca:Cutout_Augments, frame:np.ndarray, frame_idx:int):
+        if ca.grayscaling:
+            frame = frame_to_grayscale(frame, keep_as_bgr=False)
 
-        for i, frame_idx in enumerate(self.frame_list):
-            if self.progress_callback:
-                self.progress_callback.setValue(i)
-                if self.progress_callback.wasCanceled():
-                    logger.warning("[EXPORTER] Sparse frame extraction canceled by user.")
-                    if writer:
-                        writer.release()
-                        logger.debug("[EXPORTER] VideoWriter released due to cancellation.")
-                    self.progress_callback.close()
-                    raise Exception("Frame extraction canceled by user.")
+        for inst_idx in range(ca.centroids.shape[1]):
+            frame_inst = frame.copy()
 
-            logger.debug(f"[EXPORTER] Attempting to extract sparse frame {frame_idx}.")
+            x, y = ca.centroids[frame_idx, inst_idx]
+            x = int(x)
+            y = int(y)
+
+            if ca.angle_array is not None:
+                angle = ca.angle_array[frame_idx, inst_idx]
+                frame_inst = self._rotate(frame_inst, angle, (x, y))
+                h_rot, w_rot = frame_inst.shape[:2]
+                x = w_rot // 2
+                y = h_rot // 2
+
+            x1 = x - ca.cutout_dim // 2
+            x2 = x + ca.cutout_dim // 2
+            y1 = y - ca.cutout_dim // 2
+            y2 = y + ca.cutout_dim // 2
+
+            frame_inst = frame_inst[y1:y2, x1:x2]
+
+            if ca.to_image:
+                image_output_path = os.path.join(self.save_folder, f"{frame_idx}_{inst_idx}.png")
+                cv2.imwrite(image_output_path, frame_inst)
+            else:
+                arr_idx = self.frame_to_arr_idx[frame_idx]
+                self.cutout_images[arr_idx, inst_idx, ...] = frame_inst
+
+        self.pbar.update(1)
+        self.extracted_indices.append(frame_idx)
+
+    def _sparse_frame_extraction(self, aug:Exporter_Augments|Cutout_Augments, writer=None):
+        for frame_idx in self.frame_list:
             frame = self.extractor.get_frame(frame_idx)
             if frame is None:
                 logger.warning(f"[EXPORTER] Frame {frame_idx} not found during sparse extraction. Skipping.")
                 continue
-
-            frame = self._apply_filter(frame)
-
-            if to_video:
-                if writer is None:
-                    video_output_path = os.path.join(self.save_folder, "temp_extract.mp4")
-                    h, w = frame.shape[:2]
-                    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                    writer = cv2.VideoWriter(video_output_path, fourcc, fps=10.0, frameSize=(w, h))
-                    if not writer.isOpened():
-                        logger.critical(f"[EXPORTER] Failed to open VideoWriter for {video_output_path}.")
-                        raise RuntimeError(f"Failed to open VideoWriter for {video_output_path}")
-                    logger.info(f"[EXPORTER] VideoWriter opened for {video_output_path} (size: {w}x{h}).")
-
-                writer.write(frame)
-                logger.debug(f"[EXPORTER] Wrote frame {frame_idx} to video.")
+            if aug.mode == "ca":
+                self._cutout_augmentation(aug, frame, frame_idx)
             else:
-                image_output_path = os.path.join(self.save_folder, f"img{str(int(frame_idx)).zfill(8)}.png")
-                cv2.imwrite(image_output_path, frame)
-                logger.debug(f"[EXPORTER] Wrote sparse frame {frame_idx} to {image_output_path}.")
-
-            extracted_indices.append(frame_idx)
-
-        if writer:
-            writer.release()
-            logger.info(f"[EXPORTER] Video saved to {video_output_path}")
-
-        extracted_set = set(extracted_indices)
-        frame_set = set(self.frame_list)
-        missing = sorted(frame_set - extracted_set)
-
-        if self.progress_callback:
-            self.progress_callback.close()
-
-        if missing:
-            logger.error(f"[EXPORTER] Frame count mismatch! Extracted frames: {len(extracted_set)} | Expected: {len(frame_set)}"
-                         f"\nThe following frames are not extracted: {missing}")
-            return list(extracted_indices)
+                self._export_augmentation(aug, frame, frame_idx, writer)
     
-    def _continuous_frame_extraction(self, to_video:bool=False) -> Optional[List[int]]:
-        logger.debug(f"[EXPORTER] Entering _continuous_frame_extraction. to_video: {to_video}.")
+    def _continuous_frame_extraction(self, aug:Exporter_Augments|Cutout_Augments, writer=None):
         min_frame_in_list = min(self.frame_list) if self.frame_list else 0
         max_frame_in_list = max(self.frame_list) if self.frame_list else -1
-        if self.progress_callback:
-            self.progress_callback.setMinimum(min_frame_in_list)
-            self.progress_callback.setMaximum(max_frame_in_list)
-            logger.debug(f"[EXPORTER] Progress callback maximum set to {max_frame_in_list} for continuous extraction.")
 
-        empty_count = 0
         current_frame_idx = 0
-        writer = None
         frame_set = set(self.frame_list)
-        extracted_indices = []
 
         current_frame_idx += min_frame_in_list
         self.extractor.start_sequential_read(start=min_frame_in_list, end=max_frame_in_list+1)
-        logger.info("[EXPORTER] Started sequential frame read for continuous extraction.")
+        logger.debug("[EXPORTER] Started sequential frame read for continuous extraction.")
 
         while current_frame_idx <= max_frame_in_list:
             result = self.extractor.read_next_frame()
@@ -288,285 +575,21 @@ class Exporter:
             
             if frame is None:
                 frame = np.zeros((*self.extractor.get_frame_dim(), 3), dtype=np.uint8)
-                empty_count += 1
                 logger.warning(f"[EXPORTER] Frame {current_frame_idx} is empty during continuous extraction. Substituted with placeholder.")
 
             if current_frame_idx in frame_set:
-                frame = self._apply_filter(frame)
-
-                if to_video and not writer:
-                    video_output_path = os.path.join(self.save_folder, "temp_extract.mp4")
-                    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-                    writer = cv2.VideoWriter(filename=video_output_path, fourcc=fourcc, fps=10.0, frameSize=frame.shape[1::-1])
-                    if not writer.isOpened():
-                        self.extractor.finish_sequential_read()
-                        logger.critical(f"[EXPORTER] Failed to open VideoWriter for {video_output_path}. Aborting continuous extraction.")
-                        raise RuntimeError(f"Failed to open VideoWriter for {video_output_path}")
-                    logger.info(f"[EXPORTER] VideoWriter opened for {video_output_path}.")
-
-                if not to_video:
-                    image_path = f"img{str(current_frame_idx).zfill(8)}.png"
-                    image_output_path = os.path.join(self.save_folder, image_path)
-                    cv2.imwrite(image_output_path, frame)
+                if aug.mode == "ca":
+                    self._cutout_augmentation(aug, frame, current_frame_idx)
                 else:
-                    writer.write(frame)
-                
-                extracted_indices.append(current_frame_idx)
-
-            if self.progress_callback:
-                self.progress_callback.setValue(current_frame_idx)
-                if self.progress_callback.wasCanceled():
-                    logger.warning("[EXPORTER] Continuous frame extraction canceled by user.")
-                    if writer:
-                        writer.release()
-                        logger.debug("[EXPORTER] VideoWriter released due to cancellation.")
-                    self.extractor.finish_sequential_read()
-                    self.progress_callback.close()
-                    raise Exception("Frame extraction canceled by user.")
-
-            current_frame_idx += 1
-
-        if writer:
-            writer.release()
-            logger.debug("[EXPORTER] VideoWriter released after continuous extraction.")
-        self.extractor.finish_sequential_read()
-        logger.info("[EXPORTER] Finished sequential frame read after continuous extraction.")
-        if self.progress_callback:
-            self.progress_callback.close()
-            logger.debug("[EXPORTER] Progress callback closed after continuous extraction.")
-
-        extracted_set = set(extracted_indices)
-
-        if empty_count:
-            logger.warning(f"[EXPORTER] {empty_count} frames are empty and substituded with placeholders.")
-
-        missing = sorted(frame_set - extracted_set)
-
-        if missing:
-            logger.error(f"[EXPORTER] Frame count mismatch! Extracted frames: {len(extracted_set)} | Expected: {len(frame_set)}"
-                         f"\nThe following frames are not extracted: {missing}")
-            return sorted(extracted_indices)
-        
-
-class Cutout_Exporter:
-    def __init__(
-            self,
-            save_folder:str,
-            video_filepath: str,
-            frame_list: List[int],
-            centroids:np.ndarray,
-            cutout_dim:int,
-            angle_array:Optional[np.ndarray]=None,
-            blob_config:Optional[Blob_Config]=None,
-            grayscaling:bool=False,
-            progress_callback:Optional[QProgressDialog]=None,
-            ):
-        logger.info(f"[CUTEXP] Initializing Exporter for save path: {save_folder}")
-        self.save_folder = save_folder
-        self.video_filepath = video_filepath
-
-        self.frame_list = frame_list
-        self.centroids = centroids
-        self.angle_array = angle_array
-        self.bc = blob_config
-        self.progress_callback = progress_callback
-
-        self.cutout_dim = cutout_dim + 1 if cutout_dim % 2 else cutout_dim
-
-        self.video_name, _ = os.path.splitext(os.path.basename(self.video_filepath))
-        self.grayscaling = grayscaling
-
-        self.load_label_mode = False
-        if os.path.isfile(self.video_filepath):
-            self.extractor = Frame_Extractor(self.video_filepath)
-        elif os.path.isdir(self.video_filepath):
-            self.extractor = Frame_Extractor_Img(self.video_filepath)
-            self.load_label_mode = True
-        else:
-            raise RuntimeError(f"Invalid video filepath: {self.video_filepath}")
-
-        os.makedirs(self.save_folder, exist_ok=True)
-
-    def extract_frame(self) -> Optional[List[int]]:
-        total_video_frames = self.extractor.get_total_frames()
-        logger.info(f"[CUTEXP] Total frames in video: {total_video_frames}")
-
-        if not self.frame_list:
-            logger.warning("[EXPORTER] Frame list is empty. No cutouts to extract.")
-            return []
-
-        if len(self.frame_list) < total_video_frames // 100 or self.load_label_mode: # sparse extraction
-            logger.info(f"[CUTEXP] Performing sparse cutout extraction for {len(self.frame_list)} frames.")
-            corrected_indices = self._sparse_frame_extraction()
-        else:
-            logger.info(f"[CUTEXP] Performing continuous cutout extraction for {len(self.frame_list)} frames.")
-            corrected_indices = self._continuous_frame_extraction()
-
-        if self.progress_callback:
-            self.progress_callback.close()
-
-        return corrected_indices
-
-    def _sparse_frame_extraction(self) -> Optional[List[int]]:
-        if self.progress_callback:
-            self.progress_callback.setMaximum(len(self.frame_list))
-
-        extracted_indices = []
-
-        for i, frame_idx in enumerate(self.frame_list):
-            if self.progress_callback:
-                self.progress_callback.setValue(i)
-                if self.progress_callback.wasCanceled():
-                    logger.warning("[CUTEXP] Sparse frame extraction canceled by user.")
-                    self.progress_callback.close()
-                    raise RuntimeWarning("Frame extraction canceled by user.")
-
-            logger.debug(f"[CUTEXP] Attempting to extract sparse frame {frame_idx}.")
-            frame = self.extractor.get_frame(frame_idx)
-            if frame is None:
-                logger.warning(f"[CUTEXP] Frame {frame_idx} not found during sparse extraction. Skipping.")
-                continue
-
-            self._frame_export_worker(frame, frame_idx)
-            extracted_indices.append(frame_idx)
-
-        extracted_set = set(extracted_indices)
-        frame_set = set(self.frame_list)
-        missing = sorted(frame_set - extracted_set)
-
-        if missing:
-            logger.error(f"[CUTEXP] Frame count mismatch! Extracted frames: {len(extracted_set)} | Expected: {len(frame_set)}"
-                         f"\nThe following frames are not extracted: {missing}")
-            return list(extracted_indices)
-    
-    def _continuous_frame_extraction(self) -> Optional[List[int]]:
-        min_frame_in_list = min(self.frame_list) if self.frame_list else 0
-        max_frame_in_list = max(self.frame_list) if self.frame_list else -1
-        if self.progress_callback:
-            self.progress_callback.setMinimum(min_frame_in_list)
-            self.progress_callback.setMaximum(max_frame_in_list)
-
-        empty_count = 0
-        current_frame_idx = 0
-        frame_set = set(self.frame_list)
-        extracted_indices = []
-
-        current_frame_idx += min_frame_in_list
-        self.extractor.start_sequential_read(start=min_frame_in_list, end=max_frame_in_list+1)
-        logger.info("[CUTEXP] Started sequential frame read for continuous extraction.")
-
-        while current_frame_idx <= max_frame_in_list:
-            result = self.extractor.read_next_frame()
-            if result is None:
-                logger.warning(f"[CUTEXP] End of video stream reached at frame {current_frame_idx} during continuous extraction.")
-                break
-
-            idx, frame = result
-            if idx != current_frame_idx:
-                self.extractor.finish_sequential_read()
-                logger.critical(f"[CUTEXP] Mismatch between frame indices: Expected {current_frame_idx}, Got {idx}. Aborting continuous extraction.")
-                raise RuntimeError(f"Mismatch between frame indices: {idx} != {current_frame_idx}")
-            
-            if frame is None:
-                frame = np.zeros((*self.extractor.get_frame_dim(), 3), dtype=np.uint8)
-                empty_count += 1
-                logger.warning(f"[CUTEXP] Frame {current_frame_idx} is empty during continuous extraction. Substituted with placeholder.")
-
-            if current_frame_idx in frame_set:
-                self._frame_export_worker(frame, current_frame_idx)
-                extracted_indices.append(current_frame_idx)
-
-            if self.progress_callback:
-                self.progress_callback.setValue(current_frame_idx)
-                if self.progress_callback.wasCanceled():
-                    logger.warning("[CUTEXP] Continuous frame extraction canceled by user.")
-                    self.extractor.finish_sequential_read()
-                    self.progress_callback.close()
-                    raise RuntimeError("Frame extraction canceled by user.")
+                    self._export_augmentation(aug, frame, current_frame_idx, writer)
 
             current_frame_idx += 1
 
         self.extractor.finish_sequential_read()
-        logger.info("[CUTEXP] Finished sequential frame read after continuous extraction.")
-
-        extracted_set = set(extracted_indices)
-
-        if empty_count:
-            logger.warning(f"[CUTEXP] {empty_count} frames are empty and substituded with placeholders.")
-
-        missing = sorted(frame_set - extracted_set)
-
-        if missing:
-            logger.error(f"[CUTEXP] Frame count mismatch! Extracted frames: {len(extracted_set)} | Expected: {len(frame_set)}"
-                         f"\nThe following frames are not extracted: {missing}")
-            return sorted(extracted_indices)
-        
-    def _frame_export_worker(self, frame:Frame_CV2, frame_idx:int):
-        if self.grayscaling:
-            frame = frame_to_grayscale(frame, keep_as_bgr=True)
-
-        if self.bc is not None:
-            frame = self._cv2_contour_masking(frame)
-
-        for inst_idx in range(self.centroids.shape[1]):
-            frame_inst = frame.copy()
-
-            x, y = self.centroids[frame_idx, inst_idx]
-            x = int(x)
-            y = int(y)
-
-            if self.angle_array is not None:
-                angle = self.angle_array[frame_idx, inst_idx]
-                frame_inst = self._rotate(frame_inst, angle, (x, y))
-                h_rot, w_rot = frame_inst.shape[:2]
-                x = w_rot // 2
-                y = h_rot // 2
-
-            x1 = x - self.cutout_dim // 2
-            x2 = x + self.cutout_dim // 2
-            y1 = y - self.cutout_dim // 2
-            y2 = y + self.cutout_dim // 2
-
-            frame_inst = frame_inst[y1:y2, x1:x2]
-
-            image_output_path = os.path.join(self.save_folder, f"{frame_idx}_{inst_idx}.png")
-            cv2.imwrite(image_output_path, frame_inst)
-            logger.debug(f"[CUTEXP] Wrote {inst_idx} on frame {frame_idx} to {image_output_path}.")
-
-    def _cv2_contour_masking(self, frame:Frame_CV2):
-        frame_to_process = frame
-        gray_frame = cv2.cvtColor(frame_to_process, cv2.COLOR_BGR2GRAY)
-        processed_frame = gray_frame
-
-        if self.bc.bg_removal_method != "None":
-            bg = self.bc.background_frames[self.bc.bg_removal_method]
-            bg_gray = cv2.cvtColor(bg, cv2.COLOR_BGR2GRAY) if len(bg.shape) == 3 else bg
-            bg_gray = bg_gray.astype(gray_frame.dtype)
-            diff = gray_frame.astype(np.int16) - bg_gray.astype(np.int16)
-
-            if self.bc.blob_type == "Dark Blobs":
-                thresh = (diff < -self.bc.threshold).astype(np.uint8) * 255
-            else:  # Light Blobs
-                thresh = (diff > self.bc.threshold).astype(np.uint8) * 255
-        else:
-            if self.bc.blob_type == "Dark Blobs":
-                _, thresh = cv2.threshold(processed_frame, self.bc.threshold, 255, cv2.THRESH_BINARY_INV)
-            else:  # Light Blobs (Max)
-                _, thresh = cv2.threshold(processed_frame, self.bc.threshold, 255, cv2.THRESH_BINARY)
-
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        filtered_contours = []
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area > self.bc.min_blob_area:
-                filtered_contours.append(cnt)
-
-        mask = np.zeros(frame.shape[:2], dtype=np.uint8)
-        cv2.drawContours(mask, filtered_contours, -1, 255, cv2.FILLED)
-        return cv2.bitwise_and(frame, frame, mask=mask)
+        logger.debug("[EXPORTER] Finished sequential frame read after continuous extraction.")
 
     @staticmethod
-    def _rotate(frame:Frame_CV2, angle, center=None, scale=1.0):
+    def _rotate(frame:np.ndarray, angle, center=None, scale=1.0):
         (h, w) = frame.shape[:2]
         if not center:
             center = (w / 2, h / 2)

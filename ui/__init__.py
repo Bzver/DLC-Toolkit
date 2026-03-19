@@ -1,8 +1,8 @@
 from .component import (
-    Draggable_Keypoint,
-    Selectable_Instance,
     Clickable_Video_Label,
+    Selectable_Instance,
     Spinbox_With_Label,
+    Draggable_Keypoint,
 )
 from .dialog import (
     Inference_interval_Dialog,
@@ -19,13 +19,13 @@ from .dialog import (
     ROI_Dialog,
 )
 
-from .graphic_view import Canvas
 from .video_slider import Slider_With_Marks, Video_Slider_Widget
+from .progress_indicator import Progress_Indicator_Dialog
 from .video_player import Video_Player_Widget, Nav_Widget
 from .menu_shortcut import Menu_Widget, Shortcut_Manager
 from .toggle_switch import Toggle_Switch
 from .status_message import Status_Bar
-from .progress_indicator import Progress_Indicator_Dialog, Tqdm_Progress_Adapter
+from .graphic_view import Canvas
 
 __all__ = (
     Progress_Indicator_Dialog,
@@ -33,7 +33,6 @@ __all__ = (
     Instance_Selection_Dialog,
     Track_Fix_Config_Dialog,
     Clickable_Video_Label,
-    Tqdm_Progress_Adapter,
     Frame_Display_Dialog,
     Pose_Rotation_Dialog,
     Selectable_Instance,

@@ -1,6 +1,5 @@
 import os
 import shutil
-from datetime import datetime
 import yaml
 import numpy as np
 from PySide6 import QtWidgets
@@ -8,15 +7,15 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QPushButton, QDialog
 from typing import List, Optional, Tuple
 
-from ui import Spinbox_With_Label, Progress_Indicator_Dialog, Tqdm_Progress_Adapter
+from ui import Spinbox_With_Label
 from core.io import (
-    Exporter, Prediction_Loader, Frame_Extractor, Frame_Extractor_Img, Temp_Manager,
+    Frame_Exporter_Threaded, Prediction_Loader, Frame_Extractor, Frame_Extractor_Img, Temp_Manager,
     save_predictions_to_new_h5, timestamp_new_prediction,
     )
 from .reviewer import Parallel_Review_Dialog
 from utils.helper import crop_coord_to_array, get_roi_cv2, validate_crop_coord
 from utils.logger import logger, Loggerbox
-from utils.dataclass import Loaded_DLC_Data
+from utils.dataclass import Loaded_DLC_Data, Exporter_Augments
 
 
 class DLC_Inference(QDialog):
@@ -53,6 +52,7 @@ class DLC_Inference(QDialog):
         self.video_name, _ = os.path.splitext(os.path.basename(self.video_filepath))
         self.cond_or_coam = False
 
+        self.tm = tm
         self.temp_dir = tm.create("infer")
 
         if os.path.isfile(self.video_filepath):
@@ -312,9 +312,9 @@ class DLC_Inference(QDialog):
                     inference_video_path = self.video_filepath
                 else:
                     inference_video_path = os.path.join(self.temp_dir, "temp_extract.mp4")
-                    self._extract_marked_frame_as_video(headless)
+                    self._extract_marked_frames(use_video)
             else:
-                self._extract_marked_frame_images(headless)
+                self._extract_marked_frames()
         except Exception as e:
             self._panic_exit(reason=f"Error during frame image extraction. Error:{e}", exception=e)
             return
@@ -365,43 +365,16 @@ class DLC_Inference(QDialog):
             yaml.dump(config_org, file, default_flow_style=False, sort_keys=False)
             logger.info(f"[INFER] DeepLabCut config in {config_path} has been updated.")
 
-    def _extract_marked_frame_images(self, headless:bool):
-        if headless:
-            progress = Tqdm_Progress_Adapter()
-        else:
-            progress = Progress_Indicator_Dialog(0, 100, "Frame Extraction", "Extracting frames from video", parent=self)
-    
-        exporter = Exporter(
-            dlc_data=self.dlc_data,
-            save_folder=self.temp_dir,
-            video_filepath=self.video_filepath,
-            frame_list=self.frame_list,
-            progress_callback=progress,
+    def _extract_marked_frames(self, to_video:bool=False):
+        exporter = Frame_Exporter_Threaded(self.video_filepath, self.tm, self.temp_dir, frame_list=self.frame_list)
+        ea = Exporter_Augments(
             crop_coord=self.crop_coord if self.cropping else None,
             mask=self.mask_region if self.masking else None,
-            grayscaling=self.grayscaling
-            )
-        corrected_indices = exporter.export_data_to_DLC(frame_only=True)
-        if corrected_indices:
-            self.frame_list = corrected_indices
-
-    def _extract_marked_frame_as_video(self, headless:bool):
-        if headless:
-            progress = Tqdm_Progress_Adapter()
+            grayscaling=self.grayscaling)
+        if to_video:
+            corrected_indices = exporter.extract_frames_into_video(ea)
         else:
-            progress = Progress_Indicator_Dialog(0, 100, "Frame Extraction", "Extracting frames from video", parent=self)
-            
-        exporter = Exporter(
-            dlc_data=self.dlc_data,
-            save_folder=self.temp_dir,
-            video_filepath=self.video_filepath,
-            frame_list=self.frame_list,
-            progress_callback=progress,
-            crop_coord=self.crop_coord if self.cropping else None,
-            mask=self.mask_region if self.masking else None,
-            grayscaling=self.grayscaling
-            )
-        corrected_indices = exporter.export_frame_to_video()
+            corrected_indices = exporter.extract_frames(ea)
         if corrected_indices:
             self.frame_list = corrected_indices
 
