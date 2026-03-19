@@ -5,17 +5,18 @@ from .component import (
     Spinbox_With_Label,
 )
 from .dialog import (
+    Inference_interval_Dialog,
+    Instance_Selection_Dialog,
+    Track_Fix_Config_Dialog,
     Pose_Rotation_Dialog,
+    Frame_Display_Dialog,
+    Keypoint_Num_Dialog,
+    Dual_Pixmap_Dialog,
+    Frame_Range_Dialog,
     Frame_List_Dialog,
     Head_Tail_Dialog,
-    Inference_interval_Dialog,
-    Frame_Range_Dialog,
-    Frame_Display_Dialog,
-    Instance_Selection_Dialog,
-    ROI_Dialog,
     Mask_Dialog,
-    Keypoint_Num_Dialog,
-    Track_Fix_Config_Dialog,
+    ROI_Dialog,
 )
 
 from .graphic_view import Canvas
@@ -41,6 +42,7 @@ __all__ = (
     Video_Player_Widget,
     Frame_Range_Dialog,
     Spinbox_With_Label,
+    Dual_Pixmap_Dialog,
     Draggable_Keypoint,
     Frame_List_Dialog,
     Slider_With_Marks,

@@ -567,3 +567,43 @@ class Track_Fix_Config_Dialog(QDialog):
         self.warmup_epochs = self.warmup_epochs_spin.value()
             
         self.accept()
+
+
+class Dual_Pixmap_Dialog(QDialog):
+    def __init__(self, pixmap_left: QPixmap, pixmap_right: QPixmap, max_height=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Pixmap Comparison")
+
+        if max_height is not None:
+            pixmap_left = self._scale_pixmap(pixmap_left, max_height)
+            pixmap_right = self._scale_pixmap(pixmap_right, max_height)
+
+        layout = QHBoxLayout()
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
+        
+        label_left = QLabel()
+        label_right = QLabel()
+        
+        label_left.setPixmap(pixmap_left)
+        label_right.setPixmap(pixmap_right)
+        
+        label_left.adjustSize()
+        label_right.adjustSize()
+        
+        layout.addWidget(label_left)
+        layout.addWidget(label_right)
+        
+        self.setLayout(layout)
+        self.adjustSize()
+
+    def _scale_pixmap(self, pixmap: QPixmap, max_height: int) -> QPixmap:
+        if pixmap.height() <= max_height:
+            return pixmap
+            
+        return pixmap.scaled(
+            pixmap.width(), 
+            max_height, 
+            Qt.KeepAspectRatio, 
+            Qt.SmoothTransformation
+        )
