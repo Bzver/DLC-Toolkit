@@ -236,18 +236,16 @@ class Frame_Exporter_Threaded:
             start = i*probe_length
             end = min((i+1)*probe_length, len(self.frame_list))
 
-            end_idx = self.frame_list[end - 1]
-
-            if end_idx - self.frame_list[start] >= 10 * probe_length: # Very sparse
-                if last_probe == "s" and end_idx - self.frame_list[last_start] < self.segment_size:
+            if self.frame_list[end - 1] - self.frame_list[start] >= 10 * probe_length: # Very sparse
+                if last_probe == "s" and end - start < self.segment_size:
                     chunks.pop()
                     chunks.append((last_start, end))
                 else:
                     last_start = start
                     last_probe = "s"
                     chunks.append((start, end))
-            elif end_idx - self.frame_list[start] < 2 * probe_length: # Very dense
-                if last_probe == "d" and end_idx - self.frame_list[last_start] < self.segment_size:
+            elif self.frame_list[end - 1] - self.frame_list[start] < 2 * probe_length: # Very dense
+                if last_probe == "d" and end - start < self.segment_size:
                     chunks.pop()
                     chunks.append((last_start, end))
                 else:
@@ -255,7 +253,7 @@ class Frame_Exporter_Threaded:
                     last_probe = "d"
                     chunks.append((start, end))
             else: # Normie
-                if end_idx - self.frame_list[last_start] < self.segment_size and len(chunks) > 1:
+                if end - start < self.segment_size and len(chunks) > 1:
                     chunks.pop()
                     chunks.append((last_start, end))
                 else:
