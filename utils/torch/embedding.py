@@ -83,7 +83,16 @@ class Contrastive_Trainer:
             epochs=20,
             max_triplet=5000,
             sil_threshold=0.4,
+            diff_threshold=0.4,
             ):
+    
+        logger.info(f"[CONTRAIN] About to run training with following args:\n"
+            f"  - lr:              {lr}\n"
+            f"  - epochs:          {epochs}\n"
+            f"  - batch_size:      {batch_size}\n"
+            f"  - max_triplet:     {max_triplet}\n"
+            f"  - sil_threshold:   {sil_threshold}\n"
+            f"  - diff_threshold:  {diff_threshold}\n")
         optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
 
         dataset.transform = self.transform
@@ -122,8 +131,8 @@ class Contrastive_Trainer:
                 pos_emb = self.model(pos_batch)
                 neg_emb = self.model(neg_batch)
                 
-                loss = self._contrastive_loss_with_variance(anchor_emb, pos_emb, neg_emb)
-                
+                loss = self._contrastive_loss(anchor_emb, pos_emb, neg_emb, w_compat=0.1)
+
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
@@ -132,20 +141,20 @@ class Contrastive_Trainer:
             if (epoch + 1) % 5 == 0 or epoch == epochs - 1:
                 embeddings = self.extract_embeddings(dataset)
                 
-                self._log_similarity_metrics(dataset, embeddings, subsample_size=max_triplet)
+                same_mean, diif_mean = self._log_similarity_metrics(dataset, embeddings, self.slide_window, subsample_size=max_triplet)
                 score = self._silhouette_eval(embeddings, sil_subsampling=max_triplet)
                 logger.info(f"[SILHOUETTE] Epoch {epoch+1}: Score = {score:.3f}")
                 
-                if score > sil_threshold:
+                if score > sil_threshold and (same_mean > 1 - diff_threshold) and (diif_mean < diff_threshold):
                     logger.info(f"[SILHOUETTE] Threshold {sil_threshold} reached. Stopping training early.")
                     break
 
                 if epoch < epochs - 1:
                     logger.info(f"[CONTRAIN] Re-mining fresh triplets at epoch {epoch+1}...")
                     easy_triplets = self._mine_triplets(dataset, window=5, max_triplets=max_triplet)
-                    logger.info(f"[CONTRAIN] Re-mined {len(easy_triplets)} new easy triplets")
+                    logger.info(f"[CONTRAIN] Re-mined {len(easy_triplets)} new triplets")
 
-            logger.info(f"[CONTRAIN] Epoch {epoch+1}/{epochs}, Loss: {total_loss/num_batches:.4f}")
+            logger.info(f"[CONTRAIN] Epoch {epoch+1}/{epochs}, Loss: {total_loss/num_batches:.4e}")
 
         self.model.eval()
         return self.model
@@ -197,40 +206,60 @@ class Contrastive_Trainer:
         self.mined_frames.clear()
         return triplets
 
-    def _contrastive_loss_with_variance(self, anchor_emb, pos_emb, neg_emb, margin=0.5, var_weight=0.1):
+    def _contrastive_loss(
+            self,
+            anchor_emb, pos_emb, neg_emb,
+            margin:float=0.75,
+            w_compat:float=0.0,
+            w_var:float=0.0,
+            ):
+
         pos_dist = F.pairwise_distance(anchor_emb, pos_emb)
         neg_dist = F.pairwise_distance(anchor_emb, neg_emb)
         triplet_loss = F.relu(pos_dist - neg_dist + margin).mean()
+        compat_loss = 0 if w_compat < 1e-3 else self._compat_loss(pos_dist, w_compat)
+        var_loss = 0 if w_var < 1e-3 else self._variance_loss(anchor_emb, pos_emb, neg_emb, w_var)
 
-        # all_embs = torch.cat([anchor_emb, pos_emb, neg_emb], dim=0)
-        # var_loss = torch.mean(torch.var(all_embs, dim=0))
-        # var_penalty = torch.abs(var_loss - 1.0)
+        return triplet_loss + compat_loss + var_loss
 
-        return triplet_loss #+ var_weight * var_penalty
+    @staticmethod
+    def _compat_loss(pos_dist, compact_weight=0.1):
+        compact_loss = pos_dist.mean()
+        return compact_weight * compact_loss
+    
+    @staticmethod
+    def _variance_loss(anchor_emb, pos_emb, neg_emb, var_weight=0.1):
+        all_embs = torch.cat([anchor_emb, pos_emb, neg_emb], dim=0)
+        var_loss = torch.mean(torch.var(all_embs, dim=0))
+        var_penalty = torch.abs(var_loss - 1.0)
+        return var_weight * var_penalty
 
-    def _log_similarity_metrics(self, dataset, embeddings, subsample_size=5000, n_runs=3):
+    @staticmethod
+    def _log_similarity_metrics(dataset, embeddings, slide_window, subsample_size=5000):
         motion_ids_arr = np.array(dataset.motion_ids)
         frame_indices_arr = np.array(dataset.frame_indices)
+        total_len = len(embeddings)
         
         pos_sims, neg_sims = [], []
-        
-        for _ in range(n_runs):
-            if len(embeddings) > subsample_size:
-                indices = np.random.choice(len(embeddings), subsample_size, replace=False)
-                sub_embs = embeddings[indices]
-                sub_motion = motion_ids_arr[indices]
-                sub_frames = frame_indices_arr[indices]
-            else:
-                sub_embs = embeddings
-                sub_motion = motion_ids_arr
-                sub_frames = frame_indices_arr
+
+        n_chunks = max(1, (total_len + subsample_size - 1) // subsample_size)
+        for i in range(n_chunks):
+            start = i * subsample_size
+            end = min((i + 1) * subsample_size, total_len)
+
+            sub_embs = embeddings[start:end]
+            sub_motion = motion_ids_arr[start:end]
+            sub_frames = frame_indices_arr[start:end]
+
+            if len(sub_embs) < 10:
+                continue
 
             sim_sub = cosine_similarity(sub_embs)
             n_sub = len(sub_embs)
 
             i_idx, j_idx = np.triu_indices(n_sub, k=1)
             frame_diffs = np.abs(sub_frames[j_idx] - sub_frames[i_idx])
-            valid_mask = frame_diffs <= self.slide_window
+            valid_mask = frame_diffs <= slide_window
 
             valid_sims = sim_sub[i_idx[valid_mask], j_idx[valid_mask]]
             same_mouse = sub_motion[i_idx[valid_mask]] == sub_motion[j_idx[valid_mask]]
@@ -241,6 +270,8 @@ class Contrastive_Trainer:
         if pos_sims and neg_sims:
             logger.info(f"[CONTRAIN] Same-mouse: {np.mean(pos_sims):.3f} ± {np.std(pos_sims):.3f}")
             logger.info(f"[CONTRAIN] Diff-mouse: {np.mean(neg_sims):.3f} ± {np.std(neg_sims):.3f}")
+
+        return np.mean(pos_sims), np.mean(neg_sims)
         
     @staticmethod
     def _silhouette_eval(embeddings, sil_subsampling:int=5000):

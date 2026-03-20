@@ -134,6 +134,7 @@ class Frame_Exporter_Threaded:
 
         segments = self._task_splitter()
         all_indices = []
+        logger.info(f"######################## F R A M E ### E X T R A C T O R ### {self.max_workers} thread(s) ########################")
         try:
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 futures = {
@@ -166,6 +167,7 @@ class Frame_Exporter_Threaded:
         segments = self._task_splitter()
         all_indices = []
 
+        logger.info(f"######################## V I D E O ### E X T R A C T O R ### {self.max_workers} thread(s) ########################")
         try:
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 futures = {
