@@ -11,6 +11,7 @@ from typing import List, Dict, Tuple, Optional
 
 from .component import Spinbox_With_Label
 from .menu_shortcut import Shortcut_Manager
+from utils.dataclass import Emb_Params
 from utils.logger import Loggerbox
 
 
@@ -507,9 +508,8 @@ class Track_Fix_Config_Dialog(QDialog):
         self.has_marked_frames = has_marked_frames
         self.correct_marked_only = False
         self.skip_motion_sweep = False
-        self.max_epochs = 30
-        self.warmup_epochs = 5
         self.avtomat = False
+        self.emp = None
         
         self._init_ui()
         
@@ -538,12 +538,15 @@ class Track_Fix_Config_Dialog(QDialog):
         self.skip_sweep_cbx.setToolTip("Check this if track is mostly correct already.")
         cl_layout.addWidget(self.skip_sweep_cbx)
 
-        self.max_epochs_spin = Spinbox_With_Label("Max Epochs:", (1, 200), self.max_epochs)
-        cl_layout.addWidget(self.max_epochs_spin)
+        self.max_epochs_spin = Spinbox_With_Label("Max Epochs:", (1, 200), 30)
+        self.batch_size_spin = Spinbox_With_Label("Batch Size:", (2, 4096), 64)
+        self.max_triplet_spin = Spinbox_With_Label("Max Triplets per Mining:", (5000, 100000), 5000)
+        self.lr_spin = Spinbox_With_Label("Learning Rate (1e-n), n:", (2, 8), 5)
 
-        self.warmup_epochs_spin = Spinbox_With_Label("Warmup Epochs:", (0, 100), self.warmup_epochs)
-        self.warmup_epochs_spin.setToolTip("Warmup epochs before full contrastive loss")
-        cl_layout.addWidget(self.warmup_epochs_spin)
+        cl_layout.addWidget(self.max_epochs_spin)
+        cl_layout.addWidget(self.batch_size_spin)
+        cl_layout.addWidget(self.max_triplet_spin)
+        cl_layout.addWidget(self.lr_spin)
 
         cl_group.setLayout(cl_layout)
         layout.addWidget(cl_group)
@@ -553,19 +556,16 @@ class Track_Fix_Config_Dialog(QDialog):
         btn_box.rejected.connect(self.reject)
         layout.addWidget(btn_box)
 
-        self.warmup_epochs_spin.value_changed.connect(self._validate_warmup)
-        
-    def _validate_warmup(self):
-        if self.warmup_epochs_spin.value() > self.max_epochs_spin.value():
-            self.warmup_epochs_spin.setValue(self.max_epochs_spin.value())
-
     def _on_accept(self):
         self.correct_marked_only = self.marked_only_cbx.isChecked()
         self.skip_motion_sweep = self.skip_sweep_cbx.isChecked()
         self.avtomat = self.avtomat_cbx.isChecked()
-        self.max_epochs = self.max_epochs_spin.value()
-        self.warmup_epochs = self.warmup_epochs_spin.value()
-            
+        self.emp = Emb_Params(
+            batch_size=self.batch_size_spin.value(),
+            triplets=self.max_triplet_spin.value(),
+            epochs=self.max_epochs_spin.value(),
+            lr=10**-self.lr_spin.value(),
+            )
         self.accept()
 
 

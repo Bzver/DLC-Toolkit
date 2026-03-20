@@ -861,8 +861,7 @@ class Frame_Label:
         correct_marked_only = config_dlg.correct_marked_only
         skip_sweep = config_dlg.skip_motion_sweep
         avtomat = config_dlg.avtomat
-        max_epochs = config_dlg.max_epochs
-        warmup_epochs = config_dlg.warmup_epochs
+        emp = config_dlg.emp
 
         start_idx = 0
         end_idx = self.dm.total_frames
@@ -881,8 +880,7 @@ class Frame_Label:
             anglemap=self.dm.angle_map_data,
             skip_sweep=skip_sweep,
             avtomat=avtomat,
-            max_epochs=max_epochs,
-            warmup_epochs=warmup_epochs,
+            emp=emp,
             parent=self.main,
         )
 
@@ -892,4 +890,4 @@ class Frame_Label:
         self.pred_data_array = self.dm.dlc_data.pred_data_array
         self.display_current_frame()
 
-        logger.info(f"Track correction completed (avtomat={avtomat}, range={start_idx}-{end_idx-1}, epochs={max_epochs}/{warmup_epochs})")
+        logger.info(f"Track correction completed (avtomat={avtomat}, range={start_idx}-{end_idx-1}, epochs={emp.epochs})")

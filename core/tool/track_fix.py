@@ -7,9 +7,12 @@ from .reviewer import Swap_Correction_Dialog
 from core.io import Frame_Extractor, Temp_Manager, Frame_Exporter_Threaded
 from ui import Dual_Pixmap_Dialog
 from utils.track import Kalman, swap_track
-from utils.pose import calculate_pose_centroids, outlier_rotation, calculate_pose_array_rotations, calculate_pose_array_bbox
+from utils.pose import (
+    calculate_pose_centroids, calculate_pose_array_rotations, calculate_pose_array_bbox,
+    outlier_rotation, outlier_confidence, outlier_size, outlier_bodypart,
+    )
 from utils.helper import get_instance_count_per_frame, get_instances_on_current_frame, indices_to_spans
-from utils.dataclass import Loaded_DLC_Data, Cutout_Augments
+from utils.dataclass import Loaded_DLC_Data, Cutout_Augments, Emb_Params
 from utils.logger import logger
 
 class Track_Fixer:
@@ -26,8 +29,7 @@ class Track_Fixer:
         tm: Temp_Manager,
         extractor: Frame_Extractor,
         anglemap: Dict[str, int],
-        max_epochs: int = 30,
-        warmup_epochs: int = 5,
+        emp: Emb_Params,
         skip_sweep: bool = False,
         avtomat: bool = False,
         parent=None
@@ -40,8 +42,7 @@ class Track_Fixer:
         self.tm = tm
         self.temp_dir = tm.create("track")
         self.anglemap = anglemap
-        self.epochs = max_epochs
-        self.warmup_epochs = warmup_epochs
+        self.emp = emp
         self.skip_sweep = skip_sweep
         self.avtomat = avtomat
         self.main = parent
@@ -67,21 +68,26 @@ class Track_Fixer:
                     ambiguous_frames.append(f)
                     logger.debug(f"[TF] Ambiguous match, added to backtrack list")
 
-        if self.total_frames > 1000:
-            self.eligible_frames = self._find_eligible_frames()
-        else:
-            self.eligible_frames = np.where(self.inst_count_per_frame == 2)[0].tolist() # Skip dist check
-
+        self.eligible_frames = self._find_eligible_frames(min_eligible=self.emp.triplets)
         self.eligible_frames = [f for f in self.eligible_frames if f >= start_idx and f < end_idx]
         self._run_contrain_magic(ambiguous_frames)
         return self.pred_data_array
 
-    def _find_eligible_frames(self, inst_dist_threshold: float = 1.2, twist_angle_threshold: float = 10.0) -> List[int]:
-        full_mask = np.zeros(self.total_frames, dtype=bool)
+    def _find_eligible_frames(
+            self,
+            inst_dist_threshold: float = 1.2,
+            conf_threshold: float = 0.5,
+            size_threshold: Tuple[float, float] = (0.3, 2.5),
+            bp_threshold: int = 4,
+            twist_angle_threshold: float = 10.0,
+            min_eligible: int = 5000,
+            ) -> List[int]:
+
         instance_count = get_instance_count_per_frame(self.pred_data_array)
         two_inst_mask = instance_count == 2
         if not np.any(two_inst_mask):
-            return np.zeros(self.total_frames, dtype=bool)
+            raise ValueError("No frame with two insts, cannot perform contrastive learning.")
+
         two_inst_array = self.pred_data_array[two_inst_mask]
         centroids_two_inst = self.centroids[two_inst_mask]
         head_idx = self.anglemap["head_idx"]
@@ -91,9 +97,32 @@ class Track_Fixer:
         mice_length = np.nanmedian(np.linalg.norm(all_head - all_tail, axis=-1))
         dists = np.linalg.norm(centroids_two_inst[:, 1, :] - centroids_two_inst[:, 0, :], axis=-1)
         dist_mask = dists > inst_dist_threshold * mice_length
-        outlier_twist = outlier_rotation(two_inst_array, self.anglemap, twist_angle_threshold)
-        angle_mask = ~np.any(outlier_twist, axis=-1)
-        full_mask[two_inst_mask] = dist_mask & angle_mask
+
+        conf_mask = ~np.any(outlier_confidence(two_inst_array, conf_threshold), axis=-1)
+        angle_mask = ~np.any(outlier_rotation(two_inst_array, self.anglemap, twist_angle_threshold), axis=-1)
+
+        size_mask = ~np.any(outlier_size(two_inst_array, *size_threshold), axis=-1)
+        bp_mask = ~np.any(outlier_bodypart(two_inst_array, bp_threshold), axis=-1)
+
+        full_mask = np.zeros(self.total_frames, dtype=bool)
+
+        target_count = min(min_eligible, self.total_frames // 2)
+        constraint_sets = [
+            dist_mask & angle_mask & size_mask & bp_mask & conf_mask,
+            dist_mask & angle_mask & size_mask & bp_mask,
+            dist_mask & angle_mask,
+            dist_mask,
+        ]
+        for constraint in constraint_sets:
+            eligible_count = np.sum(constraint)
+            if eligible_count >= target_count:
+                full_mask[two_inst_mask] = constraint
+                return np.where(full_mask)[0].tolist()
+
+        logger.warning(
+            f"Masking yielded too few frames (<{target_count}). Falling back to ALL {np.sum(two_inst_mask)} two-instance frames. "
+        )
+        full_mask[two_inst_mask] = True
         return np.where(full_mask)[0].tolist()
 
     def _crop_rotate_and_export(self):
@@ -141,7 +170,13 @@ class Track_Fixer:
                 raise FileNotFoundError("[TF] No crops loaded. Check your folder path and filename format.")
             cds = Crop_Dataset(crops, motion_ids, frame_indices)
             trainer = Contrastive_Trainer()
-            trainer.train(cds, epochs=self.epochs, warmup_epochs=self.warmup_epochs)
+            trainer.train(
+                dataset=cds,
+                batch_size=self.emp.batch_size,
+                epochs=self.emp.epochs,
+                max_triplet=self.emp.triplets,
+                lr=self.emp.lr,
+                )
             embeddings = trainer.extract_embeddings(cds)
             np.savez(embedding_filepath, embeddings=embeddings,
                      motion_ids=motion_ids, frame_indices=frame_indices)

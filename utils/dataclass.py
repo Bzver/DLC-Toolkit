@@ -113,3 +113,11 @@ class Cutout_Augments:
     grayscaling: bool = False
     to_image: bool = False
     mode: str="ca"
+
+
+@dataclass
+class Emb_Params:
+    batch_size: int
+    triplets: int
+    epochs: int
+    lr: int

@@ -46,11 +46,12 @@ class Identity_Encoder(nn.Module):
             nn.ReLU(),
             nn.Linear(256, 256)
         )
+
     def forward(self, x):
         features = self.encoder(x)
         features = features.flatten(start_dim=1)  
         return F.normalize(self.projector(features), dim=1)
-
+    
 
 class Contrastive_Trainer:
     def __init__(self, is_ir:bool=False, slide_window:int=50, device='cuda' if torch.cuda.is_available() else 'cpu'):
@@ -71,111 +72,26 @@ class Contrastive_Trainer:
             transforms.ToTensor(),
             transforms.Normalize(mean=tr_nm_mean, std=tr_nm_std),
         ])
-    
-    def mine_triplets(self, dataset:Crop_Dataset, window:int=5, max_triplets:int=5000):
-        triplets = []
-        frames = sorted(dataset.frame_to_indices.keys())
-        
-        for frame_idx in frames:
-            indices_in_frame = dataset.frame_to_indices[frame_idx]
-            if len(indices_in_frame) != 2:
-                continue
-            
-            idx_a, idx_b = indices_in_frame
 
-            for delta in range(1, window + 1):
-                next_frame = frame_idx + delta
-                if next_frame in dataset.frame_to_indices:
-                    next_indices = dataset.frame_to_indices[next_frame]
-                    for next_idx in next_indices:
-                        if dataset.motion_ids[next_idx] == dataset.motion_ids[idx_a]:
-                            triplets.append((idx_a, next_idx, idx_b))
-                            if len(triplets) >= max_triplets:
-                                return triplets
-                    break
-    
-        return triplets
+        self.mined_frames = set()
 
-    def mine_hard_triplets_adaptive(self, dataset:Crop_Dataset, embeddings, pos_threshold=0.5, neg_threshold=0.3, max_triplets=5000, subsample_size=None):
-        if subsample_size is None:
-            subsample_size = 4 * max_triplets
-        
-        if len(embeddings) > subsample_size:
-            indices = np.random.choice(len(embeddings), subsample_size, replace=False)
-            embeddings = embeddings[indices]
-            motion_ids = np.array(dataset.motion_ids)[indices]
-            frame_indices = np.array(dataset.frame_indices)[indices]
-        else:
-            motion_ids = np.array(dataset.motion_ids)
-            frame_indices = np.array(dataset.frame_indices)
-        
-        sim_matrix = cosine_similarity(embeddings)
-        triplets = []
-        
-        for i in range(len(embeddings)):
-            anchor_id = motion_ids[i]
-            frame_idx = frame_indices[i]
-
-            same_mouse_mask = motion_ids == anchor_id
-            same_mouse_sims = sim_matrix[i].copy()
-            same_mouse_sims[~same_mouse_mask] = 2.0
-            same_mouse_sims[i] = 2.0
-
-            distant_mask = np.abs(frame_indices - frame_idx) >= self.slide_window
-            same_mouse_sims[distant_mask] = 2.0
-
-            if np.any(same_mouse_mask):
-                hard_pos_candidates = np.where(same_mouse_sims < pos_threshold)[0]
-                if len(hard_pos_candidates) > 0:
-                    hardest_pos_idx = hard_pos_candidates[np.argmin(same_mouse_sims[hard_pos_candidates])]
-        
-                    diff_mouse_mask = ~same_mouse_mask
-                    diff_mouse_sims = sim_matrix[i].copy()
-                    diff_mouse_sims[~diff_mouse_mask] = -2.0
-                    diff_mouse_sims[distant_mask] = -2.0
-
-                    if np.any(diff_mouse_mask):
-                        hard_neg_candidates = np.where(diff_mouse_sims > neg_threshold)[0]
-                        if len(hard_neg_candidates) > 0:
-                            hardest_neg_idx = hard_neg_candidates[np.argmax(diff_mouse_sims[hard_neg_candidates])]
-                            triplets.append((i, hardest_pos_idx, hardest_neg_idx))
-            
-            if len(triplets) >= max_triplets:
-                break
-        
-        logger.info(f"[EMBHARD] Found {len(triplets)} hard triplets (pos<{pos_threshold:.2f}, neg>{neg_threshold:.2f})")
-        return triplets
-
-    def contrastive_loss_with_variance(self, anchor_emb, pos_emb, neg_emb, margin=0.5, var_weight=0.1):
-        pos_dist = F.pairwise_distance(anchor_emb, pos_emb)
-        neg_dist = F.pairwise_distance(anchor_emb, neg_emb)
-        triplet_loss = F.relu(pos_dist - neg_dist + margin).mean()
-
-        all_embs = torch.cat([anchor_emb, pos_emb, neg_emb], dim=0)
-        var_loss = torch.mean(torch.var(all_embs, dim=0))
-        var_penalty = torch.abs(var_loss - 1.0)
-
-        return triplet_loss + var_weight * var_penalty
-        
     def train(
             self,
             dataset:Crop_Dataset,
             batch_size=64,
             lr=1e-5,
             epochs=20,
-            warmup_epochs=10,
-            hard_mine_interval=10,
+            max_triplet=5000,
             sil_threshold=0.4,
-            sil_subsampling=1000,
             ):
         optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
 
-        logger.info("[CONTRAIN] Warm-up training with easy triplets...")
-        easy_triplets = self.mine_triplets(dataset, window=5, max_triplets=5000)
+        dataset.transform = self.transform
+        easy_triplets = self._mine_triplets(dataset, window=5, max_triplets=max_triplet)
         logger.info(f"[CONTRAIN] Mined {len(easy_triplets)} easy triplets")
         
         self.model.train()
-        for epoch in range(warmup_epochs):
+        for epoch in range(epochs):
             total_loss = 0
             np.random.shuffle(easy_triplets)
     
@@ -194,9 +110,9 @@ class Contrastive_Trainer:
                     pos_img, _, _, _ = dataset[pos_idx]
                     neg_img, _, _, _ = dataset[neg_idx]
                     
-                    anchor_imgs.append(self.transform(anchor_img))
-                    pos_imgs.append(self.transform(pos_img))
-                    neg_imgs.append(self.transform(neg_img))
+                    anchor_imgs.append(anchor_img)
+                    pos_imgs.append(pos_img)
+                    neg_imgs.append(neg_img)
                 
                 anchor_batch = torch.stack(anchor_imgs).to(self.device)
                 pos_batch = torch.stack(pos_imgs).to(self.device)
@@ -206,101 +122,35 @@ class Contrastive_Trainer:
                 pos_emb = self.model(pos_batch)
                 neg_emb = self.model(neg_batch)
                 
-                loss = self.contrastive_loss_with_variance(anchor_emb, pos_emb, neg_emb)
+                loss = self._contrastive_loss_with_variance(anchor_emb, pos_emb, neg_emb)
                 
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
                 total_loss += loss.item()
 
-            logger.info(f"[CONTRAIN] Epoch {epoch+1}/{warmup_epochs}, Loss: {total_loss/num_batches:.4f}")
-
-        embeddings = self.extract_embeddings(dataset)
-        
-        same_mouse_sims, diff_mouse_sims = self._estimate_thresholds_subsampled(dataset, embeddings)
-        pos_threshold = np.percentile(same_mouse_sims, 20)
-        neg_threshold = np.percentile(diff_mouse_sims, 80)
-        
-        logger.info(f"[CONTRAIN] Same-mouse: {np.mean(same_mouse_sims):.3f} ± {np.std(same_mouse_sims):.3f}")
-        logger.info(f"[CONTRAIN] Diff-mouse: {np.mean(diff_mouse_sims):.3f} ± {np.std(diff_mouse_sims):.3f}")
-        logger.info(f"[CONTRAIN] pos<{pos_threshold:.3f}, neg>{neg_threshold:.3f}")
-
-        score = self._silhouette_eval(embeddings, sil_subsampling)
-        logger.info(f"[SILHOUETTE] Epoch {epoch+1}: Score = {score:.3f}")
-        if score > sil_threshold:
-            self.model.eval()
-            return self.model
-        
-
-        logger.info("[CONTRAIN] Mining hard triplets from trained embeddings...")
-
-        hard_triplets = self.mine_hard_triplets_adaptive(dataset, embeddings, pos_threshold=pos_threshold, neg_threshold=neg_threshold, max_triplets=5000)
-        logger.info(f"[CONTRAIN] Mined {len(hard_triplets)} hard triplets")
-
-        logger.info("\n[CONTRAIN] Training on hard triplets...")
-        self.model.train()
-        for epoch in range(warmup_epochs, epochs):
-            total_loss = 0
-            np.random.shuffle(hard_triplets)
-
-            num_batches = max(1, len(hard_triplets) // batch_size)
-            for batch_idx in range(num_batches):
-                start = batch_idx * batch_size
-                end = start + batch_size
-                batch_triplets = hard_triplets[start:end]
-                
-                anchor_imgs = []
-                pos_imgs = []
-                neg_imgs = []
-                
-                for anchor_idx, pos_idx, neg_idx in batch_triplets:
-                    anchor_img, _, _, _ = dataset[anchor_idx]
-                    pos_img, _, _, _ = dataset[pos_idx]
-                    neg_img, _, _, _ = dataset[neg_idx]
-                    
-                    anchor_imgs.append(self.transform(anchor_img))
-                    pos_imgs.append(self.transform(pos_img))
-                    neg_imgs.append(self.transform(neg_img))
-                
-                anchor_batch = torch.stack(anchor_imgs).to(self.device)
-                pos_batch = torch.stack(pos_imgs).to(self.device)
-                neg_batch = torch.stack(neg_imgs).to(self.device)
-                
-                anchor_emb = self.model(anchor_batch)
-                pos_emb = self.model(pos_batch)
-                neg_emb = self.model(neg_batch)
-                
-                loss = self.contrastive_loss_with_variance(anchor_emb, pos_emb, neg_emb)
-                
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                total_loss += loss.item()
-
-            logger.info(f"[CONTRAIN] Epoch {epoch+1}/{epochs}, Loss: {total_loss/num_batches:.4f}")
-
-            hardmining_needed = (epoch - warmup_epochs + 1) % hard_mine_interval == 0
-
-            if hardmining_needed and epoch < epochs - 1:
+            if (epoch + 1) % 5 == 0 or epoch == epochs - 1:
                 embeddings = self.extract_embeddings(dataset)
-
-                score = self._silhouette_eval(embeddings, sil_subsampling)
+                
+                self._log_similarity_metrics(dataset, embeddings, subsample_size=max_triplet)
+                score = self._silhouette_eval(embeddings, sil_subsampling=max_triplet)
                 logger.info(f"[SILHOUETTE] Epoch {epoch+1}: Score = {score:.3f}")
-
+                
                 if score > sil_threshold:
                     logger.info(f"[SILHOUETTE] Threshold {sil_threshold} reached. Stopping training early.")
                     break
 
-                logger.info(f"[CONTRAIN] Updating hard triplets at epoch {epoch+1}...")
-                hard_triplets = self.mine_hard_triplets_adaptive(dataset, embeddings, pos_threshold=pos_threshold, neg_threshold=neg_threshold, max_triplets=5000)
-                logger.info(f"[CONTRAIN] Re-mined {len(hard_triplets)} hard triplets")
+                if epoch < epochs - 1:
+                    logger.info(f"[CONTRAIN] Re-mining fresh triplets at epoch {epoch+1}...")
+                    easy_triplets = self._mine_triplets(dataset, window=5, max_triplets=max_triplet)
+                    logger.info(f"[CONTRAIN] Re-mined {len(easy_triplets)} new easy triplets")
 
-                self.model.train()
-        
+            logger.info(f"[CONTRAIN] Epoch {epoch+1}/{epochs}, Loss: {total_loss/num_batches:.4f}")
+
         self.model.eval()
         return self.model
 
-    def extract_embeddings(self, dataset, batch_size=128):
+    def extract_embeddings(self, dataset:Crop_Dataset, batch_size:int=128):
         embeddings = []
         self.model.eval()
         
@@ -311,7 +161,7 @@ class Contrastive_Trainer:
                 anchor_imgs = []
                 for idx in batch_indices:
                     crop, _, _, _ = dataset[idx]
-                    anchor_imgs.append(self.transform(crop))
+                    anchor_imgs.append(crop)
                 
                 batch_tensors = torch.stack(anchor_imgs).to(self.device)
                 embs = self.model(batch_tensors).cpu().numpy()
@@ -319,7 +169,46 @@ class Contrastive_Trainer:
         
         return np.vstack(embeddings)
 
-    def _estimate_thresholds_subsampled(self, dataset, embeddings, subsample_size=5000, n_runs=3):
+    def _mine_triplets(self, dataset:Crop_Dataset, window:int=5, max_triplets:int=5000):
+        triplets = []
+        frames = sorted(dataset.frame_to_indices.keys())
+
+        for frame_idx in frames:
+            indices_in_frame = dataset.frame_to_indices[frame_idx]
+            if len(indices_in_frame) != 2:
+                continue
+            if frame_idx in self.mined_frames:
+                continue
+            
+            idx_a, idx_b = indices_in_frame
+            self.mined_frames.add(frame_idx)
+
+            for delta in range(1, window + 1):
+                next_frame = frame_idx + delta
+                if next_frame in dataset.frame_to_indices:
+                    next_indices = dataset.frame_to_indices[next_frame]
+                    for next_idx in next_indices:
+                        if dataset.motion_ids[next_idx] == dataset.motion_ids[idx_a]:
+                            triplets.append((idx_a, next_idx, idx_b))
+                            if len(triplets) >= max_triplets:
+                                return triplets
+                    break
+        
+        self.mined_frames.clear()
+        return triplets
+
+    def _contrastive_loss_with_variance(self, anchor_emb, pos_emb, neg_emb, margin=0.5, var_weight=0.1):
+        pos_dist = F.pairwise_distance(anchor_emb, pos_emb)
+        neg_dist = F.pairwise_distance(anchor_emb, neg_emb)
+        triplet_loss = F.relu(pos_dist - neg_dist + margin).mean()
+
+        # all_embs = torch.cat([anchor_emb, pos_emb, neg_emb], dim=0)
+        # var_loss = torch.mean(torch.var(all_embs, dim=0))
+        # var_penalty = torch.abs(var_loss - 1.0)
+
+        return triplet_loss #+ var_weight * var_penalty
+
+    def _log_similarity_metrics(self, dataset, embeddings, subsample_size=5000, n_runs=3):
         motion_ids_arr = np.array(dataset.motion_ids)
         frame_indices_arr = np.array(dataset.frame_indices)
         
@@ -349,17 +238,18 @@ class Contrastive_Trainer:
             pos_sims.extend(valid_sims[same_mouse].tolist())
             neg_sims.extend(valid_sims[~same_mouse].tolist())
         
-        return pos_sims, neg_sims
-
+        if pos_sims and neg_sims:
+            logger.info(f"[CONTRAIN] Same-mouse: {np.mean(pos_sims):.3f} ± {np.std(pos_sims):.3f}")
+            logger.info(f"[CONTRAIN] Diff-mouse: {np.mean(neg_sims):.3f} ± {np.std(neg_sims):.3f}")
+        
     @staticmethod
-    def _silhouette_eval(embeddings, sil_subsampling):
-        with torch.no_grad():
-            if len(embeddings) > sil_subsampling:
-                indices = np.random.choice(len(embeddings), sil_subsampling, replace=False)
-                sample_embs = embeddings[indices]
-            else:
-                sample_embs = embeddings
+    def _silhouette_eval(embeddings, sil_subsampling:int=5000):
+        if len(embeddings) > sil_subsampling:
+            indices = np.random.choice(len(embeddings), sil_subsampling, replace=False)
+            sample_embs = embeddings[indices]
+        else:
+            sample_embs = embeddings
 
-            kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
-            labels = kmeans.fit_predict(sample_embs)
-            return silhouette_score(sample_embs, labels)
+        kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
+        labels = kmeans.fit_predict(sample_embs)
+        return silhouette_score(sample_embs, labels)
