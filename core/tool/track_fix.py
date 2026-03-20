@@ -30,6 +30,7 @@ class Track_Fixer:
         extractor: Frame_Extractor,
         anglemap: Dict[str, int],
         emp: Emb_Params,
+        worker_num: int = 8,
         skip_sweep: bool = False,
         avtomat: bool = False,
         parent=None
@@ -43,6 +44,7 @@ class Track_Fixer:
         self.temp_dir = tm.create("track")
         self.anglemap = anglemap
         self.emp = emp
+        self.worker_num = worker_num
         self.skip_sweep = skip_sweep
         self.avtomat = avtomat
         self.main = parent
@@ -147,6 +149,7 @@ class Track_Fixer:
             tm=self.tm,
             output_folder=self.temp_dir,
             frame_list=self.eligible_frames,
+            max_workers=self.worker_num,
         )
         co.extract_frames(ca)
 

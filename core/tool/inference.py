@@ -47,6 +47,7 @@ class DLC_Inference(QDialog):
         self.masking = False
         self.grayscaling = False
 
+        self.max_workers = 8
         self.crop_coord = validate_crop_coord(roi)
         self.mask_region = mask
         self.video_name, _ = os.path.splitext(os.path.basename(self.video_filepath))
@@ -59,7 +60,6 @@ class DLC_Inference(QDialog):
             self.extractor = Frame_Extractor(self.video_filepath)
         else:
             self.extractor = Frame_Extractor_Img(self.video_filepath)
-            
 
         layout = QVBoxLayout(self)
         setup_container = self._build_setup_container()
@@ -87,62 +87,40 @@ class DLC_Inference(QDialog):
         container_layout = QVBoxLayout()
 
         shuffle_frame = QHBoxLayout()
-        shuffle_label = QtWidgets.QLabel(f"Shuffle: ")
-        self.shuffle_spinbox = QtWidgets.QSpinBox()
-        self.shuffle_spinbox.setRange(0, self.shuffle_idx+2)
-        self.shuffle_spinbox.setValue(self.shuffle_idx)
-        self.shuffle_spinbox.valueChanged.connect(self._shuffle_spinbox_changed)
-
+        self.shuffle_spinbox = Spinbox_With_Label("Shuffle: ", (0, self.shuffle_idx+2), self.shuffle_idx)
         self.shuffle_config_label = QtWidgets.QLabel(f"{shuffle_metadata_text}")
         if not model_status:
             self.shuffle_config_label.setStyleSheet("color: red;")
 
-        shuffle_frame.addWidget(shuffle_label)
         shuffle_frame.addWidget(self.shuffle_spinbox)
         shuffle_frame.addWidget(self.shuffle_config_label)
         container_layout.addLayout(shuffle_frame)
 
-        self.max_individual_val = len(self.dlc_data.individuals)
-        self.max_individual_spinbox = Spinbox_With_Label(
-            label_text = "Number of animals in marked frames: ",
-            spinbox_range = (1,20),
-            initial_val = self.max_individual_val,
-            parent = self
-        )
-        self.max_individual_spinbox.value_changed.connect(self._individual_spinbox_changed)
-
+        self.max_individual_spinbox = Spinbox_With_Label("Number of animals in marked frames: ", (1,20), len(self.dlc_data.individuals))
         container_layout.addWidget(self.max_individual_spinbox)
 
+        self.worker_num_spinbox = Spinbox_With_Label("Number of workers for frame extraction: ", (1,256), self.max_workers)
+        container_layout.addWidget(self.worker_num_spinbox)
+
         self.cropping_checkbox = QtWidgets.QCheckBox("Crop")
-        self.cropping_checkbox.setChecked(self.cropping)
-        self.cropping_checkbox.toggled.connect(self._cropping_changed)
-
         self.masking_checkbox = QtWidgets.QCheckBox("Mask")
-        self.masking_checkbox.setChecked(self.masking)
-        self.masking_checkbox.toggled.connect(self._masking_changed)
-
         self.grayscaling_checkbox = QtWidgets.QCheckBox("Grayscale")
+        self.cropping_checkbox.setChecked(self.cropping)
+        self.masking_checkbox.setChecked(self.masking)
         self.grayscaling_checkbox.setChecked(self.grayscaling)
-        self.grayscaling_checkbox.toggled.connect(self._grayscaling_changed)
 
         self.to_video_checkbox = QtWidgets.QCheckBox("Process as Video |")
         self.to_video_checkbox.setToolTip(
-            "to_video means batchable and thus noticeably faster for 10000+ frames "
-            "but performance will drop when frames are scattered (arbitrary context -> dropping valid poses during tracklet stitching). "
-            "not to_video means slower inference but better suited for post processing (rerunning outlier frames)."
+            "Checked to allow batching and noticeably faster for 10000+ frames \n"
+            "Unchecked to have a slower inference but better accuracy for post processing (rerunning outlier frames)."
         )
 
         button_frame = QHBoxLayout()
 
         self.batch_size_changed = False
-        self.batchsize_label_spinbox = Spinbox_With_Label(label_text = "Batch Size: ", spinbox_range = (1,10000), initial_val = self.batch_size, parent = self)
-        self.batchsize_label_spinbox.value_changed.connect(self._batch_size_spinbox_changed)
-
-        self.detector_batchsize_label_spinbox = Spinbox_With_Label(
-            label_text = "Detector Batch Size: ", spinbox_range = (1,10000), initial_val = self.detector_batch_size, parent = self
-        )
-        self.detector_batchsize_label_spinbox.value_changed.connect(self._det_batch_size_spinbox_changed)
-        self._determine_det_spinbox_vis(shuffle_metadata_text)
+        self.batchsize_spinbox = Spinbox_With_Label("Batch Size: ", (1,10000), self.batch_size)
+        self.detector_batchsize_spinbox = Spinbox_With_Label("Detector Batch Size: ", (1,10000), self.detector_batch_size)
+        self.detector_batchsize_spinbox.setVisible("Detector" in shuffle_metadata_text)
 
         self.start_button = QPushButton("Run Inference")
         self.start_button.clicked.connect(self._inference_pipe)
@@ -151,8 +129,8 @@ class DLC_Inference(QDialog):
         button_frame.addWidget(self.grayscaling_checkbox)
         button_frame.addWidget(self.to_video_checkbox)
 
-        button_frame.addWidget(self.batchsize_label_spinbox)
-        button_frame.addWidget(self.detector_batchsize_label_spinbox)
+        button_frame.addWidget(self.batchsize_spinbox)
+        button_frame.addWidget(self.detector_batchsize_spinbox)
         button_frame.addWidget(self.start_button)
         container_layout.addLayout(button_frame)
  
@@ -250,7 +228,7 @@ class DLC_Inference(QDialog):
         else:
             self.shuffle_config_label.setStyleSheet("color: black;")
             self.start_button.setEnabled(True)
-            self._determine_det_spinbox_vis(text)
+            self.detector_batchsize_label_spinbox.setVisible("Detector" in text)
 
         if self.cond_or_coam:
             self.to_video_checkbox.setEnabled(False)
@@ -258,30 +236,24 @@ class DLC_Inference(QDialog):
         else:
             self.to_video_checkbox.setEnabled(True)
 
-    def _individual_spinbox_changed(self, value):
-        self.max_individual_val = value
+    def _collect_params(self):
+        batch_val = self.batchsize_spinbox
+        det_val = self.detector_batchsize_spinbox
 
-    def _batch_size_spinbox_changed(self, value):
-        self.batch_size = value
-        self.batch_size_changed = True
+        if self.batch_size != batch_val or self.detector_batch_size != det_val:
+            self.batch_size_changed
+            self.batch_size = batch_val
+            self.detector_batch_size = det_val
 
-    def _det_batch_size_spinbox_changed(self, value):
-        self.detector_batch_size = value
-        self.batch_size_changed = True
-
-    def _masking_changed(self, checked:bool):
-        self.masking = checked
-
-    def _cropping_changed(self, checked:bool):
-        self.cropping = checked
-
-    def _grayscaling_changed(self, checked:bool):
-        self.grayscaling = checked
-
-    def _determine_det_spinbox_vis(self, text:str):
-        self.detector_batchsize_label_spinbox.setVisible("Detector" in text)
+        self.max_workers = self.worker_num_spinbox.value()
+        self.max_individual_val = self.max_individual_spinbox.value()
+        self.masking = self.masking_checkbox.isChecked()
+        self.cropping = self.cropping_checkbox.isChecked()
+        self.grayscaling = self.grayscaling_checkbox.isChecked()
 
     def _inference_pipe(self, headless:bool=False):
+        self._collect_params()
+
         if self.batch_size_changed:
             self._update_config()
 
@@ -366,7 +338,13 @@ class DLC_Inference(QDialog):
             logger.info(f"[INFER] DeepLabCut config in {config_path} has been updated.")
 
     def _extract_marked_frames(self, to_video:bool=False):
-        exporter = Frame_Exporter_Threaded(self.video_filepath, self.tm, self.temp_dir, frame_list=self.frame_list)
+        exporter = Frame_Exporter_Threaded(
+            video_filepath=self.video_filepath,
+            tm=self.tm,
+            temp_dir=self.temp_dir,
+            frame_list=self.frame_list,
+            max_workers=self.max_workers
+            )
         ea = Exporter_Augments(
             crop_coord=self.crop_coord if self.cropping else None,
             mask=self.mask_region if self.masking else None,

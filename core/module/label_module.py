@@ -862,6 +862,7 @@ class Frame_Label:
         skip_sweep = config_dlg.skip_motion_sweep
         avtomat = config_dlg.avtomat
         emp = config_dlg.emp
+        worker_num = config_dlg.worker_num
 
         start_idx = 0
         end_idx = self.dm.total_frames
@@ -881,6 +882,7 @@ class Frame_Label:
             skip_sweep=skip_sweep,
             avtomat=avtomat,
             emp=emp,
+            worker_num=worker_num,
             parent=self.main,
         )
 

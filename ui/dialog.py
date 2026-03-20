@@ -509,6 +509,7 @@ class Track_Fix_Config_Dialog(QDialog):
         self.correct_marked_only = False
         self.skip_motion_sweep = False
         self.avtomat = False
+        self.worker_num = 8
         self.emp = None
         
         self._init_ui()
@@ -527,7 +528,10 @@ class Track_Fix_Config_Dialog(QDialog):
         self.avtomat_cbx = QCheckBox("Auto mode")
         self.avtomat_cbx.setToolTip("Auto-accept ID swaps based on contrastive embedding agreement")
         opts_layout.addWidget(self.avtomat_cbx)
-        
+
+        self.worker_spin = Spinbox_With_Label("Cutout Extraction Workers:", (1, 256), 8)
+        opts_layout.addWidget(self.worker_spin)
+
         opts_group.setLayout(opts_layout)
         layout.addWidget(opts_group)
 
@@ -560,6 +564,7 @@ class Track_Fix_Config_Dialog(QDialog):
         self.correct_marked_only = self.marked_only_cbx.isChecked()
         self.skip_motion_sweep = self.skip_sweep_cbx.isChecked()
         self.avtomat = self.avtomat_cbx.isChecked()
+        self.worker_num = self.worker_spin.value()
         self.emp = Emb_Params(
             batch_size=self.batch_size_spin.value(),
             triplets=self.max_triplet_spin.value(),
