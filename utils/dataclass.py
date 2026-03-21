@@ -119,5 +119,7 @@ class Cutout_Augments:
 class Emb_Params:
     batch_size: int
     triplets: int
+    pleatau: int
     epochs: int
+    warmup: int
     lr: int

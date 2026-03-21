@@ -175,10 +175,7 @@ class Track_Fixer:
             trainer = Contrastive_Trainer()
             trainer.train(
                 dataset=cds,
-                batch_size=self.emp.batch_size,
-                epochs=self.emp.epochs,
-                max_triplet=self.emp.triplets,
-                lr=self.emp.lr,
+                emp=self.emp,
                 )
             embeddings = trainer.extract_embeddings(cds)
             np.savez(embedding_filepath, embeddings=embeddings,
@@ -192,6 +189,7 @@ class Track_Fixer:
         agreement_pix.save(os.path.join(self.temp_dir, "agreement_timeline.png"))
         pix_dialog = Dual_Pixmap_Dialog(agreement_pix, tsne_pix, max_height=480, parent=self.main)
         pix_dialog.show()
+        logger.info("[TF] Visualization complete.")
         stable_spans = indices_to_spans(stable_swap_candidates)
         for start, end in stable_spans:
             start_idx = max(0, start - 10)

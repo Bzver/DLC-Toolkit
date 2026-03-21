@@ -172,3 +172,6 @@ class Spinbox_With_Label(QtWidgets.QWidget):
 
     def value(self):
         return self.spinbox.value()
+    
+    def setValue(self, val):
+        self.spinbox.setValue(val)

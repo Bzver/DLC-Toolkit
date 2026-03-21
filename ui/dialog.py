@@ -499,18 +499,19 @@ class Keypoint_Num_Dialog(QDialog):
 
 
 class Track_Fix_Config_Dialog(QDialog):
-    def __init__(self, has_marked_frames=False, parent=None):
+    def __init__(self, total_frames:int, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Track Correction Configuration")
         self.setModal(True)
         self.setFixedWidth(520)
 
-        self.has_marked_frames = has_marked_frames
-        self.correct_marked_only = False
+        self.total_frames = total_frames
+
         self.skip_motion_sweep = False
         self.avtomat = False
         self.worker_num = 8
         self.emp = None
+        self.fix_range = (0, self.total_frames-1)
         
         self._init_ui()
         
@@ -520,16 +521,18 @@ class Track_Fix_Config_Dialog(QDialog):
         opts_group = QGroupBox("Track Fixer Options")
         opts_layout = QVBoxLayout()
         
-        self.marked_only_cbx = QCheckBox("Correct marked frames only")
-        self.marked_only_cbx.setEnabled(self.has_marked_frames)
-        self.marked_only_cbx.setToolTip("Limit correction to the range of user-marked frames")
-        opts_layout.addWidget(self.marked_only_cbx)
+        range_frame = QHBoxLayout()
+        self.start_spin = Spinbox_With_Label("Start Frame:", (0, self.total_frames-2), 0)
+        self.end_spin = Spinbox_With_Label("End Frame:", (1, self.total_frames-1), self.total_frames-1)
+        range_frame.addWidget(self.start_spin)
+        range_frame.addWidget(self.end_spin)
+        opts_layout.addLayout(range_frame)
 
         self.avtomat_cbx = QCheckBox("Auto mode")
         self.avtomat_cbx.setToolTip("Auto-accept ID swaps based on contrastive embedding agreement")
         opts_layout.addWidget(self.avtomat_cbx)
 
-        self.worker_spin = Spinbox_With_Label("Cutout Extraction Workers:", (1, 256), 8)
+        self.worker_spin = Spinbox_With_Label("Cutout Extraction Workers:", (1, 256), 16)
         opts_layout.addWidget(self.worker_spin)
 
         opts_group.setLayout(opts_layout)
@@ -542,14 +545,20 @@ class Track_Fix_Config_Dialog(QDialog):
         self.skip_sweep_cbx.setToolTip("Check this if track is mostly correct already.")
         cl_layout.addWidget(self.skip_sweep_cbx)
 
-        self.max_epochs_spin = Spinbox_With_Label("Max Epochs:", (1, 200), 30)
-        self.batch_size_spin = Spinbox_With_Label("Batch Size:", (2, 4096), 64)
+        self.max_epochs_spin = Spinbox_With_Label("Max Epochs:", (1, 200), 100)
+        self.warmup_epochs_spin = Spinbox_With_Label("Warmup Epochs:", (1, 200), 5)
+        self.batch_size_spin = Spinbox_With_Label("Batch Size:", (2, 4096), 128)
+        self.max_pleatau_spin = Spinbox_With_Label("Pleatau Patience:", (2, 50), 10)
         self.max_triplet_spin = Spinbox_With_Label("Max Triplets per Mining:", (5000, 100000), 5000)
         self.lr_spin = Spinbox_With_Label("Learning Rate (1e-n), n:", (2, 8), 5)
 
+        self.warmup_epochs_spin.value_changed.connect(self._validate_warmup)
+
         cl_layout.addWidget(self.max_epochs_spin)
+        cl_layout.addWidget(self.warmup_epochs_spin)
         cl_layout.addWidget(self.batch_size_spin)
         cl_layout.addWidget(self.max_triplet_spin)
+        cl_layout.addWidget(self.max_pleatau_spin)
         cl_layout.addWidget(self.lr_spin)
 
         cl_group.setLayout(cl_layout)
@@ -560,15 +569,25 @@ class Track_Fix_Config_Dialog(QDialog):
         btn_box.rejected.connect(self.reject)
         layout.addWidget(btn_box)
 
+    def _validate_range(self):
+        if self.start_spin.value() > self.end_spin.value():
+            self.warmup_epochs_spin.setValue(0)
+
+    def _validate_warmup(self):
+        if self.warmup_epochs_spin.value() > self.max_epochs_spin.value():
+            self.warmup_epochs_spin.setValue(self.max_epochs_spin.value())
+
     def _on_accept(self):
-        self.correct_marked_only = self.marked_only_cbx.isChecked()
+        self.fix_range = (self.start_spin.value(), self.end_spin.value())
         self.skip_motion_sweep = self.skip_sweep_cbx.isChecked()
         self.avtomat = self.avtomat_cbx.isChecked()
         self.worker_num = self.worker_spin.value()
         self.emp = Emb_Params(
             batch_size=self.batch_size_spin.value(),
             triplets=self.max_triplet_spin.value(),
+            pleatau=self.max_pleatau_spin.value(),
             epochs=self.max_epochs_spin.value(),
+            warmup=self.warmup_epochs_spin.value(),
             lr=10**-self.lr_spin.value(),
             )
         self.accept()

@@ -852,26 +852,22 @@ class Frame_Label:
 
         self._save_state_for_undo()
 
-        config_dlg = Track_Fix_Config_Dialog(has_marked_frames=bool(self.dm.get_frames("marked")), parent=self.main)
+        config_dlg = Track_Fix_Config_Dialog(total_frames=self.dm.total_frames, parent=self.main)
         
         if config_dlg.exec() != QtWidgets.QDialog.Accepted:
             logger.info("Track correction configuration cancelled by user")
             return
 
-        correct_marked_only = config_dlg.correct_marked_only
+        fix_range = config_dlg.fix_range
         skip_sweep = config_dlg.skip_motion_sweep
         avtomat = config_dlg.avtomat
         emp = config_dlg.emp
         worker_num = config_dlg.worker_num
 
-        start_idx = 0
-        end_idx = self.dm.total_frames
+        start_idx = fix_range[0]
+        end_idx = fix_range[1] + 1
         
-        if correct_marked_only and self.dm.get_frames("marked"):
-            frame_list = self.dm.get_frames("marked")
-            start_idx = min(frame_list)
-            end_idx = max(frame_list) + 1
-            logger.info(f"Correcting marked frame range: {start_idx}–{end_idx-1}")
+        logger.info(f"Correcting marked frame range: {start_idx}–{end_idx-1}")
 
         self.tf = Track_Fixer(
             pred_data_array=self.pred_data_array,
