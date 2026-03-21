@@ -284,7 +284,7 @@ class Frame_App(QMainWindow):
 
     def _load_workspace(self):
         workspace_path, _ = QFileDialog.getOpenFileName(
-            self, "Load Workspace", "", "Pickle Files (*.pkl);;All Files (*)"
+            self, "Load Workspace", "", "Joblib Files (*.joblib);;Pickle Files (*.pkl);;All Files (*)"
         )
         if not workspace_path:
             return

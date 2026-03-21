@@ -15,7 +15,7 @@ def timestamp_new_prediction(save_filepath:str) -> str:
 
 def backup_existing_prediction(save_filepath:str):
     if not os.path.isfile(save_filepath):
-        return
+        return False
 
     filename = os.path.basename(save_filepath)
     path = os.path.dirname(save_filepath)
@@ -26,6 +26,8 @@ def backup_existing_prediction(save_filepath:str):
     backup_filepath = os.path.join(backup_dir, f"{file}_{timestamp}.{ext}")
 
     shutil.copy(save_filepath, backup_filepath)
+
+    return os.path.isfile(backup_filepath)
 
 def determine_save_path(prediction_filepath:str, suffix:str) -> str:
     pred_file_dir = os.path.dirname(prediction_filepath)

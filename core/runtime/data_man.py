@@ -1,7 +1,7 @@
 import os
 import shutil
 import cv2
-import pickle
+import joblib
 import numpy as np
 from PySide6.QtWidgets import QFileDialog, QDialog
 from typing import Callable, Tuple, List, Optional, Dict
@@ -32,6 +32,8 @@ class Data_Manager:
         self.init_vid_callback = init_vid_callback
         self.refresh_callback = refresh_callback
         self.reset_dm()
+
+        self.headless = self.main is None
 
     def reset_dm(self):
         self.fm = Frame_Manager(refresh_callback=self.refresh_callback)
@@ -90,7 +92,7 @@ class Data_Manager:
         """Load DLC Label without a preexisting prediction"""
         if not prediction_path:
             h5_candidates = [f for f in os.listdir(image_folder) if f.startswith("CollectedData_") and f.endswith(".h5")]
-            if not h5_candidates:
+            if not h5_candidates and not self.headless:
                 Loggerbox.warning(self.main, "No H5 File", "No 'CollectedData_*.h5' file found in the selected folder.")
                 return
             prediction_path = os.path.join(image_folder, h5_candidates[0])
@@ -106,7 +108,10 @@ class Data_Manager:
         try:
             self.dlc_data = data_loader.load_data(force_load_pred=True)
         except Exception as e:
-            Loggerbox.error(self.main, "Error Loading Prediction", f"Failed to load prediction: {e}", exc=e)
+            if self.headless:
+                logger.error(f"Failed to load prediction: {e}")
+            else:
+                Loggerbox.error(self.main, "Error Loading Prediction", f"Failed to load prediction: {e}", exc=e)
             return
         
         self.init_vid_callback(self.video_file)
@@ -124,10 +129,13 @@ class Data_Manager:
     def auto_loader_workspace(self):
         video_folder = os.path.dirname(self.video_file)
 
-        if f"{self.video_name}_workspace.pkl" in os.listdir(video_folder):
-            file_path = os.path.join(video_folder, f"{self.video_name}_workspace.pkl")
-            self.load_workspace(file_path)
-            return True
+        workspace_candidates = [f"{self.video_name}_workspace.joblib", f"{self.video_name}_workspace.pkl"]
+
+        for cand in workspace_candidates:
+            if cand in os.listdir(video_folder):
+                file_path = os.path.join(video_folder, cand)
+                self.load_workspace(file_path)
+                return True
 
         return False
 
@@ -334,7 +342,8 @@ class Data_Manager:
             if dialog.exec() == QDialog.Accepted:
                 head_idx, tail_idx = dialog.get_selected_indices()
             else:
-                Loggerbox.warning(self.main, "Head/Tail Not Set", "Canonical pose and angle map will not be available.")
+                if not self.headless:
+                    Loggerbox.warning(self.main, "Head/Tail Not Set", "Canonical pose and angle map will not be available.")
                 self.canon_pose = None
                 self.angle_map_data = None
                 return
@@ -397,7 +406,7 @@ class Data_Manager:
 
     def save_workspace(self):
         """Save the current workspace state (all vars from reset_dm_vars) to a pickle file."""
-        default_name = f"{self.video_name}_workspace.pkl"
+        default_name = f"{self.video_name}_workspace.joblib"
         file_path = os.path.join(os.path.dirname(self.video_file), default_name)
 
         workspace_state = {
@@ -420,13 +429,22 @@ class Data_Manager:
         }
         try:
             with open(file_path, 'wb') as f:
-                pickle.dump(workspace_state, f)
+                joblib.dump(workspace_state, f, compress=3)
         except Exception as e:
-            Loggerbox.error(self.main, "Error Saving Workspace", f"Failed to save workspace:\n{e}", exc=e)
+            if self.headless:
+                logger.error(f"Failed to save workspace:\n{e}")
+            else:
+                Loggerbox.error(self.main, "Error Saving Workspace", f"Failed to save workspace:\n{e}", exc=e)
 
     def load_workspace(self, file_path:str):
-        with open(file_path, 'rb') as f:
-            workspace_state = pickle.load(f)
+        if os.path.splitext(file_path)[1] == ".pkl":
+            import pickle
+            with open(file_path, 'rb') as f:
+                workspace_state = pickle.load(f)
+            update_needed = True
+        else:
+            workspace_state = joblib.load(file_path)
+            update_needed = False
 
         self.dlc_label_mode = workspace_state.get('dlc_label_mode', False)
         self.total_frames = workspace_state.get('total_frames', 0)
@@ -447,13 +465,8 @@ class Data_Manager:
         dlc_data = workspace_state.get('dlc_data')
         self.dlc_data = Loaded_DLC_Data.from_dict(dlc_data) if isinstance(dlc_data, dict) else dlc_data
 
-        update_needed = False
         plot_config = workspace_state.get('plot_config')
-        if isinstance(plot_config, dict):
-            self.plot_config = Plot_Config.from_dict(plot_config) 
-        else:
-            self.plot_config = plot_config
-            update_needed = True
+        self.plot_config = Plot_Config.from_dict(plot_config) 
 
         blob_config = workspace_state.get('blob_config')
         self.blob_config = Blob_Config.from_dict(blob_config) if isinstance(blob_config, dict) else blob_config
@@ -468,8 +481,14 @@ class Data_Manager:
             return
 
         if not os.path.isfile(self.video_file):
-            Loggerbox.error(self.main, "Video File Missing", f"Cannot find video at {self.video_file}")
-            self._select_missing_video()
+            if self.headless:
+                logger.error(f"Cannot find video at {self.video_file}")
+            else:
+                Loggerbox.error(self.main, "Video File Missing", f"Cannot find video at {self.video_file}")
+                file_dialog = QFileDialog(self.main)
+                video_path, _ = file_dialog.getOpenFileName(self.main, "Load Video", "", "Video Files (*.mp4 *.avi *.mov *.mkv);;All Files (*)")
+                self.video_file = video_path
+
             if not self.video_file:
                 return
 
@@ -477,11 +496,8 @@ class Data_Manager:
 
         if update_needed:
             self.save_workspace()
-
-    def _select_missing_video(self):
-        file_dialog = QFileDialog(self.main)
-        video_path, _ = file_dialog.getOpenFileName(self.main, "Load Video", "", "Video Files (*.mp4 *.avi *.mov *.mkv);;All Files (*)")
-        self.video_file = video_path
+            if backup_existing_prediction(file_path):
+                os.remove(file_path)
 
     ###################################################################################################################################################
 
@@ -575,7 +591,10 @@ class Data_Manager:
                 self.dlc_data, save_folder, self.video_file, frame_list, pred_data_array=pred_data_to_use, crop_coord=crop_coord, grayscaling=grayscaling)
             exporter.export_data_to_DLC()
         except Exception as e:
-            Loggerbox.error(self.main, "Error Save Data", f"Error saving data to DLC: {e}", exc=e)
+            if self.headless:
+                logger.error(f"Error saving data to DLC: {e}", exc=e)
+            else:
+                Loggerbox.error(self.main, "Error Save Data", f"Error saving data to DLC: {e}", exc=e)
         else:
             self.label_file = label_file
             self.load_labeled_overlay(self.label_file)
