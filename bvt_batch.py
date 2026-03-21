@@ -1,345 +1,324 @@
 import os
-from collections import defaultdict
-import numpy as np
 import yaml
-from PySide6 import QtWidgets
+import numpy as np
+from collections import defaultdict
+from contextlib import contextmanager
 from typing import List, Tuple, Optional
 
 from core.runtime import Data_Manager
 from core.tool.inference import DLC_Inference
-from core.tool.track_fix import Track_Fixer_No_Exit
+from core.tool.track_fix import Track_Fixer
 from core.io import backup_existing_prediction, get_existing_projects, csv_op, prediction_to_csv, Frame_Extractor
 from utils.helper import calculate_blob_inference_intervals, get_instance_count_per_frame
 from utils.logger import logger, set_headless_mode
 
 
-MAX_FRAMES_PER_RUN = 10000
+MAX_FRAMES_PER_RUN: int = 10000
+WORKSPACE_EXTENSIONS: Tuple[str, ...] = (".joblib", ".pkl")
+VIDEO_EXTENSIONS: Tuple[str, ...] = (".mp4", ".avi", ".mkv")
 
 
-def batch_to_h5(dlc_config_path: str):
-    if not os.path.isfile(dlc_config_path):
-        logger.error(f"[BATCH] DLC config file not found: {dlc_config_path}")
+############################################################################################
+
+def batch_migration_pkl_to_joblib(root_dir: str):
+    workspaces = _find_files_by_extension(root_dir, ".pkl")
+    if not workspaces:
+        logger.info("[BATCH] No old workspace files found for migration")
         return
 
-    dlc_dir = os.path.dirname(dlc_config_path)
+    _log_batch_progress("PKL Migration", workspaces)
+    
+    def process_workspace(ws_path:str) -> bool:
+        dm = Data_Manager(
+            init_vid_callback=_pseudo_callback,
+            refresh_callback=_pseudo_callback
+        )
+        dm.load_workspace(ws_path)
+        ws_newpath = ws_path.replace(".pkl",".joblib")
+        return os.path.isfile(ws_newpath)
 
-    try:
-        with open(dlc_config_path, 'r') as f:
-            config_org = yaml.safe_load(f)
-        scorer = config_org.get("scorer")
-        if not scorer:
-            logger.error("[BATCH] 'scorer' not found in DLC config.")
-            return
-    except Exception as e:
-        logger.error(f"[BATCH] Failed to read DLC config: {e}")
+    _process_batch(workspaces, process_workspace, "PKL Migration")
+
+def batch_convert_csv_to_h5(dlc_config_path: str):
+    projects = _find_labeled_projects(dlc_config_path)
+    if not projects:
         return
+    
+    scorer = yaml.safe_load(dlc_config_path.read_text())["scorer"]
+    
+    def process_project(project_dir: str) -> bool:
+        csv_path = os.path.join(project_dir, f"CollectedData_{scorer}.csv") 
+        h5_path = os.path.join(project_dir, f"CollectedData_{scorer}.h5") 
+        
+        if not csv_path.exists():
+            logger.debug(f"[BATCH] Skip (no CSV): {project_dir}")
+            return False
+        
+        if h5_path.exists():
+            logger.debug(f"[BATCH] Skip (H5 exists): {project_dir}")
+            return False
+        
+        csv_op.csv_to_h5(csv_path=str(csv_path), multi_animal=True, scorer=scorer)
+        logger.info(f"[BATCH] Converted: {csv_path.name}")
+        return True
+    
+    _process_batch(projects, process_project, "CSV→H5 conversion")
 
-    labeled_data_dir = os.path.join(dlc_dir, "labeled-data")
-    if not os.path.isdir(labeled_data_dir):
-        logger.warning(f"[BATCH] labeled-data directory not found: {labeled_data_dir}")
-        return
-
-    success_count = 0
-    skipped = []
-    failed = []
-
-    for project_name in os.listdir(labeled_data_dir):
-        project_dir = os.path.join(labeled_data_dir, project_name)
-        if not os.path.isdir(project_dir):
-            continue
-
-        csv_path = os.path.join(project_dir, f"CollectedData_{scorer}.csv")
-        h5_path = os.path.join(project_dir, f"CollectedData_{scorer}.h5")
-
-        if not os.path.isfile(csv_path):
-            skipped.append((project_name, "CSV missing"))
-            logger.debug(f"[BATCH] Skipped (CSV not found): {csv_path}")
-            continue
-        if os.path.isfile(h5_path):
-            skipped.append((project_name, "H5 already exists"))
-            logger.debug(f"[BATCH] Skipped (H5 already exists): {h5_path}")
-            continue
-
-        try:
-            csv_op.csv_to_h5(csv_path=csv_path, multi_animal=True, scorer=scorer)
-            success_count += 1
-            logger.info(f"[BATCH] Successfully converted: {csv_path}")
-        except Exception as e:
-            failed.append((project_name, str(e)))
-            logger.error(f"[BATCH] Failed to convert {csv_path}: {e}")
-
-    total = len([d for d in os.listdir(labeled_data_dir) if os.path.isdir(os.path.join(labeled_data_dir, d))])
-    logger.info(f"[BATCH] Conversion finished: {success_count}/{total} succeeded.")
-
-    if skipped:
-        logger.info(f"[BATCH] Skipped {len(skipped)} projects:")
-        for name, reason in skipped:
-            logger.info(f"  - {name} ({reason})")
-
-    if failed:
-        logger.error(f"[BATCH] Failed {len(failed)} projects:")
-        for name, err in failed:
-            logger.error(f"  - {name}: {err}")
-
-def batch_grayscale(dlc_config_path):
-    success_count = 0
-    failed = []
-    skipped = []
-
+def batch_convert_to_grayscale(dlc_config_path: str):
     projects = get_existing_projects(dlc_config_path)
     if not projects:
-        logger.info("[BATCH] No projects found.")
+        logger.info("[BATCH] No projects found for grayscale conversion")
         return
-
-    logger.info("[BATCH] Found following labeled projects in DLC.")
-    for i, path in enumerate(projects):
-        logger.info(f"[{i}]: {path}")
-
-    for project in projects:
-        if project.endswith("_GR"):
-            skipped.append(project)
-            logger.info(f"[BATCH] Skipped (already grayscale): {project}")
-            continue
-
-        grayscaled_project = f"{project}_GR"
-        if os.path.isdir(grayscaled_project):
-            skipped.append(project)
-            logger.info(f"[BATCH] Skipped (grayscale version already exists): {project}")
-            continue
-
-        try:
-            dm = Data_Manager(init_vid_callback=_pseudo_callback, refresh_callback=_pseudo_callback, parent=dialog)
-            dm.load_metadata_to_dm(dlc_config_path)
-            dm.load_dlc_label(project)
-            dm.migrate_existing_project(grayscaled_project, grayscaling=True)
-        except Exception as e:
-            error_msg = f"Failed to process project at {project}: {e}"
-            logger.error(f"[BATCH] {error_msg}")
-            failed.append(project)
-        else:
-            success_count += 1
-            logger.info(f"[BATCH] Successfully grayscaled project at {project}.")
-
-    total = len(projects)
-    logger.info(f"[BATCH] Grayscale conversion finished: {success_count}/{total} succeeded.")
-    if skipped:
-        logger.info(f"[BATCH] Skipped {len(skipped)} projects:")
-        for s in skipped:
-            logger.info(f"  - {s}")
-    if failed:
-        logger.info(f"[BATCH] Failed {len(failed)} projects:")
-        for f in failed:
-            logger.info(f"  - {f}")
-
-def batch_kp_normalization(dlc_config_path, task, dialog):
-    if not os.path.isfile(dlc_config_path):
-        logger.error(f"[BATCH] DLC config file not found: {dlc_config_path}")
-        return
-
-    dlc_dir = os.path.dirname(dlc_config_path)
-
-    try:
-        with open(dlc_config_path, 'r') as f:
-            config_org = yaml.safe_load(f)
-        scorer = config_org.get("scorer")
-        if not scorer:
-            logger.error("[BATCH] 'scorer' not found in DLC config.")
-            return
-    except Exception as e:
-        logger.error(f"[BATCH] Failed to read DLC config: {e}")
-        return
-
-    labeled_data_dir = os.path.join(dlc_dir, "labeled-data")
-    if not os.path.isdir(labeled_data_dir):
-        logger.warning(f"[BATCH] labeled-data directory not found: {labeled_data_dir}")
-        return
-
-    failed = []
-
-    for project_name in os.listdir(labeled_data_dir):
-        project_dir = os.path.join(labeled_data_dir, project_name)
-        if not os.path.isdir(project_dir):
-            continue
-
-        if project_dir.endswith("_NM"):
-            continue
-
-        dm = Data_Manager(_pseudo_callback, _pseudo_callback, dialog)
-        dm.load_metadata_to_dm(dlc_config_path)
-        dm.load_dlc_label(project_dir)
-        pred_data_array = dm.dlc_data.pred_data_array.copy()
-
-        for t_idx, r1_idx, r2_idx in task:
-            pred_data_array[:, :, t_idx*3:t_idx*3+2] = (dm.dlc_data.pred_data_array[:, :, r1_idx*3:r1_idx*3+2] + dm.dlc_data.pred_data_array[:, :, r2_idx*3:r2_idx*3+2]) / 2
-        dm.dlc_data.pred_data_array = pred_data_array
-
-        dm.migrate_existing_project(f"{project_dir}_NM")
-
-    if failed:
-        logger.error(f"[BATCH] Failed {len(failed)} projects:")
-        for name, err in failed:
-            logger.error(f"  - {name}: {err}")
-
-def batch_create_pkl(
-    rootdir: str, 
-    dlc_config_path: str, 
-    dialog: QtWidgets.QDialog,
-):
-    vid_list = []
-    for root, _, files in os.walk(rootdir):
-        for file in files:
-            if "bvt_temp" in root or "backup" in root:
-                continue
-            if not file.endswith((".mp4", ".avi", ".mkv")):
-                continue
-            
-            file_noext = os.path.splitext(file)[0]
-            if not os.path.isfile(os.path.join(root, f"{file_noext}_workspace.pkl")):
-                vid_list.append(os.path.join(root, file))
     
-    logger.info("[BATCH] About to batch create pkl project for following videos.")
-    for i, path in enumerate(vid_list):
-        logger.info(f"[{i}]: {path}")
+    _log_batch_progress("grayscale conversion", projects)
+    
+    def process_project(project_path: str) -> bool:
+        if project_path.endswith("_GR"):
+            logger.debug(f"[BATCH] Skip (already GR): {project_path}")
+            return False
+        
+        grayscaled_path = f"{project_path}_GR"
+        if grayscaled_path.exists():
+            logger.debug(f"[BATCH] Skip (GR exists): {project_path}")
+            return False
+        
+        dm = Data_Manager(
+            init_vid_callback=_pseudo_callback, 
+            refresh_callback=_pseudo_callback
+        )
+        dm.load_metadata_to_dm(str(dlc_config_path))
+        dm.load_dlc_label(str(project_path))
+        dm.migrate_existing_project(str(grayscaled_path), grayscaling=True)
+        
+        logger.info(f"[BATCH] Grayscaled: {project_path}")
+        return True
+    
+    _process_batch(projects, process_project, "grayscale")
 
-    success_count = 0
-    failed = []
-
-    for i, f in enumerate(vid_list, 1):
-        filename = os.path.basename(f)
-        logger.info(f"\n[Batch {i}/{len(vid_list)}] Starting: {filename}")
-        dm = Data_Manager(init_vid_callback=_pseudo_callback, refresh_callback=_pseudo_callback, parent=dialog)
-        try:
-            dm.update_video_path(video_path=f)
-            extractor = Frame_Extractor(f)
+def batch_create_workspaces(rootdir: str, dlc_config_path: str):
+    videos = _find_video_files(rootdir)
+    if not videos:
+        logger.info("[BATCH] No videos requiring workspace creation")
+        return
+    
+    _log_batch_progress("workspace creation", videos)
+    
+    def process_video(video_path: str) -> bool:
+        dm = Data_Manager(
+            init_vid_callback=_pseudo_callback,
+            refresh_callback=_pseudo_callback
+        )
+        
+        dm.update_video_path(video_path=str(video_path))
+        
+        with managed_frame_extractor(video_path) as extractor:
             dm.total_frames = extractor.get_total_frames()
-            extractor.close()
-            dm.load_metadata_to_dm(dlc_config_path)
-            dm.save_workspace()
-        except Exception as e:
-            logger.error(f"[Batch {i}/{len(vid_list)}] FAILED: {filename} — {e} | ")
-            logger.exception(f"[Batch {i}/{len(vid_list)}]")
-            failed.append(f)
-            continue
-        else:
-            success_count += 1
-            logger.info(f"[Batch {i}/{len(vid_list)}] Completed: {filename}")
-            continue
-
+        
+        dm.load_metadata_to_dm(str(dlc_config_path))
+        dm.save_workspace()
+        
+        return True
+    
+    _process_batch(videos, process_video, "workspace creation")
 
 def batch_export_csv(
-    rootdir: str,
-    dialog: QtWidgets.QDialog,
-    with_conf:bool=True,
-    animal_num_filtering:bool=False,
-    min_animal_num:int=2,
-    frame_count_filtering:bool=False,
-    frame_count_max:int=6000,
-    no_scorer_header:bool=False,
-):
-    pkl_list = []
-    for root, _, files in os.walk(rootdir):
-        for file in files:
-            if file.endswith(".pkl") and "backup" not in root:
-                pkl_list.append(os.path.join(root, file))
+        root_dir: str, 
+        with_conf:bool=True,
+        animal_num_filtering:bool=False,
+        min_animal_num:int=2,
+        frame_count_filtering:bool=False,
+        frame_count_max:int=6000,
+        no_scorer_header:bool=False
+    ):
+    workspaces = _find_files_by_extension(root_dir, WORKSPACE_EXTENSIONS)
+    if not workspaces:
+        logger.info("[BATCH] No workspace files found for export")
+        return
     
-    logger.info("[BATCH] About to batch process following workspace file.")
-    for i, path in enumerate(pkl_list):
-        logger.info(f"[{i}]: {path}")
-
-    success_count = 0
-    failed = []
+    _log_batch_progress("CSV export", workspaces)
     
-    for i, f in enumerate(pkl_list, 1):
-        filename = os.path.basename(f)
-        logger.info(f"\n[Batch {i}/{len(pkl_list)}] Starting: {filename}")
-        dm = Data_Manager(init_vid_callback=_pseudo_callback, refresh_callback=_pseudo_callback, parent=dialog)
-        dm.load_workspace(f)
-        try:
-            pred_data_array = dm.dlc_data.pred_data_array
-            if animal_num_filtering:
-                instance_count = get_instance_count_per_frame(pred_data_array)
-                pred_filtered = pred_data_array[instance_count >= min_animal_num]
-                pred_data_array = pred_filtered
+    def process_workspace(ws_path:str) -> bool:
+        dm = Data_Manager(
+            init_vid_callback=_pseudo_callback,
+            refresh_callback=_pseudo_callback
+        )
+        dm.load_workspace(str(ws_path))
+        
+        pred_data = dm.dlc_data.pred_data_array
 
-            if frame_count_filtering:
-                pred_data_array = pred_data_array[:frame_count_max]
+        if animal_num_filtering:
+            counts = get_instance_count_per_frame(pred_data)
+            pred_data = pred_data[counts >= min_animal_num]
+        
+        if frame_count_filtering:
+            pred_data = pred_data[:frame_count_max]
 
-            prediction_to_csv(
-                dm.dlc_data,
-                pred_data_array,
-                save_path=f.replace("_workspace.pkl", "_auto_export.csv"),
-                keep_conf=with_conf,
-                no_scorer_row=no_scorer_header,
-                )
-        except Exception as e:
-            logger.error(f"[Batch {i}/{len(pkl_list)}] FAILED: {filename} — {e} | ")
-            logger.exception(f"[Batch {i}/{len(pkl_list)}]")
-            failed.append(f)
-            continue
-        else:
-            success_count += 1
-            logger.info(f"[Batch {i}/{len(pkl_list)}] Completed: {filename}")
-            continue
-
-    logger.info(f"[BATCH] Batch finished: {success_count}/{len(pkl_list)} succeeded.")
-    if failed:
-        logger.info(f"[BATCH] Failed videos:")
-        for f in failed:
-            logger.info(f)
+        output_path = (
+            str(ws_path)
+            .replace("_workspace.joblib", "_auto_export.csv")
+            .replace("_workspace.pkl", "_auto_export.csv")
+        )
+        
+        prediction_to_csv(
+            dm.dlc_data,
+            pred_data,
+            save_path=output_path,
+            keep_conf=with_conf,
+            no_scorer_row=no_scorer_header,
+        )
+        return True
+    
+    _process_batch(workspaces, process_workspace, "CSV export")
 
 
-def batch_id_correction(
-    rootdir: str, 
-    dialog: QtWidgets.QDialog,
-):
-    pkl_list = []
-    for root, _, files in os.walk(rootdir):
-        for file in files:
-            if file.endswith(".pkl") and "backup" not in root:
-                pkl_list.append(os.path.join(root, file))
-
-    logger.info("[BATCH] About to batch process following workspace file.")
-    for i, path in enumerate(pkl_list):
-        logger.info(f"[{i}]: {path}")
-
-    success_count = 0
-    failed = []
-
-    for i, f in enumerate(pkl_list, 1):
-        filename = os.path.basename(f)
-        logger.info(f"\n[Batch {i}/{len(pkl_list)}] Starting: {filename}")
-        dm = Data_Manager(init_vid_callback=_pseudo_callback, refresh_callback=_pseudo_callback, parent=dialog)
-        dm.load_workspace(f)
-        try:
-            extractor = Frame_Extractor(dm.video_file)
+def batch_correct_tracking(root_dir:str) -> None:
+    workspaces = _find_files_by_extension(root_dir, WORKSPACE_EXTENSIONS)
+    if not workspaces:
+        logger.info("[BATCH] No workspace files found for track correction")
+        return
+    
+    _log_batch_progress("track correction", workspaces)
+    
+    def process_workspace(ws_path: str) -> bool:
+        dm = Data_Manager(
+            init_vid_callback=_pseudo_callback,
+            refresh_callback=_pseudo_callback
+        )
+        dm.load_workspace(str(ws_path))
+        
+        with managed_frame_extractor(dm.video_file) as extractor:
             if dm.angle_map_data is None:
                 dm._init_canon_pose()
-            tf = Track_Fixer_No_Exit(dm.dlc_data.pred_data_array, dm.dlc_data, extractor, dm.angle_map_data, avtomat=True)
+            
+            tf = Track_Fixer(
+                dm.dlc_data.pred_data_array,
+                dm.dlc_data,
+                dm.tm,
+                extractor,
+                dm.angle_map_data,
+                avtomat=True
+            )
             dm.dlc_data.pred_data_array = tf.track_correction()
+        
+        dm.save_workspace()
+        return True
+    
+    _process_batch(workspaces, process_workspace, "track correction")
+
+@contextmanager
+def managed_frame_extractor(video_path:str):
+    extractor = Frame_Extractor(video_path)
+    try:
+        yield extractor
+    finally:
+        extractor.close()
+
+############################################################################################
+
+def _find_video_files(root_dir: str) -> List[str]:
+    videos = _find_files_by_extension(root_dir, VIDEO_EXTENSIONS)
+    filtered = []
+    for video in videos:
+        workspace_candidates = [
+            video.with_name(f"{video.stem}_workspace{ext}")
+            for ext in WORKSPACE_EXTENSIONS
+        ]
+        if not any(ws.exists() for ws in workspace_candidates):
+            filtered.append(video)
+    
+    return filtered
+
+def _find_labeled_projects(dlc_config_path: str) -> List[str]:
+    if not dlc_config_path.is_file():
+        logger.error(f"[BATCH] DLC config not found: {dlc_config_path}")
+        return []
+    
+    try:
+        config = yaml.safe_load(dlc_config_path.read_text())
+        scorer = config.get("scorer")
+        if not scorer:
+            logger.error("[BATCH] 'scorer' missing in DLC config")
+            return []
+    except Exception as e:
+        logger.error(f"[BATCH] Failed to parse DLC config: {e}")
+        return []
+    
+    labeled_dir = os.path.join(os.path.basename(dlc_config_path), "labeled-data")
+    if not os.path.isdir(labeled_dir):
+        logger.warning(f"[BATCH] labeled-data directory not found: {labeled_dir}")
+        return []
+    
+    all_dirs = []
+    for d in os.listdir(labeled_dir):
+        d_full = os.path.join(labeled_dir, d)
+        all_dirs.append(d_full)
+
+    return all_dirs
+
+def _find_files_by_extension(root_dir:str, extensions: Tuple[str]) -> List[str]:
+    found = []
+    for root, dirs, files in os.walk(root_dir):
+        dirs[:] = [d for d in dirs if "backup" not in root and "temp" not in root]
+        
+        for file in files:
+            if file.endswith(extensions):
+                found.append(os.path.join(root, file))
+    return found
+
+############################################################################################
+
+def _process_batch(
+    items: List[str], 
+    processor: callable,
+    operation_name: str
+) -> Tuple[int, List[Tuple[str, str]]]:
+    """
+    Generic batch processing loop with error handling and logging.
+    
+    Returns:
+        Tuple of (success_count, list of (failed_path, error_message))
+    """
+    success_count = 0
+    failures = []
+    
+    for idx, item in enumerate(items, start=1):
+        filename = os.path.basename(item)
+        logger.info(f"\n[{operation_name} {idx}/{len(items)}] Processing: {filename}")
+        
+        try:
+            if processor(item):
+                success_count += 1
+                logger.info(f"[{operation_name} {idx}/{len(items)}] Completed: {filename}")
+            else:
+                logger.warning(f"[{operation_name} {idx}/{len(items)}] Skipped: {filename}")
         except Exception as e:
-            logger.error(f"[Batch {i}/{len(pkl_list)}] FAILED: {filename} — {e} | ")
-            logger.exception(f"[Batch {i}/{len(pkl_list)}]")
-            failed.append(f)
-            continue
-        else:
-            success_count += 1
-            logger.info(f"[Batch {i}/{len(pkl_list)}] Completed: {filename}")
-            dm.save_workspace()
-            continue
+            error_msg = f"{type(e).__name__}: {e}"
+            logger.error(f"[{operation_name} {idx}/{len(items)}] FAILED: {filename} — {error_msg}")
+            logger.exception(f"[{operation_name} {idx}/{len(items)}] Stack trace:")
+            failures.append((item, error_msg))
 
-    logger.info(f"[BATCH] Batch finished: {success_count}/{len(pkl_list)} succeeded.")
-    if failed:
-        logger.info(f"[BATCH] Failed videos:")
-        for f in failed:
-            logger.info(f)
+    logger.info(f"[BATCH] {operation_name} finished: {success_count}/{len(items)} succeeded.")
+    
+    if failures:
+        logger.warning(f"[BATCH] {len(failures)} item(s) failed:")
+        for path, error in failures:
+            logger.warning(f"  - {path.name}: {error}")
+    
+    return success_count, failures
 
-#################################################################################################################################
+def _pseudo_callback(*arg, **kwargs) -> None:
+    pass
 
+def _log_batch_progress(operation: str, items: List[str]) -> None:
+    logger.info(f"[BATCH] Starting {operation} for {len(items)} item(s).")
+    for idx, path in enumerate(items):
+        logger.debug(f"  [{idx}]: {path}")
+
+############################################################################################
 
 def batch_inference(
     rootdir: str, 
     dlc_config_path: str, 
-    dialog: QtWidgets.QDialog,
     crop: bool = False,
     mask: bool = False,
     grayscale: bool = False,
@@ -353,60 +332,47 @@ def batch_inference(
     infer_only_empty_frames: bool = False,
     crop_region: Optional[Tuple[int, int, int, int]] = None
 ):
-    pkl_list = []
-    for root, dirs, files in os.walk(rootdir):
-        for file in files:
-            if file.endswith(".pkl") and "backup" not in root:
-                pkl_list.append(os.path.join(root, file))
+    workspaces = _find_files_by_extension(rootdir, WORKSPACE_EXTENSIONS)
+    
+    if not workspaces:
+        logger.info("[BATCH] No workspace files found for inference")
+        return
 
-    logger.info("[BATCH] About to batch process following workspace file.")
-    for i, path in enumerate(pkl_list):
-        logger.info(f"[{i}]: {path}")
+    _log_batch_progress("inference", workspaces)
+    
+    def process_workspace(ws_path: str) -> bool:
+        dm = Data_Manager(
+            init_vid_callback=_pseudo_callback,
+            refresh_callback=_pseudo_callback
+        )
 
-    success_count = 0
-    failed = []
-
-    for i, f in enumerate(pkl_list, 1):
-        filename = os.path.basename(f)
-        logger.info(f"\n[Batch {i}/{len(pkl_list)}] Starting: {filename}")
-        dm = Data_Manager(init_vid_callback=_pseudo_callback, refresh_callback=_pseudo_callback, parent=dialog)
-        try:
-            _inference_workspace_vid(
-                workspace_file=f,
-                data_manager=dm,
-                dlc_config_path=dlc_config_path,
-                partial_infer=partial_infer,
-                partial_infer_indices=partial_infer_indices,
-                blob_based_infer=blob_based_infer,
-                infer_interval=infer_interval,
-                infer_only_empty_frames=infer_only_empty_frames,
-                crop=crop,
-                crop_region=crop_region,
-                use_mask=mask,
-                grayscale=grayscale,
-                shuffle_idx=shuffle_idx,
-                batch_size=batch_size,
-                detector_batch_size=detector_batch_size,
-            )
-        except Exception as e:
-            logger.error(f"[Batch {i}/{len(pkl_list)}] FAILED: {filename} — {e} | ")
-            logger.exception(f"[Batch {i}/{len(pkl_list)}]")
-            failed.append(f)
-            continue
-        else:
-            success_count += 1
-            logger.info(f"[Batch {i}/{len(pkl_list)}] Completed: {filename}")
-            backup_existing_prediction(f)
-            _autoload_pred(f, dm, dlc_config_path)
-            dm.save_workspace()
+        _inference_workspace_vid(
+            workspace_file=ws_path,
+            data_manager=dm,
+            dlc_config_path=dlc_config_path,
+            partial_infer=partial_infer,
+            partial_infer_indices=partial_infer_indices,
+            blob_based_infer=blob_based_infer,
+            infer_interval=infer_interval,
+            infer_only_empty_frames=infer_only_empty_frames,
+            crop=crop,
+            crop_region=crop_region,
+            use_mask=mask,
+            grayscale=grayscale,
+            shuffle_idx=shuffle_idx,
+            batch_size=batch_size,
+            detector_batch_size=detector_batch_size,
+        )
+        backup_existing_prediction(ws_path)
+        _autoload_pred(ws_path, dm, dlc_config_path)
+        dm.save_workspace()
+        
+        if dm.video_file:
             _cleanup_old_auto_predictions(os.path.dirname(dm.video_file))
-            continue
+            
+        return True
 
-    logger.info(f"[BATCH] Batch finished: {success_count}/{len(pkl_list)} succeeded.")
-    if failed:
-        logger.info(f"[BATCH] Failed videos:")
-        for f in failed:
-            logger.info(f)
+    _process_batch(workspaces, process_workspace, "inference")
 
 def _inference_workspace_vid(
         workspace_file: str,
@@ -506,8 +472,7 @@ def _inference_workspace_vid(
             frame_list=chunk_list,
             video_filepath=dm.video_file,
             roi=crop_region,
-            mask=dm.background_mask if use_mask else None,
-            parent=dialog
+            mask=dm.background_mask if use_mask else None
         )
         inference_window.hide()
         inference_window.cropping = crop
@@ -530,8 +495,6 @@ def _inference_workspace_vid(
         logger.info(f"[BATCH] Inference process initiated. cropping: {crop}, masking: {use_mask}, grayscaling: {grayscale}")
         inference_window._inference_pipe(headless=True)
 
-def _pseudo_callback(*arg, **kwargs):
-    pass
 
 def _autoload_pred(workspace_file: str, dm: Data_Manager, dlc_config_path: Optional[str] = None):
     workspace_dir = os.path.dirname(workspace_file)
@@ -628,18 +591,17 @@ def _parse_auto_pred_filename(filename: str):
 
 
 if __name__ == "__main__":
-    app = QtWidgets.QApplication([])
-    dialog = QtWidgets.QDialog()
     set_headless_mode(True)
-    rootdir = r"D:\Data\Videos\20251117 Marathon\1118"
+    rootdir = r"D:\Data\Videos\20251117 Marathon"
     dlc_config_path = "D:/Project/DLC-Models/NTD/config.yaml"
  
-    # batch_create_pkl(rootdir, dlc_config_path, dialog)
+    batch_migration_pkl_to_joblib(rootdir)
+
+    # batch_create_workspaces(rootdir, dlc_config_path)
 
     # batch_inference(
     #     rootdir,
     #     dlc_config_path,
-    #     dialog=dialog,
     #     crop=True,
     #     mask=False,
     #     grayscale=True,
@@ -648,20 +610,16 @@ if __name__ == "__main__":
     #     detector_batch_size=16
     # )
 
-    # batch_grayscale(dlc_config_path)
+    # batch_convert_to_grayscale(dlc_config_path)
 
-    batch_export_csv(
-        rootdir,
-        dialog,
-        with_conf=True,
-        no_scorer_header=True,
-        animal_num_filtering=True,
-        min_animal_num=2,
-        frame_count_filtering=True,
-        frame_count_max=6000,
-        )
+    # batch_export_csv(
+    #     rootdir,
+    #     with_conf=True,
+    #     no_scorer_header=True,
+    #     animal_num_filtering=True,
+    #     min_animal_num=2,
+    #     frame_count_filtering=True,
+    #     frame_count_max=6000,
+    #     )
 
-    # batch_to_h5(dlc_config_path)
-
-    # task = [(11, 7, 9), (10, 6, 8), (13, 9, 3), (12, 8, 3)]
-    # batch_kp_normalization(dlc_config_path, task, dialog)
+    # batch_convert_csv_to_h5(dlc_config_path)
