@@ -341,7 +341,7 @@ class DLC_Inference(QDialog):
         exporter = Frame_Exporter_Threaded(
             video_filepath=self.video_filepath,
             tm=self.tm,
-            temp_dir=self.temp_dir,
+            output_folder=self.temp_dir,
             frame_list=self.frame_list,
             max_workers=self.max_workers
             )
