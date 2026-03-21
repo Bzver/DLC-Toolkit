@@ -252,7 +252,8 @@ class Track_Fixer:
             if min_cost_kalman <= self.KALMAN_MAX_ERROR:
                 logger.debug(f"[KALMAN] Kalman matching succeeded (min_cost={min_cost_kalman:.1f})")
                 return kalman_refs
-        logger.debug(f"[KALMAN] Kalman matching failed (min_cost={min_cost_kalman:.1f} > {self.KALMAN_MAX_ERROR}), falling back to last known positions")
+            logger.debug(f"[KALMAN] Kalman matching failed (min_cost={min_cost_kalman:.1f} > {self.KALMAN_MAX_ERROR}), falling back to last known positions")
+
         last0 = self.last_known_pos[0]
         last1 = self.last_known_pos[1]
         last0_str = f"({last0[0]:.1f}, {last0[1]:.1f})" if not np.isnan(last0).any() else "NaN"
