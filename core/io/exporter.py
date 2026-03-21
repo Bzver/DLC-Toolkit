@@ -134,7 +134,13 @@ class Frame_Exporter_Threaded:
 
         segments = self._task_splitter()
         all_indices = []
-        logger.info(f"######################## F R A M E ### E X T R A C T O R ### {self.max_workers} thread(s) ########################")
+
+        title = f"FRAME EXPORTOR | {self.max_workers} workers | {len(segments)} segments | to_video: False"
+        border = "═" * (len(title) + 3)
+        logger.info(f"╔{border}╗")
+        logger.info(f"║ {title}  ║")
+        logger.info(f"╚{border}╝")
+
         try:
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 futures = {
@@ -167,7 +173,12 @@ class Frame_Exporter_Threaded:
         segments = self._task_splitter()
         all_indices = []
 
-        logger.info(f"######################## V I D E O ### E X T R A C T O R ### {self.max_workers} thread(s) ########################")
+        title = f"FRAME EXPORTOR | {self.max_workers} workers | {len(segments)} segments | to_video: True"
+        border = "═" * (len(title) + 3)
+        logger.info(f"╔{border}╗")
+        logger.info(f"║ {title}  ║")
+        logger.info(f"╚{border}╝")
+
         try:
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 futures = {
