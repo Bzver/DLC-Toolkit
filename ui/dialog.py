@@ -4,7 +4,7 @@ from PySide6 import QtWidgets, QtGui
 from PySide6.QtCore import Qt, Signal, QPoint
 from PySide6.QtWidgets import (
     QPushButton, QHBoxLayout, QVBoxLayout, QDial, QDialog, QRadioButton, QGroupBox,
-    QLabel, QDialogButtonBox, QCheckBox, QSizePolicy, QScrollArea, QComboBox)
+    QLabel, QDialogButtonBox, QCheckBox, QSizePolicy, QScrollArea, QComboBox, QDoubleSpinBox)
 from PySide6.QtGui import QPainter, QPixmap, QMouseEvent, QImage, QColor, QPen
 
 from typing import List, Dict, Tuple, Optional
@@ -552,6 +552,27 @@ class Track_Fix_Config_Dialog(QDialog):
         self.max_triplet_spin = Spinbox_With_Label("Max Triplets per Mining:", (5000, 100000), 5000)
         self.lr_spin = Spinbox_With_Label("Learning Rate (1e-n), n:", (2, 8), 5)
 
+        threshold_layout = QHBoxLayout()
+        self.margin_thresh_spin = QDoubleSpinBox()
+        self.margin_thresh_spin.setRange(0.1, 1.0)
+        self.margin_thresh_spin.setValue(0.6)
+        self.margin_thresh_spin.setDecimals(2)
+        self.margin_thresh_spin.setSingleStep(0.05)
+        self.margin_thresh_spin.setToolTip("Minimum required gap between same-mouse and diff-mouse similarity")
+        
+        self.sil_thresh_spin = QDoubleSpinBox()
+        self.sil_thresh_spin.setRange(0.1, 1.0)
+        self.sil_thresh_spin.setValue(0.6)
+        self.sil_thresh_spin.setDecimals(2)
+        self.sil_thresh_spin.setSingleStep(0.05)
+        self.sil_thresh_spin.setToolTip("Minimum required silhouette score for cluster quality")
+        
+        threshold_layout.addWidget(QLabel("Margin Threshold:"))
+        threshold_layout.addWidget(self.margin_thresh_spin)
+        threshold_layout.addStretch()
+        threshold_layout.addWidget(QLabel("Silhouette Threshold:"))
+        threshold_layout.addWidget(self.sil_thresh_spin)
+
         self.warmup_epochs_spin.value_changed.connect(self._validate_warmup)
 
         cl_layout.addWidget(self.max_epochs_spin)
@@ -560,6 +581,7 @@ class Track_Fix_Config_Dialog(QDialog):
         cl_layout.addWidget(self.max_triplet_spin)
         cl_layout.addWidget(self.max_pleatau_spin)
         cl_layout.addWidget(self.lr_spin)
+        cl_layout.addLayout(threshold_layout) 
 
         cl_group.setLayout(cl_layout)
         layout.addWidget(cl_group)
@@ -589,6 +611,8 @@ class Track_Fix_Config_Dialog(QDialog):
             epochs=self.max_epochs_spin.value(),
             warmup=self.warmup_epochs_spin.value(),
             lr=10**-self.lr_spin.value(),
+            margin=self.margin_thresh_spin.value(),
+            sil=self.sil_thresh_spin.value(),
             )
         self.accept()
 

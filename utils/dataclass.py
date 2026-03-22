@@ -122,4 +122,6 @@ class Emb_Params:
     pleatau: int
     epochs: int
     warmup: int
-    lr: int
+    lr: float
+    margin: float
+    sil: float

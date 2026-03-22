@@ -80,17 +80,17 @@ class Contrastive_Trainer:
             self,
             dataset:Crop_Dataset,
             emp:Emb_Params,
-            margin_thresh = 0.5,
-            sil_thresh = 0.5,
             ):
     
         logger.info(f"[CONTRAIN] About to run training with following args:\n"
-            f"  - lr:                   {emp.lr}\n"
+            f"  - lr:                   {emp.lr:.2e}\n"
             f"  - epochs:               {emp.epochs}\n"
             f"  - warmup_epoch:         {emp.warmup}\n"
             f"  - batch_size:           {emp.batch_size}\n"
             f"  - max_triplet:          {emp.triplets}\n"
-            f"  - pleatau_patience:     {emp.pleatau}\n")
+            f"  - pleatau_patience:     {emp.pleatau}\n"
+            f"  - margin_thresh:        {emp.margin:.2f}\n"
+            f"  - sil_thresh:           {emp.sil:.2f}\n")
 
         optimizer = torch.optim.Adam(self.model.parameters(), lr=emp.lr)
         dataset.transform = self.transform
@@ -98,33 +98,51 @@ class Contrastive_Trainer:
         self._train_easy(dataset, optimizer, emp)
 
         logger.info("[CONTRAIN] Extracting embeddings for eval...")
-        embeddings = self.extract_embeddings(dataset)
+        embeddings = self.extract_embeddings(dataset, max_sample=30000)
         pos_thresh, neg_thresh = self._similarity_eval(dataset, embeddings, self.slide_window, emp.triplets)
         score = self._silhouette_eval(embeddings, emp.triplets)
 
-        if pos_thresh - neg_thresh >= margin_thresh and score >= sil_thresh:
+        if pos_thresh - neg_thresh >= emp.margin and score >= emp.sil:
             logger.info(
-                f"[CONTRAIN] Separation score: {pos_thresh - neg_thresh} >= {margin_thresh}; sihouette score: {score} >= {sil_thresh}. "
+                f"[CONTRAIN] Separation score: {pos_thresh - neg_thresh} >= {emp.margin}; sihouette score: {score} >= {emp.sil}. "
                 "Stopping training early...")
 
             self.model.eval()
             return self.model
         
-        self._train_hard(dataset, optimizer, emp, embeddings, pos_thresh, neg_thresh, margin_thresh, sil_thresh)
+        self._train_hard(dataset, optimizer, emp, embeddings, pos_thresh, neg_thresh)
         
         self.model.eval()
         return self.model
 
-    def extract_embeddings(self, dataset:Crop_Dataset, subsample_window=None, batch_size:int=128):
+    def extract_embeddings(
+            self,
+            dataset:Crop_Dataset,
+            subsample_window:int|None=None,
+            max_sample:int|None=None,
+            batch_size:int=128):
+
         embeddings = []
         self.model.eval()
 
+        total_len = len(dataset)
         if subsample_window:
             start = max(0, subsample_window[0])
             end = min(len(dataset), subsample_window[1])
             window_indices = range(start, end)
+        elif max_sample and total_len > max_sample:
+            if max_sample % 2 != 0:
+                logger.warning(f"[CONTRAIN] Max sample cannot be odd, adjust to {max_sample-1}.")
+                max_sample -= 1
+            start = int(np.random.random()*total_len)
+            end = start + max_sample
+            if end < total_len:
+                window_indices = range(start, end)
+            else:
+                window_indices = list(range(start, total_len))
+                window_indices.extend(range(0, end%total_len))
         else:
-            window_indices = range(len(dataset))
+            window_indices = range(total_len)
 
         with torch.no_grad():
             for i in range(0, len(window_indices), batch_size):
@@ -201,8 +219,8 @@ class Contrastive_Trainer:
             
             best_loss = min(curr_loss, best_loss)
 
-    def _train_hard(self, dataset, optimizer:torch.optim.Adam, emp:Emb_Params, embeddings, pos_thresh, neg_thresh, margin_thresh, sil_thresh):
-        init_end = min(len(embeddings), emp.triplets*4)
+    def _train_hard(self, dataset, optimizer:torch.optim.Adam, emp:Emb_Params, embeddings, pos_thresh, neg_thresh):
+        init_end = min(len(embeddings), emp.triplets)
         hard_triplets = self._mine_hard_triplets(dataset, embeddings[0:init_end], (0, init_end), pos_thresh, neg_thresh, max_triplets=emp.triplets, mining_mode="random")
         hardmine_interval = max(5, emp.warmup)
         eval_interval = max(10, emp.epochs//10)
@@ -214,6 +232,7 @@ class Contrastive_Trainer:
 
         best_loss = 1e6
         pleatau_count = 0
+        last_hardmine = emp.warmup - 1
         last_eval = emp.warmup - 1
         for epoch in range(emp.warmup, emp.epochs):
             total_loss = 0
@@ -276,18 +295,18 @@ class Contrastive_Trainer:
             
             best_loss = min(curr_loss, best_loss)
 
-            hardmining_needed = (epoch - emp.warmup + 1) % hardmine_interval == 0
+            hardmining_needed = (epoch - last_hardmine) > hardmine_interval
             eval_needed = (epoch - last_eval) > eval_interval
 
             if eval_needed or force_eval or epoch == emp.epochs - 1:
-                full_embeddings = self.extract_embeddings(dataset)
+                last_eval = epoch
+                full_embeddings = self.extract_embeddings(dataset, max_sample=30000)
                 pos_thresh, neg_thresh = self._similarity_eval(dataset, full_embeddings, self.slide_window, subsample_size=emp.triplets)
                 score = self._silhouette_eval(full_embeddings, emp.triplets)
 
-                last_eval = epoch
-                if pos_thresh - neg_thresh >= margin_thresh and score > sil_thresh:
+                if pos_thresh - neg_thresh >= emp.margin and score > emp.sil:
                     logger.info(
-                        f"[HARDTRAIN] Separation score: {pos_thresh - neg_thresh} >= {margin_thresh}; sihouette score: {score} >= {sil_thresh}. "
+                        f"[HARDTRAIN] Separation score: {pos_thresh - neg_thresh} >= {emp.margin}; sihouette score: {score} >= {emp.sil}. "
                         "Stopping training early...")
                     break
                 elif force_eval or epoch == emp.epochs - 1:
@@ -295,30 +314,23 @@ class Contrastive_Trainer:
                     break
 
             if hardmining_needed or force_hardmine:
+                last_hardmine = epoch
                 end = self.emb_pointer + emp.triplets
                 subsample_window = (self.emb_pointer, end)
                 local_embeddings = self.extract_embeddings(dataset, subsample_window)
                 logger.info(f"[HARDTRAIN] Updating hard triplets at epoch {epoch+1}...")
-                hard_triplets = self._mine_hard_triplets(
+                result = self._mine_hard_triplets(
                     dataset, local_embeddings, subsample_window, pos_thresh, neg_thresh, max_triplets=emp.triplets, mining_mode=curr_miner)
-                
-                if not hard_triplets:
-                    full_embeddings = self.extract_embeddings(dataset)
-                    pos_thresh, neg_thresh = self._similarity_eval(dataset, full_embeddings, self.slide_window, subsample_size=emp.triplets)
-                    score = self._silhouette_eval(full_embeddings, emp.triplets)
+                num_result = len(result)
+                if num_result < 100:
+                    logger.info(f"[HARDTRAIN] Hard triplets too few ({num_result}, scheduled an eval next epoch.)")
+                    last_eval = -100 # Force an eval next epoch
+                    last_hardmine = -100 # Same
+                else:
+                    hard_triplets = result
+                    logger.info(f"[HARDTRAIN] Re-mined {num_result} hard triplets")
+                    self.emb_pointer = end
 
-                    last_eval = epoch
-                    if pos_thresh - neg_thresh >= margin_thresh and score > sil_thresh:
-                        logger.info(
-                            f"[HARDTRAIN] Separation score: {pos_thresh - neg_thresh} >= {margin_thresh}; sihouette score: {score} >= {sil_thresh}. "
-                            "Stopping training early...")
-                        break
-                    else:
-                        hard_triplets = self._mine_hard_triplets(
-                            dataset, full_embeddings[subsample_window[0]:subsample_window[1]], subsample_window, pos_thresh, neg_thresh, max_triplets=emp.triplets, mining_mode=curr_miner)
-
-                logger.info(f"[HARDTRAIN] Re-mined {len(hard_triplets)} hard triplets")
-                self.emb_pointer = end
                 if self.emb_pointer >= len(dataset):
                     self.emb_pointer = 0
                     logger.info("[HARDTRAIN] Completed full dataset sweep, cycling windows")
