@@ -228,7 +228,7 @@ class DLC_Inference(QDialog):
         else:
             self.shuffle_config_label.setStyleSheet("color: black;")
             self.start_button.setEnabled(True)
-            self.detector_batchsize_label_spinbox.setVisible("Detector" in text)
+            self.detector_batchsize_spinbox.setVisible("Detector" in text)
 
         if self.cond_or_coam:
             self.to_video_checkbox.setEnabled(False)

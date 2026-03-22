@@ -462,6 +462,8 @@ class Data_Manager:
         self.fm = Frame_Manager.from_dict(workspace_state.get('frame_store'), self.refresh_callback)
         self.fm.move_category("animal_n", "animal_2")
 
+        self.tm = Temp_Manager(self.video_file)
+
         dlc_data = workspace_state.get('dlc_data')
         self.dlc_data = Loaded_DLC_Data.from_dict(dlc_data) if isinstance(dlc_data, dict) else dlc_data
 
