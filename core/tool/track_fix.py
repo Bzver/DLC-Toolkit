@@ -76,7 +76,7 @@ class Track_Fixer:
 
     def _find_eligible_frames(
             self,
-            inst_dist_threshold: float = 1.2,
+            inst_dist_threshold: float = 1.0,
             conf_threshold: float = 0.5,
             size_threshold: Tuple[float, float] = (0.3, 2.5),
             bp_threshold: int = 4,

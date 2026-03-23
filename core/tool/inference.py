@@ -243,11 +243,11 @@ class DLC_Inference(QDialog):
             self.to_video_checkbox.setEnabled(True)
 
     def _collect_params(self):
-        batch_val = self.batchsize_spinbox
-        det_val = self.detector_batchsize_spinbox
+        batch_val = self.batchsize_spinbox.value()
+        det_val = self.detector_batchsize_spinbox.value()
 
         if self.batch_size != batch_val or self.detector_batch_size != det_val:
-            self.batch_size_changed
+            self.batch_size_changed = True
             self.batch_size = batch_val
             self.detector_batch_size = det_val
 

@@ -4,6 +4,7 @@ import yaml
 import numpy as np
 from collections import defaultdict
 from contextlib import contextmanager
+from PySide6 import QtWidgets
 from typing import List, Tuple, Optional
 
 from core.runtime import Data_Manager
@@ -496,9 +497,9 @@ def _inference_workspace_vid(
         to_video = not any([blob_based_infer, infer_only_empty_frames, partial_infer])
         inference_window.to_video_checkbox.setChecked(to_video)
         if batch_size is not None:
-            inference_window._batch_size_spinbox_changed(batch_size)
+            inference_window.batchsize_spinbox.setValue(batch_size)
         if detector_batch_size is not None:
-            inference_window._det_batch_size_spinbox_changed(detector_batch_size)
+            inference_window.detector_batchsize_spinbox.setValue(detector_batch_size)
         if shuffle_idx is not None:
             available_shuffles = inference_window._check_available_shuffles()
             if shuffle_idx not in available_shuffles:
@@ -605,11 +606,12 @@ def _parse_auto_pred_filename(filename: str):
 
 
 if __name__ == "__main__":
+    app = QtWidgets.QApplication([])
     set_headless_mode(True)
-    rootdir = r"D:\Data\Videos\20251117 Marathon"
-    dlc_config_path = "D:/Project/DLC-Models/NTD-Blob/config.yaml"
+    rootdir = r"D:\DGH\Data\Videos\20250913 Marathon"
+    dlc_config_path = "D:/Project/DLC-Models/NTD/config.yaml"
  
-    dial_tone = 5
+    dial_tone = 1
 
     match dial_tone:
         case 1:

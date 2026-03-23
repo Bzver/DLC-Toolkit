@@ -1,4 +1,5 @@
 import numpy as np
+import random
 
 from PySide6 import QtWidgets
 from PySide6.QtCore import Signal
@@ -8,6 +9,7 @@ from PySide6.QtGui import QIntValidator
 from typing import Optional, Dict
 
 from .outlier_finder import Outlier_Container
+from ui import Spinbox_With_Label
 from utils.helper import get_instance_count_per_frame
 from utils.logger import Loggerbox
 from utils.dataclass import Loaded_DLC_Data
@@ -140,29 +142,13 @@ class Mark_Generator(QGroupBox):
         mode = self.mode_option.currentText()
 
         if mode == "Random":
-            num_text = self.random_textbox.text().strip()
-            if not num_text:
-                Loggerbox.error(self, "Missing Input", "Please enter number of frames to mark.")
-                return
-            try:
-                n = int(num_text)
-                import random
-                selected_frames = random.sample(frame_range, min(n, len(frame_range)))
-            except (ValueError, TypeError):
-                Loggerbox.error(self, "Invalid Number", "Please enter a valid positive number.")
-                return
+            n = self.random_spin.value()
+            selected_frames = random.sample(frame_range, min(n, len(frame_range)))
 
         elif mode == "Stride":
-            stride_text = self.stride_textbox.text().strip()
-            if not stride_text:
-                Loggerbox.error(self, "Missing Input", "Please enter a stride interval.")
-                return
-            try:
-                step = int(stride_text)
-                selected_frames = frame_range[::step]
-            except ValueError:
-                Loggerbox.error(self, "Invalid Stride", "Stride must be a positive integer.")
-                return
+            stride = self.stride_spin.value()
+            step = int(stride)
+            selected_frames = frame_range[::step]
 
         elif mode == "Outlier":
             if self.pred_data_array is None:
@@ -265,58 +251,56 @@ class Mark_Generator(QGroupBox):
     def _build_random_container(self):
         container = QGroupBox("Random Frame Extraction")
         layout = QHBoxLayout(container)
-        label = QLabel("Number of Frames to Mark: ")
-        layout.addWidget(label)
-        self.random_textbox = QLineEdit()
-        validator = QIntValidator(1, self.total_frames)
-        self.random_textbox.setValidator(validator)
-        layout.addWidget(self.random_textbox)
+        self.random_spin = Spinbox_With_Label("Number of Frames to Mark: ", (1, self.total_frames), 100)
+        layout.addWidget(self.random_spin)
         return container
 
     def _build_stride_container(self):
         container = QGroupBox("Stride Frame Extraction")
         layout = QHBoxLayout(container)
-        label = QLabel("Stride Interval:")
-        self.stride_textbox = QLineEdit()
-        self.stride_textbox.setPlaceholderText("e.g., 5")
-        validator = QIntValidator(1, self.total_frames)
-        self.stride_textbox.setValidator(validator)
-        layout.addWidget(label)
-        layout.addWidget(self.stride_textbox)
+        self.stride_spin = Spinbox_With_Label("Stride Interval: ", (1, self.total_frames-1), 1)
+        layout.addWidget(self.stride_spin)
         return container
 
     def _build_animal_num_container(self):
-        container = QGroupBox("Animal Count Selection")
+        container = QtWidgets.QWidget()
         main_layout = QVBoxLayout(container)
 
-        btn_layout = QVBoxLayout()
-
-        if self.pred_data_array is not None:
-            self.short_seg_btn = QPushButton("Find Animal Count Change Frames")
-            self.short_seg_btn.clicked.connect(self._mark_count_change_frames)
-            btn_layout.addWidget(self.short_seg_btn)
-
-            if self.blob_array is not None:
-                self.discrepancy_btn = QPushButton("Find DLC-Blob Discrepancy")
-                self.discrepancy_btn.clicked.connect(self._mark_count_discrepancy_frames)
-                btn_layout.addWidget(self.discrepancy_btn)
-
-        main_layout.addLayout(btn_layout)
-
+        count_box = QGroupBox("Selection Based on Raw Count")
         count_layout = QHBoxLayout()
         self.zero_animal_checkbox = QCheckBox("0 Animal")
         self.one_animal_checkbox = QCheckBox("1 Animal")  
         self.two_plus_animal_checkbox = QCheckBox("2+ Animal")
-        
         count_layout.addWidget(self.zero_animal_checkbox)
         count_layout.addWidget(self.one_animal_checkbox)
         count_layout.addWidget(self.two_plus_animal_checkbox)
-        
+        count_box.setLayout(count_layout)
+
         if self.blob_array is not None:
             self.merged_animal_checkbox = QCheckBox("Merged Animal")
             count_layout.addWidget(self.merged_animal_checkbox)
-        
-        main_layout.addLayout(count_layout)
+
+        main_layout.addWidget(count_box)
+
+        if self.pred_data_array is not None:
+            change_box = QGroupBox("Selection Based on Count Change")
+            change_layout = QVBoxLayout()
+            self.buffer_size_spin = Spinbox_With_Label("Buffer Frames: ", (1, 100), 2)
+            self.short_seg_btn = QPushButton("Find Animal Count Change Frames")
+            self.short_seg_btn.clicked.connect(self._mark_count_change_frames)
+            change_layout.addWidget(self.buffer_size_spin)
+            change_layout.addWidget(self.short_seg_btn)
+            change_box.setLayout(change_layout)
+            main_layout.addWidget(change_box)
+
+            if self.blob_array is not None:
+                dscr_box = QGroupBox("Selection Based on DLC-Blob Discrepancy")
+                dscr_layout = QVBoxLayout()
+                self.discrepancy_btn = QPushButton("Find DLC-Blob Discrepancy")
+                self.discrepancy_btn.clicked.connect(self._mark_count_discrepancy_frames)
+                dscr_layout.addWidget(self.discrepancy_btn)
+                dscr_box.setLayout(dscr_layout)
+                main_layout.addWidget(dscr_box)
 
         return container
 
@@ -371,7 +355,7 @@ class Mark_Generator(QGroupBox):
         range_end = min(self.total_frames - 1, range_end)
 
         marked_frames = set()
-        buffer_size = 2  # -2 to +2
+        buffer_size = self.buffer_size_spin.value()
 
         changes = np.diff(animal_count_array) != 0
         change_indices = np.where(changes)[0] + 1

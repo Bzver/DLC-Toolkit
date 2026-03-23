@@ -115,7 +115,7 @@ class Frame_Exporter_Threaded:
         self.save_folder = output_folder
         self.frame_list = sorted(frame_list)
         self.max_workers = max_workers
-        self.segment_size = max_segment_size
+        self.segment_size = min(max_segment_size, len(frame_list)//max_workers) 
 
         assert self.video_filepath != self.save_folder, "Invalid destination."
         self.worker_zero = None
@@ -243,6 +243,7 @@ class Frame_Exporter_Threaded:
         chunks = []
         last_probe = "s" 
         last_start = 0
+
         for i in range(num_probe):
             start = i*probe_length
             end = min((i+1)*probe_length, len(self.frame_list))
@@ -252,7 +253,7 @@ class Frame_Exporter_Threaded:
                 last_probe = "s"
                 chunks.append((start, end))
             elif self.frame_list[end - 1] - self.frame_list[start] < 2 * probe_length: # Very dense
-                if last_probe == "d" and end - start < self.segment_size and len(chunks) > 1:
+                if last_probe == "d" and end - last_start < self.segment_size and len(chunks) > 1:
                     chunks.pop()
                     chunks.append((last_start, end))
                 else:
@@ -260,7 +261,7 @@ class Frame_Exporter_Threaded:
                     last_probe = "d"
                     chunks.append((start, end))
             else: # Normie
-                if end - start < self.segment_size//10 and len(chunks) > 1:
+                if end - last_start < self.segment_size//10 and len(chunks) > 1:
                     chunks.pop()
                     chunks.append((last_start, end))
                 else:
