@@ -13,6 +13,7 @@ from core.io import (
     save_predictions_to_new_h5, timestamp_new_prediction,
     )
 from .reviewer import Parallel_Review_Dialog
+from utils.pose import calculate_pose_centroids
 from utils.helper import crop_coord_to_array, get_roi_cv2, validate_crop_coord
 from utils.logger import logger, Loggerbox
 from utils.dataclass import Loaded_DLC_Data, Exporter_Augments
@@ -381,13 +382,17 @@ class DLC_Inference(QDialog):
         loader = Prediction_Loader(dlc_config_filepath, pred_filepath)
         loaded_data = loader.load_data()
         
+        ref_data_array = self.dlc_data.pred_data_array[self.frame_list]
         temp_data_array = loaded_data.pred_data_array
-        new_data_array = np.full(
-            (self.vid_len, temp_data_array.shape[1], temp_data_array.shape[2]), np.nan)
 
         if self.crop_coord is not None:
             coords_array = crop_coord_to_array(self.crop_coord, temp_data_array.shape)
             temp_data_array = temp_data_array + coords_array
+
+        temp_data_array = self._greedy_match(ref_data_array, temp_data_array)
+
+        new_data_array = np.full(
+            (self.vid_len, temp_data_array.shape[1], temp_data_array.shape[2]), np.nan)
 
         expected_length = len(self.frame_list)
         actual_length = temp_data_array.shape[0]
@@ -454,6 +459,35 @@ class DLC_Inference(QDialog):
     def closeEvent(self, event):
         if hasattr(self, "extractor_reviewer"):
             self.extractor_reviewer.close()
+
+    @staticmethod
+    def _greedy_match(
+        ref_array: np.ndarray,
+        new_array: np.ndarray,
+    ) -> np.ndarray:
+        if ref_array.shape != new_array.shape:
+            raise ValueError(f"Shape mismatch: {ref_array.shape} vs {new_array.shape}")
+        
+        I = ref_array.shape[1]
+    
+        if I != 2:
+            return new_array # Skip
+
+        ref_centroids, _ = calculate_pose_centroids(ref_array)
+        new_centroids, _ = calculate_pose_centroids(new_array)
+
+        dist_matrix = np.linalg.norm(ref_centroids[:, :, np.newaxis, :] - new_centroids[:, np.newaxis, :, :], axis=-1)
+        dist_matrix = np.where(np.isnan(dist_matrix) | np.isinf(dist_matrix), 1e6, dist_matrix)
+
+        closest_for_ref0 = np.argmin(dist_matrix[:, 0, :], axis=-1)
+        swap_mask = closest_for_ref0 == 1
+        matched_array = new_array.copy()
+
+        swap_indices = np.where(swap_mask)[0]
+        if len(swap_indices) > 0:
+            matched_array[swap_indices] = matched_array[swap_indices, ::-1, :]
+        
+        return matched_array
 
 
 class On_Hold_Dialog(QDialog):
