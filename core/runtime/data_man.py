@@ -8,7 +8,7 @@ from typing import Callable, Tuple, List, Optional, Dict
 
 from .frame_man import Frame_Manager
 from core.io import (
-    Prediction_Loader, DLC_Exporter, Temp_Manager,
+    Prediction_Loader, DLC_Exporter,
     backup_existing_prediction, save_predictions_to_new_h5, get_frame_list_from_h5,
     prediction_to_csv, remove_confidence_score, append_new_video_to_dlc_config)
 from ui import Head_Tail_Dialog
@@ -41,7 +41,6 @@ class Data_Manager:
         self.video_file, self.video_name = None, None
         self.dlc_data, self.label_file, self.canon_pose = None, None, None
         self.dlc_label_mode = False
-        self.tm = None
 
         self.plot_config = Plot_Config(
             plot_opacity =1.0, point_size = 6.0, confidence_cutoff = 0.0, hide_text_labels = False, edit_mode = False,
@@ -63,7 +62,6 @@ class Data_Manager:
     def update_video_path(self, video_path:str):
         self.video_file = video_path
         self.video_name = os.path.splitext(os.path.basename(self.video_file))[0]
-        self.tm = Temp_Manager(video_path)
 
     def load_pred_to_dm(self, dlc_config_path:str, prediction_path:str):
         data_loader = Prediction_Loader(dlc_config_path, prediction_path)
@@ -461,8 +459,6 @@ class Data_Manager:
 
         self.fm = Frame_Manager.from_dict(workspace_state.get('frame_store'), self.refresh_callback)
         self.fm.move_category("animal_n", "animal_2")
-
-        self.tm = Temp_Manager(self.video_file)
 
         dlc_data = workspace_state.get('dlc_data')
         self.dlc_data = Loaded_DLC_Data.from_dict(dlc_data) if isinstance(dlc_data, dict) else dlc_data

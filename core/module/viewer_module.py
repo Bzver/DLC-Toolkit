@@ -338,7 +338,6 @@ class Frame_View:
         try:
             self.inference_window = DLC_Inference(
                 dlc_data=self.dm.dlc_data,
-                tm=self.dm.tm,
                 video_length=self.dm.total_frames,
                 frame_list=inference_list,
                 video_filepath=self.dm.video_file,

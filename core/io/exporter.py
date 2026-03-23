@@ -20,7 +20,6 @@ class DLC_Exporter:
     def __init__(
             self,
             dlc_data:Loaded_DLC_Data,
-            tm:Temp_Manager,
             save_folder:str,
             video_filepath:str,
             frame_list:List[int],
@@ -33,7 +32,6 @@ class DLC_Exporter:
         logger.info(f"[EXPORTER] Initializing Exporter for save path: {save_folder}")
         self.dlc_data = dlc_data
         self.save_folder = save_folder
-        self.tm = tm
         self.video_filepath = video_filepath
         self.frame_list = frame_list
         self.pred_data_array = pred_data_array
@@ -74,7 +72,7 @@ class DLC_Exporter:
             logger.warning("[EXPORTER] Frame list is empty. No frames to extract.")
             return []
 
-        fp = Frame_Exporter_Threaded(self.video_filepath, self.tm, self.save_folder, self.frame_list)
+        fp = Frame_Exporter_Threaded(self.video_filepath, self.save_folder, self.frame_list)
         return fp.extract_frames(self.ea)
 
     def _extract_pred(self):
@@ -108,7 +106,6 @@ class Frame_Exporter_Threaded:
     def __init__(
             self,
             video_filepath:str,
-            tm:Temp_Manager,
             output_folder:str,
             frame_list:List[int],
             max_workers: int = 8,
@@ -126,6 +123,7 @@ class Frame_Exporter_Threaded:
         if os.path.isdir(self.video_filepath) or len(frame_list) < max_segment_size:
             self.worker_zero = Frame_Exporter(video_filepath, output_folder, frame_list)
 
+        tm = Temp_Manager(video_filepath)
         self.temp_dir = tm.create("export")
 
     def extract_frames(self, aug):

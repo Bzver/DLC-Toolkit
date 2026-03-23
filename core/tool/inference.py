@@ -27,7 +27,6 @@ class DLC_Inference(QDialog):
     def __init__(
         self,
         dlc_data:Loaded_DLC_Data,
-        tm:Temp_Manager,
         video_length:int,
         frame_list:List[int],
         video_filepath:str,
@@ -54,7 +53,7 @@ class DLC_Inference(QDialog):
         self.video_name, _ = os.path.splitext(os.path.basename(self.video_filepath))
         self.cond_or_coam = False
 
-        self.tm = tm
+        tm = Temp_Manager(video_filepath)
         self.temp_dir = tm.create("infer")
 
         if os.path.isfile(self.video_filepath):
@@ -341,7 +340,6 @@ class DLC_Inference(QDialog):
     def _extract_marked_frames(self, to_video:bool=False):
         exporter = Frame_Exporter_Threaded(
             video_filepath=self.video_filepath,
-            tm=self.tm,
             output_folder=self.temp_dir,
             frame_list=self.frame_list,
             max_workers=self.max_workers

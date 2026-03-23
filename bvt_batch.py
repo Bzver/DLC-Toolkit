@@ -216,7 +216,6 @@ def batch_correct_tracking(root_dir:str) -> None:
             tf = Track_Fixer(
                 dm.dlc_data.pred_data_array,
                 dm.dlc_data,
-                dm.tm,
                 extractor,
                 dm.angle_map_data,
                 avtomat=True
@@ -483,7 +482,6 @@ def _inference_workspace_vid(
 
         inference_window = DLC_Inference(
             dlc_data=dm.dlc_data,
-            tm=dm.tm,
             video_length=dm.total_frames,
             frame_list=chunk_list,
             video_filepath=dm.video_file,
@@ -611,7 +609,7 @@ if __name__ == "__main__":
     rootdir = r"D:\Data\Videos\20251117 Marathon"
     dlc_config_path = "D:/Project/DLC-Models/NTD-Blob/config.yaml"
  
-    dial_tone = 6
+    dial_tone = 5
 
     match dial_tone:
         case 1:

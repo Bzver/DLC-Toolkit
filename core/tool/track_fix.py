@@ -26,7 +26,6 @@ class Track_Fixer:
         self,
         pred_data_array: np.ndarray,
         dlc_data: Loaded_DLC_Data,
-        tm: Temp_Manager,
         extractor: Frame_Extractor,
         anglemap: Dict[str, int],
         emp: Emb_Params,
@@ -40,8 +39,6 @@ class Track_Fixer:
         self.pred_data_array = pred_data_array.copy()
         self.dlc_data = dlc_data
         self.extractor = extractor
-        self.tm = tm
-        self.temp_dir = tm.create("track")
         self.anglemap = anglemap
         self.emp = emp
         self.worker_num = worker_num
@@ -55,6 +52,8 @@ class Track_Fixer:
         self.last_known_pos = np.full((2, 2), np.nan)
         self.kalman_failure_count = [0, 0]
         
+        tm = Temp_Manager(self.extractor.get_video_filepath())
+        self.temp_dir = tm.create("track")
         self.eligible_frames = []
 
     def track_correction(self, start_idx: int = 0, end_idx: int = -1) -> np.ndarray:
@@ -146,7 +145,6 @@ class Track_Fixer:
             )
         co = Frame_Exporter_Threaded(
             video_filepath=self.extractor.get_video_filepath(),
-            tm=self.tm,
             output_folder=self.temp_dir,
             frame_list=self.eligible_frames,
             max_workers=self.worker_num,
