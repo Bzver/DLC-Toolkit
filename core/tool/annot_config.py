@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 from utils.helper import indices_to_spans
 from utils.logger import Loggerbox
 
+
 TABLE_STYLESHEET = """
         QTableWidget {
             selection-background-color: #1E03B6;
@@ -47,6 +48,7 @@ class Annotation_Config(QtWidgets.QWidget):
         self.table_widget.setSelectionMode(QTableWidget.SingleSelection)
         self.table_widget.itemChanged.connect(self._handle_item_changed)
         self.table_widget.cellClicked.connect(self._handle_cell_clicked)
+        self.table_widget.cellDoubleClicked.connect(self._handle_cell_double_clicked) 
 
         self.table_widget.setStyleSheet(TABLE_STYLESHEET)
         self.layout.addWidget(self.table_widget)
@@ -121,24 +123,9 @@ class Annotation_Config(QtWidgets.QWidget):
         item.setText("")
 
     def _handle_cell_clicked(self, row: int, column: int):
-        if column == 2:
-            category = self.table_widget.item(row, 0).text()
-            current_color = self._behaviors_map[category][1]
-            color_dialog = QColorDialog(QColor(current_color), self)
-            color_dialog.setWindowTitle(f"Select Color for '{category}'")
-            if color_dialog.exec() == QDialog.Accepted:
-                new_color = color_dialog.selectedColor()
-                if new_color.isValid():
-                    new_color_hex = new_color.name(QColor.HexArgb)
-                    old_key, _ = self._behaviors_map[category]
-                    self._behaviors_map[category] = (old_key, new_color_hex)
-                    self.map_change.emit(self._behaviors_map)
-                    self._set_color_item_background(self.table_widget.item(row, 2), new_color_hex)
-
-    def _handle_cell_clicked(self, row: int, column: int):
-        if not column == 2:
+        if column != 2:
             return
-        
+
         category = self.table_widget.item(row, 0).text()
         qcolor = self._behaviors_map[category][1]
 
@@ -156,9 +143,43 @@ class Annotation_Config(QtWidgets.QWidget):
                 self.map_change.emit(self._behaviors_map)
                 self._set_color_item_background(self.table_widget.item(row, 2), new_color_hex)
 
+    def _handle_cell_double_clicked(self, row: int, column: int):
+        if column != 0:
+            return
+
+        category = self.table_widget.item(row, 0).text()
+        key, color = self._behaviors_map[category]
+        self.last_clicked = -100.0
+        dialog = Rename_Category_Dialog(category, self)
+        if dialog.exec() == QDialog.Accepted:
+            new_category = dialog.get_inputs()
+            if not new_category:
+                Loggerbox.warning(self, "Input Error", "Category name cannot be empty.")
+                return
+            
+            self._behaviors_map[new_category] = (key.lower(), color)
+            if new_category == category:
+                return
+    
+            self._behaviors_map = self._replace_key_preserve_order(
+                self._behaviors_map, category, new_category, (key.lower(), color)
+            )
+
+            self.map_change.emit(self._behaviors_map)
+            self._populate_table()
+
+    def _replace_key_preserve_order(self, original_dict: dict, old_key: str, new_key: str, new_value: tuple) -> dict:
+        result = {}
+        for k, v in original_dict.items():
+            if k == old_key:
+                result[new_key] = new_value
+            else:
+                result[k] = v
+        return result
+
     def _handle_item_changed(self, item: QTableWidgetItem):
         if item.column() != 1:
-            return
+                return
 
         row = item.row()
         category = self.table_widget.item(row, 0).text()
@@ -325,6 +346,33 @@ class Add_Category_Dialog(QDialog):
         key = self.key_edit.text().strip().lower()
         color = self._current_color
         return category, key, color
+    
+
+class Rename_Category_Dialog(QDialog):
+    def __init__(self, old_name:str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Rename Category")
+        self.resize(150, 75)
+
+        self.category_edit = QLineEdit()
+        self.category_edit.setText(old_name)
+
+        button_box = QHBoxLayout()
+        self.ok_button = QPushButton("OK")
+        self.cancel_button = QPushButton("Cancel")
+        button_box.addWidget(self.ok_button)
+        button_box.addWidget(self.cancel_button)
+
+        layout = QVBoxLayout()
+        layout.addWidget(self.category_edit)
+        layout.addLayout(button_box)
+        self.setLayout(layout)
+
+        self.ok_button.clicked.connect(self.accept)
+        self.cancel_button.clicked.connect(self.reject)
+
+    def get_inputs(self):
+        return self.category_edit.text().strip()
 
 
 class Annotation_Summary_Table(QtWidgets.QWidget):
