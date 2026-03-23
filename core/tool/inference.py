@@ -109,11 +109,21 @@ class DLC_Inference(QDialog):
         self.masking_checkbox.setChecked(self.masking)
         self.grayscaling_checkbox.setChecked(self.grayscaling)
 
-        self.to_video_checkbox = QtWidgets.QCheckBox("Process as Video |")
+        self.to_video_checkbox = QtWidgets.QCheckBox("Process as Video")
         self.to_video_checkbox.setToolTip(
             "Checked to allow batching and noticeably faster for 10000+ frames \n"
             "Unchecked to have a slower inference but better accuracy for post processing (rerunning outlier frames)."
         )
+
+        params_box = QtWidgets.QGroupBox("Preprocess Parameters")
+        params_frame = QHBoxLayout()
+        params_frame.addWidget(self.cropping_checkbox)
+        params_frame.addWidget(self.masking_checkbox)
+        params_frame.addWidget(self.grayscaling_checkbox)
+        params_frame.addWidget(self.to_video_checkbox)
+
+        params_box.setLayout(params_frame)
+        container_layout.addWidget(params_box)
 
         button_frame = QHBoxLayout()
 
@@ -124,10 +134,6 @@ class DLC_Inference(QDialog):
 
         self.start_button = QPushButton("Run Inference")
         self.start_button.clicked.connect(self._inference_pipe)
-        button_frame.addWidget(self.cropping_checkbox)
-        button_frame.addWidget(self.masking_checkbox)
-        button_frame.addWidget(self.grayscaling_checkbox)
-        button_frame.addWidget(self.to_video_checkbox)
 
         button_frame.addWidget(self.batchsize_spinbox)
         button_frame.addWidget(self.detector_batchsize_spinbox)
