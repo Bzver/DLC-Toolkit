@@ -1,4 +1,5 @@
 import os
+import shutil
 import yaml
 import numpy as np
 from collections import defaultdict
@@ -19,6 +20,27 @@ VIDEO_EXTENSIONS: Tuple[str, ...] = (".mp4", ".avi", ".mkv")
 
 
 ############################################################################################
+
+def batch_backup_project(root_dir: str):
+    workspaces = _find_files_by_extension(root_dir, WORKSPACE_EXTENSIONS)
+    if not workspaces:
+        logger.info("[BATCH] No old workspace files found for backup")
+        return
+
+    _log_batch_progress("Workspace Backup", workspaces)
+    backup_dir = os.path.join(root_dir, "bvt_backup")
+    os.makedirs(backup_dir, exist_ok=True)
+    
+    def process_workspace(ws_path:str) -> bool:
+        rel_dir = ws_path.split(root_dir)[1]
+        new_path = f"{backup_dir}{rel_dir}"
+        os.makedirs(os.path.dirname(new_path), exist_ok=True)
+        if os.path.isfile(new_path):
+            backup_existing_prediction(new_path)
+        shutil.copy(ws_path, new_path)
+        return os.path.isfile(new_path)
+
+    _process_batch(workspaces, process_workspace, "Workspace Backup")
 
 def batch_migration_pkl_to_joblib(root_dir: str):
     workspaces = _find_files_by_extension(root_dir, ".pkl")
@@ -44,22 +66,23 @@ def batch_convert_csv_to_h5(dlc_config_path: str):
     if not projects:
         return
     
-    scorer = yaml.safe_load(dlc_config_path.read_text())["scorer"]
+    with open(dlc_config_path, 'r') as f:
+        scorer = yaml.safe_load(f)["scorer"]
     
     def process_project(project_dir: str) -> bool:
         csv_path = os.path.join(project_dir, f"CollectedData_{scorer}.csv") 
         h5_path = os.path.join(project_dir, f"CollectedData_{scorer}.h5") 
         
-        if not csv_path.exists():
+        if not os.path.exists(csv_path):
             logger.debug(f"[BATCH] Skip (no CSV): {project_dir}")
             return False
         
-        if h5_path.exists():
+        if os.path.exists(h5_path):
             logger.debug(f"[BATCH] Skip (H5 exists): {project_dir}")
             return False
         
         csv_op.csv_to_h5(csv_path=str(csv_path), multi_animal=True, scorer=scorer)
-        logger.info(f"[BATCH] Converted: {csv_path.name}")
+        logger.info(f"[BATCH] Converted: {csv_path}")
         return True
     
     _process_batch(projects, process_project, "CSV→H5 conversion")
@@ -78,7 +101,7 @@ def batch_convert_to_grayscale(dlc_config_path: str):
             return False
         
         grayscaled_path = f"{project_path}_GR"
-        if grayscaled_path.exists():
+        if os.path.exists(grayscaled_path):
             logger.debug(f"[BATCH] Skip (GR exists): {project_path}")
             return False
         
@@ -223,18 +246,19 @@ def _find_video_files(root_dir: str) -> List[str]:
             video.with_name(f"{video.stem}_workspace{ext}")
             for ext in WORKSPACE_EXTENSIONS
         ]
-        if not any(ws.exists() for ws in workspace_candidates):
+        if not any(os.path.exists(ws) for ws in workspace_candidates):
             filtered.append(video)
     
     return filtered
 
 def _find_labeled_projects(dlc_config_path: str) -> List[str]:
-    if not dlc_config_path.is_file():
+    if not os.path.isfile(dlc_config_path):
         logger.error(f"[BATCH] DLC config not found: {dlc_config_path}")
         return []
     
     try:
-        config = yaml.safe_load(dlc_config_path.read_text())
+        with open(dlc_config_path, 'r') as f:
+            config = yaml.safe_load(f)
         scorer = config.get("scorer")
         if not scorer:
             logger.error("[BATCH] 'scorer' missing in DLC config")
@@ -243,7 +267,7 @@ def _find_labeled_projects(dlc_config_path: str) -> List[str]:
         logger.error(f"[BATCH] Failed to parse DLC config: {e}")
         return []
     
-    labeled_dir = os.path.join(os.path.basename(dlc_config_path), "labeled-data")
+    labeled_dir = os.path.join(os.path.dirname(dlc_config_path), "labeled-data")
     if not os.path.isdir(labeled_dir):
         logger.warning(f"[BATCH] labeled-data directory not found: {labeled_dir}")
         return []
@@ -257,11 +281,9 @@ def _find_labeled_projects(dlc_config_path: str) -> List[str]:
 
 def _find_files_by_extension(root_dir:str, extensions: Tuple[str]) -> List[str]:
     found = []
-    for root, dirs, files in os.walk(root_dir):
-        dirs[:] = [d for d in dirs if "backup" not in root and "temp" not in root]
-        
+    for root, _, files in os.walk(root_dir):
         for file in files:
-            if file.endswith(extensions):
+            if file.endswith(extensions) and "backup" not in root and "temp" not in root:
                 found.append(os.path.join(root, file))
     return found
 
@@ -272,12 +294,6 @@ def _process_batch(
     processor: callable,
     operation_name: str
 ) -> Tuple[int, List[Tuple[str, str]]]:
-    """
-    Generic batch processing loop with error handling and logging.
-    
-    Returns:
-        Tuple of (success_count, list of (failed_path, error_message))
-    """
     success_count = 0
     failures = []
     
@@ -302,7 +318,7 @@ def _process_batch(
     if failures:
         logger.warning(f"[BATCH] {len(failures)} item(s) failed:")
         for path, error in failures:
-            logger.warning(f"  - {path.name}: {error}")
+            logger.warning(f"  - {path}: {error}")
     
     return success_count, failures
 
@@ -593,33 +609,34 @@ def _parse_auto_pred_filename(filename: str):
 if __name__ == "__main__":
     set_headless_mode(True)
     rootdir = r"D:\Data\Videos\20251117 Marathon"
-    dlc_config_path = "D:/Project/DLC-Models/NTD/config.yaml"
+    dlc_config_path = "D:/Project/DLC-Models/NTD-Blob/config.yaml"
  
-    batch_migration_pkl_to_joblib(rootdir)
+    dial_tone = 6
 
-    # batch_create_workspaces(rootdir, dlc_config_path)
-
-    # batch_inference(
-    #     rootdir,
-    #     dlc_config_path,
-    #     crop=True,
-    #     mask=False,
-    #     grayscale=True,
-    #     infer_only_empty_frames=False,
-    #     batch_size=32,
-    #     detector_batch_size=16
-    # )
-
-    # batch_convert_to_grayscale(dlc_config_path)
-
-    # batch_export_csv(
-    #     rootdir,
-    #     with_conf=True,
-    #     no_scorer_header=True,
-    #     animal_num_filtering=True,
-    #     min_animal_num=2,
-    #     frame_count_filtering=True,
-    #     frame_count_max=6000,
-    #     )
-
-    # batch_convert_csv_to_h5(dlc_config_path)
+    match dial_tone:
+        case 1:
+            batch_inference(
+                rootdir,
+                dlc_config_path,
+                crop=True,
+                mask=False,
+                grayscale=True,
+                infer_only_empty_frames=False,
+                batch_size=32,
+                detector_batch_size=16
+            )
+        case 2:
+            batch_export_csv(
+                rootdir,
+                with_conf=True,
+                no_scorer_header=True,
+                animal_num_filtering=True,
+                min_animal_num=2,
+                frame_count_filtering=True,
+                frame_count_max=6000,
+                )
+        case 3: batch_create_workspaces(rootdir, dlc_config_path)
+        case 4: batch_convert_to_grayscale(dlc_config_path)
+        case 5: batch_convert_csv_to_h5(dlc_config_path)
+        case 6: batch_migration_pkl_to_joblib(rootdir)
+        case 7: batch_backup_project(rootdir)
