@@ -2,11 +2,12 @@ import cv2
 import numpy as np
 import time
 from tqdm import tqdm
+import json
 
 from PySide6 import QtWidgets, QtGui
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
+    QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QFileDialog,
     QSizePolicy, QSlider, QComboBox, QPushButton,
 )
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -19,7 +20,7 @@ from typing import Optional, Tuple, List
 
 from ui import Progress_Indicator_Dialog, Frame_Display_Dialog, Frame_Range_Dialog, Spinbox_With_Label
 from utils.helper import get_roi_cv2, plot_roi, frame_to_qimage
-from core.io import Frame_Extractor
+from core.io import Frame_Extractor, Frame_Extractor_Img
 from utils.logger import Loggerbox, QMessageBox, logger
 from utils.dataclass import Blob_Config
 
@@ -41,8 +42,11 @@ class Blob_Counter(QGroupBox):
         self.setTitle("Blob Counting Controls")
 
         self.video_filepath = video_filepath
-        self.extractor = Frame_Extractor(video_filepath)
-        
+        try:
+            self.extractor = Frame_Extractor(video_filepath)
+        except:
+            self.extractor = Frame_Extractor_Img(video_filepath)
+
         self.current_frame = None
         self.working_bg = None
         self.total_frames, self.frame_idx = 0, 0
@@ -64,9 +68,31 @@ class Blob_Counter(QGroupBox):
         self.bg_display.roi_requested.connect(self._roi_to_bg_display)
         self.blb_layout.addWidget(self.bg_display)
 
-        # Histogram for blob sizes
+        self.hist_section_widget = QtWidgets.QWidget()
+        self.hist_section_layout = QVBoxLayout(self.hist_section_widget)
+        self.hist_section_layout.setContentsMargins(0, 0, 0, 0)
+        self.hist_section_layout.setSpacing(2)
+
+        self.hist_header_layout = QHBoxLayout()
+        self.hist_toggle_btn = QPushButton("▼ Blob Size Histogram")
+        self.hist_toggle_btn.setCheckable(True)
+        self.hist_toggle_btn.setChecked(True)
+        self.hist_toggle_btn.clicked.connect(self._toggle_histogram)
+        self.hist_header_layout.addWidget(self.hist_toggle_btn)
+        self.hist_section_layout.addLayout(self.hist_header_layout)
+
+        self.hist_content_widget = QtWidgets.QWidget()
+        self.hist_content_layout = QVBoxLayout(self.hist_content_widget)
+        self.hist_content_layout.setContentsMargins(0, 0, 0, 0)
+        
         self.blb_hist = Blob_Histogram(self.extractor)
-        self.blb_layout.addLayout(self.blb_hist)
+        self.refresh_hist_btn = QPushButton("Refresh Histogram")
+        self.refresh_hist_btn.clicked.connect(self._plot_blob_histogram)
+        self.hist_content_layout.addLayout(self.blb_hist)
+        self.hist_content_layout.addWidget(self.refresh_hist_btn)
+        self.hist_section_layout.addWidget(self.hist_content_widget)
+
+        self.blb_layout.addWidget(self.hist_section_widget)
         self.blb_hist.threshold_changed.connect(self._on_blb_hist_change)
 
         # Controls
@@ -123,20 +149,26 @@ class Blob_Counter(QGroupBox):
         ])
         self.bg_removal_combo.currentTextChanged.connect(self._on_bg_removal_changed)
         
-        self.bg_regen_btn = QPushButton("Regenerate Background")
+        bg_roi_btns_layout = QHBoxLayout()
+        self.bg_regen_btn = QPushButton("Regen BG")
         self.bg_regen_btn.clicked.connect(self._regen_bg)
-        self.blb_layout.addWidget(self.bg_regen_btn)
+        self.select_roi_btn = QPushButton("Set ROI")
+        self.select_roi_btn.clicked.connect(self._select_roi)
+        bg_roi_btns_layout.addWidget(self.bg_regen_btn)
+        bg_roi_btns_layout.addWidget(self.select_roi_btn)
+        self.blb_layout.addLayout(bg_roi_btns_layout)
 
         self.controls_layout.addWidget(self.bg_removal_label)
         self.controls_layout.addWidget(self.bg_removal_combo)
 
-        self.select_roi_btn = QPushButton("Select ROI")
-        self.select_roi_btn.clicked.connect(self._select_roi)
-        self.blb_layout.addWidget(self.select_roi_btn)
-
-        self.refresh_hist_btn = QPushButton("Refresh Histogram")
-        self.refresh_hist_btn.clicked.connect(self._plot_blob_histogram)
-        self.blb_layout.addWidget(self.refresh_hist_btn)
+        config_btns_layout = QHBoxLayout()
+        self.export_config_btn = QPushButton("Save Config")
+        self.export_config_btn.clicked.connect(self._export_config_json)
+        self.import_config_btn = QPushButton("Load Config")
+        self.import_config_btn.clicked.connect(self._import_config_json)
+        config_btns_layout.addWidget(self.export_config_btn)
+        config_btns_layout.addWidget(self.import_config_btn)
+        self.blb_layout.addLayout(config_btns_layout)
 
         self.max_worker_spin = Spinbox_With_Label("Max Workers: ", (1,64), 4)
         self.max_worker_spin.setToolTip("Number of parallel processes when counting the entire video.")
@@ -152,8 +184,8 @@ class Blob_Counter(QGroupBox):
 
         self.total_frames = self.extractor.get_total_frames()
 
-        self.parameters_changed.connect(self._reset_and_reprocess)
         self.bg_display.update_background_display()
+        self.parameters_changed.connect(self._reset_and_reprocess)
 
         if config is not None:
             self._apply_config(config)
@@ -162,6 +194,21 @@ class Blob_Counter(QGroupBox):
 
         self.blob_array = blob_array
         self.last_reset_query = 0
+
+        if config is not None and blob_array is not None and np.any(blob_array!=0):
+            self._collapse_histogram()
+
+    def _collapse_histogram(self):
+        self.hist_toggle_btn.setChecked(False)
+        self.hist_content_widget.setVisible(False)
+        self.hist_toggle_btn.setText("▶ Histogram")
+
+    def _toggle_histogram(self, checked: bool):
+        self.hist_content_widget.setVisible(checked)
+        if checked:
+            self.hist_toggle_btn.setText("▼ Histogram")
+        else:
+            self.hist_toggle_btn.setText("▶ Histogram")
 
     def set_current_frame(self, frame:Frame_CV2, frame_idx:int):
         self.current_frame = frame
@@ -380,6 +427,9 @@ class Blob_Counter(QGroupBox):
         self.working_bg = self._process_background()
 
     def _plot_blob_histogram(self):
+        if not self.hist_content_widget.isVisible():
+            self._toggle_histogram(True)
+            
         if not self.extractor:
             return
         
@@ -448,14 +498,13 @@ class Blob_Counter(QGroupBox):
     def _on_bg_removal_changed(self, text:str):
         self.bg_display.bg_removal_method = text
         self.parameters_changed.emit()
-        self.bg_display.update_background_display()
-        self.working_bg = self._process_background()
 
     def _on_blb_hist_change(self, value:int):
         self.blb_hist.double_blob_area_threshold = value
         self._reprocess_current_frame()
 
     def _reset_and_reprocess(self):
+        self.bg_display.update_background_display()
         self._reset_blob_array()
         self._reprocess_current_frame()
 
@@ -479,6 +528,78 @@ class Blob_Counter(QGroupBox):
 
         self.blob_array = np.zeros((self.total_frames, 2), dtype=np.uint8)
 
+    def _export_config_json(self):
+        config_dict = {
+            "threshold": self.threshold,
+            "double_blob_area_threshold": self.blb_hist.double_blob_area_threshold,
+            "min_blob_area": self.min_blob_area,
+            "bg_removal_method": self.bg_display.bg_removal_method,
+            "blob_type": self.blob_type,
+            "roi": tuple(self.roi) if self.roi is not None else None
+        }
+        
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Export Config", "", "JSON Files (*.json)"
+        )
+        if file_path:
+            if not file_path.endswith('.json'):
+                file_path += '.json'
+            try:
+                with open(file_path, 'w') as f:
+                    json.dump(config_dict, f, indent=2)
+                logger.info(f"[CONFIG] Exported config to {file_path}")
+            except Exception as e:
+                logger.error(f"[CONFIG] Failed to export config: {e}")
+                QMessageBox.critical(self, "Export Error", f"Failed to export config: {e}")
+
+    def _import_config_json(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Import Config", "", "JSON Files (*.json)"
+        )
+        if file_path:
+            try:
+                with open(file_path, 'r') as f:
+                    config_dict = json.load(f)
+
+                if "threshold" in config_dict:
+                    self.threshold = int(config_dict["threshold"])
+                    self.threshold_slider.setValue(self.threshold)
+                    self.threshold_value_label.setText(str(self.threshold))
+                
+                if "double_blob_area_threshold" in config_dict:
+                    self.blb_hist.double_blob_area_threshold = int(config_dict["double_blob_area_threshold"])
+                
+                if "min_blob_area" in config_dict:
+                    self.min_blob_area = int(config_dict["min_blob_area"])
+                    self.min_area_slider.setValue(self.min_blob_area)
+                    self.min_area_value_label.setText(str(self.min_blob_area))
+                
+                if "bg_removal_method" in config_dict:
+                    self.bg_display.bg_removal_method = str(config_dict["bg_removal_method"])
+                    self.bg_removal_combo.setCurrentText(config_dict["bg_removal_method"])
+                
+                if "blob_type" in config_dict:
+                    self.blob_type = str(config_dict["blob_type"])
+                    self.blob_type_combo.setCurrentText(self.blob_type)
+                
+                if "roi" in config_dict:
+                    roi_val = config_dict["roi"]
+                    if roi_val is not None:
+                        self.roi = tuple(int(x) for x in roi_val)
+                    else:
+                        self.roi = None
+                
+                logger.info(f"[CONFIG] Imported config from {file_path}")
+                self.parameters_changed.emit()
+                self._process_background()
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"[CONFIG] Invalid JSON file: {e}")
+                QMessageBox.critical(self, "Import Error", f"Invalid JSON file: {e}")
+            except Exception as e:
+                logger.error(f"[CONFIG] Failed to import config: {e}")
+                QMessageBox.critical(self, "Import Error", f"Failed to import config: {e}")
+
     @staticmethod
     def _task_splitter(start_idx: int, end_idx: int, max_workers:int):
         segment_size = min(5000, (end_idx - start_idx)//max_workers)
@@ -490,27 +611,26 @@ class Blob_Counter(QGroupBox):
             chunk_start = chunk_end
         return chunks
 
-class Blob_Background(QtWidgets.QWidget):
+
+class Blob_Background(QtWidgets.QGroupBox):
     roi_requested = Signal()
 
     def __init__(self, extractor:Frame_Extractor, parent=None):
         super().__init__(parent)
+        self.setTitle("Background Image:")
         self.bg_removal_method = "None"
         self.background_frames = {}
         self.extractor = extractor
+        self.setMaximumHeight(250)
 
-        layout = QHBoxLayout(self)
-        self.bg_label = QLabel("Background Image:")
-        self.bg_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
+        layout = QVBoxLayout()
         self.image_label = QLabel("None")
         self.image_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.image_label.setMaximumHeight(50)
         self.image_label.setCursor(Qt.PointingHandCursor)
         self.image_label.mousePressEvent = lambda e: self._show_background_in_dialog()
 
-        layout.addWidget(self.bg_label, 1)
         layout.addWidget(self.image_label, 1)
+        self.setLayout(layout)
 
     def get_background_frame(self, bg_frame_list:Optional[List[int]]=None):
         method = self.bg_removal_method
@@ -621,6 +741,7 @@ class Blob_Background(QtWidgets.QWidget):
         qimage = frame_to_qimage(frame)
         dialog = Frame_Display_Dialog(title=f"Background Image — {self.bg_removal_method}", image=qimage)
         dialog.exec()
+
 
 class Blob_Histogram(QVBoxLayout):
     threshold_changed = Signal(int)
