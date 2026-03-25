@@ -83,7 +83,7 @@ class Frame_View:
 
     def _init_blob_counter(self):
         self.blob_counter = Blob_Counter(
-            frame_extractor=self.vm.extractor,
+            video_filepath=self.dm.video_file,
             config=self.dm.blob_config,
             blob_array=self.dm.blob_array,
             roi=self.dm.roi,

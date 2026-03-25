@@ -471,6 +471,9 @@ class Data_Manager:
         if self.blob_config and self.roi is None:
             self.roi = np.array(self.blob_config.roi)
 
+        if self.blob_array is not None and self.blob_array.shape[1] == 6:
+            self.blob_array = self.blob_array[:,:2]
+
         if self.dlc_data is not None and self.dlc_data.pred_data_array is not None:
             self._init_loaded_data()
     

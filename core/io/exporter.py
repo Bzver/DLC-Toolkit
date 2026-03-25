@@ -222,9 +222,8 @@ class Frame_Exporter_Threaded:
                 indices = worker_fe.extract_frames(aug)
                 return indices
         except Exception as e:
-            logger.warning(f"[WORKER_{seg_idx}] Failed: {e}")
+            logger.warning(f"[Segment_{seg_idx}] Failed: {e}")
             pbar.set_description(f"Segment {seg_idx} FAILED")
-            pbar.close()
             if to_video:
                 seg_path = os.path.join(temp_dir, seg_filename)
                 os.remove(seg_path)

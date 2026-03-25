@@ -205,8 +205,6 @@ class Inference_interval_Dialog(QDialog):
 
 
 class Frame_Range_Dialog(QDialog):
-    range_selected = Signal(tuple)
-
     def __init__(self, total_frames:int, parent=None):
         super().__init__(parent)
         self.total_frames = total_frames
@@ -239,8 +237,6 @@ class Frame_Range_Dialog(QDialog):
         end_idx = self.end_spin.value()
         self.selected_range = (start_idx, end_idx)
         if end_idx >= start_idx:
-            self.hide()
-            self.range_selected.emit((start_idx, end_idx))
             self.accept()
         else:
             Loggerbox(self, "Invalid Parameters", f"End frame ({end_idx}) cannot be lower than start frame ({start_idx}).")

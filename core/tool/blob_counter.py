@@ -1,21 +1,23 @@
 import cv2
 import numpy as np
 import time
+from tqdm import tqdm
+
 from PySide6 import QtWidgets, QtGui
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGroupBox, QLabel,
     QSizePolicy, QSlider, QComboBox, QPushButton,
 )
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import matplotlib
 matplotlib.use("QtAgg")
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-
 from typing import Optional, Tuple, List
 
-from ui import Progress_Indicator_Dialog, Frame_Display_Dialog, Frame_Range_Dialog
+from ui import Progress_Indicator_Dialog, Frame_Display_Dialog, Frame_Range_Dialog, Spinbox_With_Label
 from utils.helper import get_roi_cv2, plot_roi, frame_to_qimage
 from core.io import Frame_Extractor
 from utils.logger import Loggerbox, QMessageBox, logger
@@ -30,7 +32,7 @@ class Blob_Counter(QGroupBox):
     roi_set = Signal(object)
 
     def __init__(self,
-                 frame_extractor:Frame_Extractor,
+                 video_filepath:str,
                  config: Optional[Blob_Config]=None,
                  roi:Optional[np.ndarray] = None,
                  blob_array:Optional[np.ndarray] = None,
@@ -38,10 +40,12 @@ class Blob_Counter(QGroupBox):
         super().__init__(parent)
         self.setTitle("Blob Counting Controls")
 
-        self.frame_extractor = frame_extractor
+        self.video_filepath = video_filepath
+        self.extractor = Frame_Extractor(video_filepath)
+        
         self.current_frame = None
+        self.working_bg = None
         self.total_frames, self.frame_idx = 0, 0
-        self.vid_h, self.vid_w = self.frame_extractor.get_frame_dim()
         self.roi = roi
 
         self.kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
@@ -56,12 +60,12 @@ class Blob_Counter(QGroupBox):
         self.setFixedWidth(200)
 
         # Image Display
-        self.bg_display = Blob_Background(self.frame_extractor)
+        self.bg_display = Blob_Background(self.extractor)
         self.bg_display.roi_requested.connect(self._roi_to_bg_display)
         self.blb_layout.addWidget(self.bg_display)
 
         # Histogram for blob sizes
-        self.blb_hist = Blob_Histogram(self.frame_extractor)
+        self.blb_hist = Blob_Histogram(self.extractor)
         self.blb_layout.addLayout(self.blb_hist)
         self.blb_hist.threshold_changed.connect(self._on_blb_hist_change)
 
@@ -134,11 +138,9 @@ class Blob_Counter(QGroupBox):
         self.refresh_hist_btn.clicked.connect(self._plot_blob_histogram)
         self.blb_layout.addWidget(self.refresh_hist_btn)
 
-        self.fast_mode_checkbox = QtWidgets.QCheckBox("Fast Mode")
-        self.fast_mode_checkbox.setToolTip("Processes only every 5th frame for speed. Gaps are filled with neighboring values.\n"
-                                            "Bounding box calculation is skipped.")
-        self.fast_mode_checkbox.setChecked(False)
-        self.controls_layout.addWidget(self.fast_mode_checkbox)
+        self.max_worker_spin = Spinbox_With_Label("Max Workers: ", (1,64), 4)
+        self.max_worker_spin.setToolTip("Number of parallel processes when counting the entire video.")
+        self.controls_layout.addWidget(self.max_worker_spin)
 
         self.count_all_btn = QPushButton("Count Animals")
         self.count_all_btn.clicked.connect(self._count_video)
@@ -148,7 +150,7 @@ class Blob_Counter(QGroupBox):
         self.count_label.setAlignment(Qt.AlignCenter)
         self.blb_layout.addWidget(self.count_label)
 
-        self._get_total_frames()
+        self.total_frames = self.extractor.get_total_frames()
 
         self.parameters_changed.connect(self._reset_and_reprocess)
         self.bg_display.update_background_display()
@@ -204,101 +206,84 @@ class Blob_Counter(QGroupBox):
             return
         
         contours = self._process_contour_from_frame(self.current_frame)
-        count, _ = self._perform_blob_counting(contours)
+        count, _ = self._count_contours(contours)
 
         self.count_label.setText(f"Animal Count: {count}")
         display_frame = self._draw_mask(self.current_frame, contours)
         self.frame_processed.emit(display_frame, count)
 
-    def _get_total_frames(self):
-        self.total_frames = self.frame_extractor.get_total_frames()
-
     def _count_video(self):
         fm_dialog = Frame_Range_Dialog(self.total_frames, parent=self)
-        fm_dialog.range_selected.connect(self._count_entire_video)
-        fm_dialog.exec()
+        if fm_dialog.exec() == QtWidgets.QDialog.Accepted:
+            max_workers = self.max_worker_spin.value()
+            start_idx, end_idx = fm_dialog.selected_range #inclusive
+            end_idx += 1
 
-    def _count_entire_video(self, frame_range_tuple):
-        start_idx, end_idx = frame_range_tuple
-        if end_idx < start_idx:
-            logger.error(f"[BCOUNT] End_idx {end_idx} < start_idx {start_idx} during video counting bootstrap.")
-            return
+            segments = self._task_splitter(start_idx, end_idx, max_workers)
 
-        self.frame_extractor.start_sequential_read(start=start_idx, end=end_idx)
-        frame_idx = start_idx
+            title = f"BLOB COUNTER | {max_workers} workers | {len(segments)} segments"
+            border = "═" * (len(title) + 2)
+            logger.info(f"╔{border}╗")
+            logger.info(f"║ {title} ║")
+            logger.info(f"╚{border}╝")
 
-        progress = Progress_Indicator_Dialog(0, end_idx-start_idx, "Counting", "Blob counting...", self)
+            try:
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {
+                        executor.submit(self._process_segment, idx, chunk[0], chunk[1]): idx
+                        for idx, chunk in enumerate(segments)
+                    }
+                    for future in as_completed(futures):
+                        try:
+                            result = future.result()
+                            if result:
+                                start_idx, end_idx, chunk_array = result
+                                self.blob_array[start_idx:end_idx] = chunk_array
+                        except Exception as e:
+                            logger.error(f"[THREAD_EXP] Segment failed: {e}")
 
-        fast_mode_active = self.fast_mode_checkbox.isChecked()
+            except Exception as e:
+                logger.error(f"[THREAD_EXP] Critical failure: {e}")
 
-        last_processed_idx = start_idx-5
-        while frame_idx <= end_idx:
-            if progress.wasCanceled():
-                break
+            self.video_counted.emit(self.blob_array)
 
-            result = self.frame_extractor.read_next_frame()
-            if result is None:
-                break
-            actual_idx, frame = result
-            assert actual_idx == frame_idx, "Frame index mismatch!"
+    def _process_segment(self, seg_idx:int, start_idx: int, end_idx: int) -> Tuple[int, int, np.ndarray]:
+        pbar = tqdm(
+            total=end_idx - start_idx,
+            desc=f"Segment {seg_idx} [{start_idx}-{end_idx}]",
+            leave=False, 
+            ncols=200
+        )
 
-            if frame_idx - last_processed_idx < 5 and fast_mode_active:
-                if frame_idx - last_processed_idx < 3 or frame_idx + 5 > end_idx:
-                    self.blob_array[frame_idx] = self.blob_array[last_processed_idx]
+        extractor = Frame_Extractor(self.video_filepath)
+        try:
+            extractor.start_sequential_read(start=start_idx, end=end_idx)
+            chunk_array = np.zeros((end_idx-start_idx, 2), dtype=np.uint8)
+
+            frame_idx = 0
+            while frame_idx < end_idx - start_idx:
+                result = extractor.read_next_frame()
+                if result is None:
+                    break
+                actual_idx, frame = result
+                assert actual_idx == frame_idx + start_idx, "Frame index mismatch!"
+
+                contours = self._process_contour_from_frame(frame)
+                count, merged = self._count_contours(contours)
+
+                chunk_array[frame_idx, 0] = count
+                chunk_array[frame_idx, 1] = merged
+                pbar.update(1)
                 frame_idx += 1
-                continue
+        except Exception as e:
+            logger.warning(f"[Segment_{seg_idx}] Failed: {e}")
+            pbar.set_description(f"Segment {seg_idx} FAILED")
+            return None
+        finally:
+            pbar.close()
+            extractor.finish_sequential_read()
 
-            contours = self._process_contour_from_frame(frame)
-            count, merged = self._perform_blob_counting(contours)
-
-            if fast_mode_active:
-                x1, y1, x2, y2 = 0, 0, 0, 0
-            else:
-                x1, y1, x2, y2 = self._perform_bbox_calculation(contours)
-            self._update_blob_array(frame_idx, count, merged, x1, y1, x2, y2)
-
-            if fast_mode_active and frame_idx > 1:
-                self.blob_array[frame_idx-2:frame_idx] = self.blob_array[frame_idx]
-
-            progress.setValue(frame_idx-start_idx)
-            QtWidgets.QApplication.processEvents()
-            last_processed_idx = frame_idx
-            frame_idx += 1
-
-        self.frame_extractor.finish_sequential_read()
-        progress.close()
-
-        self.video_counted.emit(self.blob_array)
-
-    def _perform_blob_counting(self, contours:List[np.ndarray]) -> Tuple[int, int]:
-        if not contours:
-            return 0, False
-
-        merged = 0
-        animal_count = 0
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area >= self.blb_hist.double_blob_area_threshold:
-                animal_count += 2
-                merged = 1
-            else:
-                animal_count += 1
-
-        return animal_count, merged
-
-    def _perform_bbox_calculation(self, contours:List[np.ndarray]) -> Tuple[int, int, int, int]:
-        if not contours:
-            return (0, 0, self.vid_w, self.vid_h)
-
-        min_x, max_x, min_y, max_y = self.vid_w, 0, self.vid_h, 0
-        for cnt in contours:
-            x, y, w, h = cv2.boundingRect(cnt)
-            min_x = max(min(min_x, x - 50), 0)
-            max_x = min(max(max_x, x + w + 50), self.vid_w)
-            min_y = max(min(min_y, y - 50), 0)
-            max_y = min(max(max_y, y + h + 50), self.vid_h)
-
-        return (int(min_x), int(min_y), int(max_x), int(max_y))
+        return start_idx, end_idx, chunk_array
 
     def _process_contour_from_frame(self, frame:Frame_CV2) -> List[np.ndarray]:
         if self.roi is not None:
@@ -313,15 +298,8 @@ class Blob_Counter(QGroupBox):
 
         processed_frame = gray_frame
 
-        if self.bg_display.bg_removal_method != "None":
-            background_frame = self.bg_display.get_background_frame()
-            if self.roi is not None:
-                bg_roi = background_frame[y1:y2, x1:x2]
-            else:
-                bg_roi = background_frame
-            bg_gray = cv2.cvtColor(bg_roi, cv2.COLOR_BGR2GRAY) if len(bg_roi.shape) == 3 else bg_roi
-            bg_gray = bg_gray.astype(gray_frame.dtype)
-            diff = gray_frame.astype(np.int16) - bg_gray.astype(np.int16)
+        if self.working_bg is not None:
+            diff = gray_frame.astype(np.int16) - self.working_bg
 
             if self.blob_type == "Dark Blobs":
                 thresh = (diff < -self.threshold).astype(np.uint8) * 255
@@ -344,6 +322,22 @@ class Blob_Counter(QGroupBox):
 
         return filtered_contours
 
+    def _count_contours(self, contours:List[np.ndarray]) -> Tuple[int, int]:
+        if not contours:
+            return 0, False
+
+        merged = 0
+        animal_count = 0
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area >= self.blb_hist.double_blob_area_threshold:
+                animal_count += 2
+                merged = 1
+            else:
+                animal_count += 1
+
+        return animal_count, merged
+
     def _draw_mask(self, current_frame:Frame_CV2, contours:List[np.ndarray]) -> Frame_CV2:
         mask = np.zeros_like(current_frame, dtype=np.uint8)
         cv2.drawContours(mask, contours, -1, (0, 255, 0), cv2.FILLED)
@@ -352,12 +346,25 @@ class Blob_Counter(QGroupBox):
         cv2.drawContours(display_frame, contours, -1, (0, 255, 0), 2)
         return display_frame
 
+    def _process_background(self):
+        if self.bg_display.bg_removal_method == "None":
+            return None
+
+        background_frame = self.bg_display.get_background_frame()
+        if self.roi is not None:
+            x1, y1, x2, y2 = self.roi
+            bg_roi = background_frame[y1:y2, x1:x2]
+        else:
+            bg_roi = background_frame
+        bg_gray = cv2.cvtColor(bg_roi, cv2.COLOR_BGR2GRAY) if len(bg_roi.shape) == 3 else bg_roi
+        return bg_gray.astype(dtype=np.int16)
+
     def _regen_bg(self):
         self.bg_display.background_frames.clear()
         self.bg_display.update_background_display()
 
     def _select_roi(self):
-        frame = self.frame_extractor.get_frame(0)
+        frame = self.extractor.get_frame(0)
         if frame is None:
             return
         
@@ -370,15 +377,16 @@ class Blob_Counter(QGroupBox):
         
         self.parameters_changed.emit()
         self.roi_set.emit(np.array(self.roi))
+        self.working_bg = self._process_background()
 
     def _plot_blob_histogram(self):
-        if not self.frame_extractor:
+        if not self.extractor:
             return
         
         self._reset_blob_array()
         self.video_counted.emit(self.blob_array) # Invalidated previous counting and refresh the state
 
-        total_frames = self.frame_extractor.get_total_frames()
+        total_frames = self.extractor.get_total_frames()
         if total_frames == 0:
             return
         
@@ -393,14 +401,14 @@ class Blob_Counter(QGroupBox):
         progress_dialog = Progress_Indicator_Dialog(0, len(frame_indices), "Blob Analysis", "Analyzing blob sizes...", self)
 
         for i, idx in enumerate(frame_indices):
-            self.frame_extractor.start_sequential_read(idx)
+            self.extractor.start_sequential_read(idx)
             progress_dialog.setValue(i)
             if progress_dialog.wasCanceled():
-                self.frame_extractor.finish_sequential_read()
+                self.extractor.finish_sequential_read()
                 break
 
             for k in range(sample_segment_length):
-                result = self.frame_extractor.read_next_frame()
+                result = self.extractor.read_next_frame()
                 if result is None:
                     break
                 if k % 5 != 0:
@@ -409,24 +417,16 @@ class Blob_Counter(QGroupBox):
                 assert actual_idx == idx + k, f"Frame index mismatch! actual_idx: {actual_idx} | idx + k: {idx + k}"
 
                 contours = self._process_contour_from_frame(frame)
-                count_result = self._perform_blob_counting(contours)
+                count_result = self._count_contours(contours)
                 frame_areas = [cv2.contourArea(c) for c in contours]
                 areas.extend(frame_areas)
                 self.blob_array[idx + k, 0], self.blob_array[idx+k, 1] = count_result
             
-            self.frame_extractor.finish_sequential_read()
+            self.extractor.finish_sequential_read()
 
         progress_dialog.close()
         self.blb_hist.plot_histogram(areas)
         self.video_counted.emit(self.blob_array)
- 
-    def _update_blob_array(self, frame_idx, count, merged, x1, y1, x2, y2):
-        self.blob_array[frame_idx, 0] = count
-        self.blob_array[frame_idx, 1] = merged
-        self.blob_array[frame_idx, 2] = x1
-        self.blob_array[frame_idx, 3] = y1
-        self.blob_array[frame_idx, 4] = x2
-        self.blob_array[frame_idx, 5] = y2
 
     def _roi_to_bg_display(self):
         self.bg_display.display_background_roi_dialog(self.roi)
@@ -449,6 +449,7 @@ class Blob_Counter(QGroupBox):
         self.bg_display.bg_removal_method = text
         self.parameters_changed.emit()
         self.bg_display.update_background_display()
+        self.working_bg = self._process_background()
 
     def _on_blb_hist_change(self, value:int):
         self.blb_hist.double_blob_area_threshold = value
@@ -461,7 +462,7 @@ class Blob_Counter(QGroupBox):
     def _reset_blob_array(self):
         if not hasattr(self, "blob_array") or self.blob_array is None:
             logger.info("[BCOUNT] Preallocating blob array with numeric zeros.")
-            self.blob_array = np.zeros((self.total_frames, 6), dtype=np.uint16)
+            self.blob_array = np.zeros((self.total_frames, 2), dtype=np.uint8)
             return
         if np.any(self.blob_array != 0):
             now = time.time()
@@ -476,8 +477,18 @@ class Blob_Counter(QGroupBox):
             if reply == QMessageBox.No:
                 return
 
-        self.blob_array = np.zeros((self.total_frames, 6), dtype=np.uint16)
-            
+        self.blob_array = np.zeros((self.total_frames, 2), dtype=np.uint8)
+
+    @staticmethod
+    def _task_splitter(start_idx: int, end_idx: int, max_workers:int):
+        segment_size = min(5000, (end_idx - start_idx)//max_workers)
+        chunk_start = start_idx
+        chunks = []
+        while chunk_start < end_idx:
+            chunk_end = min(end_idx, chunk_start + segment_size)
+            chunks.append((chunk_start, chunk_end))
+            chunk_start = chunk_end
+        return chunks
 
 class Blob_Background(QtWidgets.QWidget):
     roi_requested = Signal()
@@ -486,7 +497,7 @@ class Blob_Background(QtWidgets.QWidget):
         super().__init__(parent)
         self.bg_removal_method = "None"
         self.background_frames = {}
-        self.frame_extractor = extractor
+        self.extractor = extractor
 
         layout = QHBoxLayout(self)
         self.bg_label = QLabel("Background Image:")
@@ -506,7 +517,7 @@ class Blob_Background(QtWidgets.QWidget):
         if method in self.background_frames:
             return self.background_frames[method]
 
-        total_frames = self.frame_extractor.get_total_frames()
+        total_frames = self.extractor.get_total_frames()
 
         if total_frames == 0:
             self.background_frames[method] = None
@@ -519,7 +530,7 @@ class Blob_Background(QtWidgets.QWidget):
         else:
             frames_to_iter = np.linspace(0, total_frames - 1, 100, dtype=int)
 
-        first_frame = self.frame_extractor.get_frame(0)
+        first_frame = self.extractor.get_frame(0)
         if first_frame is None:
             self.background_frames[method] = None
             return None
@@ -531,7 +542,7 @@ class Blob_Background(QtWidgets.QWidget):
         for i, idx in enumerate(frames_to_iter):
             if progress_dialog.wasCanceled():
                 break
-            frame = self.frame_extractor.get_frame(idx)
+            frame = self.extractor.get_frame(idx)
             if frame is None:
                 continue
 
@@ -617,7 +628,7 @@ class Blob_Histogram(QVBoxLayout):
     def __init__(self, extractor:Frame_Extractor, parent=None):
         super().__init__(parent)
         self.double_blob_area_threshold = 100000
-        self.frame_extractor = extractor
+        self.extractor = extractor
 
         self.blob_areas = []
 
