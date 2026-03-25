@@ -130,8 +130,6 @@ class Load_Label_Dialog(QDialog):
         else:
             self.video_name = None
 
-        self._swap_time = 0
-
         self.config_path = self.dlc_data.dlc_config_filepath
         self.project_folders = get_existing_projects(self.config_path)
         if not self.project_folders:
@@ -177,7 +175,7 @@ class Load_Label_Dialog(QDialog):
 
     def _check_offset(self):
         if not self.selected_folder or not self.extractor:
-            self._swap_buttons()
+            self.offset_btn.setVisible(False)
             return
         
         crop_file = os.path.join(self.selected_folder, "crop.yaml")
@@ -229,39 +227,6 @@ class Load_Label_Dialog(QDialog):
         frame = self.plotter.plot_predictions(frame, frame_data)
         image = frame_to_qimage(frame)
         self.od_dialog.update_image(image)
-
-    def _swap_buttons(self):
-        self._swap_time += 1
-
-        item_j = self.okay_frame.takeAt(1)
-        widget_j = item_j.widget()
-        item_i = self.okay_frame.takeAt(0)
-        widget_i = item_i.widget()
-        self.okay_frame.insertWidget(0, widget_j)
-        self.okay_frame.insertWidget(1, widget_i)
-
-        taunts = [
-            None,
-            "Try again.",
-            "Hmm. Maybe this button is for another use case?",
-            "Perhaps come back when you've already loaded an existing prediction?",
-            "Admiring your persistence. Truly.",
-            "Warning: Excessive clicking may cause\n   - mild confusion  - sudden awareness  - urge to read the README",
-            "I give up. You win.",
-            (
-            "<pre>  The cow says: *mooove* a prediction in place first.\n"
-            "        ^__^\n"
-            "        (oo)\\_______\n"
-            "        (__)\\       )\\/\\\n"
-            "            ||---ww |\n"
-            "            ||     ||\n\n"
-            "</pre>"
-            )
-        ]
-        if self._swap_time < len(taunts):
-            self.offset_btn.setToolTip(taunts[self._swap_time])
-        else:
-            self.offset_btn.setVisible(False)
 
     def _on_selection_changed(self, index):
         if index >= 0:

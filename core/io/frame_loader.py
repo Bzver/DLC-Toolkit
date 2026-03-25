@@ -244,6 +244,9 @@ class Frame_Extractor_Img:
         logger.info(f"[FLOADER] Largest dimensions found: {max_x}x{max_y}.")
         return int(max_x), int(max_y)
     
+    def clear_cache(self):
+        pass
+
     def close(self):
         pass
 
