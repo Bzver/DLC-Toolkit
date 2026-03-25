@@ -608,10 +608,10 @@ def _parse_auto_pred_filename(filename: str):
 if __name__ == "__main__":
     app = QtWidgets.QApplication([])
     set_headless_mode(True)
-    rootdir = r"D:\DGH\Data\Videos\20250913 Marathon"
-    dlc_config_path = "D:/Project/DLC-Models/NTD/config.yaml"
+    rootdir = r""
+    dlc_config_path = "D:/Project/DLC-Models/NTD-Blob/config.yaml"
  
-    dial_tone = 1
+    dial_tone = 4
 
     match dial_tone:
         case 1:

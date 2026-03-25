@@ -386,14 +386,17 @@ class DLC_Inference(QDialog):
         loader = Prediction_Loader(dlc_config_filepath, pred_filepath)
         loaded_data = loader.load_data()
         
-        ref_data_array = self.dlc_data.pred_data_array[self.frame_list]
         temp_data_array = loaded_data.pred_data_array
 
         if self.crop_coord is not None:
             coords_array = crop_coord_to_array(self.crop_coord, temp_data_array.shape)
             temp_data_array = temp_data_array + coords_array
 
-        temp_data_array = self._greedy_match(ref_data_array, temp_data_array)
+        try:
+            ref_data_array = self.dlc_data.pred_data_array[self.frame_list]
+            temp_data_array = self._greedy_match(ref_data_array, temp_data_array)
+        except:
+            pass
 
         new_data_array = np.full(
             (self.vid_len, temp_data_array.shape[1], temp_data_array.shape[2]), np.nan)
