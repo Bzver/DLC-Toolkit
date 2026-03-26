@@ -88,6 +88,7 @@ class DLC_Inference(QDialog):
 
         shuffle_frame = QHBoxLayout()
         self.shuffle_spinbox = Spinbox_With_Label("Shuffle: ", (0, self.shuffle_idx+2), self.shuffle_idx)
+        self.shuffle_spinbox.value_changed.connect(self._shuffle_spinbox_changed)
         self.shuffle_config_label = QtWidgets.QLabel(f"{shuffle_metadata_text}")
         if not model_status:
             self.shuffle_config_label.setStyleSheet("color: red;")
@@ -252,6 +253,7 @@ class DLC_Inference(QDialog):
             self.detector_batch_size = det_val
 
         self.max_workers = self.worker_num_spinbox.value()
+        self.shuffle_idx = self.shuffle_spinbox.value()
         self.max_individual_val = self.max_individual_spinbox.value()
         self.masking = self.masking_checkbox.isChecked()
         self.cropping = self.cropping_checkbox.isChecked()
