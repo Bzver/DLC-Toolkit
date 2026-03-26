@@ -528,18 +528,22 @@ class Track_Fix_Config_Dialog(QDialog):
         self.avtomat_cbx.setToolTip("Auto-accept ID swaps based on contrastive embedding agreement")
         opts_layout.addWidget(self.avtomat_cbx)
 
-        self.worker_spin = Spinbox_With_Label("Cutout Extraction Workers:", (1, 256), 16)
-        opts_layout.addWidget(self.worker_spin)
+        self.skip_sweep_cbx = QCheckBox("Skip Motion Sweep Prior to Learning")
+        self.skip_sweep_cbx.setToolTip("Check this if track is mostly correct already.")
+        opts_layout.addWidget(self.skip_sweep_cbx)
+
+        self.lock_id_cbx = QCheckBox("Lock ID During Exit For Unilateral Exit Setups")
+        self.lock_id_cbx.setToolTip("For cases where only one mouse can exit the chamber and thus the remaining mouse's ID should be consistent.")
+        opts_layout.addWidget(self.lock_id_cbx)
 
         opts_group.setLayout(opts_layout)
         layout.addWidget(opts_group)
 
         cl_group = QGroupBox("Contrastive Learning Parameters")
         cl_layout = QVBoxLayout()
-        
-        self.skip_sweep_cbx = QCheckBox("Skip Motion Sweep Prior to Learning")
-        self.skip_sweep_cbx.setToolTip("Check this if track is mostly correct already.")
-        cl_layout.addWidget(self.skip_sweep_cbx)
+
+        self.worker_spin = Spinbox_With_Label("Cutout Extraction Workers:", (1, 256), 16)
+        cl_layout.addWidget(self.worker_spin)
 
         self.max_epochs_spin = Spinbox_With_Label("Max Epochs:", (1, 200), 100)
         self.warmup_epochs_spin = Spinbox_With_Label("Warmup Epochs:", (1, 200), 5)
@@ -600,6 +604,7 @@ class Track_Fix_Config_Dialog(QDialog):
         self.skip_motion_sweep = self.skip_sweep_cbx.isChecked()
         self.avtomat = self.avtomat_cbx.isChecked()
         self.worker_num = self.worker_spin.value()
+        self.lock_id = self.lock_id_cbx.isChecked()
         self.emp = Emb_Params(
             batch_size=self.batch_size_spin.value(),
             triplets=self.max_triplet_spin.value(),

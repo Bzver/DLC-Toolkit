@@ -31,6 +31,7 @@ class Track_Fixer:
         emp: Emb_Params,
         worker_num: int = 8,
         skip_sweep: bool = False,
+        blob_array: np.ndarray|None = None,
         avtomat: bool = False,
         parent=None
     ):
@@ -43,6 +44,7 @@ class Track_Fixer:
         self.emp = emp
         self.worker_num = worker_num
         self.skip_sweep = skip_sweep
+        self.blob_array = blob_array
         self.avtomat = avtomat
         self.main = parent
         self.total_frames = self.pred_data_array.shape[0]
@@ -286,6 +288,13 @@ class Track_Fixer:
     def _handle_single_observation(self, frame_idx: int, ref_positions: np.ndarray, compare_only: bool = False) -> bool:
         obs_idx = get_instances_on_current_frame(self.pred_data_array, frame_idx)[0]
         obs_pos = self.centroids[frame_idx, obs_idx]
+        if self.blob_array is not None and self.blob_array[frame_idx, 0] == 1:
+            logger.debug(f"Frame {frame_idx}: Blob array supplied, locking single obs to instance 0.")
+            if obs_idx != 0:
+                self._swap_ids_in_frame(frame_idx)
+            self._update_kalman_with_observation(frame_idx, [0], [0])
+            return True
+
         costs = []
         candidates = []
         for candidate_idx in [0, 1]:

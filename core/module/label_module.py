@@ -869,11 +869,15 @@ class Frame_Label:
         avtomat = config_dlg.avtomat
         emp = config_dlg.emp
         worker_num = config_dlg.worker_num
+        lock_id = config_dlg.lock_id
 
         start_idx = fix_range[0]
         end_idx = fix_range[1] + 1
         
         logger.info(f"Correcting marked frame range: {start_idx}–{end_idx-1}")
+
+        if lock_id and self.dm.blob_array is None:
+            raise RuntimeError("lock_id is set to true but blob_array is None. Use animal counter to get blob array first.")
 
         self.tf = Track_Fixer(
             pred_data_array=self.pred_data_array,
@@ -881,6 +885,7 @@ class Frame_Label:
             extractor=self.vm.extractor,
             anglemap=self.dm.angle_map_data,
             skip_sweep=skip_sweep,
+            blob_array=self.dm.blob_array if lock_id else None,
             avtomat=avtomat,
             emp=emp,
             worker_num=worker_num,
