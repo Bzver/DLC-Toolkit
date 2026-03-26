@@ -46,7 +46,7 @@ def calculate_blob_inference_intervals(blob_array:np.ndarray, intervals:Dict[str
     
     return inference_list
 
-def clean_blob_array_for_inference(blob_array:np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+def clean_blob_array_for_inference(blob_array:np.ndarray, buffer_size:int=5) -> Tuple[np.ndarray, np.ndarray]:
     total_frames = blob_array.shape[0]
 
     animal_count_array, merge_array = blob_array[:, 0].copy(), blob_array[:, 1].copy()
@@ -61,7 +61,7 @@ def clean_blob_array_for_inference(blob_array:np.ndarray) -> Tuple[np.ndarray, n
             finally:
                 continue
         if value == 1:
-            merge_array[max(0,start-5):end+6] = value
+            merge_array[max(0,start-buffer_size):end+buffer_size+1] = value
 
     merged_frames = set(np.where(merge_array==1)[0])
 
@@ -75,9 +75,9 @@ def clean_blob_array_for_inference(blob_array:np.ndarray) -> Tuple[np.ndarray, n
             finally:
                 continue
         if value == 2:
-            two_indices.update(range(max(0,start-5), min(total_frames,end+6)))
+            two_indices.update(range(max(0,start-buffer_size), min(total_frames,end+buffer_size+1)))
         if value == 1:
-            animal_count_array[max(0,start-5):min(total_frames,end+6)] = value
+            animal_count_array[max(0,start):min(total_frames,end+1)] = value
 
     two_indices = list(sorted(two_indices|merged_frames))
     animal_count_array[two_indices] = 2

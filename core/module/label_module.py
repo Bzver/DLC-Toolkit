@@ -175,6 +175,9 @@ class Frame_Label:
         if self.dm.dlc_data is not None and not hasattr(self, "plotter"):
             self.plotter = Prediction_Plotter(
                 dlc_data = self.dm.dlc_data, plot_config=self.dm.plot_config, plot_callback=self.plotter_callback, fast_mode=False)
+            
+        if self.dm.dlc_data is None or self.dm.dlc_data.pred_data_array is None:
+            self.plotter = None
 
         frame = self.vm.get_frame(self.dm.current_frame_idx)
         if frame is None:
@@ -195,6 +198,9 @@ class Frame_Label:
         self._plot_current_frame(frame)
 
     def _plot_current_frame(self, frame):
+        if not self.plotter:
+            return
+
         pixmap, w, h = frame_to_pixmap(frame, request_dim=True)
         pixmap_item = self.gview.gscene.addPixmap(pixmap)
         pixmap_item.setZValue(-1)
