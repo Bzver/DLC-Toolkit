@@ -3,10 +3,11 @@ from PySide6 import QtWidgets
 from PySide6.QtCore import Qt, QTimer, Signal, QRect
 from PySide6.QtWidgets import (
     QPushButton, QHBoxLayout, QVBoxLayout, QStyle, QStyleOptionSlider, QSlider, QLineEdit, QLabel, QApplication)
-from PySide6.QtGui import QPainter, QColor, QImage, QIntValidator, QFont, QPixmap, QKeyEvent
+from PySide6.QtGui import QPainter, QColor, QImage, QIntValidator, QFont, QPixmap, QKeyEvent, QPen
 from typing import List, Dict
 
 from utils.helper import indices_to_spans
+
 
 class Video_Slider_Widget(QtWidgets.QWidget):
     frame_changed = Signal(int)
@@ -163,6 +164,7 @@ class Video_Slider_Widget(QtWidgets.QWidget):
             self.is_playing = False
             self.play_button.setText("▶")
             self.playback_timer.stop()
+
 
 class Slider_With_Marks(QSlider):
     frame_changed = Signal(int)
@@ -366,6 +368,7 @@ class Slider_With_Marks(QSlider):
                     return
         super().mousePressEvent(event)
 
+
 class Frame_Input(QHBoxLayout):
     frame_changed_sig = Signal(int)
 
@@ -471,8 +474,8 @@ class Zoomed_zoom_slider(Slider_With_Marks):
             self.reset_category()
             return
 
-        start = max(0, self._center_frame - self._window_radius)
-        end = min(self._total_frames - 1, self._center_frame + self._window_radius)
+        start = self._center_frame - self._window_radius
+        end = self._center_frame + self._window_radius
         logical_span = end - start
         self.setRange(0, max(0, logical_span))
 
@@ -481,6 +484,35 @@ class Zoomed_zoom_slider(Slider_With_Marks):
             self.set_frame_category(sub_cat, self._full_idx_to_color, force_full_update=True)
         else:
             self.reset_category()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        opt = QStyleOptionSlider()
+        self.initStyleOption(opt)
+        groove_rect = self.style().subControlRect(
+            QStyle.CC_Slider, opt, QStyle.SC_SliderGroove, self
+        )
+        min_val, max_val = self.minimum(), self.maximum()
+        if max_val > min_val:
+            center_value = self._window_radius
+            center_x = QStyle.sliderPositionFromValue(
+                min_val, max_val, center_value, groove_rect.width(), False
+            ) + groove_rect.left()
+        else:
+            center_x = groove_rect.center().x()
+
+        self._draw_center_marker(painter, groove_rect, center_x)
+        painter.end()
+
+    def _draw_center_marker(self, painter: QPainter, groove_rect: QRect, x: int):
+        painter.setPen(QPen(QColor("#000000"), 2))
+        painter.drawLine(x, groove_rect.top() - 3, x, groove_rect.bottom() + 3)
+        painter.drawLine(x - 4, groove_rect.top() - 3, x + 4, groove_rect.top() - 3)
+        painter.drawLine(x - 4, groove_rect.bottom() + 3, x + 4, groove_rect.bottom() + 3)
 
 class No_Focus_Line_Edit(QLineEdit):
     value_changed = Signal(int)
