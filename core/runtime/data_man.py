@@ -78,13 +78,25 @@ class Data_Manager:
             pred_data_array = self.dlc_data.pred_data_array.copy()
             pred_frame_count = self.dlc_data.pred_frame_count
 
-        self.dlc_data = data_loader.load_data(metadata_only=True)
-        self.dlc_data.pred_frame_count = self.total_frames
+            old_kp = sorted(self.dlc_data.keypoints)
+
+        new_dlc_data = data_loader.load_data(metadata_only=True)
+        new_dlc_data.pred_frame_count = self.total_frames
 
         if existing_data:
-            self.dlc_data.prediction_filepath = prediction_filepath
-            self.dlc_data.pred_data_array = pred_data_array
-            self.dlc_data.pred_frame_count = pred_frame_count
+            new_kp = sorted(new_dlc_data.keypoints)
+            if new_kp != old_kp:
+                logger.warning(f"[DATAMAN] Loaded dlc config has different configuration. Saving the old predictions to file.")
+                save_path = f"{os.path.splitext(self.video_file)[0]}_config_change_backup.h5"
+                self.save_pred(self.dlc_data.pred_data_array, save_path)
+            else:
+                self.dlc_data.prediction_filepath = prediction_filepath
+                self.dlc_data.pred_data_array = pred_data_array
+                self.dlc_data.pred_frame_count = pred_frame_count
+
+        self.dlc_data = new_dlc_data
+        self.canon_pose = None
+        self.angle_map_data = None
 
     def load_dlc_label(self, image_folder:str, prediction_path:Optional[str]=None):
         """Load DLC Label without a preexisting prediction"""

@@ -120,7 +120,7 @@ class Frame_Exporter_Threaded:
         assert self.video_filepath != self.save_folder, "Invalid destination."
         self.worker_zero = None
 
-        if os.path.isdir(self.video_filepath) or len(frame_list) < max_segment_size:
+        if os.path.isdir(self.video_filepath) or len(frame_list) < 100:
             self.worker_zero = Frame_Exporter(video_filepath, output_folder, frame_list)
 
         tm = Temp_Manager(video_filepath)

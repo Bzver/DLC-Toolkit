@@ -113,6 +113,9 @@ class Frame_View:
         if self.dm.dlc_data is not None and not hasattr(self, "plotter"):
             self.plotter = Prediction_Plotter(dlc_data=self.dm.dlc_data, plot_config=self.dm.plot_config)
 
+        if self.dm.dlc_data is None or self.dm.dlc_data.pred_data_array is None:
+            self.plotter = None
+
         frame = self.vm.get_frame(self.dm.current_frame_idx)
         if frame is None:
             self.vid_play.display.setText("Failed to load current frame.")
