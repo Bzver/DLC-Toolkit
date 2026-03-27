@@ -137,27 +137,22 @@ class Frame_View:
         else:
             self._plot_current_frame(frame)
 
+    def _plot_current_frame(self, frame, count=None):
+        if self.dm.dlc_data is not None and self.dm.dlc_data.pred_data_array is not None and self.plotter is not None:
+            if self.dm.plot_config.plot_pred:
+                frame = self.plotter.plot_predictions(frame, self.dm.dlc_data.pred_data_array[self.dm.current_frame_idx,:,:])
+            if self.dm.has_current_frame_cat("labeled") and self.dm.plot_config.plot_labeled and self.dm.label_data_array is not None:
+                old_colors = self.plotter.color_rgb.copy()
+                self.plotter.color_rgb = [(200, 130, 0), (40, 200, 40), (40, 120, 200), (200, 40, 40), (200, 200, 80)]
+                frame = self.plotter.plot_predictions(frame, self.dm.label_data_array[self.dm.current_frame_idx,:,:])
+                self.plotter.color_rgb = old_colors
+
         pixmap = frame_to_pixmap(frame)
 
         scaled_pixmap = pixmap.scaled(self.vid_play.display.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self.vid_play.display.setPixmap(scaled_pixmap)
         self.vid_play.display.setText("")
         self.vid_play.set_current_frame(self.dm.current_frame_idx)
-
-    def _plot_current_frame(self, frame, count=None):
-        if self.dm.dlc_data is None or self.dm.dlc_data.pred_data_array is None or self.plotter is None:
-            return frame
-        
-        if self.dm.plot_config.plot_pred:
-            frame = self.plotter.plot_predictions(frame, self.dm.dlc_data.pred_data_array[self.dm.current_frame_idx,:,:])
-
-        if self.dm.has_current_frame_cat("labeled") and self.dm.plot_config.plot_labeled and self.dm.label_data_array is not None:
-            old_colors = self.plotter.color_rgb.copy()
-            self.plotter.color_rgb = [(200, 130, 0), (40, 200, 40), (40, 120, 200), (200, 40, 40), (200, 200, 80)]
-            frame = self.plotter.plot_predictions(frame, self.dm.label_data_array[self.dm.current_frame_idx,:,:])
-            self.plotter.color_rgb = old_colors
-
-        return frame
 
     ###################################################################################################################################################
 
