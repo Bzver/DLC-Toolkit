@@ -170,7 +170,7 @@ class Blob_Counter(QGroupBox):
         config_btns_layout.addWidget(self.import_config_btn)
         self.blb_layout.addLayout(config_btns_layout)
 
-        self.max_worker_spin = Spinbox_With_Label("Max Workers: ", (1,64), 8)
+        self.max_worker_spin = Spinbox_With_Label("Max Workers: ", (1,64), 4)
         self.max_worker_spin.setToolTip("Number of parallel processes when counting the entire video.")
         self.controls_layout.addWidget(self.max_worker_spin)
 
@@ -505,6 +505,7 @@ class Blob_Counter(QGroupBox):
 
     def _reset_and_reprocess(self):
         self.bg_display.update_background_display()
+        self.working_bg = self._process_background()
         self._reset_blob_array()
         self._reprocess_current_frame()
 
@@ -591,7 +592,7 @@ class Blob_Counter(QGroupBox):
                 
                 logger.info(f"[CONFIG] Imported config from {file_path}")
                 self.parameters_changed.emit()
-                self._process_background()
+                self.working_bg = self._process_background()
                 self._reprocess_current_frame()
                 
             except json.JSONDecodeError as e:

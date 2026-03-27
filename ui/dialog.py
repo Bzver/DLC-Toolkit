@@ -528,6 +528,10 @@ class Track_Fix_Config_Dialog(QDialog):
         self.avtomat_cbx.setToolTip("Auto-accept ID swaps based on contrastive embedding agreement")
         opts_layout.addWidget(self.avtomat_cbx)
 
+        self.kp_smooth_cbx = QCheckBox("Keypoint Smoothing")
+        self.kp_smooth_cbx.setChecked(True)
+        opts_layout.addWidget(self.kp_smooth_cbx)
+
         self.skip_sweep_cbx = QCheckBox("Skip Motion Sweep Prior to Learning")
         self.skip_sweep_cbx.setToolTip("Check this if track is mostly correct already.")
         opts_layout.addWidget(self.skip_sweep_cbx)
@@ -605,6 +609,7 @@ class Track_Fix_Config_Dialog(QDialog):
         self.avtomat = self.avtomat_cbx.isChecked()
         self.worker_num = self.worker_spin.value()
         self.lock_id = self.lock_id_cbx.isChecked()
+        self.kp_smooth = self.kp_smooth_cbx.isChecked()
         self.emp = Emb_Params(
             batch_size=self.batch_size_spin.value(),
             triplets=self.max_triplet_spin.value(),

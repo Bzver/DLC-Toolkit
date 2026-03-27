@@ -870,6 +870,7 @@ class Frame_Label:
         emp = config_dlg.emp
         worker_num = config_dlg.worker_num
         lock_id = config_dlg.lock_id
+        kp_smooth = config_dlg.kp_smooth
 
         start_idx = fix_range[0]
         end_idx = fix_range[1] + 1
@@ -879,11 +880,12 @@ class Frame_Label:
         if lock_id and self.dm.blob_array is None:
             raise RuntimeError("lock_id is set to true but blob_array is None. Use animal counter to get blob array first.")
 
-        self.tf = Track_Fixer(
+        tf = Track_Fixer(
             pred_data_array=self.pred_data_array,
             dlc_data=self.dm.dlc_data,
             extractor=self.vm.extractor,
             anglemap=self.dm.angle_map_data,
+            kp_smooth=kp_smooth,
             skip_sweep=skip_sweep,
             blob_array=self.dm.blob_array if lock_id else None,
             avtomat=avtomat,
@@ -892,7 +894,7 @@ class Frame_Label:
             parent=self.main,
         )
 
-        pred_data_array = self.tf.track_correction(start_idx=start_idx, end_idx=end_idx)
+        pred_data_array = tf.track_correction(start_idx=start_idx, end_idx=end_idx)
 
         self.dm.dlc_data.pred_data_array = pred_data_array
         self.pred_data_array = self.dm.dlc_data.pred_data_array
