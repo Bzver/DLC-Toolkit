@@ -336,11 +336,14 @@ class Mark_Generator(QGroupBox):
             self.frame_list_combine.emit(discrepancy_frames)
 
     def _mark_count_change_frames(self):
-        if self.pred_data_array is None:
-            Loggerbox.error(self, "No Data", "DLC prediction data is required to find count changes.")
+        if self.pred_data_array is None and self.blob_array is None:
+            Loggerbox.error(self, "No Data", "Either DLC prediction or blob counting is required to find count changes.")
             return
 
-        animal_count_array = get_instance_count_per_frame(self.pred_data_array)
+        if self.pred_data_array is not None and np.any(~np.isnan(self.pred_data_array)):
+            animal_count_array = get_instance_count_per_frame(self.pred_data_array)
+        else:
+            animal_count_array = self.blob_array[:,0]
 
         start_text = self.start_frame_textbox.text().strip()
         end_text = self.end_frame_textbox.text().strip()

@@ -105,9 +105,6 @@ class New_Folder_Name_Dialog(QDialog):
         if os.path.sep in name or (':' in name and os.name == 'nt'):
             Loggerbox.warning(self, "Invalid Name", "Project name cannot contain path separators.")
             return
-        if self.exclude_curr and name == self.video_name:
-            Loggerbox.warning(self, "Invalid Name", "Project with the same name already exists.")
-            return
         self.folder_selected.emit(name)
         self.accept()
 

@@ -224,7 +224,7 @@ class Frame_View:
             self.menu_slot_callback()
             mark_gen = Mark_Generator(
                 total_frames=self.dm.total_frames,
-                pred_data_array=self.dm.dlc_data.pred_data_array,
+                pred_data_array=self.dm.dlc_data.pred_data_array if self.dm.dlc_data else None,
                 blob_array=self.dm.blob_array,
                 dlc_data=self.dm.dlc_data,
                 angle_map_data=self.dm.angle_map_data,
