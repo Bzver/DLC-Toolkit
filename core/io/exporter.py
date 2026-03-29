@@ -43,7 +43,7 @@ class DLC_Exporter:
 
         self.ea = Exporter_Augments(
             crop_coord = validate_crop_coord(crop_coord),
-            mask = mask, grayscaling = grayscaling
+            mask = None if mask is None else True, grayscaling = grayscaling
         )
 
         os.makedirs(self.save_folder, exist_ok=True)
