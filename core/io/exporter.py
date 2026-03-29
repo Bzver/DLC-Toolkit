@@ -133,11 +133,7 @@ class Frame_Exporter_Threaded:
         segments = self._task_splitter()
         all_indices = []
 
-        title = f"FRAME EXPORTOR | {self.max_workers} workers | {len(segments)} segments | to_video: False"
-        border = "═" * (len(title) + 3)
-        logger.info(f"╔{border}╗")
-        logger.info(f"║ {title}  ║")
-        logger.info(f"╚{border}╝")
+        self._job_info_verbose(segments, aug)
 
         try:
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
@@ -171,11 +167,7 @@ class Frame_Exporter_Threaded:
         segments = self._task_splitter()
         all_indices = []
 
-        title = f"FRAME EXPORTOR | {self.max_workers} workers | {len(segments)} segments | to_video: True"
-        border = "═" * (len(title) + 3)
-        logger.info(f"╔{border}╗")
-        logger.info(f"║ {title}  ║")
-        logger.info(f"╚{border}╝")
+        self._job_info_verbose(segments, ea)
 
         try:
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
@@ -196,6 +188,21 @@ class Frame_Exporter_Threaded:
 
         except Exception as e:
             logger.error(f"[THREAD_EXP] Critical failure: {e}")
+
+    def _job_info_verbose(self, segments, aug:Exporter_Augments|Cutout_Augments):
+        line1 = f"FRAME EXPORTOR | {self.max_workers} workers | {len(segments)} segments | MODE: {aug.mode}"
+        if aug.mode == "ea":
+            line2 = f"Crop Coords: {aug.crop_coord} | Masking: {aug.mask} | Grayscaling: {aug.grayscaling}"
+        else:
+            line2 = f"Cutout Dim: ({aug.cutout_dim}, {aug.cutout_dim}) | To Image: {aug.to_image} | Grayscaling: {aug.grayscaling}"
+
+        content_width = max(len(line1), len(line2))
+        border = "═" * (content_width + 2)
+
+        logger.info(f"╔{border}╗")
+        logger.info(f"║ {line1:^{content_width}} ║")
+        logger.info(f"║ {line2:^{content_width}} ║")
+        logger.info(f"╚{border}╝")
 
     def _worker_process_segment(
             self, 
