@@ -390,7 +390,7 @@ class DLC_Inference(QDialog):
         
         temp_data_array = loaded_data.pred_data_array
 
-        if self.crop_coord is not None:
+        if self.crop_coord is not None and self.cropping:
             coords_array = crop_coord_to_array(self.crop_coord, temp_data_array.shape)
             temp_data_array = temp_data_array + coords_array
 

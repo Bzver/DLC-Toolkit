@@ -177,8 +177,9 @@ class Mark_Generator(QGroupBox):
             if self.blob_array is not None:
                 animal_count_array = self.blob_array[:, 0]
 
-            if self.pred_data_array is not None:
-                animal_count_array = get_instance_count_per_frame(self.pred_data_array)
+            animal_count_array = self._acquire_animal_count_source()
+            if animal_count_array is None:
+                return
 
             selected_options = []
             if self.zero_animal_checkbox.isChecked():
@@ -248,6 +249,8 @@ class Mark_Generator(QGroupBox):
         elif self.combine_radio.isChecked():
             self.frame_list_combine.emit(selected_frames)
 
+        return selected_frames
+
     def _build_random_container(self):
         container = QGroupBox("Random Frame Extraction")
         layout = QHBoxLayout(container)
@@ -266,11 +269,37 @@ class Mark_Generator(QGroupBox):
         container = QtWidgets.QWidget()
         main_layout = QVBoxLayout(container)
 
+        source_box = QGroupBox("Data Source")
+        source_layout = QHBoxLayout()
+        
+        self.dlc_source_radio = QtWidgets.QRadioButton("DLC Prediction")
+        self.blob_source_radio = QtWidgets.QRadioButton("Blob Counter")
+        
+        if self.pred_data_array is not None and self.blob_array is not None:
+            self.dlc_source_radio.setChecked(True)
+        elif self.pred_data_array is not None:
+            self.dlc_source_radio.setChecked(True)
+            self.blob_source_radio.setEnabled(False)
+            self.blob_source_radio.setToolTip("Blob data not available")
+        elif self.blob_array is not None and np.any(self.blob_array[:, 0]):
+            self.blob_source_radio.setChecked(True)
+            self.dlc_source_radio.setEnabled(False)
+            self.dlc_source_radio.setToolTip("DLC prediction data not available")
+        else:
+            self.dlc_source_radio.setEnabled(False)
+            self.blob_source_radio.setEnabled(False)
+        
+        source_layout.addWidget(self.dlc_source_radio)
+        source_layout.addWidget(self.blob_source_radio)
+        source_box.setLayout(source_layout)
+        main_layout.addWidget(source_box)
+
         count_box = QGroupBox("Selection Based on Raw Count")
         count_layout = QHBoxLayout()
         self.zero_animal_checkbox = QCheckBox("0 Animal")
         self.one_animal_checkbox = QCheckBox("1 Animal")  
         self.two_plus_animal_checkbox = QCheckBox("2+ Animal")
+
         count_layout.addWidget(self.zero_animal_checkbox)
         count_layout.addWidget(self.one_animal_checkbox)
         count_layout.addWidget(self.two_plus_animal_checkbox)
@@ -282,7 +311,7 @@ class Mark_Generator(QGroupBox):
 
         main_layout.addWidget(count_box)
 
-        if self.pred_data_array is not None:
+        if self.pred_data_array is not None or self.blob_array is not None:
             change_box = QGroupBox("Selection Based on Count Change")
             change_layout = QVBoxLayout()
             self.buffer_size_spin = Spinbox_With_Label("Buffer Frames: ", (1, 100), 2)
@@ -293,14 +322,14 @@ class Mark_Generator(QGroupBox):
             change_box.setLayout(change_layout)
             main_layout.addWidget(change_box)
 
-            if self.blob_array is not None:
-                dscr_box = QGroupBox("Selection Based on DLC-Blob Discrepancy")
-                dscr_layout = QVBoxLayout()
-                self.discrepancy_btn = QPushButton("Find DLC-Blob Discrepancy")
-                self.discrepancy_btn.clicked.connect(self._mark_count_discrepancy_frames)
-                dscr_layout.addWidget(self.discrepancy_btn)
-                dscr_box.setLayout(dscr_layout)
-                main_layout.addWidget(dscr_box)
+        if self.pred_data_array is not None and self.blob_array is not None:
+            dscr_box = QGroupBox("Selection Based on DLC-Blob Discrepancy")
+            dscr_layout = QVBoxLayout()
+            self.discrepancy_btn = QPushButton("Find DLC-Blob Discrepancy")
+            self.discrepancy_btn.clicked.connect(self._mark_count_discrepancy_frames)
+            dscr_layout.addWidget(self.discrepancy_btn)
+            dscr_box.setLayout(dscr_layout)
+            main_layout.addWidget(dscr_box)
 
         return container
 
@@ -335,15 +364,29 @@ class Mark_Generator(QGroupBox):
         elif self.combine_radio.isChecked():
             self.frame_list_combine.emit(discrepancy_frames)
 
+        return discrepancy_frames
+
+    def _acquire_animal_count_source(self):
+        if self.dlc_source_radio.isChecked() and self.pred_data_array is not None:
+            return get_instance_count_per_frame(self.pred_data_array)
+        elif self.blob_source_radio.isChecked() and self.blob_array is not None:
+            return self.blob_array[:, 0]
+        elif self.pred_data_array is not None:
+            return get_instance_count_per_frame(self.pred_data_array)
+        elif self.blob_array is not None:
+            return self.blob_array[:, 0]
+        else:
+            Loggerbox.error(self, "No Data", "Either DLC prediction or blob counting is required to find count changes.")
+            return None
+
     def _mark_count_change_frames(self):
         if self.pred_data_array is None and self.blob_array is None:
             Loggerbox.error(self, "No Data", "Either DLC prediction or blob counting is required to find count changes.")
             return
 
-        if self.pred_data_array is not None and np.any(~np.isnan(self.pred_data_array)):
-            animal_count_array = get_instance_count_per_frame(self.pred_data_array)
-        else:
-            animal_count_array = self.blob_array[:,0]
+        animal_count_array = self._acquire_animal_count_source()
+        if animal_count_array is None:
+            return
 
         start_text = self.start_frame_textbox.text().strip()
         end_text = self.end_frame_textbox.text().strip()
@@ -387,6 +430,8 @@ class Mark_Generator(QGroupBox):
             self.frame_list_subset.emit(selected_frames)
         elif self.combine_radio.isChecked():
             self.frame_list_combine.emit(selected_frames)
+
+        return selected_frames
 
     def _build_clipboard_container(self):
         container = QGroupBox("Paste or Edit Frame List")

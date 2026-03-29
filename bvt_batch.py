@@ -1,17 +1,15 @@
 import os
 import shutil
 import yaml
-import numpy as np
 from collections import defaultdict
 from contextlib import contextmanager
 from PySide6 import QtWidgets
 from typing import List, Tuple, Optional
 
 from core.runtime import Data_Manager
-from core.tool.inference import DLC_Inference
-from core.tool.track_fix import Track_Fixer
+from core.tool import DLC_Inference, Track_Fixer, Mark_Generator
 from core.io import backup_existing_prediction, get_existing_projects, csv_op, prediction_to_csv, Frame_Extractor
-from utils.helper import calculate_blob_inference_intervals, get_instance_count_per_frame
+from utils.helper import get_instance_count_per_frame
 from utils.logger import logger, set_headless_mode
 
 
@@ -335,17 +333,14 @@ def _log_batch_progress(operation: str, items: List[str]) -> None:
 def batch_inference(
     rootdir: str, 
     dlc_config_path: str, 
+    mark_gen_cmd: list | None=None,
     crop: bool = False,
     mask: bool = False,
     grayscale: bool = False,
+    infer_as_video: bool = False,
     batch_size: int = 32,
     detector_batch_size: int = 32,
     shuffle_idx: Optional[int] = None,
-    partial_infer: bool = False,
-    partial_infer_indices: Optional[List[int]] = None,
-    blob_based_infer: bool = False,
-    infer_interval: Optional[Tuple[int, int, int, int]] = None,
-    infer_only_empty_frames: bool = False,
     crop_region: Optional[Tuple[int, int, int, int]] = None
 ):
     workspaces = _find_files_by_extension(rootdir, WORKSPACE_EXTENSIONS)
@@ -366,15 +361,12 @@ def batch_inference(
             workspace_file=ws_path,
             data_manager=dm,
             dlc_config_path=dlc_config_path,
-            partial_infer=partial_infer,
-            partial_infer_indices=partial_infer_indices,
-            blob_based_infer=blob_based_infer,
-            infer_interval=infer_interval,
-            infer_only_empty_frames=infer_only_empty_frames,
+            mark_gen_cmd=mark_gen_cmd if mark_gen_cmd else [],
             crop=crop,
             crop_region=crop_region,
             use_mask=mask,
             grayscale=grayscale,
+            infer_as_video=infer_as_video,
             shuffle_idx=shuffle_idx,
             batch_size=batch_size,
             detector_batch_size=detector_batch_size,
@@ -394,15 +386,12 @@ def _inference_workspace_vid(
         workspace_file: str,
         data_manager: Data_Manager,
         dlc_config_path: Optional[str] = None,
-        partial_infer: bool = False,
-        partial_infer_indices: Optional[List[int]] = None,
-        blob_based_infer: bool = False,
-        infer_interval: Optional[Tuple[int, int, int, int]] = None,
-        infer_only_empty_frames: bool = False,
+        mark_gen_cmd: list = [],
         crop: bool = False,
         crop_region: Optional[Tuple[int, int, int, int]] = None,
         use_mask: bool = False,
         grayscale: bool = False,
+        infer_as_video:bool = False,
         shuffle_idx: Optional[int] = None,
         batch_size: Optional[int] = None,
         detector_batch_size: Optional[int] = None,
@@ -435,36 +424,8 @@ def _inference_workspace_vid(
     if use_mask:
         assert dm.background_mask is not None, "No mask is loaded in data manager when mask parameter is set to True."
 
-    inference_list = []
-    if partial_infer:
-        assert partial_infer_indices is not None, "[BATCH] partial_infer_indices must be provided when partial_infer is True"
-        inference_list = partial_infer_indices
-    elif blob_based_infer:
-        assert infer_interval is not None, "[BATCH] infer_interval must be provided when blob_based_infer is True"
-        logger.info(f"[BATCH] Blob-based inference selected with interval: {infer_interval}")
-        if dm.blob_array is not None:
-            intervals = {
-                "interval_0_animal": infer_interval[0],
-                "interval_1_animal": infer_interval[1],
-                "interval_n_animals": infer_interval[2],
-                "interval_merged": infer_interval[3],
-            }
-            if infer_only_empty_frames and dm.dlc_data.pred_data_array is not None:
-                existing_frames = np.where(np.any(~np.isnan(dm.dlc_data.pred_data_array), axis=(1,2)))[0].tolist()
-                if existing_frames:
-                    logger.info(f"[BATCH] Loaded {len(existing_frames)} inferenced frames.")
-                    inference_list = calculate_blob_inference_intervals(dm.blob_array, intervals, existing_frames)
-                else:
-                    logger.info("[BATCH] No existing frames found.")
-                    inference_list = calculate_blob_inference_intervals(dm.blob_array, intervals)
-            else:
-                inference_list = calculate_blob_inference_intervals(dm.blob_array, intervals)
-        else:
-            raise RuntimeError("[BATCH] Blob array has not been initialized in the workspace file!")
-    elif infer_only_empty_frames and dm.dlc_data.pred_data_array is not None:
-        inference_list = np.where(np.all(np.isnan(dm.dlc_data.pred_data_array), axis=(1,2)))[0].tolist()
-    else:
-        inference_list = list(range(dm.total_frames))
+    if mark_gen_cmd:
+        inference_list = _acquire_inference_list_from_markgen(dm)
 
     if len(inference_list) > MAX_FRAMES_PER_RUN:
         logger.info(f"[BATCH] Splitting {len(inference_list)} frames into chunks.")
@@ -490,12 +451,10 @@ def _inference_workspace_vid(
             mask=dm.background_mask if use_mask else None
         )
         inference_window.hide()
-        inference_window.cropping = crop
-        inference_window.masking = use_mask
-        inference_window.grayscaling = grayscale
-
-        to_video = not any([blob_based_infer, infer_only_empty_frames, partial_infer])
-        inference_window.to_video_checkbox.setChecked(to_video)
+        inference_window.cropping_checkbox.setChecked(crop)
+        inference_window.masking_checkbox.setChecked(use_mask)
+        inference_window.grayscaling_checkbox.setChecked(grayscale)
+        inference_window.to_video_checkbox.setChecked(infer_as_video)
         if batch_size is not None:
             inference_window.batchsize_spinbox.setValue(batch_size)
         if detector_batch_size is not None:
@@ -509,7 +468,32 @@ def _inference_workspace_vid(
 
         logger.info(f"[BATCH] Inference process initiated. cropping: {crop}, masking: {use_mask}, grayscaling: {grayscale}")
         inference_window._inference_pipe(headless=True)
+        inference_window.close()
 
+def _acquire_inference_list_from_markgen(dm:Data_Manager):
+    mg = Mark_Generator(
+        total_frames=dm.total_frames,
+        pred_data_array=dm.dlc_data.pred_data_array if dm.dlc_data else None,
+        blob_array=dm.blob_array,
+        dlc_data=dm.dlc_data,
+        angle_map_data=dm.angle_map_data
+        )
+    mg.hide()
+    mg.mode_option.setCurrentText("Animal Num")
+    mg.blob_source_radio.setChecked(True)
+    mg.merged_animal_checkbox.setChecked(True)
+    mg.two_plus_animal_checkbox.setChecked(True)
+    inference_list = []
+    marker = mg.find_frames_to_mark()
+    if marker:
+        inference_list.extend(marker)
+        mg.buffer_size_spin.setValue(15)
+        result = mg._mark_count_change_frames()
+        if result:
+            inference_list.extend(result)
+
+    return sorted(set(inference_list))
+    mg.close()
 
 def _autoload_pred(workspace_file: str, dm: Data_Manager, dlc_config_path: Optional[str] = None):
     workspace_dir = os.path.dirname(workspace_file)
@@ -611,18 +595,19 @@ if __name__ == "__main__":
     rootdir = r""
     dlc_config_path = "D:/Project/DLC-Models/NTD-Blob/config.yaml"
  
-    dial_tone = 4
+    dial_tone = 1
 
     match dial_tone:
         case 1:
             batch_inference(
                 rootdir,
                 dlc_config_path,
+                mark_gen_cmd=["dummy"],
                 crop=True,
                 mask=False,
-                grayscale=True,
-                infer_only_empty_frames=False,
-                batch_size=32,
+                grayscale=False,
+                infer_as_video=False,
+                batch_size=16,
                 detector_batch_size=16
             )
         case 2:
