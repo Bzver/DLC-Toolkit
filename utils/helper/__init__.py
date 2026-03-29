@@ -1,6 +1,5 @@
 from .body_part_work import infer_head_tail_indices, build_angle_map, build_weighted_pose_vectors
 from .data_cleaning import (
-    calculate_blob_inference_intervals,
     clean_blob_array_for_inference,
     clean_inconsistent_nans,
     array_to_iterable_runs,
@@ -20,7 +19,6 @@ from .roi import get_roi_cv2, plot_roi, crop_coord_to_array, validate_crop_coord
 from .misc import handle_unsaved_changes_on_close, bye_bye_runtime_warning
 
 __all__ = (
-    calculate_blob_inference_intervals,
     handle_unsaved_changes_on_close,
     clean_blob_array_for_inference,
     get_instances_on_current_frame,

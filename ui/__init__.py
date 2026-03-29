@@ -5,7 +5,6 @@ from .component import (
     Draggable_Keypoint,
 )
 from .dialog import (
-    Inference_interval_Dialog,
     Instance_Selection_Dialog,
     Track_Fix_Config_Dialog,
     Pose_Rotation_Dialog,
@@ -29,7 +28,6 @@ from .graphic_view import Canvas
 
 __all__ = (
     Progress_Indicator_Dialog,
-    Inference_interval_Dialog,
     Instance_Selection_Dialog,
     Track_Fix_Config_Dialog,
     Clickable_Video_Label,

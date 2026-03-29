@@ -5,8 +5,8 @@ from PySide6.QtGui import QPixmap
 
 from core.runtime import Data_Manager, Video_Manager
 from core.tool import Mark_Generator, Blob_Counter, Prediction_Plotter
-from ui import Menu_Widget, Video_Player_Widget, Frame_List_Dialog, Status_Bar, Inference_interval_Dialog, Shortcut_Manager
-from utils.helper import frame_to_pixmap, calculate_blob_inference_intervals, frame_to_grayscale
+from ui import Menu_Widget, Video_Player_Widget, Frame_List_Dialog, Status_Bar, Shortcut_Manager
+from utils.helper import frame_to_pixmap, frame_to_grayscale
 from utils.logger import Loggerbox, QMessageBox
 
 
@@ -299,20 +299,9 @@ class Frame_View:
         self.call_inference(inference_list)
 
     def dlc_inference_all(self):
-        if self.dm.total_frames > 9000:
-            self.status_bar.show_message("It's over nine thousands!", duration_ms=500)
-            self._suggest_animal_counting()
-            if self.dm.blob_array is not None:
-                dialog = Inference_interval_Dialog(self.main)
-                dialog.intervals_selected.connect(self._handle_inference_intervals)
-                dialog.exec()
-            elif self.skip_counting:
-                inference_list = list(range(self.dm.total_frames))
-                self.call_inference(inference_list)
-        else:
-            inference_list = list(range(self.dm.total_frames))
-            self.call_inference(inference_list)
-    
+        inference_list = list(range(self.dm.total_frames))
+        self.call_inference(inference_list)
+
     def call_inference(self, inference_list:list):
         if not self.vm.check_status_msg():
             return
@@ -364,25 +353,6 @@ class Frame_View:
                 self._toggle_animal_counting()
             else:
                 self.skip_counting = True
-
-    def _handle_inference_intervals(self, intervals:dict, skip_existing:bool):
-        existing_frames = []
-
-        if skip_existing and self.dm.dlc_data is not None and self.dm.dlc_data.pred_data_array is not None:
-            existing_frames = np.where(np.any(~np.isnan(self.dm.dlc_data.pred_data_array), axis=(1,2)))[0].tolist()
-
-        inference_list= calculate_blob_inference_intervals(self.dm.blob_array, intervals, existing_frames)
-
-        if not inference_list:
-            Loggerbox.info(self, "Inference List Empty", "No additional frames are to be inferenced, skipping...")
-            return
-
-        reply = Loggerbox.question(
-            self.main, "Inference List Calculated",
-            f"A total of {len(inference_list)} frames out of {self.dm.total_frames} will be inferenced, confirm?"
-        )
-        if reply == QMessageBox.Yes:
-            self.call_inference(inference_list)
 
     def _reload_prediction(self, prediction_path:str):
         """Reload prediction data from file and update visualization"""
