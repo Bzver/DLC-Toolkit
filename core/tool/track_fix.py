@@ -1,5 +1,6 @@
 import os
 import numpy as np
+from tqdm import tqdm
 from scipy.signal import savgol_filter
 from sklearn.cluster import KMeans
 from typing import Tuple, List, Dict
@@ -72,11 +73,16 @@ class Track_Fixer:
             end_idx = self.total_frames
 
         if not self.skip_sweep:
-            for f in range(start_idx, end_idx):
-                success = self._correct_frame_with_hungarian(f)
-                if not success:
-                    self.ambiguous_frames.append(f)
-                    logger.debug(f"[TF] Ambiguous match, added to backtrack list")
+            pbar = tqdm(total=end_idx - start_idx, desc=f"Motion Sweep In Progress", leave=False, ncols=200)
+            try:
+                for f in range(start_idx, end_idx):
+                    pbar.update(1)
+                    success = self._correct_frame_with_hungarian(f)
+                    if not success:
+                        self.ambiguous_frames.append(f)
+                        logger.debug(f"[TF] Ambiguous match, added to backtrack list")
+            finally:
+                pbar.close()
 
         if self.kp_smooth:
             self._run_kp_smoothing()
@@ -84,8 +90,8 @@ class Track_Fixer:
         if self.skip_contrast:
             if self.blob_array is not None and self.locker_stable_swap:
                 self._process_stable_swap_candidates(self.locker_stable_swap)
-            else:
-                swap_orders = self._launch_dialog_swap(self.ambiguous_frames, 0, self.total_frames-1)
+            elif self.ambiguous_frames:
+                swap_orders = self._launch_dialog_swap(self.ambiguous_frames, start_idx, end_idx)
                 self._execute_swap_orders(swap_orders, self.total_frames-1)
             return self.pred_data_array
 
@@ -311,6 +317,7 @@ class Track_Fixer:
                 kalman_refs[inst_idx] = state[:2]
             else:
                 kalman_available = False
+
         logger.debug(f"[KALMAN] Kalman refs: Inst 0: ({kalman_refs[0, 0]:.1f}, {kalman_refs[0, 1]:.1f}), Inst 1: ({kalman_refs[1, 0]:.1f}, {kalman_refs[1, 1]:.1f})")
         if (kalman_available or force_kalman) and not np.isnan(kalman_refs).any():
             min_cost_kalman = self._compute_min_assignment_cost(kalman_refs, current_obs)
@@ -322,7 +329,7 @@ class Track_Fixer:
         last_known_cost = self._compute_min_assignment_cost(self.last_known_pos, current_obs)
         last_known_ambiguous = last_known_cost > self.AMBIGUITY_THRESHOLD
 
-        if last_known_ambiguous or np.isnan(self.last_known_pos).any():
+        if last_known_ambiguous:
             vote_refs = self._vote_last_n_frames(frame_idx,  n_frames=self.VOTE_WINDOW_SIZE,  skip_ambiguous=True)
             
             if not np.isnan(vote_refs).all():
@@ -412,8 +419,9 @@ class Track_Fixer:
             logger.debug(f"Frame {frame_idx}: Blob array supplied, locking single obs to instance 0.")
             if obs_idx != 0:
                 self._swap_ids_in_frame(frame_idx)
-                if self.skip_contrast:
+                if self.skip_contrast and frame_idx - self.last_id_locker > 2 and np.sum(self.inst_count_per_frame[self.last_id_locker:frame_idx]==2) > 2:
                     self.locker_stable_swap.extend(range(self.last_id_locker+1, frame_idx))
+                    self.ambiguous_frames.append(frame_idx)
 
             self.last_id_locker = frame_idx
             self._update_kalman_with_observation(frame_idx, [0], [0])
@@ -451,7 +459,7 @@ class Track_Fixer:
             if abs(c0 - c1) < self.AMBIGUITY_THRESHOLD:
                 logger.debug(f"Frame {frame_idx}: Ambiguous single observation (costs {c0:.1f}, {c1:.1f})")
                 return False
-            return True
+        return True
 
     def _handle_two_observations(self, frame_idx: int, ref_positions: np.ndarray, get_min_cost: bool = False) -> bool | float:
         valid_ref = np.where(np.all(~np.isnan(ref_positions), axis=-1))[0]

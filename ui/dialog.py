@@ -487,22 +487,21 @@ class Track_Fix_Config_Dialog(QDialog):
         self.kp_smooth_cbx.setChecked(True)
         opts_layout.addWidget(self.kp_smooth_cbx)
 
-        self.skip_sweep_cbx = QCheckBox("Skip Motion Sweep Prior to Learning")
-        self.skip_sweep_cbx.setToolTip("Check this if track is mostly correct already.")
-        opts_layout.addWidget(self.skip_sweep_cbx)
-
-        lock_skip_row = QHBoxLayout()
         self.lock_id_cbx = QCheckBox("Lock ID During Exit For Unilateral Exit Setups")
         self.lock_id_cbx.setToolTip("For cases where only one mouse can exit the chamber and thus the remaining mouse's ID should be consistent.")
+        opts_layout.addWidget(self.lock_id_cbx)
         
+        skip_row = QHBoxLayout()
+        self.skip_sweep_cbx = QCheckBox("Skip Motion Sweep Prior to Learning")
+        self.skip_sweep_cbx.setToolTip("Check this if track is mostly correct already.")
+        skip_row.addWidget(self.skip_sweep_cbx)
+
         self.skip_contrastive_cbx = QCheckBox("Skip Contrastive Learning")
         self.skip_contrastive_cbx.setToolTip("Skip contrastive learning step entirely. Use only motion sweep and id lock for track correction.")
         self.skip_contrastive_cbx.stateChanged.connect(self._toggle_contrastive_params)
-        
-        lock_skip_row.addWidget(self.lock_id_cbx)
-        lock_skip_row.addWidget(self.skip_contrastive_cbx)
-        opts_layout.addLayout(lock_skip_row)
+        skip_row.addWidget(self.skip_contrastive_cbx)
 
+        opts_layout.addLayout(skip_row)
         opts_group.setLayout(opts_layout)
         layout.addWidget(opts_group)
 
@@ -563,9 +562,13 @@ class Track_Fix_Config_Dialog(QDialog):
     def _toggle_contrastive_params(self):
         is_skipped = self.skip_contrastive_cbx.isChecked()
         self.cl_group.setDisabled(is_skipped)
+        self.skip_sweep_cbx.setChecked(False)
+        self.skip_sweep_cbx.setDisabled(is_skipped)
         if is_skipped and not self.lock_id_cbx.isChecked():
             self.avtomat_cbx.setChecked(False)
             self.avtomat_cbx.setDisabled(True)
+        else:
+            self.avtomat_cbx.setDisabled(False)
 
     def _validate_range(self):
         if self.start_spin.value() > self.end_spin.value():
