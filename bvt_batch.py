@@ -333,6 +333,7 @@ def _log_batch_progress(operation: str, items: List[str]) -> None:
 def batch_inference(
     rootdir: str, 
     dlc_config_path: str, 
+    use_dm_list: bool = False,
     mark_gen_cmd: list | None=None,
     crop: bool = False,
     mask: bool = False,
@@ -361,6 +362,7 @@ def batch_inference(
             workspace_file=ws_path,
             data_manager=dm,
             dlc_config_path=dlc_config_path,
+            use_dm_list=use_dm_list,
             mark_gen_cmd=mark_gen_cmd if mark_gen_cmd else [],
             crop=crop,
             crop_region=crop_region,
@@ -386,6 +388,7 @@ def _inference_workspace_vid(
         workspace_file: str,
         data_manager: Data_Manager,
         dlc_config_path: Optional[str] = None,
+        use_dm_list: bool = False,
         mark_gen_cmd: list = [],
         crop: bool = False,
         crop_region: Optional[Tuple[int, int, int, int]] = None,
@@ -424,8 +427,12 @@ def _inference_workspace_vid(
     if use_mask:
         assert dm.background_mask is not None, "No mask is loaded in data manager when mask parameter is set to True."
 
-    if mark_gen_cmd:
+    if use_dm_list:
+        inference_list = dm.get_frames("marked")
+    elif mark_gen_cmd:
         inference_list = _acquire_inference_list_from_markgen(dm)
+    else:
+        inference_list = range(dm.total_frames)
 
     if len(inference_list) > MAX_FRAMES_PER_RUN:
         logger.info(f"[BATCH] Splitting {len(inference_list)} frames into chunks.")
@@ -597,16 +604,16 @@ if __name__ == "__main__":
  
     dial_tone = 1
 
-    match dial_tone:
+    match dial_tone: 
         case 1:
             batch_inference(
                 rootdir,
                 dlc_config_path,
-                mark_gen_cmd=["dummy"],
+                use_dm_list=True,
                 crop=True,
-                mask=False,
+                mask=True,
                 grayscale=False,
-                infer_as_video=False,
+                infer_as_video=True,
                 batch_size=16,
                 detector_batch_size=16
             )

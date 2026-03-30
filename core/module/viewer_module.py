@@ -27,6 +27,8 @@ class Frame_View:
         self.request_config_callback = request_config_callback
         self.main = parent
 
+        self.plotter = None
+
         self.viewer_menu_config = {
             "Animal Counter":{
                 "buttons": [
@@ -110,7 +112,7 @@ class Frame_View:
             self.vid_play.display.setText("No video loaded")
             return
 
-        if self.dm.dlc_data is not None and not hasattr(self, "plotter"):
+        if self.dm.dlc_data is not None and self.plotter is None:
             self.plotter = Prediction_Plotter(dlc_data=self.dm.dlc_data, plot_config=self.dm.plot_config)
 
         if self.dm.dlc_data is None or self.dm.dlc_data.pred_data_array is None:

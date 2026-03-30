@@ -111,11 +111,6 @@ class DLC_Inference(QDialog):
         self.grayscaling_checkbox.setChecked(self.grayscaling)
 
         self.to_video_checkbox = QtWidgets.QCheckBox("Process as Video")
-        self.to_video_checkbox.setToolTip(
-            "Checked to allow batching and noticeably faster for 10000+ frames \n"
-            "Unchecked to have a slower inference but better accuracy for post processing (rerunning outlier frames)."
-        )
-
         params_box = QtWidgets.QGroupBox("Preprocess Parameters")
         params_frame = QHBoxLayout()
         params_frame.addWidget(self.cropping_checkbox)

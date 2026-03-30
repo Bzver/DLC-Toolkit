@@ -192,7 +192,7 @@ class Frame_Exporter_Threaded:
     def _job_info_verbose(self, segments, aug:Exporter_Augments|Cutout_Augments):
         line1 = f"FRAME EXPORTOR | {self.max_workers} workers | {len(segments)} segments | MODE: {aug.mode}"
         if aug.mode == "ea":
-            line2 = f"Crop Coords: {aug.crop_coord} | Masking: {aug.mask} | Grayscaling: {aug.grayscaling}"
+            line2 = f"Crop Coords: {aug.crop_coord} | Masking: {aug.mask is not None} | Grayscaling: {aug.grayscaling}"
         else:
             line2 = f"Cutout Dim: ({aug.cutout_dim}, {aug.cutout_dim}) | To Image: {aug.to_image} | Grayscaling: {aug.grayscaling}"
 
