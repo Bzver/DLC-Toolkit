@@ -19,6 +19,7 @@ class Frame_View:
                  menu_slot_callback: callable,
                  request_config_callback: callable,
                  parent: QtWidgets.QWidget):
+
         self.dm = data_manager
         self.vm = video_manager
         self.vid_play = video_play_widget
@@ -26,8 +27,6 @@ class Frame_View:
         self.menu_slot_callback = menu_slot_callback
         self.request_config_callback = request_config_callback
         self.main = parent
-
-        self.plotter = None
 
         self.viewer_menu_config = {
             "Animal Counter":{
@@ -111,6 +110,9 @@ class Frame_View:
         if not self.vm.check_status_msg():
             self.vid_play.display.setText("No video loaded")
             return
+        
+        if not hasattr(self, "plotter"):
+            self.plotter = None
 
         if self.dm.dlc_data is not None and self.plotter is None:
             self.plotter = Prediction_Plotter(dlc_data=self.dm.dlc_data, plot_config=self.dm.plot_config)

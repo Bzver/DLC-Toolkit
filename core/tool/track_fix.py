@@ -65,27 +65,21 @@ class Track_Fixer:
         self.temp_dir = tm.create("track")
         self.eligible_frames = []
         self.ambiguous_frames = []
+        self.id_lock = self.blob_array is not None
         self.last_id_locker = 0
         self.locker_stable_swap = []
+        self.locked_idx = 0
+
+        if self.skip_contrast and not self.id_lock:
+            raise RuntimeError("Lock-ID mode needs animal counter data. Please count animals before running track correction with skip_contrast enabled.")
+        if self.skip_contrast and self.skip_sweep:
+            raise RuntimeError("I don't know how you did it, cheers!")
 
     def track_correction(self, start_idx: int = 0, end_idx: int = -1) -> np.ndarray:
         if end_idx == -1:
             end_idx = self.total_frames
 
-        if not self.skip_sweep:
-            pbar = tqdm(total=end_idx - start_idx, desc=f"Motion Sweep In Progress", leave=False, ncols=200)
-            try:
-                for f in range(start_idx, end_idx):
-                    pbar.update(1)
-                    success = self._correct_frame_with_hungarian(f)
-                    if not success:
-                        self.ambiguous_frames.append(f)
-                        logger.debug(f"[TF] Ambiguous match, added to backtrack list")
-            finally:
-                pbar.close()
-
-        if self.kp_smooth:
-            self._run_kp_smoothing()
+        self._motion_sweep(start_idx, end_idx)
 
         if self.skip_contrast:
             if self.blob_array is not None and self.locker_stable_swap:
@@ -98,9 +92,38 @@ class Track_Fixer:
         self.eligible_frames = self._find_eligible_frames(min_eligible=self.emp.triplets)
         self.eligible_frames = [f for f in self.eligible_frames if f >= start_idx and f < end_idx]
         self._run_contrain_magic()
+        self._run_kp_smoothing()
         return self.pred_data_array
 
+    def _motion_sweep(self, start_idx, end_idx):
+        if self.skip_sweep:
+            return
+        
+        if self.id_lock:
+            try:
+                lock_mask = (self.inst_count_per_frame == 1) & (self.blob_array[:,0] == 1)
+                lock_frame_indices = np.where(lock_mask)[0][:10]
+            except:
+                pass
+            else:
+                num_0 = np.sum(~np.isnan(self.centroids[lock_frame_indices, 0, 0]))
+                self.locked_idx = 0 if num_0 >= 5 else 1
+
+        pbar = tqdm(total=end_idx - start_idx, desc=f"Motion Sweep In Progress", leave=False, ncols=200)
+        try:
+            for f in range(start_idx, end_idx):
+                pbar.update(1)
+                success = self._correct_frame_with_hungarian(f)
+                if not success:
+                    self.ambiguous_frames.append(f)
+                    logger.debug(f"[TF] Ambiguous match, added to backtrack list")
+        finally:
+            pbar.close()
+
     def _run_kp_smoothing(self):
+        if not self.kp_smooth:
+            return
+        
         n_frames, n_instances, n_values = self.pred_data_array.shape
         n_keypoints = n_values // 3
         window_length = min(11, n_frames // 4)
@@ -415,17 +438,6 @@ class Track_Fixer:
     def _handle_single_observation(self, frame_idx: int, ref_positions: np.ndarray, compare_only: bool = False) -> bool:
         obs_idx = get_instances_on_current_frame(self.pred_data_array, frame_idx)[0]
         obs_pos = self.centroids[frame_idx, obs_idx]
-        if self.blob_array is not None and self.blob_array[frame_idx, 0] == 1:
-            logger.debug(f"Frame {frame_idx}: Blob array supplied, locking single obs to instance 0.")
-            if obs_idx != 0:
-                self._swap_ids_in_frame(frame_idx)
-                if self.skip_contrast and frame_idx - self.last_id_locker > 2 and np.sum(self.inst_count_per_frame[self.last_id_locker:frame_idx]==2) > 2:
-                    self.ambiguous_frames.append(frame_idx)
-                    self.locker_stable_swap.extend(range(self.last_id_locker+1, frame_idx+1))
-
-            self.last_id_locker = frame_idx
-            self._update_kalman_with_observation(frame_idx, [0], [0])
-            return True
 
         costs = []
         candidates = []
@@ -434,15 +446,37 @@ class Track_Fixer:
                 d = np.linalg.norm(obs_pos - ref_positions[candidate_idx])
                 costs.append(d)
                 candidates.append(candidate_idx)
+
+        if compare_only:
+            assert len(candidates) == 1, "Compare_only arg only supports 1vs1 comparison!"
+            cost = costs[0]
+            return cost <= self.MAX_DIST_THRESHOLD
+
+        if self.id_lock and self.blob_array[frame_idx, 0] == 1 and self.blob_array[max(0, frame_idx-1), 0] == 1: #Continuous co-single block, not checkpoint
+            logger.debug(f"Frame {frame_idx}: Blob array supplied, locking single obs to instance 0.")
+            if obs_idx != self.locked_idx:
+                self._swap_ids_in_frame(frame_idx)
+
+            self.last_id_locker = frame_idx
+            self._update_kalman_with_observation(frame_idx, [self.locked_idx], [self.locked_idx])
+            return True
+
         if not candidates:
             return False
         if len(candidates) == 1:
-            if not compare_only:
-                assigned_idx = candidates[0]
-                if assigned_idx != obs_idx:
+            assigned_idx = candidates[0]
+            if self.id_lock and self.blob_array[frame_idx, 0] == 1 and assigned_idx != self.locked_idx: # It attempts to assign the wrong id at checkpoint
+                if self.skip_contrast and frame_idx - self.last_id_locker > 2 and np.sum(self.inst_count_per_frame[self.last_id_locker:frame_idx]==2) > 2: # observe and report
+                    self.ambiguous_frames.append(frame_idx)
+                    self.locker_stable_swap.extend(range(self.last_id_locker+1, frame_idx+1))
+                if obs_idx != self.locked_idx:
                     self._swap_ids_in_frame(frame_idx)
-                    logger.debug(f"Frame {frame_idx}: Single obs assigned to {assigned_idx} (was {obs_idx}), swapped")
-                self._update_kalman_with_observation(frame_idx, [assigned_idx], [assigned_idx])
+                self._update_kalman_with_observation(frame_idx, [self.locked_idx], [self.locked_idx])
+                return True
+            if assigned_idx != obs_idx:
+                self._swap_ids_in_frame(frame_idx)
+                logger.debug(f"Frame {frame_idx}: Single obs assigned to {assigned_idx} (was {obs_idx}), swapped")
+            self._update_kalman_with_observation(frame_idx, [assigned_idx], [assigned_idx])
             cost = costs[0]
             if cost <= self.MAX_DIST_THRESHOLD:
                 return True
@@ -452,6 +486,14 @@ class Track_Fixer:
         else:
             c0, c1 = costs
             winner = candidates[0] if c0 < c1 else candidates[1]
+            if self.id_lock and self.blob_array[frame_idx, 0] == 1 and winner != self.locked_idx: # same
+                if self.skip_contrast and frame_idx - self.last_id_locker > 2 and np.sum(self.inst_count_per_frame[self.last_id_locker:frame_idx]==2) > 2:
+                    self.ambiguous_frames.append(frame_idx)
+                    self.locker_stable_swap.extend(range(self.last_id_locker+1, frame_idx+1))
+                if obs_idx != self.locked_idx:
+                    self._swap_ids_in_frame(frame_idx)
+                self._update_kalman_with_observation(frame_idx, [self.locked_idx], [self.locked_idx])
+                return True
             if winner != obs_idx:
                 self._swap_ids_in_frame(frame_idx)
                 logger.debug(f"Frame {frame_idx}: Single obs winner {winner} (was {obs_idx}), swapped")
