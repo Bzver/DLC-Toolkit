@@ -22,6 +22,7 @@ class Track_Fixer:
     AMBIGUITY_THRESHOLD = 20.0
     MAX_DIST_THRESHOLD = 120.0
     KALMAN_MAX_ERROR = 80.0
+    VOTE_WINDOW_SIZE = 5
 
     def __init__(
         self,
@@ -35,6 +36,7 @@ class Track_Fixer:
         kp_smooth: bool = True,
         blob_array: np.ndarray|None = None,
         avtomat: bool = False,
+        skip_contrast: bool = False,
         parent=None
     ):
         if pred_data_array.shape[1] != 2:
@@ -60,18 +62,17 @@ class Track_Fixer:
         tm = Temp_Manager(self.extractor.get_video_filepath())
         self.temp_dir = tm.create("track")
         self.eligible_frames = []
+        self.ambiguous_frames = []
 
     def track_correction(self, start_idx: int = 0, end_idx: int = -1) -> np.ndarray:
         if end_idx == -1:
             end_idx = self.total_frames
 
-        ambiguous_frames = []
-
         if not self.skip_sweep:
             for f in range(start_idx, end_idx):
                 success = self._correct_frame_with_hungarian(f)
                 if not success:
-                    ambiguous_frames.append(f)
+                    self.ambiguous_frames.append(f)
                     logger.debug(f"[TF] Ambiguous match, added to backtrack list")
 
         if self.kp_smooth:
@@ -79,7 +80,7 @@ class Track_Fixer:
 
         self.eligible_frames = self._find_eligible_frames(min_eligible=self.emp.triplets)
         self.eligible_frames = [f for f in self.eligible_frames if f >= start_idx and f < end_idx]
-        self._run_contrain_magic(ambiguous_frames)
+        self._run_contrain_magic()
         return self.pred_data_array
 
     def _run_kp_smoothing(self):
@@ -212,7 +213,7 @@ class Track_Fixer:
         )
         co.extract_frames(ca)
 
-    def _run_contrain_magic(self, ambiguous_frames: List[int]):
+    def _run_contrain_magic(self):
 
         from utils.torch import Crop_Dataset, Embedding_Visualizer, Contrastive_Trainer
 
@@ -253,7 +254,7 @@ class Track_Fixer:
         for start, end in stable_spans:
             start_idx = max(0, start - 10)
             fin_idx = min(end + 11, self.total_frames-1)
-            amb_in_range = [f for f in ambiguous_frames if f >= start and f < end]
+            amb_in_range = [f for f in self.ambiguous_frames if f >= start and f < end]
             if self.avtomat:
                 swap_orders = []
                 if not amb_in_range:
@@ -313,12 +314,71 @@ class Track_Fixer:
                 return kalman_refs
             logger.debug(f"[KALMAN] Kalman matching failed (min_cost={min_cost_kalman:.1f} > {self.KALMAN_MAX_ERROR}), falling back to last known positions")
 
-        last0 = self.last_known_pos[0]
-        last1 = self.last_known_pos[1]
-        last0_str = f"({last0[0]:.1f}, {last0[1]:.1f})" if not np.isnan(last0).any() else "NaN"
-        last1_str = f"({last1[0]:.1f}, {last1[1]:.1f})" if not np.isnan(last1).any() else "NaN"
-        logger.debug(f"[KALMAN] Last known refs: Inst 0: {last0_str}, Inst 1: {last1_str}")
+        last_known_cost = self._compute_min_assignment_cost(self.last_known_pos, current_obs)
+        last_known_ambiguous = last_known_cost > self.AMBIGUITY_THRESHOLD
+
+        if last_known_ambiguous or np.isnan(self.last_known_pos).any():
+            vote_refs = self._vote_last_n_frames(frame_idx,  n_frames=self.VOTE_WINDOW_SIZE,  skip_ambiguous=True)
+            
+            if not np.isnan(vote_refs).all():
+                vote_cost = self._compute_min_assignment_cost(vote_refs, current_obs)
+                if vote_cost < last_known_cost:
+                    logger.debug(f"[VOTE] Wins (cost {vote_cost:.1f} < {last_known_cost:.1f})")
+                    return vote_refs
+                else:
+                    logger.debug(f"[LAST_KNOWN] Wins (cost {last_known_cost:.1f} <= {vote_cost:.1f})")
+
+        logger.debug(f"[FALLBACK] Using last_known_pos")
         return self.last_known_pos
+
+    def _vote_last_n_frames(self, frame_idx: int, n_frames: int = None, skip_ambiguous: bool = True) -> np.ndarray:
+        if n_frames is None:
+            n_frames = self.VOTE_WINDOW_SIZE
+
+        search_depth = n_frames * 3
+        start_idx = max(0, frame_idx - search_depth)
+        
+        clean_positions = {0: [], 1: []}
+        frames_used = []
+
+        for f in range(frame_idx - 1, start_idx - 1, -1):
+            if skip_ambiguous and f in self.ambiguous_frames:
+                logger.debug(f"[VOTE] Frame {f}: Skipping (marked ambiguous)")
+                continue
+            
+            insts = get_instances_on_current_frame(self.pred_data_array, f)
+            if len(insts) == 2:
+                valid_frame = True
+                for inst_idx in [0, 1]:
+                    pos = self.centroids[f, inst_idx]
+                    if np.isnan(pos[0]):
+                        valid_frame = False
+                        break
+                    clean_positions[inst_idx].append(pos)
+
+                if valid_frame:
+                    frames_used.append(f)
+                    logger.debug(f"[VOTE] Frame {f}: Using as clean reference")
+
+                    min_samples = min(len(clean_positions[0]), len(clean_positions[1]))
+                    if min_samples >= n_frames:
+                        break
+
+        min_samples = min(len(clean_positions[0]), len(clean_positions[1]))
+        if min_samples < self.VOTE_MIN_CLEAN_FRAMES:
+            logger.debug(f"[VOTE] Frame {frame_idx}: Insufficient clean frames "
+                        f"(found {min_samples}, need {self.VOTE_MIN_CLEAN_FRAMES})")
+            return np.full((2, 2), np.nan)
+
+        ref_positions = np.full((2, 2), np.nan)
+        for inst_idx in [0, 1]:
+            positions = np.array(clean_positions[inst_idx])
+            ref_positions[inst_idx] = np.nanmedian(positions, axis=0)
+        
+        logger.debug(f"[VOTE] Frame {frame_idx}: Voted from clean frames {frames_used}, "
+                    f"skipped {sum(1 for f in range(start_idx, frame_idx) if f in self.ambiguous_frames)} ambiguous")
+        
+        return ref_positions
 
     def _compute_min_assignment_cost(self, refs: np.ndarray, obs: np.ndarray) -> float:
         valid_obs = ~np.isnan(obs[:, 0])
