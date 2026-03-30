@@ -276,7 +276,7 @@ class Track_Fixer:
         for start, end in stable_spans:
             start_idx = max(0, start - 10)
             fin_idx = min(end + 11, self.total_frames-1)
-            amb_in_range = [f for f in self.ambiguous_frames if f >= start and f < end]
+            amb_in_range = [f for f in self.ambiguous_frames if f >= start and f <= end]
             if self.avtomat:
                 swap_orders = []
                 if not amb_in_range:
@@ -420,8 +420,8 @@ class Track_Fixer:
             if obs_idx != 0:
                 self._swap_ids_in_frame(frame_idx)
                 if self.skip_contrast and frame_idx - self.last_id_locker > 2 and np.sum(self.inst_count_per_frame[self.last_id_locker:frame_idx]==2) > 2:
-                    self.locker_stable_swap.extend(range(self.last_id_locker+1, frame_idx))
                     self.ambiguous_frames.append(frame_idx)
+                    self.locker_stable_swap.extend(range(self.last_id_locker+1, frame_idx+1))
 
             self.last_id_locker = frame_idx
             self._update_kalman_with_observation(frame_idx, [0], [0])
