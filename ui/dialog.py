@@ -459,6 +459,7 @@ class Track_Fix_Config_Dialog(QDialog):
 
         self.skip_motion_sweep = False
         self.avtomat = False
+        self.skip_contrastive = False
         self.worker_num = 8
         self.emp = None
         self.fix_range = (0, self.total_frames-1)
@@ -490,14 +491,23 @@ class Track_Fix_Config_Dialog(QDialog):
         self.skip_sweep_cbx.setToolTip("Check this if track is mostly correct already.")
         opts_layout.addWidget(self.skip_sweep_cbx)
 
+        lock_skip_row = QHBoxLayout()
         self.lock_id_cbx = QCheckBox("Lock ID During Exit For Unilateral Exit Setups")
         self.lock_id_cbx.setToolTip("For cases where only one mouse can exit the chamber and thus the remaining mouse's ID should be consistent.")
-        opts_layout.addWidget(self.lock_id_cbx)
+        
+        self.skip_contrastive_cbx = QCheckBox("Skip Contrastive Learning")
+        self.skip_contrastive_cbx.setToolTip("Skip contrastive learning step entirely. Use only motion sweep and id lock for track correction.")
+        self.skip_contrastive_cbx.stateChanged.connect(self._toggle_contrastive_params)
+        
+        lock_skip_row.addWidget(self.lock_id_cbx)
+        lock_skip_row.addWidget(self.skip_contrastive_cbx)
+        opts_layout.addLayout(lock_skip_row)
 
         opts_group.setLayout(opts_layout)
         layout.addWidget(opts_group)
 
         cl_group = QGroupBox("Contrastive Learning Parameters")
+        self.cl_group = cl_group
         cl_layout = QVBoxLayout()
 
         self.worker_spin = Spinbox_With_Label("Cutout Extraction Workers:", (1, 256), 16)
@@ -548,6 +558,14 @@ class Track_Fix_Config_Dialog(QDialog):
         btn_box.accepted.connect(self._on_accept)
         btn_box.rejected.connect(self.reject)
         layout.addWidget(btn_box)
+        self._toggle_contrastive_params()
+
+    def _toggle_contrastive_params(self):
+        is_skipped = self.skip_contrastive_cbx.isChecked()
+        self.cl_group.setDisabled(is_skipped)
+        if is_skipped and not self.lock_id_cbx.isChecked():
+            self.avtomat_cbx.setChecked(False)
+            self.avtomat_cbx.setDisabled(True)
 
     def _validate_range(self):
         if self.start_spin.value() > self.end_spin.value():
@@ -561,6 +579,7 @@ class Track_Fix_Config_Dialog(QDialog):
         self.fix_range = (self.start_spin.value(), self.end_spin.value())
         self.skip_motion_sweep = self.skip_sweep_cbx.isChecked()
         self.avtomat = self.avtomat_cbx.isChecked()
+        self.skip_contrastive = self.skip_contrastive_cbx.isChecked()
         self.worker_num = self.worker_spin.value()
         self.lock_id = self.lock_id_cbx.isChecked()
         self.kp_smooth = self.kp_smooth_cbx.isChecked()
@@ -573,7 +592,8 @@ class Track_Fix_Config_Dialog(QDialog):
             lr=10**-self.lr_spin.value(),
             margin=self.margin_thresh_spin.value(),
             sil=self.sil_thresh_spin.value(),
-            )
+        )
+
         self.accept()
 
 

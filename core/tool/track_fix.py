@@ -22,7 +22,7 @@ class Track_Fixer:
     AMBIGUITY_THRESHOLD = 20.0
     MAX_DIST_THRESHOLD = 120.0
     KALMAN_MAX_ERROR = 80.0
-    VOTE_WINDOW_SIZE = 5
+    VOTE_WINDOW_SIZE = 10
 
     def __init__(
         self,
@@ -37,7 +37,7 @@ class Track_Fixer:
         blob_array: np.ndarray|None = None,
         avtomat: bool = False,
         skip_contrast: bool = False,
-        parent=None
+        parent = None
     ):
         if pred_data_array.shape[1] != 2:
             raise NotImplementedError("Track_Fixer supports exactly 2 instances.")
@@ -51,6 +51,7 @@ class Track_Fixer:
         self.kp_smooth = kp_smooth
         self.blob_array = blob_array
         self.avtomat = avtomat
+        self.skip_contrast = skip_contrast
         self.main = parent
         self.total_frames = self.pred_data_array.shape[0]
         self.centroids, _ = calculate_pose_centroids(self.pred_data_array)
@@ -63,6 +64,8 @@ class Track_Fixer:
         self.temp_dir = tm.create("track")
         self.eligible_frames = []
         self.ambiguous_frames = []
+        self.last_id_locker = 0
+        self.locker_stable_swap = []
 
     def track_correction(self, start_idx: int = 0, end_idx: int = -1) -> np.ndarray:
         if end_idx == -1:
@@ -77,6 +80,14 @@ class Track_Fixer:
 
         if self.kp_smooth:
             self._run_kp_smoothing()
+
+        if self.skip_contrast:
+            if self.blob_array is not None and self.locker_stable_swap:
+                self._process_stable_swap_candidates(self.locker_stable_swap)
+            else:
+                swap_orders = self._launch_dialog_swap(self.ambiguous_frames, 0, self.total_frames-1)
+                self._execute_swap_orders(swap_orders, self.total_frames-1)
+            return self.pred_data_array
 
         self.eligible_frames = self._find_eligible_frames(min_eligible=self.emp.triplets)
         self.eligible_frames = [f for f in self.eligible_frames if f >= start_idx and f < end_idx]
@@ -250,6 +261,11 @@ class Track_Fixer:
         pix_dialog = Dual_Pixmap_Dialog(agreement_pix, tsne_pix, max_height=480, parent=self.main)
         pix_dialog.show()
         logger.info("[TF] Visualization complete.")
+
+        self._process_stable_swap_candidates(stable_swap_candidates)
+        self.centroids, _ = calculate_pose_centroids(self.pred_data_array)
+
+    def _process_stable_swap_candidates(self, stable_swap_candidates):
         stable_spans = indices_to_spans(stable_swap_candidates)
         for start, end in stable_spans:
             start_idx = max(0, start - 10)
@@ -269,19 +285,8 @@ class Track_Fixer:
             else:
                 swap_orders = self._launch_dialog_swap(amb_in_range, start_idx, fin_idx)
 
-            if swap_orders == "exit":
+            if not self._execute_swap_orders(swap_orders, fin_idx):
                 return
-            else:
-                for frame_idx, order in swap_orders:
-                    if order == "i":
-                        self.pred_data_array = swap_track(self.pred_data_array, frame_idx)
-                    else:
-                        self.pred_data_array = swap_track(self.pred_data_array, frame_idx,
-                                                          swap_range=list(range(frame_idx, fin_idx)))
-
-        self.centroids, _ = calculate_pose_centroids(self.pred_data_array)
-        if os.path.isfile(embedding_filepath):
-            os.remove(embedding_filepath)
 
     def _correct_frame_with_hungarian(self, frame_idx: int) -> bool:
         n_obs = len(get_instances_on_current_frame(self.pred_data_array, frame_idx))
@@ -365,10 +370,6 @@ class Track_Fixer:
                         break
 
         min_samples = min(len(clean_positions[0]), len(clean_positions[1]))
-        if min_samples < self.VOTE_MIN_CLEAN_FRAMES:
-            logger.debug(f"[VOTE] Frame {frame_idx}: Insufficient clean frames "
-                        f"(found {min_samples}, need {self.VOTE_MIN_CLEAN_FRAMES})")
-            return np.full((2, 2), np.nan)
 
         ref_positions = np.full((2, 2), np.nan)
         for inst_idx in [0, 1]:
@@ -411,6 +412,10 @@ class Track_Fixer:
             logger.debug(f"Frame {frame_idx}: Blob array supplied, locking single obs to instance 0.")
             if obs_idx != 0:
                 self._swap_ids_in_frame(frame_idx)
+                if self.skip_contrast:
+                    self.locker_stable_swap.extend(range(self.last_id_locker+1, frame_idx))
+
+            self.last_id_locker = frame_idx
             self._update_kalman_with_observation(frame_idx, [0], [0])
             return True
 
@@ -514,6 +519,18 @@ class Track_Fixer:
     def _swap_ids_in_frame(self, frame_idx: int):
         self.pred_data_array[frame_idx] = self.pred_data_array[frame_idx, ::-1]
         self.centroids[frame_idx] = self.centroids[frame_idx, ::-1]
+
+    def _execute_swap_orders(self, swap_orders:List[Tuple[int, str]], fin_idx:int):
+        if swap_orders == "exit":
+            return False
+
+        for frame_idx, order in swap_orders:
+            if order == "i":
+                self.pred_data_array = swap_track(self.pred_data_array, frame_idx)
+            else:
+                self.pred_data_array = swap_track(self.pred_data_array, frame_idx, swap_range=list(range(frame_idx, fin_idx)))
+        
+        return True
 
     def _launch_dialog_swap(
         self,
