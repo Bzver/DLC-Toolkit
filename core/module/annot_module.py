@@ -15,9 +15,8 @@ from core.tool import Annotation_Config, Annotation_Summary_Table, Prediction_Pl
 from core.io import load_annotation, prediction_to_csv, load_onehot_csv
 from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Status_Bar, Frame_List_Dialog
 from utils.track import interpolate_track_all
-from utils.pose import generate_missing_kp_batch
 from utils.helper import frame_to_pixmap, frame_to_grayscale, get_instance_count_per_frame, array_to_iterable_runs, get_next_frame_in_list
-from utils.logger import Loggerbox
+from utils.logger import Loggerbox, logger
 
 
 class Frame_Annotator:
@@ -72,7 +71,8 @@ class Frame_Annotator:
                     ("Export in Text", self._export_annotation_to_text),
                     ("Export in Mat", self._export_annotation_to_mat),
                     ("Export in One-Hot", self._export_annotation_to_onehot),
-                    ("Export Truncated One-Hot for ASOID", self._export_truncated_package),
+                    ("Export Truncated One-Hot for ASOID Training", self._export_training_package),
+                    ("Export Truncated One-Hot for ASOID Inference", self._export_inference_package),
                 ]
             },
         }
@@ -173,10 +173,8 @@ class Frame_Annotator:
         if not csv_path:
             return
 
-        csv_name = os.path.basename(csv_path).split("_pred_annotated_")[0]
-        video_dir = os.path.dirname(self.dm.video_file)
-
-        auto_path = os.path.join(video_dir, f"{csv_name}.json")
+        auto_path = csv_path.replace("_pred_annotated_iteration-0.csv", ".json")
+        print(auto_path)
         if os.path.isfile(auto_path):
             json_path = auto_path
         else:
@@ -652,10 +650,89 @@ class Frame_Annotator:
         else:
             Loggerbox.info(self.main, "Success", f"Successfully saved to {file_path}")
 
-    def _export_truncated_package(self, min_duration:int=10, max_gap:int=3, fps:int=10):
+    def _export_training_package(self, min_duration:int=10, max_gap:int=3, fps:int=10):
         if self.dm.dlc_data is None or self.dm.dlc_data.pred_data_array is None:
             return
+
+        frame_categories = {}
+        for cat in self.behav_map.keys():
+            cat_list = np.where(self.annot_array==self.cat_to_idx[cat])[0].tolist()
+            frame_categories[str(cat)] = (str(cat), cat_list)
+        if frame_categories:
+            fm_dialog = Frame_List_Dialog(frame_categories, self.main)
+            if not fm_dialog.exec() == QtWidgets.QDialog.Accepted:
+                return
+            cat_list_to_use = fm_dialog.combined_indices
+        else:
+            cat_list_to_use = []
+
+        file_dialog = QFileDialog(self.main)
+
+        folder_path = file_dialog.getExistingDirectory(self.main, "Select Export Folder for ASOID Training", "")
+        if not folder_path:
+            return
         
+        os.makedirs(os.path.join(folder_path, "behav"), exist_ok=True)
+        os.makedirs(os.path.join(folder_path, "pred"), exist_ok=True)
+
+        pred_data_array = self.dm.dlc_data.pred_data_array.copy()
+        I = pred_data_array.shape[1]
+        for inst_idx in range(I):
+            pred_data_array = interpolate_track_all(pred_data_array, inst_idx, max_gap)
+
+        instance_array = get_instance_count_per_frame(pred_data_array)
+        
+        cat_mask = np.zeros_like(instance_array, dtype=bool)
+        if cat_list_to_use:
+            cat_mask[cat_list_to_use] = True
+        else:
+            cat_mask[:] = True
+
+        behavior_list = [b for b in self.idx_to_cat.values()]
+
+        frames_to_use = np.zeros_like(instance_array, dtype=bool)
+        truncated_arrays = []
+
+        for start, end, value in array_to_iterable_runs(instance_array != I):
+            if value:
+                continue
+            if end - start + 1 < min_duration:
+                continue
+
+            cat_list_in_range = np.where(cat_mask[start:end+1])[0].tolist()
+            cat_list_in_range = [f + start for f in cat_list_in_range]
+
+            if not cat_list_in_range:
+                continue
+
+            frames_to_use[cat_list_in_range] = True
+            truncated_arrays.append(self.annot_array[cat_list_in_range])
+
+        frame_list = np.where(frames_to_use)[0].tolist()
+        truncated_behavior_array = np.concatenate(truncated_arrays)
+        truncated_pred_array = pred_data_array[frames_to_use]
+
+        behavior_list = [b for b in self.idx_to_cat.values()]
+
+        truncated_one_hot = np.zeros((truncated_behavior_array.size, len(behavior_list)), dtype=int)
+        truncated_one_hot[np.arange(truncated_behavior_array.size), truncated_behavior_array] = 1
+
+        df_annot = pd.DataFrame(truncated_one_hot, columns=behavior_list)
+        if "other" in behavior_list:
+            behavior_cols = [col for col in df_annot.columns if col != "other"]
+            new_column_order = behavior_cols + ["other"]
+            df_annot = df_annot[new_column_order]
+
+        df_annot.insert(0, "time", np.arange(len(frame_list)) / fps)
+
+        file_path = os.path.join(folder_path, "behav", f"{self.dm.video_name}_ASOiD_train.csv")
+        pred_path = os.path.join(folder_path, "pred", f"{self.dm.video_name}_ASOiD_train.csv")
+        self._csv_exporter_worker(df_annot, file_path, truncated_pred_array, pred_path, frame_list, training=True)
+
+    def _export_inference_package(self, min_duration:int=10, max_gap:int=3, fps:int=10):
+        if self.dm.dlc_data is None or self.dm.dlc_data.pred_data_array is None:
+            return
+
         file_dialog = QFileDialog(self.main)
         file_path, _ = file_dialog.getSaveFileName(self.main, "Export Truncated Annotation For ASOID Analysis", "", "CSV Files (*.csv);;All Files (*)")
 
@@ -667,7 +744,6 @@ class Frame_Annotator:
         for inst_idx in range(I):
             pred_data_array = interpolate_track_all(pred_data_array, inst_idx, max_gap)
 
-        pred_data_array = generate_missing_kp_batch(pred_data_array, self.dm.canon_pose, 2)
         instance_array = get_instance_count_per_frame(pred_data_array)
         
         frames_to_use = np.zeros_like(instance_array, dtype=bool)
@@ -699,21 +775,29 @@ class Frame_Annotator:
 
         df_annot.insert(0, "time", np.arange(len(frame_list)) / fps)
 
+        pred_path = file_path.replace(".csv", "_pred.csv")
+        self._csv_exporter_worker(df_annot, file_path, truncated_pred_array, pred_path, frame_list, training=False)
+
+    def _csv_exporter_worker(self, df_annot, annot_path, truncated_pred_array, pred_path, frame_list, training):
         try:
-            df_annot.to_csv(file_path, sep=',', index=False, float_format='%.6f')
+            if training:
+                df_annot.to_csv(annot_path, sep=',', index=False, float_format='%.6f')
+            else:
+                json_path = annot_path.replace(".csv", ".json")
+                with open(json_path, 'w') as f:
+                    json.dump({
+                        "used_frames": frame_list,
+                        "total_frames": self.dm.total_frames,
+                        "total_exported_frames": len(frame_list),
+                        "behav_map": self.behav_map,
+                    }, f, indent=2)
 
-            pred_path = file_path.replace(".csv", "_pred.csv")
-            prediction_to_csv(self.dm.dlc_data, truncated_pred_array, pred_path, keep_conf=True, no_scorer_row=True)
+            prediction_to_csv(self.dm.dlc_data, truncated_pred_array, pred_path, keep_conf=True, no_scorer_row=not training)
 
-            json_path = file_path.replace(".csv", ".json")
-            with open(json_path, 'w') as f:
-                json.dump({
-                    "used_frames": frame_list,
-                    "total_frames": self.dm.total_frames,
-                    "total_exported_frames": len(frame_list),
-                    "behav_map": self.behav_map,
-                }, f, indent=2)
         except Exception as e:
-            Loggerbox.error(self.main, "Failed", f"Failed to save {file_path}, Exception: {e}", exc=e)
+            Loggerbox.error(self.main, "Failed", f"Failed to save {pred_path}, Exception: {e}", exc=e)
         else:
-            Loggerbox.info(self.main, "Success", f"Successfully saved to {file_path}")
+            if training:
+                logger.info(f"Successfully saved to {pred_path}")
+            else:
+                Loggerbox.info(self.main, "Success", f"Successfully saved to {pred_path}")

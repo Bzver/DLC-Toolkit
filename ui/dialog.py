@@ -95,6 +95,7 @@ class Frame_List_Dialog(QDialog):
 
         self.ok_btn.clicked.connect(self._on_ok)
         self.cancel_btn.clicked.connect(self.reject)
+        self.combined_indices = []
 
         button_layout.addStretch()
         button_layout.addWidget(self.ok_btn)
@@ -111,6 +112,8 @@ class Frame_List_Dialog(QDialog):
                 cat, indices = self.frame_categories[label]
                 selected_categories.append(cat)
                 combined_indices.extend(indices)
+        
+        self.combined_indices = combined_indices
 
         combined_indices = sorted(set(combined_indices))
         self.frame_indices_acquired.emit(combined_indices)
@@ -447,7 +450,6 @@ class Keypoint_Num_Dialog(QDialog):
         
         self.setWindowTitle("Keypoint Threshold")
 
-
 class Track_Fix_Config_Dialog(QDialog):
     def __init__(self, total_frames:int, parent=None):
         super().__init__(parent)
@@ -460,6 +462,7 @@ class Track_Fix_Config_Dialog(QDialog):
         self.skip_motion_sweep = False
         self.avtomat = False
         self.skip_contrastive = False
+        self.use_kalman = True
         self.worker_num = 8
         self.emp = None
         self.fix_range = (0, self.total_frames-1)
@@ -486,6 +489,11 @@ class Track_Fix_Config_Dialog(QDialog):
         self.kp_smooth_cbx = QCheckBox("Keypoint Smoothing")
         self.kp_smooth_cbx.setChecked(True)
         opts_layout.addWidget(self.kp_smooth_cbx)
+
+        self.use_kalman_cbx = QCheckBox("Use Kalman Filter for Trajectory Prediction")
+        self.use_kalman_cbx.setChecked(True)
+        self.use_kalman_cbx.setToolTip("Enable Kalman filters for motion prediction and outlier rejection. Uncheck to rely solely on trajectory voting and last-known positions.")
+        opts_layout.addWidget(self.use_kalman_cbx)
 
         self.lock_id_cbx = QCheckBox("Lock ID During Exit For Unilateral Exit Setups")
         self.lock_id_cbx.setToolTip("For cases where only one mouse can exit the chamber and thus the remaining mouse's ID should be consistent.")
@@ -583,6 +591,7 @@ class Track_Fix_Config_Dialog(QDialog):
         self.skip_motion_sweep = self.skip_sweep_cbx.isChecked()
         self.avtomat = self.avtomat_cbx.isChecked()
         self.skip_contrastive = self.skip_contrastive_cbx.isChecked()
+        self.use_kalman = self.use_kalman_cbx.isChecked()
         self.worker_num = self.worker_spin.value()
         self.lock_id = self.lock_id_cbx.isChecked()
         self.kp_smooth = self.kp_smooth_cbx.isChecked()
