@@ -63,7 +63,8 @@ class Frame_Annotator:
             "Analyze":{
                 "buttons": [
                     ("Filter Out Short Bout", self._filter_short_bout),
-                    ("Toggle Viewing Selected Beavior", self._toggle_category_nav_mode)
+                    ("Toggle Selected Beavior Navigation", self._toggle_category_nav_mode),
+                    ("Change Behaviors To Navigate", self._choose_behav_to_nav),
                 ]   
             },
             "Save":{
@@ -204,9 +205,9 @@ class Frame_Annotator:
             Loggerbox.info(self.main, "No Frames", "No frame categories with frames found.")
             return
 
-        dialog = Frame_List_Dialog(frame_categories, parent=self.main)
-        dialog.categories_selected.connect(self._frame_list_to_new_annot_cat)
-        dialog.exec()
+        fm_dialog = Frame_List_Dialog(frame_categories, parent=self.main)
+        fm_dialog.categories_selected.connect(self._frame_list_to_new_annot_cat)
+        fm_dialog.exec()
 
     def _frame_list_to_new_annot_cat(
             self, categories:List[str], behav_map:Optional[Dict[str, Tuple[str, str]]]=None, frame_dict:Optional[Dict[str, List[int]]]=None):
@@ -324,35 +325,42 @@ class Frame_Annotator:
 
     def _toggle_category_nav_mode(self):
         if not self.cat_nav_enabled:
-            categories = list(self.behav_map.keys())
-            if not categories:
-                self.status_bar.show_message("No categories available", 2000)
-                return
-            
-            selected, ok = QtWidgets.QInputDialog.getItem(
-                self.main, 
-                "Select Category for Navigation", 
-                "Choose a behavior category to navigate:", 
-                categories, 
-                0, 
-                False
-            )
-            if not ok or not selected:
-                return
-            self.cat_nav_enabled = True
-            self.cat_nav_target = self.cat_to_idx[selected]
+            if not self.cat_nav_target:
+                self._choose_behav_to_nav()
+            if self.cat_nav_target:
+                self.cat_nav_enabled = True
         else:
             self.cat_nav_enabled = False
-            self.cat_nav_target = None
             self.status_bar.show_message("Category navigation mode disabled", 1500)
             self.refresh_ui()
 
+    def _choose_behav_to_nav(self):
+        selected_categories, _ = self._choose_behavior_categories()
+        self.cat_nav_target = [self.cat_to_idx[cat] for cat in selected_categories]
+        if not self.cat_nav_enabled and self.cat_nav_target:
+            self.cat_nav_enabled = True
+
+    def _choose_behavior_categories(self):
+        frame_categories = {}
+        for cat in self.behav_map.keys():
+            cat_list = np.where(self.annot_array==self.cat_to_idx[cat])[0].tolist()
+            frame_categories[str(cat)] = (str(cat), cat_list)
+        if frame_categories:
+            fm_dialog = Frame_List_Dialog(frame_categories, self.main)
+            if fm_dialog.exec() == QtWidgets.QDialog.Accepted:
+                return fm_dialog.selected_categories, fm_dialog.combined_indices
+
+        return [], []
+
     def determine_list_to_nav(self):
+        if self.annot_array is None or self.annot_array.size == 0:
+            return []
+
         diff_mask = np.concatenate([[True], np.diff(self.annot_array)!=0])
-        if self.cat_nav_enabled:
-            return np.where((self.annot_array == self.cat_nav_target) & diff_mask)[0].tolist()
-        if self.annot_array is not None:
-            return np.where(diff_mask)[0].tolist()
+        if self.cat_nav_enabled and self.cat_nav_target is not None:
+            return np.where(np.isin(self.annot_array, self.cat_nav_target) & diff_mask)[0].tolist()
+
+        return np.where(diff_mask)[0].tolist()
 
     ###################################################################################################################################################
             
@@ -654,17 +662,7 @@ class Frame_Annotator:
         if self.dm.dlc_data is None or self.dm.dlc_data.pred_data_array is None:
             return
 
-        frame_categories = {}
-        for cat in self.behav_map.keys():
-            cat_list = np.where(self.annot_array==self.cat_to_idx[cat])[0].tolist()
-            frame_categories[str(cat)] = (str(cat), cat_list)
-        if frame_categories:
-            fm_dialog = Frame_List_Dialog(frame_categories, self.main)
-            if not fm_dialog.exec() == QtWidgets.QDialog.Accepted:
-                return
-            cat_list_to_use = fm_dialog.combined_indices
-        else:
-            cat_list_to_use = []
+        _, cat_list_to_use = self._choose_behavior_categories()
 
         file_dialog = QFileDialog(self.main)
 

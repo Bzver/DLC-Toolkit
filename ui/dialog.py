@@ -95,6 +95,7 @@ class Frame_List_Dialog(QDialog):
 
         self.ok_btn.clicked.connect(self._on_ok)
         self.cancel_btn.clicked.connect(self.reject)
+        self.selected_categories = []
         self.combined_indices = []
 
         button_layout.addStretch()
@@ -113,6 +114,7 @@ class Frame_List_Dialog(QDialog):
                 selected_categories.append(cat)
                 combined_indices.extend(indices)
         
+        self.selected_categories = selected_categories
         self.combined_indices = combined_indices
 
         combined_indices = sorted(set(combined_indices))
