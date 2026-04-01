@@ -872,6 +872,7 @@ class Frame_Label:
         lock_id = config_dlg.lock_id
         kp_smooth = config_dlg.kp_smooth
         skip_contrast = config_dlg.skip_contrastive
+        use_kalman = config_dlg.use_kalman
 
         start_idx = fix_range[0]
         end_idx = fix_range[1] + 1
@@ -891,6 +892,7 @@ class Frame_Label:
             blob_array=self.dm.blob_array if lock_id else None,
             avtomat=avtomat,
             skip_contrast=skip_contrast,
+            use_kalman=use_kalman,
             emp=emp,
             worker_num=worker_num,
             parent=self.main,

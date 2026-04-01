@@ -17,11 +17,12 @@ from utils.helper import get_instance_count_per_frame, get_instances_on_current_
 from utils.dataclass import Loaded_DLC_Data, Cutout_Augments, Emb_Params
 from utils.logger import logger
 
+
 class Track_Fixer:
     KALMAN_RESET_THRESHOLD = 3
     USER_DIALOG_COOLDOWN = 20
-    AMBIGUITY_THRESHOLD = 20.0
-    MAX_DIST_THRESHOLD = 120.0
+    AMBIGUITY_THRESHOLD = 0.15
+    MAX_DIST_THRESHOLD = 1.2
     KALMAN_MAX_ERROR = 80.0
     VOTE_WINDOW_SIZE = 10
 
@@ -38,6 +39,7 @@ class Track_Fixer:
         blob_array: np.ndarray|None = None,
         avtomat: bool = False,
         skip_contrast: bool = False,
+        use_kalman: bool = True,
         parent = None
     ):
         if pred_data_array.shape[1] != 2:
@@ -53,13 +55,16 @@ class Track_Fixer:
         self.blob_array = blob_array
         self.avtomat = avtomat
         self.skip_contrast = skip_contrast
+        self.use_kalman = use_kalman
         self.main = parent
         self.total_frames = self.pred_data_array.shape[0]
         self.centroids, _ = calculate_pose_centroids(self.pred_data_array)
         self.inst_count_per_frame = get_instance_count_per_frame(self.pred_data_array)
-        self.kalman_filters = [None, None]
+        self.mice_length = self._get_mice_length()
+
+        self.kalman_filters = [None, None] if use_kalman else []
         self.last_known_pos = np.full((2, 2), np.nan)
-        self.kalman_failure_count = [0, 0]
+        self.kalman_failure_count = [0, 0] if use_kalman else []
         
         tm = Temp_Manager(self.extractor.get_video_filepath())
         self.temp_dir = tm.create("track")
@@ -193,13 +198,9 @@ class Track_Fixer:
 
         two_inst_array = self.pred_data_array[two_inst_mask]
         centroids_two_inst = self.centroids[two_inst_mask]
-        head_idx = self.anglemap["head_idx"]
-        all_head = self.pred_data_array[..., head_idx * 3:head_idx * 3 + 2]
-        tail_idx = self.anglemap["tail_idx"]
-        all_tail = self.pred_data_array[..., tail_idx * 3:tail_idx * 3 + 2]
-        mice_length = np.nanmedian(np.linalg.norm(all_head - all_tail, axis=-1))
+
         dists = np.linalg.norm(centroids_two_inst[:, 1, :] - centroids_two_inst[:, 0, :], axis=-1)
-        dist_mask = dists > inst_dist_threshold * mice_length
+        dist_mask = dists > inst_dist_threshold * self.mice_length
 
         conf_mask = ~np.any(outlier_confidence(two_inst_array, conf_threshold), axis=-1)
         angle_mask = ~np.any(outlier_rotation(two_inst_array, self.anglemap, twist_angle_threshold), axis=-1)
@@ -273,10 +274,7 @@ class Track_Fixer:
                 raise FileNotFoundError("[TF] No crops loaded. Check your folder path and filename format.")
             cds = Crop_Dataset(crops, motion_ids, frame_indices)
             trainer = Contrastive_Trainer()
-            trainer.train(
-                dataset=cds,
-                emp=self.emp,
-                )
+            trainer.train(dataset=cds, emp=self.emp)
             embeddings = trainer.extract_embeddings(cds)
             np.savez(embedding_filepath, embeddings=embeddings,
                      motion_ids=motion_ids, frame_indices=frame_indices)
@@ -290,6 +288,11 @@ class Track_Fixer:
         pix_dialog = Dual_Pixmap_Dialog(agreement_pix, tsne_pix, max_height=480, parent=self.main)
         pix_dialog.show()
         logger.info("[TF] Visualization complete.")
+
+        if self.locker_stable_swap:
+            locker_set = set(self.locker_stable_swap)
+            stable_swap = [f for f in stable_swap_candidates if f in locker_set]
+            stable_swap_candidates = stable_swap
 
         self._process_stable_swap_candidates(stable_swap_candidates)
         self.centroids, _ = calculate_pose_centroids(self.pred_data_array)
@@ -305,6 +308,8 @@ class Track_Fixer:
                 if not amb_in_range:
                     swap_orders.append((start, "t"))
                     swap_orders.append((end, "t"))
+                elif amb_in_range[0] >= end - 1:
+                    return
                 else:
                     swap_orders.append((amb_in_range[0], "t"))
                     if len(amb_in_range) >= 2:
@@ -332,84 +337,26 @@ class Track_Fixer:
 
     def _get_ref_pos(self, frame_idx: int, force_kalman: bool = False) -> np.ndarray:
         current_obs = self.centroids[frame_idx]
-        kalman_refs = np.full((2, 2), np.nan)
-        kalman_available = True
-        for inst_idx in [0, 1]:
-            if self.kalman_filters[inst_idx] is not None:
-                state = self.kalman_filters[inst_idx].predict()
-                kalman_refs[inst_idx] = state[:2]
-            else:
-                kalman_available = False
 
-        logger.debug(f"[KALMAN] Kalman refs: Inst 0: ({kalman_refs[0, 0]:.1f}, {kalman_refs[0, 1]:.1f}), Inst 1: ({kalman_refs[1, 0]:.1f}, {kalman_refs[1, 1]:.1f})")
-        if (kalman_available or force_kalman) and not np.isnan(kalman_refs).any():
-            min_cost_kalman = self._compute_min_assignment_cost(kalman_refs, current_obs)
-            if min_cost_kalman <= self.KALMAN_MAX_ERROR:
-                logger.debug(f"[KALMAN] Kalman matching succeeded (min_cost={min_cost_kalman:.1f})")
-                return kalman_refs
-            logger.debug(f"[KALMAN] Kalman matching failed (min_cost={min_cost_kalman:.1f} > {self.KALMAN_MAX_ERROR}), falling back to last known positions")
-
-        last_known_cost = self._compute_min_assignment_cost(self.last_known_pos, current_obs)
-        last_known_ambiguous = last_known_cost > self.AMBIGUITY_THRESHOLD
-
-        if last_known_ambiguous:
-            vote_refs = self._vote_last_n_frames(frame_idx,  n_frames=self.VOTE_WINDOW_SIZE,  skip_ambiguous=True)
-            
-            if not np.isnan(vote_refs).all():
-                vote_cost = self._compute_min_assignment_cost(vote_refs, current_obs)
-                if vote_cost < last_known_cost:
-                    logger.debug(f"[VOTE] Wins (cost {vote_cost:.1f} < {last_known_cost:.1f})")
-                    return vote_refs
+        if self.use_kalman:
+            kalman_refs = np.full((2, 2), np.nan)
+            kalman_available = True
+            for inst_idx in [0, 1]:
+                if self.kalman_filters[inst_idx] is not None:
+                    state = self.kalman_filters[inst_idx].predict()
+                    kalman_refs[inst_idx] = state[:2]
                 else:
-                    logger.debug(f"[LAST_KNOWN] Wins (cost {last_known_cost:.1f} <= {vote_cost:.1f})")
+                    kalman_available = False
 
-        logger.debug(f"[FALLBACK] Using last_known_pos")
+            logger.debug(f"[KALMAN] Kalman refs: Inst 0: ({kalman_refs[0, 0]:.1f}, {kalman_refs[0, 1]:.1f}), Inst 1: ({kalman_refs[1, 0]:.1f}, {kalman_refs[1, 1]:.1f})")
+            if (kalman_available or force_kalman) and not np.isnan(kalman_refs).any():
+                min_cost_kalman = self._compute_min_assignment_cost(kalman_refs, current_obs)
+                if min_cost_kalman <= self.KALMAN_MAX_ERROR:
+                    logger.debug(f"[KALMAN] Kalman matching succeeded (min_cost={min_cost_kalman:.1f})")
+                    return kalman_refs
+                logger.debug(f"[KALMAN] Kalman matching failed (min_cost={min_cost_kalman:.1f} > {self.KALMAN_MAX_ERROR}), falling back to last known positions")
+
         return self.last_known_pos
-
-    def _vote_last_n_frames(self, frame_idx: int, n_frames: int = None, skip_ambiguous: bool = True) -> np.ndarray:
-        if n_frames is None:
-            n_frames = self.VOTE_WINDOW_SIZE
-
-        search_depth = n_frames * 3
-        start_idx = max(0, frame_idx - search_depth)
-        
-        clean_positions = {0: [], 1: []}
-        frames_used = []
-
-        for f in range(frame_idx - 1, start_idx - 1, -1):
-            if skip_ambiguous and f in self.ambiguous_frames:
-                logger.debug(f"[VOTE] Frame {f}: Skipping (marked ambiguous)")
-                continue
-            
-            insts = get_instances_on_current_frame(self.pred_data_array, f)
-            if len(insts) == 2:
-                valid_frame = True
-                for inst_idx in [0, 1]:
-                    pos = self.centroids[f, inst_idx]
-                    if np.isnan(pos[0]):
-                        valid_frame = False
-                        break
-                    clean_positions[inst_idx].append(pos)
-
-                if valid_frame:
-                    frames_used.append(f)
-                    logger.debug(f"[VOTE] Frame {f}: Using as clean reference")
-
-                    min_samples = min(len(clean_positions[0]), len(clean_positions[1]))
-                    if min_samples >= n_frames:
-                        break
-
-        min_samples = min(len(clean_positions[0]), len(clean_positions[1]))
-
-        ref_positions = np.full((2, 2), np.nan)
-        for inst_idx in [0, 1]:
-            positions = np.array(clean_positions[inst_idx])
-            ref_positions[inst_idx] = np.nanmedian(positions, axis=0)
-        
-        logger.debug(f"[VOTE] Frame {frame_idx}: Voted from clean frames {frames_used}, "
-                    f"skipped {sum(1 for f in range(start_idx, frame_idx) if f in self.ambiguous_frames)} ambiguous")
-        
-        return ref_positions
 
     def _compute_min_assignment_cost(self, refs: np.ndarray, obs: np.ndarray) -> float:
         valid_obs = ~np.isnan(obs[:, 0])
@@ -450,7 +397,7 @@ class Track_Fixer:
         if compare_only:
             assert len(candidates) == 1, "Compare_only arg only supports 1vs1 comparison!"
             cost = costs[0]
-            return cost <= self.MAX_DIST_THRESHOLD
+            return cost <= self.MAX_DIST_THRESHOLD * self.mice_length
 
         if self.id_lock and self.blob_array[frame_idx, 0] == 1 and self.blob_array[max(0, frame_idx-1), 0] == 1: #Continuous co-single block, not checkpoint
             logger.debug(f"Frame {frame_idx}: Blob array supplied, locking single obs to instance 0.")
@@ -466,7 +413,7 @@ class Track_Fixer:
         if len(candidates) == 1:
             assigned_idx = candidates[0]
             if self.id_lock and self.blob_array[frame_idx, 0] == 1 and assigned_idx != self.locked_idx: # It attempts to assign the wrong id at checkpoint
-                if self.skip_contrast and frame_idx - self.last_id_locker > 2 and np.sum(self.inst_count_per_frame[self.last_id_locker:frame_idx]==2) > 2: # observe and report
+                if frame_idx - self.last_id_locker > 2 and np.sum(self.inst_count_per_frame[self.last_id_locker:frame_idx]==2) > 2: # observe and report
                     self.ambiguous_frames.append(frame_idx)
                     self.locker_stable_swap.extend(range(self.last_id_locker+1, frame_idx+1))
                 if obs_idx != self.locked_idx:
@@ -478,7 +425,7 @@ class Track_Fixer:
                 logger.debug(f"Frame {frame_idx}: Single obs assigned to {assigned_idx} (was {obs_idx}), swapped")
             self._update_kalman_with_observation(frame_idx, [assigned_idx], [assigned_idx])
             cost = costs[0]
-            if cost <= self.MAX_DIST_THRESHOLD:
+            if cost <= self.MAX_DIST_THRESHOLD * self.mice_length:
                 return True
             else:
                 logger.debug(f"Frame {frame_idx}: Single obs assignment cost too large: (cost: {cost:.1f} > {self.MAX_DIST_THRESHOLD})")
@@ -487,7 +434,7 @@ class Track_Fixer:
             c0, c1 = costs
             winner = candidates[0] if c0 < c1 else candidates[1]
             if self.id_lock and self.blob_array[frame_idx, 0] == 1 and winner != self.locked_idx: # same
-                if self.skip_contrast and frame_idx - self.last_id_locker > 2 and np.sum(self.inst_count_per_frame[self.last_id_locker:frame_idx]==2) > 2:
+                if frame_idx - self.last_id_locker > 2 and np.sum(self.inst_count_per_frame[self.last_id_locker:frame_idx]==2) > 2:
                     self.ambiguous_frames.append(frame_idx)
                     self.locker_stable_swap.extend(range(self.last_id_locker+1, frame_idx+1))
                 if obs_idx != self.locked_idx:
@@ -498,12 +445,12 @@ class Track_Fixer:
                 self._swap_ids_in_frame(frame_idx)
                 logger.debug(f"Frame {frame_idx}: Single obs winner {winner} (was {obs_idx}), swapped")
                 self._update_kalman_with_observation(frame_idx, [winner], [winner])
-            if abs(c0 - c1) < self.AMBIGUITY_THRESHOLD:
+            if abs(c0 - c1)/(c0 + c1) < self.AMBIGUITY_THRESHOLD:
                 logger.debug(f"Frame {frame_idx}: Ambiguous single observation (costs {c0:.1f}, {c1:.1f})")
                 return False
         return True
 
-    def _handle_two_observations(self, frame_idx: int, ref_positions: np.ndarray, get_min_cost: bool = False) -> bool | float:
+    def _handle_two_observations(self, frame_idx: int, ref_positions: np.ndarray) -> bool | float:
         valid_ref = np.where(np.all(~np.isnan(ref_positions), axis=-1))[0]
         n_ref = len(valid_ref)
         if n_ref == 1:
@@ -521,19 +468,20 @@ class Track_Fixer:
             cost_no_swap = cost_matrix_lap[0, 0] + cost_matrix_lap[1, 1]
         else:
             return False
-        if get_min_cost:
-            return min(cost_swap, cost_no_swap)
         needs_swap = cost_swap < cost_no_swap
         if needs_swap:
             self._swap_ids_in_frame(frame_idx)
             logger.debug(f"Frame {frame_idx}: Two-obs swap needed (cost_swap={cost_swap:.1f} < no_swap={cost_no_swap:.1f})")
         self._update_kalman_with_observation(frame_idx, [0, 1], [0, 1])
-        if abs(cost_swap - cost_no_swap) < self.AMBIGUITY_THRESHOLD:
+        if abs(cost_swap - cost_no_swap)/(cost_swap + cost_no_swap) < self.AMBIGUITY_THRESHOLD:
             logger.debug(f"Frame {frame_idx}: Ambiguous two-obs match (Δcost={abs(cost_swap - cost_no_swap):.1f})")
             return False
         return True
 
     def _update_kalman_with_observation(self, frame_idx: int, observed_inst_ids: List[int], assigned_ids: List[int]):
+        if not self.use_kalman:
+            return
+
         for obs_idx, global_idx in zip(observed_inst_ids, assigned_ids):
             z = self.centroids[frame_idx, obs_idx]
             if np.isnan(z).any():
@@ -560,6 +508,13 @@ class Track_Fixer:
                 else:
                     kf.update(z)
                     self.kalman_failure_count[global_idx] = 0
+
+    def _get_mice_length(self) -> float:
+        head_idx = self.anglemap["head_idx"]
+        all_head = self.pred_data_array[..., head_idx * 3:head_idx * 3 + 2]
+        tail_idx = self.anglemap["tail_idx"]
+        all_tail = self.pred_data_array[..., tail_idx * 3:tail_idx * 3 + 2]
+        return np.nanmedian(np.linalg.norm(all_head - all_tail, axis=-1))
 
     def _clear_instance_at_frame(self, frame_idx: int, inst_idx: int):
         self.pred_data_array[frame_idx, inst_idx, :] = np.nan
