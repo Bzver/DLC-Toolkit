@@ -11,7 +11,7 @@ from ui import Dual_Pixmap_Dialog
 from utils.track import Kalman, swap_track
 from utils.pose import (
     calculate_pose_centroids, calculate_pose_array_rotations, calculate_pose_array_bbox,
-    outlier_rotation, outlier_confidence, outlier_size, outlier_bodypart,
+    outlier_rotation, outlier_size, outlier_bodypart,
     )
 from utils.helper import get_instance_count_per_frame, get_instances_on_current_frame, indices_to_spans
 from utils.dataclass import Loaded_DLC_Data, Cutout_Augments, Emb_Params
@@ -68,12 +68,13 @@ class Track_Fixer:
         
         tm = Temp_Manager(self.extractor.get_video_filepath())
         self.temp_dir = tm.create("track")
-        self.eligible_frames = []
         self.ambiguous_frames = []
         self.id_lock = self.blob_array is not None
         self.last_id_locker = 0
         self.locker_stable_swap = []
         self.locked_idx = 0
+
+        self.seg_list = []
 
         if self.skip_contrast and not self.id_lock:
             raise RuntimeError("Lock-ID mode needs animal counter data. Please count animals before running track correction with skip_contrast enabled.")
@@ -94,8 +95,44 @@ class Track_Fixer:
                 self._execute_swap_orders(swap_orders, self.total_frames-1)
             return self.pred_data_array
 
-        self.eligible_frames = self._find_eligible_frames(min_eligible=self.emp.triplets)
-        self.eligible_frames = [f for f in self.eligible_frames if f >= start_idx and f < end_idx]
+        eligible_mask = self._find_eligible_frames(min_eligible=self.emp.triplets)
+        if self.ambiguous_frames:
+            eligible_mask[self.ambiguous_frames] = False
+
+        assert self.total_frames == len(eligible_mask), f"self.total_frames({self.total_frames}) != len(eligible_mask)({len(eligible_mask)})"
+
+        crop_coords = calculate_pose_array_bbox(self.pred_data_array[eligible_mask], padding=15).astype(np.uint16)
+        cutout_dim = int(np.percentile(crop_coords[..., 2:4] - crop_coords[..., 0:2], 90))
+
+        if cutout_dim % 2:
+            cutout_dim += 1
+    
+        angles = np.zeros((self.total_frames, self.dlc_data.instance_count))
+        angles[eligible_mask] = np.rad2deg(calculate_pose_array_rotations(self.pred_data_array[eligible_mask], self.anglemap))
+
+        ca = Cutout_Augments(
+            centroids=self.centroids,
+            cutout_dim=cutout_dim,
+            angle_array=angles,
+            grayscaling=True
+            )
+
+        for seg_start, seg_end in indices_to_spans(np.where(eligible_mask)[0].tolist()):
+            if seg_end < start_idx or seg_start > end_idx:
+                continue
+            
+            seg_start = max(seg_start, start_idx)
+            seg_end = min(seg_end, end_idx-1)
+
+            try:
+                seg_frames = [i for i in range(seg_start, seg_end + 1) if eligible_mask[i]]
+            except:
+                print(f"seg_end:{seg_end}, eligible_mask len:{len(eligible_mask)}")
+            if len(seg_frames) <= 3:
+                continue
+            self.seg_list.append(seg_frames)
+
+        self._crop_rotate_and_export(ca)
         self._run_contrain_magic()
         self._run_kp_smoothing()
         return self.pred_data_array
@@ -114,7 +151,7 @@ class Track_Fixer:
                 num_0 = np.sum(~np.isnan(self.centroids[lock_frame_indices, 0, 0]))
                 self.locked_idx = 0 if num_0 >= 5 else 1
 
-        pbar = tqdm(total=end_idx - start_idx, desc=f"Motion Sweep In Progress", leave=False, ncols=200)
+        pbar = tqdm(total=end_idx - start_idx, desc=f"Motion Sweep In Progress", leave=False, ncols=200)        
         try:
             for f in range(start_idx, end_idx):
                 pbar.update(1)
@@ -184,12 +221,11 @@ class Track_Fixer:
     def _find_eligible_frames(
             self,
             inst_dist_threshold: float = 1.0,
-            conf_threshold: float = 0.5,
             size_threshold: Tuple[float, float] = (0.3, 2.5),
             bp_threshold: int = 4,
-            twist_angle_threshold: float = 10.0,
+            twist_angle_threshold: float = 50.0,
             min_eligible: int = 5000,
-            ) -> List[int]:
+            ) -> np.ndarray:
 
         instance_count = get_instance_count_per_frame(self.pred_data_array)
         two_inst_mask = instance_count == 2
@@ -202,9 +238,7 @@ class Track_Fixer:
         dists = np.linalg.norm(centroids_two_inst[:, 1, :] - centroids_two_inst[:, 0, :], axis=-1)
         dist_mask = dists > inst_dist_threshold * self.mice_length
 
-        conf_mask = ~np.any(outlier_confidence(two_inst_array, conf_threshold), axis=-1)
         angle_mask = ~np.any(outlier_rotation(two_inst_array, self.anglemap, twist_angle_threshold), axis=-1)
-
         size_mask = ~np.any(outlier_size(two_inst_array, *size_threshold), axis=-1)
         bp_mask = ~np.any(outlier_bodypart(two_inst_array, bp_threshold), axis=-1)
 
@@ -212,7 +246,6 @@ class Track_Fixer:
 
         target_count = min(min_eligible, self.total_frames // 2)
         constraint_sets = [
-            dist_mask & angle_mask & size_mask & bp_mask & conf_mask,
             dist_mask & angle_mask & size_mask & bp_mask,
             dist_mask & angle_mask,
             dist_mask,
@@ -221,79 +254,121 @@ class Track_Fixer:
             eligible_count = np.sum(constraint)
             if eligible_count >= target_count:
                 full_mask[two_inst_mask] = constraint
-                return np.where(full_mask)[0].tolist()
+                return full_mask
 
         logger.warning(
             f"Masking yielded too few frames (<{target_count}). Falling back to ALL {np.sum(two_inst_mask)} two-instance frames. "
         )
         full_mask[two_inst_mask] = True
-        return np.where(full_mask)[0].tolist()
+        return full_mask
 
-    def _crop_rotate_and_export(self):
-        I = self.pred_data_array.shape[1]
-        angles = np.zeros((self.total_frames, I))
-        crop_coords = calculate_pose_array_bbox(self.pred_data_array[self.eligible_frames], padding=15).astype(np.uint16)
-        cutout_dim = int(np.percentile(crop_coords[..., 2:4] - crop_coords[..., 0:2], 90))
+    def _crop_rotate_and_export(self, ca:Cutout_Augments):
+        frame_list = []
+        for seg in self.seg_list:
+            frame_list.extend(seg)
 
-        if cutout_dim % 2:
-            cutout_dim += 1
-
-        angles[self.eligible_frames] = np.rad2deg(calculate_pose_array_rotations(self.pred_data_array[self.eligible_frames], self.anglemap))  # (F, I)
-
-        ca = Cutout_Augments(
-            centroids=self.centroids,
-            cutout_dim=cutout_dim,
-            angle_array=angles,
-            grayscaling=True
-            )
         co = Frame_Exporter_Threaded(
             video_filepath=self.extractor.get_video_filepath(),
             output_folder=self.temp_dir,
-            frame_list=self.eligible_frames,
+            frame_list=frame_list,
             max_workers=self.worker_num,
         )
-        co.extract_frames(ca)
+        co.extract_frames(ca, self.seg_list)
+    
+    def _run_contrain_magic(self, min_samples:int = 1000):
 
-    def _run_contrain_magic(self):
+        from utils.torch import Crop_Dataset, Embedding_Visualizer, Contrastive_Trainer, Cutout_Dataloader
 
-        from utils.torch import Crop_Dataset, Embedding_Visualizer, Contrastive_Trainer
+        dataloader = Cutout_Dataloader(folder_path=self.temp_dir, seg_list=self.seg_list)
 
-        embedding_filepath = os.path.join(self.temp_dir, 'embeddings.npz')
-        if os.path.isfile(embedding_filepath):
-            logger.info(f"Auto loading embedding file at {embedding_filepath}")
-            cache = np.load(embedding_filepath)
-            embeddings = cache['embeddings']
-            motion_ids = cache['motion_ids'].tolist()
-            frame_indices = cache['frame_indices'].tolist()
-        else:
-            from core.io import Cutout_Dataloader
-            self._crop_rotate_and_export()
-            loader = Cutout_Dataloader(self.temp_dir)
-            crops, motion_ids, frame_indices, _, _ = loader.load_paired_tracks(n_mice=2)
-            if len(crops) == 0:
-                raise FileNotFoundError("[TF] No crops loaded. Check your folder path and filename format.")
-            cds = Crop_Dataset(crops, motion_ids, frame_indices)
-            trainer = Contrastive_Trainer()
-            trainer.train(dataset=cds, emp=self.emp)
-            embeddings = trainer.extract_embeddings(cds)
-            np.savez(embedding_filepath, embeddings=embeddings,
-                     motion_ids=motion_ids, frame_indices=frame_indices)
+        init_ratio = 0.1
+        total_samples = sum(len(seg) for seg in self.seg_list)
+        init_ratio = min(max(min_samples / total_samples, 0.1), 0.9)
+
+        trainer = Contrastive_Trainer()
+        first_iter = True
+        if self.emp.pretrained_model_path and os.path.exists(self.emp.pretrained_model_path):
+            logger.info(f"[TF] Loading pretrained model: {self.emp.pretrained_model_path}")
+            trainer.load_checkpoint(self.emp.pretrained_model_path, strict=False)
+
+        while init_ratio < 1.0:
+            train_seg_indices = dataloader.select_training_segments(ratio=init_ratio)
+
+            logger.info(f"[TF] Loading {len(train_seg_indices)} training segments...")
+            train_datasets = dataloader.load_all_segments_for_training(train_seg_indices)
+
+            trainer.train(dataset=train_datasets, emp=self.emp, skip_easy=not first_iter)
+
+            val_seg_indices = dataloader.select_validation_segments(exclude=train_seg_indices, ratio=init_ratio)
+            val_datasets = dataloader.load_all_segments_for_training(val_seg_indices)
+
+            if trainer.eval_on_dataset(val_datasets, emp=self.emp):
+                logger.info(f"[TF] Validation passed at ratio={init_ratio:.1f}")
+                break
+
+            first_iter = False
+            init_ratio += 0.2
+            trainer.model.train()
+
+        if self.emp.save_model:
+            model_path = os.path.join(self.temp_dir, 'trained_model.pth')
+            trainer.save_checkpoint(model_path, metadata={'video_name': self.dlc_data.video_name})
+            logger.info(f"[TF] Model saved to {model_path}")
+
+        logger.info("[TF] Running inference on ALL segments (5 frames per segment)")
+        segment_embeddings = []
+        segment_frame_indices = []
+        segment_motion_ids = []
+
+        for seg_idx in tqdm(range(len(dataloader.segment_index)), desc="Inferring Segments", ncols=200):
+            images, frames, _ = dataloader.load_segment_samples(seg_idx, n_samples=5)
+
+            crops = [images[i, mouse_idx] for i in range(len(frames)) for mouse_idx in range(2)]
+            mids_flat = [mid for _ in frames for mid in [0, 1]]
+            frames_flat = [f for f in frames for _ in range(2)]
+            
+            ds = Crop_Dataset(crops, mids_flat, frames_flat, is_ir=True)
+            
+            embs = trainer.extract_embeddings(ds)
+            
+            segment_embeddings.append(embs)
+            segment_frame_indices.append(frames_flat)
+            segment_motion_ids.append(mids_flat)
+        
+        all_embeddings = np.vstack(segment_embeddings)
         kmeans = KMeans(n_clusters=2, random_state=42)
-        visual_labels = kmeans.fit_predict(embeddings)
-        vis = Embedding_Visualizer(embeddings, motion_ids, frame_indices, visual_labels)
+        visual_labels = kmeans.fit_predict(all_embeddings)
+
+        segment_visual_labels = []
+        idx = 0
+        for seg_emb in segment_embeddings:
+            n = len(seg_emb)
+            segment_visual_labels.append(visual_labels[idx:idx+n])
+            idx += n
+        
+        vis = Embedding_Visualizer(
+            segment_embeddings, 
+            segment_motion_ids, 
+            segment_frame_indices,
+            visual_labels=segment_visual_labels,
+            total_frames=self.total_frames
+        )
+        
         tsne_pix = vis.plot_tsne_combined()
         agreement_pix, stable_swap_candidates = vis.plot_agreement_timeline()
+        
         tsne_pix.save(os.path.join(self.temp_dir, "tsne_combined.png"))
         agreement_pix.save(os.path.join(self.temp_dir, "agreement_timeline.png"))
+        
         pix_dialog = Dual_Pixmap_Dialog(agreement_pix, tsne_pix, max_height=480, parent=self.main)
         pix_dialog.show()
         logger.info("[TF] Visualization complete.")
-
+        
         if self.locker_stable_swap:
             locker_set = set(self.locker_stable_swap)
             stable_swap = [f for f in stable_swap_candidates if f in locker_set]
             stable_swap_candidates = stable_swap
-
+        
         self._process_stable_swap_candidates(stable_swap_candidates)
         self.centroids, _ = calculate_pose_centroids(self.pred_data_array)
 
@@ -515,11 +590,6 @@ class Track_Fixer:
         tail_idx = self.anglemap["tail_idx"]
         all_tail = self.pred_data_array[..., tail_idx * 3:tail_idx * 3 + 2]
         return np.nanmedian(np.linalg.norm(all_head - all_tail, axis=-1))
-
-    def _clear_instance_at_frame(self, frame_idx: int, inst_idx: int):
-        self.pred_data_array[frame_idx, inst_idx, :] = np.nan
-        self.centroids[frame_idx, inst_idx, :] = np.nan
-        self.inst_count_per_frame[frame_idx] = len(get_instances_on_current_frame(self.pred_data_array, frame_idx))
 
     def _swap_ids_in_frame(self, frame_idx: int):
         self.pred_data_array[frame_idx] = self.pred_data_array[frame_idx, ::-1]

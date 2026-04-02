@@ -125,3 +125,5 @@ class Emb_Params:
     lr: float
     margin: float
     sil: float
+    save_model: bool
+    pretrained_model_path: str

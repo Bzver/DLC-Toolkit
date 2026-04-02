@@ -1,4 +1,4 @@
-from .frame_loader import Frame_Extractor, Frame_Extractor_Img, Cutout_Dataloader
+from .frame_loader import Frame_Extractor, Frame_Extractor_Img
 from .exporter import DLC_Exporter, Frame_Exporter_Threaded
 from .pred_loader import Prediction_Loader
 from .helper_temp import Temp_Manager
@@ -19,7 +19,6 @@ __all__ = (
     Frame_Exporter_Threaded,
     Frame_Extractor_Img,
     Prediction_Loader,
-    Cutout_Dataloader,
     Frame_Extractor,
     DLC_Exporter,
     Temp_Manager,

@@ -126,11 +126,15 @@ class Frame_Exporter_Threaded:
         tm = Temp_Manager(video_filepath)
         self.temp_dir = tm.create("export")
 
-    def extract_frames(self, aug):
+    def extract_frames(self, aug, chunked_segments:List[List[int]]=[]):
         if self.worker_zero:
             return self.worker_zero.extract_frames(aug)
 
-        segments = self._task_splitter()
+        if not chunked_segments:
+            segments = self._task_splitter()
+        else:
+            segments = chunked_segments
+
         all_indices = []
 
         self._job_info_verbose(segments, aug)
@@ -387,10 +391,7 @@ class Frame_Exporter:
             d = aug.cutout_dim
             f = len(self.frame_list)
             i = aug.centroids.shape[1]
-            if aug.grayscaling:
-                self.cutout_images = np.zeros((f, i, d, d), dtype=np.uint8)
-            else:
-                self.cutout_images = np.zeros((f, i, d, d, 3), dtype=np.uint8)
+            self.cutout_images = np.zeros((f, i, d, d, 3), dtype=np.uint8)
             self.cutout_frames = np.array(sorted(self.frame_list))
             self.frame_to_arr_idx = {fid: idx for idx, fid in enumerate(self.cutout_frames)}
 
@@ -516,7 +517,7 @@ class Frame_Exporter:
 
     def _cutout_augmentation(self, ca:Cutout_Augments, frame:np.ndarray, frame_idx:int):
         if ca.grayscaling:
-            frame = frame_to_grayscale(frame, keep_as_bgr=False)
+            frame = frame_to_grayscale(frame, keep_as_bgr=True)
 
         for inst_idx in range(ca.centroids.shape[1]):
             frame_inst = frame.copy()

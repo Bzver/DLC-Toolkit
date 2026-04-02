@@ -3,7 +3,7 @@ from functools import partial
 from PySide6 import QtWidgets, QtGui
 from PySide6.QtCore import Qt, Signal, QPoint
 from PySide6.QtWidgets import (
-    QPushButton, QHBoxLayout, QVBoxLayout, QDial, QDialog, QRadioButton, QGroupBox,
+    QPushButton, QHBoxLayout, QVBoxLayout, QDial, QDialog, QRadioButton, QGroupBox, QFileDialog,
     QLabel, QDialogButtonBox, QCheckBox, QSizePolicy, QScrollArea, QComboBox, QDoubleSpinBox)
 from PySide6.QtGui import QPainter, QPixmap, QMouseEvent, QImage, QColor, QPen
 
@@ -468,6 +468,9 @@ class Track_Fix_Config_Dialog(QDialog):
         self.worker_num = 8
         self.emp = None
         self.fix_range = (0, self.total_frames-1)
+
+        self.save_model = False
+        self.pretrained_model_path = None
         
         self._init_ui()
         
@@ -512,6 +515,25 @@ class Track_Fix_Config_Dialog(QDialog):
         skip_row.addWidget(self.skip_contrastive_cbx)
 
         opts_layout.addLayout(skip_row)
+
+        model_row = QHBoxLayout()
+        
+        self.save_model_cbx = QCheckBox("Save Model After Training")
+        self.save_model_cbx.setToolTip("Save trained model weights for reuse in future videos with similar setup")
+        model_row.addWidget(self.save_model_cbx)
+        
+        self.load_model_btn = QPushButton("Load Pretrained Model...")
+        self.load_model_btn.setToolTip("Load previously trained model for fine-tuning on this video")
+        self.load_model_btn.clicked.connect(self._on_load_model)
+        model_row.addWidget(self.load_model_btn)
+        
+        self.model_path_label = QLabel("")
+        self.model_path_label.setStyleSheet("color: gray; font-size: 9px;")
+        self.model_path_label.setWordWrap(True)
+        model_row.addWidget(self.model_path_label)
+        
+        opts_layout.addLayout(model_row)
+
         opts_group.setLayout(opts_layout)
         layout.addWidget(opts_group)
 
@@ -569,11 +591,32 @@ class Track_Fix_Config_Dialog(QDialog):
         layout.addWidget(btn_box)
         self._toggle_contrastive_params()
 
+    def _on_load_model(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Pretrained Model",
+            "",
+            "PyTorch Models (*.pth *.pt);;All Files (*)"
+        )
+        
+        if file_path:
+            self.pretrained_model_path = file_path
+            display_path = file_path[-50:] if len(file_path) > 50 else file_path
+            if len(file_path) > 50:
+                display_path = "..." + display_path
+            self.model_path_label.setText(f"✓ {display_path}")
+            self.model_path_label.setStyleSheet("color: green; font-size: 9px;")
+
     def _toggle_contrastive_params(self):
         is_skipped = self.skip_contrastive_cbx.isChecked()
         self.cl_group.setDisabled(is_skipped)
         self.skip_sweep_cbx.setChecked(False)
         self.skip_sweep_cbx.setDisabled(is_skipped)
+
+        self.save_model_cbx.setDisabled(is_skipped)
+        self.load_model_btn.setDisabled(is_skipped)
+        self.model_path_label.setDisabled(is_skipped)
+        
         if is_skipped and not self.lock_id_cbx.isChecked():
             self.avtomat_cbx.setChecked(False)
             self.avtomat_cbx.setDisabled(True)
@@ -597,6 +640,9 @@ class Track_Fix_Config_Dialog(QDialog):
         self.worker_num = self.worker_spin.value()
         self.lock_id = self.lock_id_cbx.isChecked()
         self.kp_smooth = self.kp_smooth_cbx.isChecked()
+
+        self.save_model = self.save_model_cbx.isChecked()
+        
         self.emp = Emb_Params(
             batch_size=self.batch_size_spin.value(),
             triplets=self.max_triplet_spin.value(),
@@ -606,6 +652,8 @@ class Track_Fix_Config_Dialog(QDialog):
             lr=10**-self.lr_spin.value(),
             margin=self.margin_thresh_spin.value(),
             sil=self.sil_thresh_spin.value(),
+            save_model=self.save_model,
+            pretrained_model_path=self.pretrained_model_path,
         )
 
         self.accept()
