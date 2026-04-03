@@ -873,6 +873,7 @@ class Frame_Label:
         kp_smooth = config_dlg.kp_smooth
         skip_contrast = config_dlg.skip_contrastive
         use_kalman = config_dlg.use_kalman
+        use_cache = config_dlg.use_cache
 
         start_idx = fix_range[0]
         end_idx = fix_range[1] + 1
@@ -893,6 +894,7 @@ class Frame_Label:
             avtomat=avtomat,
             skip_contrast=skip_contrast,
             use_kalman=use_kalman,
+            use_cache=use_cache,
             emp=emp,
             worker_num=worker_num,
             parent=self.main,

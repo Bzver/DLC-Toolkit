@@ -15,9 +15,11 @@ class Temp_Manager:
 
         self._clean()
 
-    def create(self, sub_name:str) -> str:
+    def create(self, sub_name:str, use_existing:bool=False) -> str:
         self.temp_dir = os.path.join(self.temp_dir_root, self.video_name, sub_name)
         if os.path.exists(self.temp_dir):
+            if use_existing:
+                return self.temp_dir
             try:
                 shutil.rmtree(self.temp_dir)
             except (PermissionError, OSError):

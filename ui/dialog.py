@@ -465,6 +465,7 @@ class Track_Fix_Config_Dialog(QDialog):
         self.avtomat = False
         self.skip_contrastive = False
         self.use_kalman = True
+        self.use_cache = True
         self.worker_num = 8
         self.emp = None
         self.fix_range = (0, self.total_frames-1)
@@ -552,21 +553,21 @@ class Track_Fix_Config_Dialog(QDialog):
 
         self.max_epochs_spin = Spinbox_With_Label("Max Epochs:", (0, 200), 100)
         self.warmup_epochs_spin = Spinbox_With_Label("Warmup Epochs:", (0, 200), 5)
-        self.batch_size_spin = Spinbox_With_Label("Batch Size:", (2, 4096), 128)
 
         param_grid.addWidget(self.max_epochs_spin, 0, 0)
         param_grid.addWidget(self.warmup_epochs_spin, 0, 1)
-        param_grid.addWidget(self.batch_size_spin, 0, 2)
+
+        self.batch_size_spin = Spinbox_With_Label("Batch Size:", (2, 4096), 128)
+        self.max_triplet_spin = Spinbox_With_Label("Max Triplets per Mining:", (5000, 100000), 5000)
+        param_grid.addWidget(self.batch_size_spin, 1, 0)
+        param_grid.addWidget(self.max_triplet_spin, 1, 1)
 
         self.max_pleatau_spin = Spinbox_With_Label("Pleatau Patience:", (2, 50), 3)
-        self.max_triplet_spin = Spinbox_With_Label("Max Triplets per Mining:", (5000, 100000), 5000)
         self.lr_spin = Spinbox_With_Label("Learning Rate (1e-n), n:", (2, 8), 5)
+        param_grid.addWidget(self.max_pleatau_spin, 2, 0)
+        param_grid.addWidget(self.lr_spin, 2, 1)
 
-        param_grid.addWidget(self.max_pleatau_spin, 1, 0)
-        param_grid.addWidget(self.max_triplet_spin, 1, 1)
-        param_grid.addWidget(self.lr_spin, 1, 2)
-
-        threshold_layout = QHBoxLayout()
+        margin_layout = QHBoxLayout()
         self.margin_thresh_spin = QDoubleSpinBox()
         self.margin_thresh_spin.setRange(0.1, 2.0)
         self.margin_thresh_spin.setValue(1.0)
@@ -574,6 +575,7 @@ class Track_Fix_Config_Dialog(QDialog):
         self.margin_thresh_spin.setSingleStep(0.05)
         self.margin_thresh_spin.setToolTip("Minimum required gap between same-mouse and diff-mouse similarity")
         
+        sil_layout = QHBoxLayout()
         self.sil_thresh_spin = QDoubleSpinBox()
         self.sil_thresh_spin.setRange(0.1, 1.0)
         self.sil_thresh_spin.setValue(0.8)
@@ -581,6 +583,7 @@ class Track_Fix_Config_Dialog(QDialog):
         self.sil_thresh_spin.setSingleStep(0.05)
         self.sil_thresh_spin.setToolTip("Minimum required silhouette score for cluster quality")
 
+        min_imp_layout = QHBoxLayout()
         self.min_imp_spin = QDoubleSpinBox()
         self.min_imp_spin.setRange(0.01, 1.00)
         self.min_imp_spin.setValue(0.01)
@@ -588,17 +591,23 @@ class Track_Fix_Config_Dialog(QDialog):
         self.min_imp_spin.setSingleStep(0.01)
         self.min_imp_spin.setToolTip("Minimum improvements between iterations to determine early stopping or increasing data.")
         
-        threshold_layout.addWidget(QLabel("Margin:"))
-        threshold_layout.addWidget(self.margin_thresh_spin)
-        threshold_layout.addWidget(QLabel("Silhouette:"))
-        threshold_layout.addWidget(self.sil_thresh_spin)
-        threshold_layout.addWidget(QLabel("Min Improvement:"))
-        threshold_layout.addWidget(self.min_imp_spin)
+        margin_layout.addWidget(QLabel("Margin:"))
+        margin_layout.addWidget(self.margin_thresh_spin)
+        sil_layout.addWidget(QLabel("Silhouette:"))
+        sil_layout.addWidget(self.sil_thresh_spin)
+        min_imp_layout.addWidget(QLabel("Min Improvement:"))
+        min_imp_layout.addWidget(self.min_imp_spin)
+
+        self.cache_cbx = QCheckBox("Use Cache Frames If Possible")
+        self.cache_cbx.setChecked(True)
 
         self.warmup_epochs_spin.value_changed.connect(self._validate_warmup)
 
         cl_layout.addLayout(param_grid)
-        cl_layout.addLayout(threshold_layout) 
+        cl_layout.addLayout(margin_layout)
+        cl_layout.addLayout(sil_layout)
+        cl_layout.addLayout(min_imp_layout)
+        cl_layout.addWidget(self.cache_cbx)
 
         cl_group.setLayout(cl_layout)
         layout.addWidget(cl_group)
@@ -655,6 +664,7 @@ class Track_Fix_Config_Dialog(QDialog):
         self.avtomat = self.avtomat_cbx.isChecked()
         self.skip_contrastive = self.skip_contrastive_cbx.isChecked()
         self.use_kalman = self.use_kalman_cbx.isChecked()
+        self.use_cache = self.cache_cbx.isChecked()
         self.worker_num = self.worker_spin.value()
         self.lock_id = self.lock_id_cbx.isChecked()
         self.kp_smooth = self.kp_smooth_cbx.isChecked()

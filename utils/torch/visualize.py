@@ -15,9 +15,10 @@ class Embedding_Visualizer:
         segment_motion_ids: List[List[int]],
         segment_frame_indices: List[List[int]],
         visual_labels: List[np.ndarray],
-        total_frames: Optional[int] = None
+        total_frames: Optional[int] = None,
+        start_idx: int = 0,
+        end_idx: int = -1
     ):
-        self.total_frames = total_frames
     
         self.segment_embeddings = segment_embeddings
         self.segment_motion_ids = segment_motion_ids
@@ -31,7 +32,10 @@ class Embedding_Visualizer:
         self.visual_labels = np.hstack(visual_labels) if visual_labels else np.array([])
         self.segment_visual_labels = visual_labels
     
+        self.total_frames = total_frames if total_frames else max(max(seg) for seg in self.segment_frame_indices) + 1
         self.n_samples = len(self.embeddings)
+        self.start_idx = start_idx
+        self.end_idx = self.total_frames if end_idx < 0 else end_idx
 
         logger.info(f"[VIS] Initialized with {self.n_segments} segments, {self.n_samples} total samples")
 
@@ -121,24 +125,7 @@ class Embedding_Visualizer:
         return pixmap
 
     def plot_agreement_timeline(self, dpi: int = 150) -> Tuple[any, List[int]]:
-
-        baseline_segments = min(3, self.n_segments)
-        cluster_votes = {0: {0: 0, 1: 0}, 1: {0: 0, 1: 0}}
-
-        for seg_idx in range(baseline_segments):
-            v_labels = self.segment_visual_labels[seg_idx]
-            m_ids = self.segment_motion_ids[seg_idx]
-            
-            for v_cluster in [0, 1]:
-                for m_id in [0, 1]:
-                    mask = (v_labels == v_cluster) & (np.array(m_ids) == m_id)
-                    cluster_votes[v_cluster][m_id] += np.sum(mask)
-        
-        mapping = {vc: max(cluster_votes[vc], key=cluster_votes[vc].get) for vc in [0, 1]}
-        logger.info(f"[VIS] Baseline mapping: Visual Cluster 0→Motion ID {mapping[0]}, 1→{mapping[1]}")
-
-        if self.total_frames is None:
-            self.total_frames = max(max(seg) for seg in self.segment_frame_indices) + 1
+        mapping = {0: 0, 1: 1}
 
         agreement_timeline = np.full(self.total_frames, np.nan)
         for seg_idx in range(self.n_segments):
@@ -191,7 +178,7 @@ class Embedding_Visualizer:
 
         fig, ax = plt.subplots(figsize=(15, 5))
 
-        ax.plot(smoothed_timeline, marker="o", markersize=1, linewidth=1, label="Segment Agreement", color="navy", alpha=0.6)
+        ax.plot(smoothed_timeline[self.start_idx:self.end_idx+1], marker="o", markersize=1, linewidth=1, label="Segment Agreement", color="navy", alpha=0.6)
         
         colors = {2: "lightgreen", 1: "lightcoral", 0: "lightyellow"}
         labels = {2: "Agree", 1: "Disagree (Swap)", 0: "Ambiguous"}

@@ -126,9 +126,9 @@ class Frame_Exporter_Threaded:
         tm = Temp_Manager(video_filepath)
         self.temp_dir = tm.create("export")
 
-    def extract_frames(self, aug, chunked_segments:List[List[int]]=[]):
+    def extract_frames(self, aug, chunked_segments:List[List[int]]=[], use_cache:bool=False):
         if self.worker_zero:
-            return self.worker_zero.extract_frames(aug)
+            return self.worker_zero.extract_frames(aug, use_cache)
 
         if not chunked_segments:
             segments = self._task_splitter()
@@ -142,7 +142,7 @@ class Frame_Exporter_Threaded:
         try:
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 futures = {
-                    executor.submit(self._worker_process_segment, idx, chunk, aug, self.temp_dir, to_video=False): idx
+                    executor.submit(self._worker_process_segment, idx, chunk, aug, self.temp_dir, to_video=False, use_cache=use_cache): idx
                     for idx, chunk in enumerate(segments)
                 }
                 for future in as_completed(futures):
@@ -176,7 +176,7 @@ class Frame_Exporter_Threaded:
         try:
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 futures = {
-                    executor.submit(self._worker_process_segment, idx, chunk, ea, self.temp_dir, to_video=True): idx
+                    executor.submit(self._worker_process_segment, idx, chunk, ea, self.temp_dir, to_video=True, use_cache=False): idx
                     for idx, chunk in enumerate(segments)
                 }
                 for future in as_completed(futures):
@@ -214,7 +214,8 @@ class Frame_Exporter_Threaded:
             frame_list: List[int], 
             aug: Exporter_Augments|Cutout_Augments,
             temp_dir: str,
-            to_video: bool
+            to_video: bool,
+            use_cache: bool,
     ) -> Optional[List[int]]:
 
         pbar = tqdm(
@@ -230,7 +231,7 @@ class Frame_Exporter_Threaded:
                 indices = worker_fe.extract_frames_into_video(aug, video_name=seg_filename)
                 return indices
             else:
-                indices = worker_fe.extract_frames(aug)
+                indices = worker_fe.extract_frames(aug, use_cache)
                 return indices
         except Exception as e:
             logger.warning(f"[Segment_{seg_idx}] Failed: {e}")
@@ -384,16 +385,25 @@ class Frame_Exporter:
         self.extractor = Frame_Extractor_Img(video_filepath) if self.label_mode else Frame_Extractor(video_filepath)
         self.extracted_indices = []
 
-    def extract_frames(self, aug:Exporter_Augments|Cutout_Augments):
-        if aug.mode == "ea":
-            self._process_frame_mask(aug.mask)
-        elif aug.mode == "ca" and not aug.to_image:
+    def extract_frames(self, aug:Exporter_Augments|Cutout_Augments, use_cache:bool=False):
+        if aug.mode == "ca" and not aug.to_image:
             d = aug.cutout_dim
             f = len(self.frame_list)
             i = aug.centroids.shape[1]
+            chunk_path = os.path.join(self.save_folder, f"chunk_{self.frame_list[0]:08d}.npz")
+            if os.path.isfile(chunk_path) and use_cache:
+                return self.extracted_indices
             self.cutout_images = np.zeros((f, i, d, d, 3), dtype=np.uint8)
             self.cutout_frames = np.array(sorted(self.frame_list))
             self.frame_to_arr_idx = {fid: idx for idx, fid in enumerate(self.cutout_frames)}
+            np.savez_compressed(
+                chunk_path,
+                images=self.cutout_images,
+                frame_indices=self.cutout_frames
+            )
+            return self.extracted_indices
+    
+        self._process_frame_mask(aug.mask)
 
         sparse_mode = self._determine_continous_or_sparse()
         if sparse_mode or self.label_mode:
@@ -402,14 +412,6 @@ class Frame_Exporter:
             self._continuous_frame_extraction(aug)
 
         self._validate_extracted_indices()
-
-        if hasattr(self, "cutout_images"):
-            chunk_path = os.path.join(self.save_folder, f"chunk_{self.frame_list[0]:08d}.npz")
-            np.savez_compressed(
-                chunk_path,
-                images=self.cutout_images,
-                frame_indices=self.cutout_frames
-            )
 
         if self.homegrown_pbar:
             self.pbar.close()

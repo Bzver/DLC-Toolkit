@@ -13,7 +13,7 @@ from utils.pose import (
     calculate_pose_centroids, calculate_pose_array_rotations, calculate_pose_array_bbox,
     outlier_rotation, outlier_size, outlier_bodypart,
     )
-from utils.helper import get_instance_count_per_frame, get_instances_on_current_frame, indices_to_spans
+from utils.helper import get_instance_count_per_frame, get_instances_on_current_frame, indices_to_spans, array_to_iterable_runs
 from utils.dataclass import Loaded_DLC_Data, Cutout_Augments, Emb_Params
 from utils.logger import logger
 
@@ -40,6 +40,7 @@ class Track_Fixer:
         avtomat: bool = False,
         skip_contrast: bool = False,
         use_kalman: bool = True,
+        use_cache: bool = True,
         parent = None
     ):
         if pred_data_array.shape[1] != 2:
@@ -67,7 +68,8 @@ class Track_Fixer:
         self.kalman_failure_count = [0, 0] if use_kalman else []
         
         tm = Temp_Manager(self.extractor.get_video_filepath())
-        self.temp_dir = tm.create("track")
+        self.temp_dir = tm.create("track", use_existing=use_cache)
+        self.use_cache = use_cache
         self.ambiguous_frames = []
         self.id_lock = self.blob_array is not None
         self.last_id_locker = 0
@@ -84,6 +86,12 @@ class Track_Fixer:
     def track_correction(self, start_idx: int = 0, end_idx: int = -1) -> np.ndarray:
         if end_idx == -1:
             end_idx = self.total_frames
+
+        if self.id_lock:
+            self.co_single_array = (self.blob_array[:, 0] == 1) & (self.inst_count_per_frame <= 1)
+            for start, end, value in array_to_iterable_runs(self.co_single_array):
+                if end - start + 1 < 5 and value:
+                    self.co_single_array[start:end+1] = False
 
         self._motion_sweep(start_idx, end_idx)
 
@@ -133,7 +141,7 @@ class Track_Fixer:
             self.seg_list.append(seg_frames)
 
         self._crop_rotate_and_export(ca)
-        self._run_contrain_magic()
+        self._run_contrain_magic(start_idx, end_idx)
         self._run_kp_smoothing()
         return self.pred_data_array
 
@@ -154,6 +162,7 @@ class Track_Fixer:
         pbar = tqdm(total=end_idx - start_idx, desc=f"Motion Sweep In Progress", leave=False, ncols=200)        
         try:
             for f in range(start_idx, end_idx):
+                logger.debug(f"--------- frame {f} ---------")
                 pbar.update(1)
                 success = self._correct_frame_with_hungarian(f)
                 if not success:
@@ -220,11 +229,11 @@ class Track_Fixer:
 
     def _find_eligible_frames(
             self,
-            inst_dist_threshold: float = 1.0,
-            size_threshold: Tuple[float, float] = (0.3, 2.5),
-            bp_threshold: int = 4,
-            twist_angle_threshold: float = 50.0,
-            min_eligible: int = 5000,
+            inst_dist_threshold: float = 1.2,
+            size_threshold: Tuple[float, float] = (0.5, 1.5),
+            bp_threshold: float = 0.9,
+            twist_angle_threshold: float = 40.0,
+            min_eligible: int = 100,
             ) -> np.ndarray:
 
         instance_count = get_instance_count_per_frame(self.pred_data_array)
@@ -240,7 +249,7 @@ class Track_Fixer:
 
         angle_mask = ~np.any(outlier_rotation(two_inst_array, self.anglemap, twist_angle_threshold), axis=-1)
         size_mask = ~np.any(outlier_size(two_inst_array, *size_threshold), axis=-1)
-        bp_mask = ~np.any(outlier_bodypart(two_inst_array, bp_threshold), axis=-1)
+        bp_mask = ~np.any(outlier_bodypart(two_inst_array, bp_threshold*(two_inst_array.shape[2]//3)), axis=-1)
 
         full_mask = np.zeros(self.total_frames, dtype=bool)
 
@@ -263,6 +272,9 @@ class Track_Fixer:
         return full_mask
 
     def _crop_rotate_and_export(self, ca:Cutout_Augments):
+        if self.use_cache:
+            logger.info("[TF] Scanning for existing npz chunk in the folder,")
+
         frame_list = []
         for seg in self.seg_list:
             frame_list.extend(seg)
@@ -273,9 +285,9 @@ class Track_Fixer:
             frame_list=frame_list,
             max_workers=self.worker_num,
         )
-        co.extract_frames(ca, self.seg_list)
+        co.extract_frames(ca, self.seg_list, self.use_cache)
     
-    def _run_contrain_magic(self, min_samples:int = 1000):
+    def _run_contrain_magic(self, start_idx, end_idx, min_samples:int = 1000):
 
         from utils.torch import Crop_Dataset, Embedding_Visualizer, Contrastive_Trainer, Cutout_Dataloader
 
@@ -394,7 +406,9 @@ class Track_Fixer:
             segment_motion_ids, 
             segment_frame_indices,
             visual_labels=segment_visual_labels,
-            total_frames=self.total_frames
+            total_frames=self.total_frames,
+            start_idx=start_idx,
+            end_idx=end_idx,
         )
         
         tsne_pix = vis.plot_tsne_combined()
@@ -408,8 +422,7 @@ class Track_Fixer:
         logger.info("[TF] Visualization complete.")
         
         if self.locker_stable_swap:
-            locker_set = set(self.locker_stable_swap)
-            stable_swap = [f for f in stable_swap_candidates if f in locker_set]
+            stable_swap = [f for f in stable_swap_candidates if not self.co_single_array[f]]
             stable_swap_candidates = stable_swap
         
         self._process_stable_swap_candidates(stable_swap_candidates)
@@ -517,7 +530,7 @@ class Track_Fixer:
             cost = costs[0]
             return cost <= self.MAX_DIST_THRESHOLD * self.mice_length
 
-        if self.id_lock and self.blob_array[frame_idx, 0] == 1 and self.blob_array[max(0, frame_idx-1), 0] == 1: #Continuous co-single block, not checkpoint
+        if self.id_lock and self.co_single_array[frame_idx] and self.co_single_array[max(0, frame_idx-1)]: #Continuous co-single block, not checkpoint
             logger.debug(f"Frame {frame_idx}: Blob array supplied, locking single obs to instance 0.")
             if obs_idx != self.locked_idx:
                 self._swap_ids_in_frame(frame_idx)
@@ -530,14 +543,14 @@ class Track_Fixer:
             return False
         if len(candidates) == 1:
             assigned_idx = candidates[0]
-            if self.id_lock and self.blob_array[frame_idx, 0] == 1 and assigned_idx != self.locked_idx: # It attempts to assign the wrong id at checkpoint
+            if self.id_lock and self.co_single_array[frame_idx] and assigned_idx != self.locked_idx: # It attempts to assign the wrong id at checkpoint
                 if frame_idx - self.last_id_locker > 2 and np.sum(self.inst_count_per_frame[self.last_id_locker:frame_idx]==2) > 2: # observe and report
                     self.ambiguous_frames.append(frame_idx)
                     self.locker_stable_swap.extend(range(self.last_id_locker+1, frame_idx+1))
                 if obs_idx != self.locked_idx:
                     self._swap_ids_in_frame(frame_idx)
                 self._update_kalman_with_observation(frame_idx, [self.locked_idx], [self.locked_idx])
-                return True
+                return False
             if assigned_idx != obs_idx:
                 self._swap_ids_in_frame(frame_idx)
                 logger.debug(f"Frame {frame_idx}: Single obs assigned to {assigned_idx} (was {obs_idx}), swapped")
