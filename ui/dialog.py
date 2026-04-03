@@ -3,7 +3,7 @@ from functools import partial
 from PySide6 import QtWidgets, QtGui
 from PySide6.QtCore import Qt, Signal, QPoint
 from PySide6.QtWidgets import (
-    QPushButton, QHBoxLayout, QVBoxLayout, QDial, QDialog, QRadioButton, QGroupBox, QFileDialog,
+    QPushButton, QHBoxLayout, QVBoxLayout, QDial, QDialog, QRadioButton, QGroupBox, QGridLayout, QFileDialog,
     QLabel, QDialogButtonBox, QCheckBox, QSizePolicy, QScrollArea, QComboBox, QDoubleSpinBox)
 from PySide6.QtGui import QPainter, QPixmap, QMouseEvent, QImage, QColor, QPen
 
@@ -457,7 +457,7 @@ class Track_Fix_Config_Dialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Track Correction Configuration")
         self.setModal(True)
-        self.setFixedWidth(520)
+        self.setFixedWidth(600)
 
         self.total_frames = total_frames
 
@@ -520,8 +520,10 @@ class Track_Fix_Config_Dialog(QDialog):
         
         self.save_model_cbx = QCheckBox("Save Model After Training")
         self.save_model_cbx.setToolTip("Save trained model weights for reuse in future videos with similar setup")
+        self.save_model_cbx.setChecked(True)
         model_row.addWidget(self.save_model_cbx)
         
+        model_row.addStretch()
         self.load_model_btn = QPushButton("Load Pretrained Model...")
         self.load_model_btn.setToolTip("Load previously trained model for fine-tuning on this video")
         self.load_model_btn.clicked.connect(self._on_load_model)
@@ -544,42 +546,58 @@ class Track_Fix_Config_Dialog(QDialog):
         self.worker_spin = Spinbox_With_Label("Cutout Extraction Workers:", (1, 256), 16)
         cl_layout.addWidget(self.worker_spin)
 
-        self.max_epochs_spin = Spinbox_With_Label("Max Epochs:", (1, 200), 100)
-        self.warmup_epochs_spin = Spinbox_With_Label("Warmup Epochs:", (1, 200), 5)
+        param_grid = QGridLayout()
+        param_grid.setHorizontalSpacing(15)
+        param_grid.setVerticalSpacing(10)
+
+        self.max_epochs_spin = Spinbox_With_Label("Max Epochs:", (0, 200), 100)
+        self.warmup_epochs_spin = Spinbox_With_Label("Warmup Epochs:", (0, 200), 5)
         self.batch_size_spin = Spinbox_With_Label("Batch Size:", (2, 4096), 128)
-        self.max_pleatau_spin = Spinbox_With_Label("Pleatau Patience:", (2, 50), 10)
+
+        param_grid.addWidget(self.max_epochs_spin, 0, 0)
+        param_grid.addWidget(self.warmup_epochs_spin, 0, 1)
+        param_grid.addWidget(self.batch_size_spin, 0, 2)
+
+        self.max_pleatau_spin = Spinbox_With_Label("Pleatau Patience:", (2, 50), 3)
         self.max_triplet_spin = Spinbox_With_Label("Max Triplets per Mining:", (5000, 100000), 5000)
         self.lr_spin = Spinbox_With_Label("Learning Rate (1e-n), n:", (2, 8), 5)
 
+        param_grid.addWidget(self.max_pleatau_spin, 1, 0)
+        param_grid.addWidget(self.max_triplet_spin, 1, 1)
+        param_grid.addWidget(self.lr_spin, 1, 2)
+
         threshold_layout = QHBoxLayout()
         self.margin_thresh_spin = QDoubleSpinBox()
-        self.margin_thresh_spin.setRange(0.1, 1.0)
-        self.margin_thresh_spin.setValue(0.6)
+        self.margin_thresh_spin.setRange(0.1, 2.0)
+        self.margin_thresh_spin.setValue(1.0)
         self.margin_thresh_spin.setDecimals(2)
         self.margin_thresh_spin.setSingleStep(0.05)
         self.margin_thresh_spin.setToolTip("Minimum required gap between same-mouse and diff-mouse similarity")
         
         self.sil_thresh_spin = QDoubleSpinBox()
         self.sil_thresh_spin.setRange(0.1, 1.0)
-        self.sil_thresh_spin.setValue(0.6)
+        self.sil_thresh_spin.setValue(0.8)
         self.sil_thresh_spin.setDecimals(2)
         self.sil_thresh_spin.setSingleStep(0.05)
         self.sil_thresh_spin.setToolTip("Minimum required silhouette score for cluster quality")
+
+        self.min_imp_spin = QDoubleSpinBox()
+        self.min_imp_spin.setRange(0.01, 1.00)
+        self.min_imp_spin.setValue(0.01)
+        self.min_imp_spin.setDecimals(2)
+        self.min_imp_spin.setSingleStep(0.01)
+        self.min_imp_spin.setToolTip("Minimum improvements between iterations to determine early stopping or increasing data.")
         
-        threshold_layout.addWidget(QLabel("Margin Threshold:"))
+        threshold_layout.addWidget(QLabel("Margin:"))
         threshold_layout.addWidget(self.margin_thresh_spin)
-        threshold_layout.addStretch()
-        threshold_layout.addWidget(QLabel("Silhouette Threshold:"))
+        threshold_layout.addWidget(QLabel("Silhouette:"))
         threshold_layout.addWidget(self.sil_thresh_spin)
+        threshold_layout.addWidget(QLabel("Min Improvement:"))
+        threshold_layout.addWidget(self.min_imp_spin)
 
         self.warmup_epochs_spin.value_changed.connect(self._validate_warmup)
 
-        cl_layout.addWidget(self.max_epochs_spin)
-        cl_layout.addWidget(self.warmup_epochs_spin)
-        cl_layout.addWidget(self.batch_size_spin)
-        cl_layout.addWidget(self.max_triplet_spin)
-        cl_layout.addWidget(self.max_pleatau_spin)
-        cl_layout.addWidget(self.lr_spin)
+        cl_layout.addLayout(param_grid)
         cl_layout.addLayout(threshold_layout) 
 
         cl_group.setLayout(cl_layout)
@@ -650,6 +668,7 @@ class Track_Fix_Config_Dialog(QDialog):
             epochs=self.max_epochs_spin.value(),
             warmup=self.warmup_epochs_spin.value(),
             lr=10**-self.lr_spin.value(),
+            min_imp=self.min_imp_spin.value(),
             margin=self.margin_thresh_spin.value(),
             sil=self.sil_thresh_spin.value(),
             save_model=self.save_model,

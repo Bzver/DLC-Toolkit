@@ -1,7 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.ndimage import gaussian_filter1d
 from sklearn.manifold import TSNE
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple
 
 from utils.helper import fig_to_pixmap, array_to_iterable_runs
 from utils.logger import logger
@@ -119,11 +120,7 @@ class Embedding_Visualizer:
         
         return pixmap
 
-    def plot_agreement_timeline(
-        self, 
-        stability_window: int = 5,
-        dpi: int = 150
-    ) -> Tuple[any, List[int]]:
+    def plot_agreement_timeline(self, dpi: int = 150) -> Tuple[any, List[int]]:
 
         baseline_segments = min(3, self.n_segments)
         cluster_votes = {0: {0: 0, 1: 0}, 1: {0: 0, 1: 0}}
@@ -140,60 +137,49 @@ class Embedding_Visualizer:
         mapping = {vc: max(cluster_votes[vc], key=cluster_votes[vc].get) for vc in [0, 1]}
         logger.info(f"[VIS] Baseline mapping: Visual Cluster 0→Motion ID {mapping[0]}, 1→{mapping[1]}")
 
-        frame_data = {}
+        if self.total_frames is None:
+            self.total_frames = max(max(seg) for seg in self.segment_frame_indices) + 1
+
+        agreement_timeline = np.full(self.total_frames, np.nan)
         for seg_idx in range(self.n_segments):
             v_labels = self.segment_visual_labels[seg_idx]
             m_ids = self.segment_motion_ids[seg_idx]
             f_idxs = self.segment_frame_indices[seg_idx]
-            
+
             for i in range(len(m_ids)):
-                fid = f_idxs[i]
-                if fid not in frame_data:
-                    frame_data[fid] = {'motion_ids': [], 'visual_labels': []}
-                frame_data[fid]['motion_ids'].append(m_ids[i])
-                frame_data[fid]['visual_labels'].append(v_labels[i])
-        
-        frame_classifications = {}
-        for fid, data in frame_data.items():
-            motion_ids = np.array(data['motion_ids'])
-            visual_labels = np.array(data['visual_labels'])
-    
-            agrees = 0
-            for i in range(len(motion_ids)):
-                expected = mapping[visual_labels[i]]
-                if expected == motion_ids[i]:
-                    agrees += 1
-    
-            n_instances = len(motion_ids)
-            if agrees == n_instances: 
-                frame_classifications[fid] = 2
-            elif agrees == 0:
-                frame_classifications[fid] = 1
+                expected = mapping[v_labels[i]]
+                agree = (expected == m_ids[i])
+                f = f_idxs[i]
+
+                if np.isnan(agreement_timeline[f]):
+                    agreement_timeline[f] = agree / 2
+                else:
+                    agreement_timeline[f] += agree / 2
+
+        segment_agreement_timeline = np.full(self.total_frames, np.nan)
+        segment_type_timeline = np.full(self.total_frames, 0, dtype=np.uint8)
+
+        for seg_idx in range(self.n_segments):
+            f_idxs = self.segment_frame_indices[seg_idx]
+            if np.all(np.isnan(agreement_timeline[f_idxs])):
+                continue
+
+            segment_avg = np.nanmean(agreement_timeline[f_idxs])
+            if segment_avg > 0.7:
+                seg_class = 2
+            elif segment_avg < 0.3:
+                seg_class = 1
             else:
-                frame_classifications[fid] = 0
+                seg_class = 0
+            segment_agreement_timeline[int(np.mean(f_idxs))] = segment_avg
+            segment_type_timeline[f_idxs] = seg_class
 
-        if self.total_frames is None:
-            self.total_frames = max(max(seg) for seg in self.segment_frame_indices) + 1
-
-        agreement_timeline = np.full(self.total_frames, -1.0)
-        segment_type_timeline = np.full(self.total_frames, -1, dtype=int)
-
-        for fid, classification in frame_classifications.items():
-            if 0 <= fid < self.total_frames:
-                segment_type_timeline[fid] = classification
-                if fid in frame_data:
-                    data = frame_data[fid]
-                    agreement_timeline[fid] = len([i for i in range(len(data['motion_ids'])) 
-                                                if mapping[data['visual_labels'][i]] == data['motion_ids'][i]]) / len(data['motion_ids'])
+        valid_mask = ~np.isnan(segment_agreement_timeline)
+        x = np.arange(self.total_frames)
+        smoothed_timeline = gaussian_filter1d(
+            np.interp(x, x[valid_mask], segment_agreement_timeline[valid_mask]), sigma=40.0, mode='nearest')
 
         plot_n_export = segment_type_timeline.copy()
-
-        for start, end, val in array_to_iterable_runs(plot_n_export):
-            if start == 0 or val != 2:
-                continue
-            if end - start + 1 < stability_window:
-                if start > 0:
-                    plot_n_export[start:end+1] = plot_n_export[start-1]
 
         for start, end, val in array_to_iterable_runs(plot_n_export):
             if start == 0 or end == len(plot_n_export) - 1 or val != 0:
@@ -205,15 +191,10 @@ class Embedding_Visualizer:
 
         fig, ax = plt.subplots(figsize=(15, 5))
 
-        sampled_frames = sorted([f for f in frame_classifications.keys() if f in frame_data])
-        sampled_agreements = [agreement_timeline[f] for f in sampled_frames if agreement_timeline[f] >= 0]
+        ax.plot(smoothed_timeline, marker="o", markersize=1, linewidth=1, label="Segment Agreement", color="navy", alpha=0.6)
         
-        if sampled_frames and sampled_agreements:
-            ax.plot(sampled_frames, sampled_agreements, marker="o", markersize=3, linewidth=1, 
-                    label="Frame Agreement", color="navy", alpha=0.6)
-        
-        colors = {2: "lightgreen", 1: "lightcoral", 0: "lightyellow", -1: "lightgray"}
-        labels = {2: "Agree", 1: "Disagree (Swap)", 0: "Ambiguous", -1: "Not Sampled"}
+        colors = {2: "lightgreen", 1: "lightcoral", 0: "lightyellow"}
+        labels = {2: "Agree", 1: "Disagree (Swap)", 0: "Ambiguous"}
         
         handled_labels = set()
         for start, end, val in array_to_iterable_runs(plot_n_export):
@@ -228,9 +209,7 @@ class Embedding_Visualizer:
         ax.axhline(y=0.0, color="red", linestyle="--", alpha=0.4, linewidth=0.8)
         
         swap_frames = np.where(plot_n_export == 1)[0].tolist()
-        if swap_frames:
-            ax.vlines(swap_frames, 0, 1, colors="red", linewidth=0.5, alpha=0.5, label="Confirmed Swap")
-        
+
         ax.set_xlabel("Frame Index")
         ax.set_ylabel("Agreement Fraction")
         ax.set_title("Motion Pipeline vs Visual Cluster Agreement Over Time", fontsize=13)

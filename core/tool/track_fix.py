@@ -291,7 +291,8 @@ class Track_Fixer:
             logger.info(f"[TF] Loading pretrained model: {self.emp.pretrained_model_path}")
             trainer.load_checkpoint(self.emp.pretrained_model_path, strict=False)
 
-        while init_ratio < 1.0:
+        prev_val_score = 1e-6 
+        while init_ratio < 1.0 and self.emp.epochs > 0:
             train_seg_indices = dataloader.select_training_segments(ratio=init_ratio)
 
             logger.info(f"[TF] Loading {len(train_seg_indices)} training segments...")
@@ -302,17 +303,59 @@ class Track_Fixer:
             val_seg_indices = dataloader.select_validation_segments(exclude=train_seg_indices, ratio=init_ratio)
             val_datasets = dataloader.load_all_segments_for_training(val_seg_indices)
 
-            if trainer.eval_on_dataset(val_datasets, emp=self.emp):
-                logger.info(f"[TF] Validation passed at ratio={init_ratio:.1f}")
+            pos_thresh, neg_thresh, sil = trainer.eval_on_dataset(val_datasets)
+            margin = pos_thresh - neg_thresh
+            val_score = min(margin, sil)
+
+            logger.info(
+                f"[EVAL] Ratio {init_ratio:.0%}: "
+                f"margin={margin:.3f} (target: {self.emp.margin}), "
+                f"sil={sil:.3f} (target: {self.emp.sil}), "
+                f"combined={val_score:.3f}"
+            )
+            
+            improvement = val_score - prev_val_score
+
+            if margin >= self.emp.margin and sil >= self.emp.sil:
+                logger.info(f"[TF] Validation passed at ratio={init_ratio:.1f}, validating again to prevent lucky shots.")
+
+                dlb_val_seg_indices = dataloader.select_validation_segments(
+                    exclude=list(train_seg_indices) + list(val_seg_indices), 
+                    ratio=init_ratio
+                )
+                if dlb_val_seg_indices:
+                    val_datasets = dataloader.load_all_segments_for_training(dlb_val_seg_indices)
+                    pos_thresh, neg_thresh, sil = trainer.eval_on_dataset(val_datasets)
+                    margin = pos_thresh - neg_thresh
+                    val_score = min(margin, sil)
+                    
+                    if margin >= self.emp.margin and sil >= self.emp.sil:
+                        logger.info(f"[TF] ✓ Double-validation passed. Stopping at {init_ratio:.0%}.")
+                        break
+                    else:
+                        logger.info(f"[TF] ✗ Double-validation failed. Continuing to gather more data.")
+            elif improvement < self.emp.min_imp * 5:
+                logger.info(
+                    f"[TF] ✗ Diminishing returns detected: "
+                    f"improvement {improvement:.3f} < threshold {self.emp.min_imp * 5:.3f}. "
+                    f"Stopping at {init_ratio:.0%} data."
+                )
                 break
+            else:
+                logger.info(
+                    f"[TF] Improvement {improvement:.3f} >= {self.emp.min_imp * 5:.3f}, "
+                    f"continuing to next ratio..."
+                )
+
+            prev_val_score = val_score
 
             first_iter = False
             init_ratio += 0.2
             trainer.model.train()
 
         if self.emp.save_model:
-            model_path = os.path.join(self.temp_dir, 'trained_model.pth')
-            trainer.save_checkpoint(model_path, metadata={'video_name': self.dlc_data.video_name})
+            model_path = os.path.join(self.extractor.get_video_dir(), f"{self.extractor.get_video_name()}_contrastive_trained_ratio{int(init_ratio*100)}.pth")
+            trainer.save_checkpoint(model_path)
             logger.info(f"[TF] Model saved to {model_path}")
 
         logger.info("[TF] Running inference on ALL segments (5 frames per segment)")

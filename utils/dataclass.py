@@ -123,6 +123,7 @@ class Emb_Params:
     epochs: int
     warmup: int
     lr: float
+    min_imp: float
     margin: float
     sil: float
     save_model: bool

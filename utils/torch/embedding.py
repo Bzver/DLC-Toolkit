@@ -10,6 +10,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
+
 from typing import List, Tuple, Dict
 
 from .dataloader import Crop_Dataset
@@ -58,8 +59,7 @@ class Contrastive_Trainer:
             f"  - pleatau_patience:     {emp.pleatau}\n"
             f"  - margin_thresh:        {emp.margin:.2f}\n"
             f"  - sil_thresh:           {emp.sil:.2f}\n"
-            f"  - save model:           {emp.save_model}\n"
-            f"  - use pretrain:         {emp.pretrained_model_path is not None}\n"
+            f"  - min_improv:           {emp.min_imp:.2f}\n"
             f"  - n_segments:           {n_segments}\n"
             f"  - total_samples:        {total_frames}\n"
             )
@@ -67,7 +67,7 @@ class Contrastive_Trainer:
         optimizer_warmup = torch.optim.Adam(self.model.parameters(), lr=emp.lr*10)
         optimizer = torch.optim.Adam(self.model.parameters(), lr=emp.lr)
 
-        if not skip_easy:
+        if not skip_easy and emp.warmup != 0:
             self._train_easy(dataset, optimizer_warmup, emp)
 
         embeddings = self._extract_embeddings_list(dataset)
@@ -83,7 +83,7 @@ class Contrastive_Trainer:
             self.model.eval()
             return self.model
 
-        self._train_hard(dataset, optimizer, emp, embeddings, pos_thresh, neg_thresh)
+        self._train_hard(dataset, optimizer, emp, embeddings, pos_thresh, neg_thresh, skip_easy)
         
         self.model.eval()
         return self.model
@@ -111,25 +111,21 @@ class Contrastive_Trainer:
     def eval_on_dataset(
             self,
             val_dataset: List[Crop_Dataset],
-            emp: Emb_Params,
             batch_size: int = 128,
-    ) -> bool:
+    ) -> Tuple[float, float]:
 
         val_emb = self._extract_embeddings_list(val_dataset, batch_size)
         pos_thresh, neg_thresh = self._similarity_eval(val_emb)
         val_sil = self._silhouette_eval(val_emb)
-        val_margin = pos_thresh - neg_thresh
 
-        logger.info(f"[EVAL] Separation score: {val_margin} (Threshold: {emp.margin}); sihouette score: {val_sil} (Threshold: {emp.sil}). ")
-        
-        return (val_margin > emp.margin) and (val_sil > emp.sil)
+        return pos_thresh, neg_thresh, val_sil
 
     def save_checkpoint(self, path: str, metadata: dict = None):
         checkpoint = {
             'model_state_dict': self.model.state_dict(),
             'metadata': metadata or {},
             'timestamp': datetime.datetime.now().isoformat(),
-            'torch_version': torch.__version__,
+            'torch_version': str(torch.__version__),
             'cuda_available': torch.cuda.is_available()
         }
 
@@ -206,13 +202,14 @@ class Contrastive_Trainer:
             optimizer: torch.optim.Adam, 
             emp: Emb_Params
     ):
+
         easy_triplets = self._mine_easy_triplets(datasets, window=20, max_triplets=emp.triplets)
         logger.info(f"[EASYTRAIN] Mined {len(easy_triplets)} easy triplets from {len(datasets)} segments")
         
         self.model.train()
 
         best_loss = 1e6
-        pleatau_count = 0
+        pleatau_train = 0
         for epoch in range(emp.warmup):
             total_loss = 0
             np.random.shuffle(easy_triplets)
@@ -255,11 +252,11 @@ class Contrastive_Trainer:
             logger.info(f"[EASYTRAIN] Epoch {epoch+1}/{emp.warmup}, Loss: {curr_loss:.4e}")
 
             if curr_loss >= best_loss:
-                pleatau_count += 1
+                pleatau_train += 1
             else:
-                pleatau_count = 0
+                pleatau_train = 0
 
-            if pleatau_count >= emp.pleatau:
+            if pleatau_train >= emp.pleatau:
                 logger.info(f"[EASYTRAIN] Pleatau hit, switching to hard mining.")
                 break
             
@@ -272,8 +269,10 @@ class Contrastive_Trainer:
             emp: Emb_Params, 
             embeddings: np.ndarray, 
             pos_thresh: float, 
-            neg_thresh: float
+            neg_thresh: float,
+            skip_easy: bool = False
     ):
+
         hard_triplets = self._mine_hard_triplets(
             datasets, embeddings, pos_thresh, neg_thresh, max_triplets=emp.triplets, mining_mode="semihard"
         )
@@ -288,14 +287,17 @@ class Contrastive_Trainer:
         logger.info(f"[CONTRAIN] Training on hard triplets...")
         self.model.train()
 
-        curr_miner = "semihard"
+        curr_miner = "hard" if skip_easy else "semihard"
 
         best_loss = 1e6
-        pleatau_count = 0
+        pleatau_train = 0
+
         last_eval = emp.warmup - 1
+        best_eval = 0.0
+        pleatau_eval = 0
 
         segment_embeddings = self._extract_embeddings_list(datasets)
-        
+
         for epoch in range(emp.warmup, emp.epochs):
             total_loss = 0
             np.random.shuffle(hard_triplets)
@@ -347,42 +349,54 @@ class Contrastive_Trainer:
             logger.info(f"[HARDTRAIN] Epoch {epoch+1}/{emp.epochs}, Loss: {curr_loss:.4e}")
 
             if curr_loss >= best_loss and curr_loss > 0:
-                pleatau_count += 1
-                logger.info(f"[HARDTRAIN] Current pleatau count: {pleatau_count}, best loss: {best_loss:.4e}, patience: {emp.pleatau}")
+                pleatau_train += 1
+                logger.info(f"[HARDTRAIN] Current training pleatau: {pleatau_train}, best loss: {best_loss:.4e}, patience: {emp.pleatau}")
             else:
-                pleatau_count = 0
+                pleatau_train = 0
 
-            if pleatau_count >= emp.pleatau:
+            if pleatau_train >= emp.pleatau:
                 if curr_miner == "semihard":
                     curr_miner = "hard"
                     best_loss = float('inf')
-                    pleatau_count = 0
+                    pleatau_train = 0
                     logger.info("[HARDTRAIN] Switching to HARD mining. Resetting patience.")
                     continue
     
                 logger.info(f"[HARDTRAIN] Loss plateaued for {emp.pleatau} epochs in hard mode. Evaluating final state...")
 
-                if self.eval_on_dataset(datasets):
+                pos_thresh, neg_thresh, sil = self.eval_on_dataset(datasets)
+                if pos_thresh - neg_thresh >= emp.margin and sil >= emp.sil:
                     logger.info("[HARDTRAIN] Thresholds met on convergence. Stopping early.")
                 else:
                     logger.info("[HARDTRAIN] Model converged to best possible state. Stopping early.")
                 break 
             
             best_loss = min(curr_loss, best_loss) if curr_loss > 0 else best_loss
-            eval_needed = (epoch - last_eval) % eval_interval
+            eval_needed = (epoch - last_eval) % eval_interval == 0
+
             if eval_needed or epoch == emp.epochs - 1:
                 last_eval = epoch
-                
-                if self.eval_on_dataset(datasets):
+
+                pos_thresh, neg_thresh, sil = self.eval_on_dataset(datasets)
+                eval_score = min(pos_thresh - neg_thresh, sil)
+
+                if eval_score - best_eval < emp.min_imp:
+                    pleatau_eval += 1
+                    logger.info(f"[HARDTRAIN] Current eval pleatau: {pleatau_eval}, last improvement: {eval_score - best_eval:.3f}, patience: {emp.pleatau}")
+
+                if pos_thresh - neg_thresh >= emp.margin and sil >= emp.sil:
                     logger.info("[HARDTRAIN] Thresholds met on convergence. Stopping early.")
                     break
                 elif epoch == emp.epochs - 1:
-                    logger.info("[HARDTRAIN] The model did the best it could. Stopping...")
+                    logger.info("[HARDTRAIN] Max epoch reached. Stopping...")
+                    break
+                elif pleatau_eval >= emp.pleatau:
+                    logger.info("[HARDTRAIN] Model converged to best possible state. Stopping early.")
                     break
                 else:
                     segment_embeddings = self._extract_embeddings_list(datasets)
                     logger.info(f"[HARDTRAIN] Updating hard triplets at epoch {epoch+1}...")
-                    result = self._mine_hard_triplets( datasets, segment_embeddings, pos_thresh, neg_thresh, max_triplets=emp.triplets, mining_mode=curr_miner)
+                    result = self._mine_hard_triplets(datasets, segment_embeddings, pos_thresh, neg_thresh, max_triplets=emp.triplets, mining_mode=curr_miner)
                     num_result = len(result)
                     if num_result < 10:
                         logger.info(f"[HARDTRAIN] Hard triplets too few ({num_result}, stopping...")
@@ -390,6 +404,8 @@ class Contrastive_Trainer:
                     else:
                         hard_triplets = result
                         logger.info(f"[HARDTRAIN] Re-mined {num_result} hard triplets")
+                
+                best_eval = max(eval_score, best_eval)
 
     def _mine_easy_triplets(
             self, 
@@ -432,6 +448,7 @@ class Contrastive_Trainer:
             max_triplets: int = 5000,
             mining_mode: str = "semihard"
     ) -> List[Tuple[int, int, int, int]]:
+
         triplets = []
 
         for ds_idx, dataset in enumerate(datasets):
