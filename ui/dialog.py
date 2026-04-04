@@ -452,7 +452,107 @@ class Keypoint_Num_Dialog(QDialog):
         
         self.setWindowTitle("Keypoint Threshold")
 
+
 class Track_Fix_Config_Dialog(QDialog):
+    PRESETS = {
+        "Training": {
+            "description": "Full training for new video setup. No pretrained model.",
+            "values": {
+                "skip_contrastive": False,
+                "skip_sweep": False,
+                "use_kalman": True,
+                "kp_smooth": True,
+                "save_model": True,
+                "pretrained_model_path": None,
+                "max_epochs": 100,
+                "warmup_epochs": 10,
+                "batch_size": 128,
+                "max_triplets": 5000,
+                "pleatau_patience": 20,
+                "lr_exponent": 5,  # 1e-5
+                "margin_thresh": 1.0,
+                "sil_thresh": 0.8,
+                "min_imp": 0.01,
+                "worker_num": 16,
+                "use_cache": True,
+                "avtomat": False,
+            }
+        },
+        "Inference": {
+            "description": "Use pretrained model from similar video setup. Fast inference only.",
+            "values": {
+                "skip_contrastive": False,
+                "skip_sweep": False,
+                "use_kalman": True,
+                "kp_smooth": True,
+                "save_model": False,
+                "pretrained_model_path": "PROMPT_USER",
+                "max_epochs": 20,
+                "warmup_epochs": 0,
+                "batch_size": 128,
+                "max_triplets": 5000,
+                "pleatau_patience": 3,
+                "lr_exponent": 5,
+                "margin_thresh": 1.0,
+                "sil_thresh": 0.8,
+                "min_imp": 0.01,
+                "worker_num": 16,
+                "use_cache": True,
+                "avtomat": False,
+            }
+        },
+        "High Accuracy": {
+            "description": "Maximum accuracy for challenging videos. Slower but more reliable.",
+            "values": {
+                "skip_contrastive": False,
+                "skip_sweep": False,
+                "use_kalman": True,
+                "kp_smooth": True,
+                "save_model": True,
+                "pretrained_model_path": None,
+                "max_epochs": 200,
+                "warmup_epochs": 20,
+                "batch_size": 64,
+                "max_triplets": 10000,
+                "pleatau_patience": 50,
+                "lr_exponent": 5,
+                "margin_thresh": 1.5,
+                "sil_thresh": 0.9,
+                "min_imp": 0.005,
+                "worker_num": 8,
+                "use_cache": True,
+                "avtomat": False,
+            }
+        },
+        "Motion Sweep Only": {
+            "description": "Skip contrastive learning entirely. Use only motion-based correction.",
+            "values": {
+                "skip_contrastive": True,
+                "skip_sweep": False,
+                "use_kalman": True,
+                "kp_smooth": True,
+                "save_model": False,
+                "pretrained_model_path": None,
+                "max_epochs": 0,
+                "warmup_epochs": 0,
+                "batch_size": 128,
+                "max_triplets": 5000,
+                "pleatau_patience": 3,
+                "lr_exponent": 5,
+                "margin_thresh": 1.0,
+                "sil_thresh": 0.8,
+                "min_imp": 0.01,
+                "worker_num": 16,
+                "use_cache": False,
+                "avtomat": False,
+            }
+        },
+        "Custom": {
+            "description": "User-defined configuration.",
+            "values": None
+        }
+    }
+
     def __init__(self, total_frames:int, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Track Correction Configuration")
@@ -460,6 +560,7 @@ class Track_Fix_Config_Dialog(QDialog):
         self.setFixedWidth(600)
 
         self.total_frames = total_frames
+        self.current_preset = "Training"
 
         self.skip_motion_sweep = False
         self.avtomat = False
@@ -477,6 +578,19 @@ class Track_Fix_Config_Dialog(QDialog):
         
     def _init_ui(self):
         layout = QVBoxLayout(self)
+
+        preset_frame = QHBoxLayout()
+        preset_frame.addWidget(QLabel("Configuration Preset:"))
+        
+        self.preset_combo = QComboBox()
+        self.preset_combo.addItems(list(self.PRESETS.keys())[:-1])  # Exclude "Custom"
+        self.preset_combo.setCurrentText(self.current_preset)
+        self.preset_combo.currentTextChanged.connect(self._on_preset_changed)
+        preset_frame.addWidget(self.preset_combo)
+        
+        preset_frame.addStretch()
+        
+        layout.addLayout(preset_frame)
 
         opts_group = QGroupBox("Track Fixer Options")
         opts_layout = QVBoxLayout()
@@ -512,7 +626,7 @@ class Track_Fix_Config_Dialog(QDialog):
 
         self.skip_contrastive_cbx = QCheckBox("Skip Contrastive Learning")
         self.skip_contrastive_cbx.setToolTip("Skip contrastive learning step entirely. Use only motion sweep and id lock for track correction.")
-        self.skip_contrastive_cbx.stateChanged.connect(self._toggle_contrastive_params)
+        self.skip_contrastive_cbx.stateChanged.connect(self._on_manual_change)
         skip_row.addWidget(self.skip_contrastive_cbx)
 
         opts_layout.addLayout(skip_row)
@@ -522,6 +636,7 @@ class Track_Fix_Config_Dialog(QDialog):
         self.save_model_cbx = QCheckBox("Save Model After Training")
         self.save_model_cbx.setToolTip("Save trained model weights for reuse in future videos with similar setup")
         self.save_model_cbx.setChecked(True)
+        self.save_model_cbx.stateChanged.connect(self._on_manual_change)
         model_row.addWidget(self.save_model_cbx)
         
         model_row.addStretch()
@@ -545,6 +660,7 @@ class Track_Fix_Config_Dialog(QDialog):
         cl_layout = QVBoxLayout()
 
         self.worker_spin = Spinbox_With_Label("Cutout Extraction Workers:", (1, 256), 16)
+        self.worker_spin.value_changed.connect(self._on_manual_change)
         cl_layout.addWidget(self.worker_spin)
 
         param_grid = QGridLayout()
@@ -553,17 +669,24 @@ class Track_Fix_Config_Dialog(QDialog):
 
         self.max_epochs_spin = Spinbox_With_Label("Max Epochs:", (0, 200), 100)
         self.warmup_epochs_spin = Spinbox_With_Label("Warmup Epochs:", (0, 200), 5)
+        self.max_epochs_spin.value_changed.connect(self._on_manual_change)
+        self.warmup_epochs_spin.value_changed.connect(self._on_manual_change)
+        self.warmup_epochs_spin.value_changed.connect(self._validate_warmup)
 
         param_grid.addWidget(self.max_epochs_spin, 0, 0)
         param_grid.addWidget(self.warmup_epochs_spin, 0, 1)
 
         self.batch_size_spin = Spinbox_With_Label("Batch Size:", (2, 4096), 128)
         self.max_triplet_spin = Spinbox_With_Label("Max Triplets per Mining:", (5000, 100000), 5000)
+        self.batch_size_spin.value_changed.connect(self._on_manual_change)
+        self.max_triplet_spin.value_changed.connect(self._on_manual_change)
         param_grid.addWidget(self.batch_size_spin, 1, 0)
         param_grid.addWidget(self.max_triplet_spin, 1, 1)
 
         self.max_pleatau_spin = Spinbox_With_Label("Pleatau Patience:", (2, 50), 3)
         self.lr_spin = Spinbox_With_Label("Learning Rate (1e-n), n:", (2, 8), 5)
+        self.max_pleatau_spin.value_changed.connect(self._on_manual_change)
+        self.lr_spin.value_changed.connect(self._on_manual_change)
         param_grid.addWidget(self.max_pleatau_spin, 2, 0)
         param_grid.addWidget(self.lr_spin, 2, 1)
 
@@ -574,6 +697,7 @@ class Track_Fix_Config_Dialog(QDialog):
         self.margin_thresh_spin.setDecimals(2)
         self.margin_thresh_spin.setSingleStep(0.05)
         self.margin_thresh_spin.setToolTip("Minimum required gap between same-mouse and diff-mouse similarity")
+        self.margin_thresh_spin.valueChanged.connect(self._on_manual_change)
         
         sil_layout = QHBoxLayout()
         self.sil_thresh_spin = QDoubleSpinBox()
@@ -582,6 +706,7 @@ class Track_Fix_Config_Dialog(QDialog):
         self.sil_thresh_spin.setDecimals(2)
         self.sil_thresh_spin.setSingleStep(0.05)
         self.sil_thresh_spin.setToolTip("Minimum required silhouette score for cluster quality")
+        self.sil_thresh_spin.valueChanged.connect(self._on_manual_change)
 
         min_imp_layout = QHBoxLayout()
         self.min_imp_spin = QDoubleSpinBox()
@@ -590,6 +715,7 @@ class Track_Fix_Config_Dialog(QDialog):
         self.min_imp_spin.setDecimals(2)
         self.min_imp_spin.setSingleStep(0.01)
         self.min_imp_spin.setToolTip("Minimum improvements between iterations to determine early stopping or increasing data.")
+        self.min_imp_spin.valueChanged.connect(self._on_manual_change)
         
         margin_layout.addWidget(QLabel("Margin:"))
         margin_layout.addWidget(self.margin_thresh_spin)
@@ -600,8 +726,7 @@ class Track_Fix_Config_Dialog(QDialog):
 
         self.cache_cbx = QCheckBox("Use Cache Frames If Possible")
         self.cache_cbx.setChecked(True)
-
-        self.warmup_epochs_spin.value_changed.connect(self._validate_warmup)
+        self.cache_cbx.stateChanged.connect(self._on_manual_change)
 
         cl_layout.addLayout(param_grid)
         cl_layout.addLayout(margin_layout)
@@ -616,7 +741,67 @@ class Track_Fix_Config_Dialog(QDialog):
         btn_box.accepted.connect(self._on_accept)
         btn_box.rejected.connect(self.reject)
         layout.addWidget(btn_box)
+        
         self._toggle_contrastive_params()
+        self._apply_preset(self.current_preset)
+
+    def _on_preset_changed(self, preset_name: str):
+        self.current_preset = preset_name
+        self._apply_preset(preset_name)
+    
+    def _apply_preset(self, preset_name: str):
+        if preset_name not in self.PRESETS:
+            return
+        
+        preset = self.PRESETS[preset_name]
+        
+        if preset["values"] is None:
+            return
+        
+        vals = preset["values"]
+
+        self.skip_contrastive_cbx.setChecked(vals.get("skip_contrastive", False))
+        self.skip_sweep_cbx.setChecked(vals.get("skip_sweep", False))
+        self.use_kalman_cbx.setChecked(vals.get("use_kalman", True))
+        self.kp_smooth_cbx.setChecked(vals.get("kp_smooth", True))
+        self.save_model_cbx.setChecked(vals.get("save_model", False))
+        self.avtomat_cbx.setChecked(vals.get("avtomat", False))
+
+        self.worker_spin.setValue(vals.get("worker_num", 16))
+        self.max_epochs_spin.setValue(vals.get("max_epochs", 100))
+        self.warmup_epochs_spin.setValue(vals.get("warmup_epochs", 10))
+        self.batch_size_spin.setValue(vals.get("batch_size", 128))
+        self.max_triplet_spin.setValue(vals.get("max_triplets", 5000))
+        self.max_pleatau_spin.setValue(vals.get("pleatau_patience", 3))
+        self.lr_spin.setValue(vals.get("lr_exponent", 5))
+        self.margin_thresh_spin.setValue(vals.get("margin_thresh", 1.0))
+        self.sil_thresh_spin.setValue(vals.get("sil_thresh", 0.8))
+        self.min_imp_spin.setValue(vals.get("min_imp", 0.01))
+        self.cache_cbx.setChecked(vals.get("use_cache", True))
+
+        model_path = vals.get("pretrained_model_path")
+        if model_path == "PROMPT_USER":
+            self._on_load_model()
+        elif model_path:
+            self.pretrained_model_path = model_path
+            self._update_model_label(model_path)
+        else:
+            self.pretrained_model_path = None
+            self.model_path_label.setText("")
+        
+        self._toggle_contrastive_params()
+    
+    def _on_manual_change(self):
+        if self.current_preset != "Custom":
+            self.current_preset = "Custom"
+            self.preset_combo.setCurrentText("Custom")
+    
+    def _update_model_label(self, path: str):
+        display_path = path[-50:] if len(path) > 50 else path
+        if len(path) > 50:
+            display_path = "..." + display_path
+        self.model_path_label.setText(f"✓ {display_path}")
+        self.model_path_label.setStyleSheet("color: green; font-size: 9px;")
 
     def _on_load_model(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -628,11 +813,8 @@ class Track_Fix_Config_Dialog(QDialog):
         
         if file_path:
             self.pretrained_model_path = file_path
-            display_path = file_path[-50:] if len(file_path) > 50 else file_path
-            if len(file_path) > 50:
-                display_path = "..." + display_path
-            self.model_path_label.setText(f"✓ {display_path}")
-            self.model_path_label.setStyleSheet("color: green; font-size: 9px;")
+            self._update_model_label(file_path)
+            self._on_manual_change()
 
     def _toggle_contrastive_params(self):
         is_skipped = self.skip_contrastive_cbx.isChecked()

@@ -15,6 +15,8 @@ class Embedding_Visualizer:
         segment_motion_ids: List[List[int]],
         segment_frame_indices: List[List[int]],
         visual_labels: List[np.ndarray],
+        assignment_confidence: List[np.ndarray] = None,
+        confidence_threshold: float = 0.2,
         total_frames: Optional[int] = None,
         start_idx: int = 0,
         end_idx: int = -1
@@ -31,6 +33,9 @@ class Embedding_Visualizer:
 
         self.visual_labels = np.hstack(visual_labels) if visual_labels else np.array([])
         self.segment_visual_labels = visual_labels
+        self.assignment_confidence = assignment_confidence
+        self.confidence_flat = np.hstack(assignment_confidence) if assignment_confidence else None
+        self.confidence_threshold = confidence_threshold
     
         self.total_frames = total_frames if total_frames else max(max(seg) for seg in self.segment_frame_indices) + 1
         self.n_samples = len(self.embeddings)
@@ -55,13 +60,25 @@ class Embedding_Visualizer:
         fig, axes = plt.subplots(2, 2, figsize=(12, 10))
         fig.suptitle("Embedding Analysis: t-SNE Projections", fontsize=16, fontweight="bold")
 
+        sharpness = 10
+        alphas = 0.2 + 0.7 * (1 / (1 + np.exp(-sharpness * (self.confidence_flat - self.confidence_threshold))))
+        alphas = np.clip(alphas, 0.1, 0.95)
+    
         ax = axes[0, 0]
-        scatter = ax.scatter(embeddings_2d[:, 0], embeddings_2d[:, 1], c=self.motion_ids, cmap="Set1", alpha=0.6, s=15)
+        if self.confidence_flat is not None:
+            for mid in [0, 1]:
+                mask = self.motion_ids == mid
+                ax.scatter(embeddings_2d[mask, 0], embeddings_2d[mask, 1], c=[f"tab:{'blue' if mid==0 else 'orange'}"], alpha=alphas[mask], s=15, label=f"Motion ID {mid}")
+        else:
+            scatter = ax.scatter(embeddings_2d[:, 0], embeddings_2d[:, 1], 
+                            c=self.motion_ids, cmap="Set1", alpha=0.6, s=15)
+            plt.colorbar(scatter, ax=ax, label="Motion ID")
+        
         ax.set_title("By Motion ID", fontsize=10)
         ax.set_xlabel("t-SNE 1")
         ax.set_ylabel("t-SNE 2")
         ax.grid(alpha=0.3)
-        plt.colorbar(scatter, ax=ax, label="Motion ID")
+        ax.legend()
 
         ax = axes[0, 1]
         scatter = ax.scatter(embeddings_2d[:, 0], embeddings_2d[:, 1], c=self.frame_indices, cmap="viridis", alpha=0.6, s=15)
@@ -73,9 +90,17 @@ class Embedding_Visualizer:
 
         ax = axes[1, 0]
         if self.visual_labels is not None:
-            scatter = ax.scatter(embeddings_2d[:, 0], embeddings_2d[:, 1], c=self.visual_labels, cmap="Set2", alpha=0.6, s=15)
+            if self.confidence_flat is not None:
+                for cluster in [0, 1]:
+                    mask = self.visual_labels == cluster
+                    ax.scatter(embeddings_2d[mask, 0], embeddings_2d[mask, 1], 
+                            c=[f"tab:{'green' if cluster==0 else 'red'}"], 
+                            alpha=alphas[mask], s=15, label=f"Cluster {cluster}")
+            else:
+                scatter = ax.scatter(embeddings_2d[:, 0], embeddings_2d[:, 1], 
+                                c=self.visual_labels, cmap="Set2", alpha=0.6, s=15)
+                plt.colorbar(scatter, ax=ax, label="Cluster")
             ax.set_title("By Visual Cluster (K-Means)", fontsize=10)
-            plt.colorbar(scatter, ax=ax, label="Cluster")
         else:
             ax.scatter(embeddings_2d[:, 0], embeddings_2d[:, 1], c="gray", alpha=0.6, s=15)
             ax.set_title("Visual Cluster (N/A)", fontsize=10)
@@ -125,19 +150,37 @@ class Embedding_Visualizer:
         return pixmap
 
     def plot_agreement_timeline(self, dpi: int = 150) -> Tuple[any, List[int]]:
-        mapping = {0: 0, 1: 1}
+        baseline_segments = min(10, self.n_segments)
+        cluster_votes = {0: {0: 0, 1: 0}, 1: {0: 0, 1: 0}}
+
+        for seg_idx in range(baseline_segments):
+            v_labels = self.segment_visual_labels[seg_idx]
+            m_ids = self.segment_motion_ids[seg_idx]
+            for v_cluster in [0, 1]:
+                for m_id in [0, 1]:
+                    mask = (v_labels == v_cluster) & (np.array(m_ids) == m_id)
+                    cluster_votes[v_cluster][m_id] += np.sum(mask)
+
+        mapping = {vc: max(cluster_votes[vc], key=cluster_votes[vc].get) for vc in [0, 1]}
+        if mapping[0] == mapping[1]:
+            mapping = {0: 0, 1: 1}
 
         agreement_timeline = np.full(self.total_frames, np.nan)
         for seg_idx in range(self.n_segments):
             v_labels = self.segment_visual_labels[seg_idx]
             m_ids = self.segment_motion_ids[seg_idx]
             f_idxs = self.segment_frame_indices[seg_idx]
+            confidences = self.assignment_confidence[seg_idx] if self.assignment_confidence else None
 
             for i in range(len(m_ids)):
                 expected = mapping[v_labels[i]]
                 agree = (expected == m_ids[i])
                 f = f_idxs[i]
 
+                conf = confidences[i] if confidences is not None else 1.0
+
+                if conf < self.confidence_threshold:
+                    continue
                 if np.isnan(agreement_timeline[f]):
                     agreement_timeline[f] = agree / 2
                 else:
@@ -160,6 +203,8 @@ class Embedding_Visualizer:
                 seg_class = 0
             segment_agreement_timeline[int(np.mean(f_idxs))] = segment_avg
             segment_type_timeline[f_idxs] = seg_class
+
+        diagnosis_timeline = np.column_stack((agreement_timeline, segment_agreement_timeline, segment_type_timeline))
 
         valid_mask = ~np.isnan(segment_agreement_timeline)
         x = np.arange(self.total_frames)
@@ -210,4 +255,4 @@ class Embedding_Visualizer:
         
         logger.info(f"[VIS] Identified {len(swap_frames)} frames as swap candidates")
         
-        return pixmap, swap_frames
+        return pixmap, swap_frames, diagnosis_timeline

@@ -50,11 +50,13 @@ class Cutout_Dataloader:
         self.folder_path = folder_path
         self.seg_list = seg_list
         self.segment_index = self._build_segment_index()
+
         
         logger.info(f"[CLOAD] Found {len(self.segment_index)} segments in {folder_path}")
     
     def _build_segment_index(self) -> List[Dict]:
         index = []
+        all_len = []
         for seg_idx, frame_list in enumerate(self.seg_list):
             if not frame_list:
                 continue
@@ -69,8 +71,11 @@ class Cutout_Dataloader:
                     'length': len(frame_list),
                     'frame_indices': frame_list
                 })
+                all_len.append(len(frame_list))
             else:
                 logger.warning(f"[CLOAD] Chunk not found: {chunk_path}")
+
+        self.min_segment_length = max(np.median(all_len), 10)
 
         return index
     
@@ -95,6 +100,7 @@ class Cutout_Dataloader:
         seg_idx: int, 
         n_samples: int = 5
     ) -> Tuple[np.ndarray, List[int], List[int]]:
+
         all_images, all_frames, all_mids = self.load_segment(seg_idx)
         
         n_total = len(all_frames)
@@ -116,7 +122,7 @@ class Cutout_Dataloader:
     
     def load_all_segments_for_training(
         self, 
-        train_seg_indices: List[int]
+        train_seg_indices: List[int],
     ) -> List[Crop_Dataset]:
         datasets = []
         
@@ -142,6 +148,7 @@ class Cutout_Dataloader:
     
     def select_training_segments(self, ratio: float = 0.1, use_random: bool = False) -> List[int]:
         available = list(range(len(self.segment_index)))
+        available = [i for i in available if self.segment_index[i]['length'] >= self.min_segment_length]
         n = int(ratio * len(available))
 
         if use_random:
@@ -152,7 +159,7 @@ class Cutout_Dataloader:
             return [sorted_segs[int(i * step)] for i in range(n)]
     
     def select_validation_segments(self, exclude: List[int], ratio: float = 0.1) -> List[int]:
-        available = [i for i in range(len(self.segment_index)) if i not in exclude]
+        available = [i for i in range(len(self.segment_index)) if i not in exclude and self.segment_index[i]['length'] >= self.min_segment_length]
         n = int(ratio * len(available))
 
         return random.sample(available, min(n, len(available)))

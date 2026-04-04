@@ -392,24 +392,26 @@ class Frame_Exporter:
             i = aug.centroids.shape[1]
             chunk_path = os.path.join(self.save_folder, f"chunk_{self.frame_list[0]:08d}.npz")
             if os.path.isfile(chunk_path) and use_cache:
-                return self.extracted_indices
+                return self.frame_list
             self.cutout_images = np.zeros((f, i, d, d, 3), dtype=np.uint8)
             self.cutout_frames = np.array(sorted(self.frame_list))
             self.frame_to_arr_idx = {fid: idx for idx, fid in enumerate(self.cutout_frames)}
-            np.savez_compressed(
-                chunk_path,
-                images=self.cutout_images,
-                frame_indices=self.cutout_frames
-            )
-            return self.extracted_indices
-    
-        self._process_frame_mask(aug.mask)
+        if aug.mode == "ea":
+            self._process_frame_mask(aug.mask)
 
         sparse_mode = self._determine_continous_or_sparse()
         if sparse_mode or self.label_mode:
             self._sparse_frame_extraction(aug)
         else:
             self._continuous_frame_extraction(aug)
+
+        if hasattr(self, "cutout_images"):
+            chunk_path = os.path.join(self.save_folder, f"chunk_{self.frame_list[0]:08d}.npz")
+            np.savez_compressed(
+                chunk_path,
+                images=self.cutout_images,
+                frame_indices=self.cutout_frames
+            )
 
         self._validate_extracted_indices()
 

@@ -251,7 +251,7 @@ class Contrastive_Trainer:
             curr_loss = total_loss/num_batches
             logger.info(f"[EASYTRAIN] Epoch {epoch+1}/{emp.warmup}, Loss: {curr_loss:.4e}")
 
-            if curr_loss >= best_loss:
+            if curr_loss >= best_loss or curr_loss == 0:
                 pleatau_train += 1
             else:
                 pleatau_train = 0
@@ -338,7 +338,7 @@ class Contrastive_Trainer:
                 pos_emb = self.model(pos_batch)
                 neg_emb = self.model(neg_batch)
                 
-                loss = self._contrastive_loss(anchor_emb, pos_emb, neg_emb)
+                loss = self._contrastive_loss(anchor_emb, pos_emb, neg_emb, w_compat=0.1)
                 
                 optimizer.zero_grad()
                 loss.backward()
@@ -380,9 +380,10 @@ class Contrastive_Trainer:
                 pos_thresh, neg_thresh, sil = self.eval_on_dataset(datasets)
                 eval_score = min(pos_thresh - neg_thresh, sil)
 
+                eval_patience = max(3, emp.pleatau//4)
                 if eval_score - best_eval < emp.min_imp:
                     pleatau_eval += 1
-                    logger.info(f"[HARDTRAIN] Current eval pleatau: {pleatau_eval}, last improvement: {eval_score - best_eval:.3f}, patience: {emp.pleatau}")
+                    logger.info(f"[HARDTRAIN] Current eval pleatau: {pleatau_eval}, last improvement: {eval_score - best_eval:.3f}, patience: {eval_patience}")
 
                 if pos_thresh - neg_thresh >= emp.margin and sil >= emp.sil:
                     logger.info("[HARDTRAIN] Thresholds met on convergence. Stopping early.")
@@ -390,7 +391,7 @@ class Contrastive_Trainer:
                 elif epoch == emp.epochs - 1:
                     logger.info("[HARDTRAIN] Max epoch reached. Stopping...")
                     break
-                elif pleatau_eval >= emp.pleatau:
+                elif pleatau_eval >= eval_patience:
                     logger.info("[HARDTRAIN] Model converged to best possible state. Stopping early.")
                     break
                 else:

@@ -1,5 +1,6 @@
 import os
 import numpy as np
+import pandas as pd
 from tqdm import tqdm
 from scipy.signal import savgol_filter
 from sklearn.cluster import KMeans
@@ -88,7 +89,7 @@ class Track_Fixer:
             end_idx = self.total_frames
 
         if self.id_lock:
-            self.co_single_array = (self.blob_array[:, 0] == 1) & (self.inst_count_per_frame <= 1)
+            self.co_single_array = np.array((self.blob_array[:, 0] == 1) & (self.inst_count_per_frame <= 1))
             for start, end, value in array_to_iterable_runs(self.co_single_array):
                 if end - start + 1 < 5 and value:
                     self.co_single_array[start:end+1] = False
@@ -103,20 +104,19 @@ class Track_Fixer:
                 self._execute_swap_orders(swap_orders, self.total_frames-1)
             return self.pred_data_array
 
-        eligible_mask = self._find_eligible_frames(min_eligible=self.emp.triplets)
+        segment_break_mask, qc_mask = self._find_eligible_frames()
         if self.ambiguous_frames:
-            eligible_mask[self.ambiguous_frames] = False
+            segment_break_mask[self.ambiguous_frames] = False
+            qc_mask[self.ambiguous_frames] = False
 
-        assert self.total_frames == len(eligible_mask), f"self.total_frames({self.total_frames}) != len(eligible_mask)({len(eligible_mask)})"
-
-        crop_coords = calculate_pose_array_bbox(self.pred_data_array[eligible_mask], padding=15).astype(np.uint16)
+        crop_coords = calculate_pose_array_bbox(self.pred_data_array[qc_mask], padding=15).astype(np.uint16)
         cutout_dim = int(np.percentile(crop_coords[..., 2:4] - crop_coords[..., 0:2], 90))
 
         if cutout_dim % 2:
             cutout_dim += 1
     
         angles = np.zeros((self.total_frames, self.dlc_data.instance_count))
-        angles[eligible_mask] = np.rad2deg(calculate_pose_array_rotations(self.pred_data_array[eligible_mask], self.anglemap))
+        angles[qc_mask] = np.rad2deg(calculate_pose_array_rotations(self.pred_data_array[qc_mask], self.anglemap))
 
         ca = Cutout_Augments(
             centroids=self.centroids,
@@ -125,7 +125,7 @@ class Track_Fixer:
             grayscaling=True
             )
 
-        for seg_start, seg_end in indices_to_spans(np.where(eligible_mask)[0].tolist()):
+        for seg_start, seg_end in indices_to_spans(np.where(segment_break_mask)[0].tolist()):
             if seg_end < start_idx or seg_start > end_idx:
                 continue
             
@@ -133,9 +133,9 @@ class Track_Fixer:
             seg_end = min(seg_end, end_idx-1)
 
             try:
-                seg_frames = [i for i in range(seg_start, seg_end + 1) if eligible_mask[i]]
+                seg_frames = [i for i in range(seg_start, seg_end + 1) if qc_mask[i]]
             except:
-                print(f"seg_end:{seg_end}, eligible_mask len:{len(eligible_mask)}")
+                print(f"seg_end:{seg_end}, eligible_mask len:{len(qc_mask)}")
             if len(seg_frames) <= 3:
                 continue
             self.seg_list.append(seg_frames)
@@ -229,15 +229,15 @@ class Track_Fixer:
 
     def _find_eligible_frames(
             self,
-            inst_dist_threshold: float = 1.2,
-            size_threshold: Tuple[float, float] = (0.5, 1.5),
-            bp_threshold: float = 0.9,
-            twist_angle_threshold: float = 40.0,
-            min_eligible: int = 100,
-            ) -> np.ndarray:
+            inst_dist_threshold: float = 0.8,
+            size_threshold: Tuple[float, float] = (0.3, 2.5),
+            bp_threshold: int = 4,
+            twist_angle_threshold: float = 50.0,
+            ) -> Tuple[np.ndarray, np.ndarray]:
 
         instance_count = get_instance_count_per_frame(self.pred_data_array)
         two_inst_mask = instance_count == 2
+        
         if not np.any(two_inst_mask):
             raise ValueError("No frame with two insts, cannot perform contrastive learning.")
 
@@ -249,27 +249,15 @@ class Track_Fixer:
 
         angle_mask = ~np.any(outlier_rotation(two_inst_array, self.anglemap, twist_angle_threshold), axis=-1)
         size_mask = ~np.any(outlier_size(two_inst_array, *size_threshold), axis=-1)
-        bp_mask = ~np.any(outlier_bodypart(two_inst_array, bp_threshold*(two_inst_array.shape[2]//3)), axis=-1)
+        bp_mask = ~np.any(outlier_bodypart(two_inst_array, bp_threshold), axis=-1)
 
-        full_mask = np.zeros(self.total_frames, dtype=bool)
+        frame_valid_mask = np.zeros(self.total_frames, dtype=bool)
+        frame_valid_mask[two_inst_mask] = dist_mask & angle_mask & size_mask & bp_mask
 
-        target_count = min(min_eligible, self.total_frames // 2)
-        constraint_sets = [
-            dist_mask & angle_mask & size_mask & bp_mask,
-            dist_mask & angle_mask,
-            dist_mask,
-        ]
-        for constraint in constraint_sets:
-            eligible_count = np.sum(constraint)
-            if eligible_count >= target_count:
-                full_mask[two_inst_mask] = constraint
-                return full_mask
+        segment_break_mask = np.zeros(self.total_frames, dtype=bool)
+        segment_break_mask[two_inst_mask] = dist_mask
 
-        logger.warning(
-            f"Masking yielded too few frames (<{target_count}). Falling back to ALL {np.sum(two_inst_mask)} two-instance frames. "
-        )
-        full_mask[two_inst_mask] = True
-        return full_mask
+        return segment_break_mask, frame_valid_mask
 
     def _crop_rotate_and_export(self, ca:Cutout_Augments):
         if self.use_cache:
@@ -287,15 +275,15 @@ class Track_Fixer:
         )
         co.extract_frames(ca, self.seg_list, self.use_cache)
     
-    def _run_contrain_magic(self, start_idx, end_idx, min_samples:int = 1000):
+    def _run_contrain_magic(self, start_idx, end_idx, min_samples:int = 100, segment_samples: int=10):
 
         from utils.torch import Crop_Dataset, Embedding_Visualizer, Contrastive_Trainer, Cutout_Dataloader
 
         dataloader = Cutout_Dataloader(folder_path=self.temp_dir, seg_list=self.seg_list)
 
-        init_ratio = 0.1
+        init_ratio = 0.9
         total_samples = sum(len(seg) for seg in self.seg_list)
-        init_ratio = min(max(min_samples / total_samples, 0.1), 0.9)
+        init_ratio = min(max(min_samples / total_samples, 0.9), 0.9)
 
         trainer = Contrastive_Trainer()
         first_iter = True
@@ -370,13 +358,13 @@ class Track_Fixer:
             trainer.save_checkpoint(model_path)
             logger.info(f"[TF] Model saved to {model_path}")
 
-        logger.info("[TF] Running inference on ALL segments (5 frames per segment)")
+        logger.info(f"[TF] Running inference on ALL segments ({segment_samples} frames per segment)")
         segment_embeddings = []
         segment_frame_indices = []
         segment_motion_ids = []
 
         for seg_idx in tqdm(range(len(dataloader.segment_index)), desc="Inferring Segments", ncols=200):
-            images, frames, _ = dataloader.load_segment_samples(seg_idx, n_samples=5)
+            images, frames, _ = dataloader.load_segment_samples(seg_idx, n_samples=segment_samples)
 
             crops = [images[i, mouse_idx] for i in range(len(frames)) for mouse_idx in range(2)]
             mids_flat = [mid for _ in frames for mid in [0, 1]]
@@ -389,10 +377,70 @@ class Track_Fixer:
             segment_embeddings.append(embs)
             segment_frame_indices.append(frames_flat)
             segment_motion_ids.append(mids_flat)
-        
+    
         all_embeddings = np.vstack(segment_embeddings)
-        kmeans = KMeans(n_clusters=2, random_state=42)
+        kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
         visual_labels = kmeans.fit_predict(all_embeddings)
+
+        centroids = kmeans.cluster_centers_ 
+        dist_to_c0 = np.linalg.norm(all_embeddings - centroids[0], axis=1)
+        dist_to_c1 = np.linalg.norm(all_embeddings - centroids[1], axis=1)
+
+        margin = np.abs(dist_to_c0 - dist_to_c1)
+        margin_scale = np.percentile(margin, 75)
+        confidence = 1 / (1 + np.exp(-(margin - margin_scale) / (margin_scale * 0.5)))
+
+        segment_confidence = []
+        idx = 0
+        for seg_emb in segment_embeddings:
+            n = len(seg_emb)
+            segment_confidence.append(confidence[idx:idx+n])
+            idx += n
+
+        logger.info("[TF] Checking for low-confidence segments...")
+        confidence_threshold = 0.5
+        min_confident_ratio = 0.4
+
+        for seg_idx in range(len(segment_embeddings)):
+            confidences = segment_confidence[seg_idx]
+            confident_ratio = np.sum(confidences >= confidence_threshold) / len(confidences)
+            
+            if confident_ratio < min_confident_ratio:
+                logger.debug(f"[TF] Segment {seg_idx}: low confidence ({confident_ratio:.1%}), re-mining with more samples")
+
+                images, frames, _ = dataloader.load_segment_samples(seg_idx, n_samples=2*segment_samples)
+                
+                crops = [images[i, mouse_idx] for i in range(len(frames)) for mouse_idx in range(2)]
+                mids_flat = [mid for _ in frames for mid in [0, 1]]
+                frames_flat = [f for f in frames for _ in range(2)]
+                
+                ds = Crop_Dataset(crops, mids_flat, frames_flat, is_ir=True)
+                new_embs = trainer.extract_embeddings(ds)
+                
+                segment_embeddings[seg_idx] = new_embs
+                segment_frame_indices[seg_idx] = frames_flat
+                segment_motion_ids[seg_idx] = mids_flat
+    
+        logger.info("[TF] Re-clustering with updated embeddings...")
+
+        all_embeddings = np.vstack(segment_embeddings)
+        kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
+        visual_labels = kmeans.fit_predict(all_embeddings)
+
+        centroids = kmeans.cluster_centers_ 
+        dist_to_c0 = np.linalg.norm(all_embeddings - centroids[0], axis=1)
+        dist_to_c1 = np.linalg.norm(all_embeddings - centroids[1], axis=1)
+
+        margin = np.abs(dist_to_c0 - dist_to_c1)
+        margin_scale = np.percentile(margin, 75)
+        confidence = 1 / (1 + np.exp(-(margin - margin_scale) / (margin_scale * 0.5)))
+
+        segment_confidence = []
+        idx = 0
+        for seg_emb in segment_embeddings:
+            n = len(seg_emb)
+            segment_confidence.append(confidence[idx:idx+n])
+            idx += n
 
         segment_visual_labels = []
         idx = 0
@@ -400,28 +448,40 @@ class Track_Fixer:
             n = len(seg_emb)
             segment_visual_labels.append(visual_labels[idx:idx+n])
             idx += n
-        
+
         vis = Embedding_Visualizer(
             segment_embeddings, 
             segment_motion_ids, 
             segment_frame_indices,
             visual_labels=segment_visual_labels,
+            assignment_confidence=segment_confidence,
             total_frames=self.total_frames,
             start_idx=start_idx,
             end_idx=end_idx,
         )
-        
+
         tsne_pix = vis.plot_tsne_combined()
-        agreement_pix, stable_swap_candidates = vis.plot_agreement_timeline()
-        
         tsne_pix.save(os.path.join(self.temp_dir, "tsne_combined.png"))
+
+        agreement_pix, stable_swap_candidates, diagnosis_timeline = vis.plot_agreement_timeline()
         agreement_pix.save(os.path.join(self.temp_dir, "agreement_timeline.png"))
+
+        df_diagnosis = pd.DataFrame(diagnosis_timeline, columns=[
+            "frame_agreement_score", "segment_agreement_score", "segment_type_class"])
+
+        df_diagnosis.insert(0, "frame_index", np.arange(self.total_frames))
+        output_csv_path = os.path.join(self.temp_dir, "diagnosis_timeline.csv")
+        try:
+            df_diagnosis.to_csv(output_csv_path, index=False)
+            logger.info(f"[VIS] Diagnosis timeline exported to {output_csv_path}")
+        except Exception as e:
+            logger.error(f"[VIS] Failed to export diagnosis timeline: {e}")
         
         pix_dialog = Dual_Pixmap_Dialog(agreement_pix, tsne_pix, max_height=480, parent=self.main)
         pix_dialog.show()
         logger.info("[TF] Visualization complete.")
         
-        if self.locker_stable_swap:
+        if self.id_lock and self.co_single_array is not None:
             stable_swap = [f for f in stable_swap_candidates if not self.co_single_array[f]]
             stable_swap_candidates = stable_swap
         
@@ -544,13 +604,12 @@ class Track_Fixer:
         if len(candidates) == 1:
             assigned_idx = candidates[0]
             if self.id_lock and self.co_single_array[frame_idx] and assigned_idx != self.locked_idx: # It attempts to assign the wrong id at checkpoint
-                if frame_idx - self.last_id_locker > 2 and np.sum(self.inst_count_per_frame[self.last_id_locker:frame_idx]==2) > 2: # observe and report
-                    self.ambiguous_frames.append(frame_idx)
-                    self.locker_stable_swap.extend(range(self.last_id_locker+1, frame_idx+1))
+                self.ambiguous_frames.append(frame_idx)
+                self.locker_stable_swap.extend(range(self.last_id_locker+1, frame_idx+1))
                 if obs_idx != self.locked_idx:
                     self._swap_ids_in_frame(frame_idx)
                 self._update_kalman_with_observation(frame_idx, [self.locked_idx], [self.locked_idx])
-                return False
+                return True
             if assigned_idx != obs_idx:
                 self._swap_ids_in_frame(frame_idx)
                 logger.debug(f"Frame {frame_idx}: Single obs assigned to {assigned_idx} (was {obs_idx}), swapped")
