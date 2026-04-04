@@ -1,4 +1,5 @@
 import os
+import numpy as np
 import shutil
 import yaml
 from collections import defaultdict
@@ -333,6 +334,7 @@ def _log_batch_progress(operation: str, items: List[str]) -> None:
 def batch_inference(
     rootdir: str, 
     dlc_config_path: str, 
+    force_load_new_config: bool = False,
     use_dm_list: bool = False,
     mark_gen_cmd: list | None=None,
     crop: bool = False,
@@ -362,6 +364,7 @@ def batch_inference(
             workspace_file=ws_path,
             data_manager=dm,
             dlc_config_path=dlc_config_path,
+            force_load_new_config=force_load_new_config,
             use_dm_list=use_dm_list,
             mark_gen_cmd=mark_gen_cmd if mark_gen_cmd else [],
             crop=crop,
@@ -388,6 +391,7 @@ def _inference_workspace_vid(
         workspace_file: str,
         data_manager: Data_Manager,
         dlc_config_path: Optional[str] = None,
+        force_load_new_config: bool = False,
         use_dm_list: bool = False,
         mark_gen_cmd: list = [],
         crop: bool = False,
@@ -406,7 +410,7 @@ def _inference_workspace_vid(
 
     dm.load_workspace(workspace_file)
 
-    if dlc_config_path is not None and os.path.isfile(dlc_config_path) and dm.dlc_data is None:
+    if dlc_config_path is not None and os.path.isfile(dlc_config_path) and (dm.dlc_data is None or force_load_new_config):
         dm.load_metadata_to_dm(dlc_config_path)
     else:
         assert dm.dlc_data is not None and dm.dlc_data.dlc_config_filepath is not None, "[BATCH] DLC configuration not found in workspace. Ensure the workspace includes a valid DLC project."
@@ -432,7 +436,7 @@ def _inference_workspace_vid(
     elif mark_gen_cmd:
         inference_list = _acquire_inference_list_from_markgen(dm)
     else:
-        inference_list = range(dm.total_frames)
+        inference_list = sorted(range(dm.total_frames))
 
     if len(inference_list) > MAX_FRAMES_PER_RUN:
         logger.info(f"[BATCH] Splitting {len(inference_list)} frames into chunks.")
@@ -486,21 +490,30 @@ def _acquire_inference_list_from_markgen(dm:Data_Manager):
         angle_map_data=dm.angle_map_data
         )
     mg.hide()
-    mg.mode_option.setCurrentText("Animal Num")
-    mg.blob_source_radio.setChecked(True)
-    mg.merged_animal_checkbox.setChecked(True)
-    mg.two_plus_animal_checkbox.setChecked(True)
-    inference_list = []
-    marker = mg.find_frames_to_mark()
-    if marker:
-        inference_list.extend(marker)
-        mg.buffer_size_spin.setValue(15)
-        result = mg._mark_count_change_frames()
-        if result:
-            inference_list.extend(result)
 
-    return sorted(set(inference_list))
+    inference_list = []
+
+    if dm.blob_array is not None or np.any(dm.blob_array!=0):
+        mg.mode_option.setCurrentText("Animal Num")
+        mg.blob_source_radio.setChecked(True)
+        mg.merged_animal_checkbox.setChecked(True)
+        mg.two_plus_animal_checkbox.setChecked(True)
+
+        frames_by_count = mg.find_frames_to_mark()
+        if frames_by_count:
+            inference_list.extend(frames_by_count)
+            mg.buffer_size_spin.setValue(20)
+            frames_buffer = mg._mark_count_change_frames()
+            inference_list.extend(frames_buffer)
+
+    mg.mode_option.setCurrentText("Stride")
+    mg.stride_spin.setValue(10)
+    frames_by_interval = mg.find_frames_to_mark()
+    if frames_by_interval:
+        inference_list.extend(frames_by_interval)
+
     mg.close()
+    return sorted(set(inference_list))
 
 def _autoload_pred(workspace_file: str, dm: Data_Manager, dlc_config_path: Optional[str] = None):
     workspace_dir = os.path.dirname(workspace_file)
@@ -609,9 +622,11 @@ if __name__ == "__main__":
             batch_inference(
                 rootdir,
                 dlc_config_path,
-                use_dm_list=True,
+                force_load_new_config=True,
+                use_dm_list=False,
+                mark_gen_cmd=["dummy"],
                 crop=True,
-                mask=True,
+                mask=False,
                 grayscale=False,
                 infer_as_video=True,
                 batch_size=16,

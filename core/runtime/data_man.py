@@ -85,11 +85,7 @@ class Data_Manager:
 
         if existing_data:
             new_kp = sorted(new_dlc_data.keypoints)
-            if new_kp != old_kp:
-                logger.warning(f"[DATAMAN] Loaded dlc config has different configuration. Saving the old predictions to file.")
-                save_path = f"{os.path.splitext(self.video_file)[0]}_config_change_backup.h5"
-                self.save_pred(self.dlc_data.pred_data_array, save_path)
-            else:
+            if new_kp == old_kp:
                 self.dlc_data.prediction_filepath = prediction_filepath
                 self.dlc_data.pred_data_array = pred_data_array
                 self.dlc_data.pred_frame_count = pred_frame_count
