@@ -195,9 +195,9 @@ class Embedding_Visualizer:
                 continue
 
             segment_avg = np.nanmean(agreement_timeline[f_idxs])
-            if segment_avg > 0.7:
+            if segment_avg > 0.6:
                 seg_class = 2
-            elif segment_avg < 0.3:
+            elif segment_avg < 0.4:
                 seg_class = 1
             else:
                 seg_class = 0

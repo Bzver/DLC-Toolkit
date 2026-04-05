@@ -472,7 +472,7 @@ class Track_Fix_Config_Dialog(QDialog):
                 "lr_exponent": 5,  # 1e-5
                 "margin_thresh": 1.0,
                 "sil_thresh": 0.8,
-                "min_imp": 0.01,
+                "min_imp": 0.05,
                 "worker_num": 16,
                 "use_cache": True,
                 "avtomat": False,
@@ -495,31 +495,8 @@ class Track_Fix_Config_Dialog(QDialog):
                 "lr_exponent": 5,
                 "margin_thresh": 1.0,
                 "sil_thresh": 0.8,
-                "min_imp": 0.01,
+                "min_imp": 0.05,
                 "worker_num": 16,
-                "use_cache": True,
-                "avtomat": False,
-            }
-        },
-        "High Accuracy": {
-            "description": "Maximum accuracy for challenging videos. Slower but more reliable.",
-            "values": {
-                "skip_contrastive": False,
-                "skip_sweep": False,
-                "use_kalman": True,
-                "kp_smooth": True,
-                "save_model": True,
-                "pretrained_model_path": None,
-                "max_epochs": 200,
-                "warmup_epochs": 20,
-                "batch_size": 64,
-                "max_triplets": 10000,
-                "pleatau_patience": 50,
-                "lr_exponent": 5,
-                "margin_thresh": 1.5,
-                "sil_thresh": 0.9,
-                "min_imp": 0.005,
-                "worker_num": 8,
                 "use_cache": True,
                 "avtomat": False,
             }
@@ -711,9 +688,9 @@ class Track_Fix_Config_Dialog(QDialog):
         min_imp_layout = QHBoxLayout()
         self.min_imp_spin = QDoubleSpinBox()
         self.min_imp_spin.setRange(0.01, 1.00)
-        self.min_imp_spin.setValue(0.01)
+        self.min_imp_spin.setValue(0.05)
         self.min_imp_spin.setDecimals(2)
-        self.min_imp_spin.setSingleStep(0.01)
+        self.min_imp_spin.setSingleStep(0.02)
         self.min_imp_spin.setToolTip("Minimum improvements between iterations to determine early stopping or increasing data.")
         self.min_imp_spin.valueChanged.connect(self._on_manual_change)
         

@@ -104,10 +104,7 @@ class Track_Fixer:
                 self._execute_swap_orders(swap_orders, self.total_frames-1)
             return self.pred_data_array
 
-        segment_break_mask, qc_mask = self._find_eligible_frames()
-        if self.ambiguous_frames:
-            segment_break_mask[self.ambiguous_frames] = False
-            qc_mask[self.ambiguous_frames] = False
+        qc_mask = self._find_eligible_frames(start_idx, end_idx)
 
         crop_coords = calculate_pose_array_bbox(self.pred_data_array[qc_mask], padding=15).astype(np.uint16)
         cutout_dim = int(np.percentile(crop_coords[..., 2:4] - crop_coords[..., 0:2], 90))
@@ -124,21 +121,6 @@ class Track_Fixer:
             angle_array=angles,
             grayscaling=True
             )
-
-        for seg_start, seg_end in indices_to_spans(np.where(segment_break_mask)[0].tolist()):
-            if seg_end < start_idx or seg_start > end_idx:
-                continue
-            
-            seg_start = max(seg_start, start_idx)
-            seg_end = min(seg_end, end_idx-1)
-
-            try:
-                seg_frames = [i for i in range(seg_start, seg_end + 1) if qc_mask[i]]
-            except:
-                print(f"seg_end:{seg_end}, eligible_mask len:{len(qc_mask)}")
-            if len(seg_frames) <= 3:
-                continue
-            self.seg_list.append(seg_frames)
 
         self._crop_rotate_and_export(ca)
         self._run_contrain_magic(start_idx, end_idx)
@@ -229,11 +211,13 @@ class Track_Fixer:
 
     def _find_eligible_frames(
             self,
+            start_idx: int,
+            end_idx: int,
             inst_dist_threshold: float = 0.8,
             size_threshold: Tuple[float, float] = (0.3, 2.5),
             bp_threshold: int = 4,
             twist_angle_threshold: float = 50.0,
-            ) -> Tuple[np.ndarray, np.ndarray]:
+            ) -> np.ndarray:
 
         instance_count = get_instance_count_per_frame(self.pred_data_array)
         two_inst_mask = instance_count == 2
@@ -254,10 +238,26 @@ class Track_Fixer:
         frame_valid_mask = np.zeros(self.total_frames, dtype=bool)
         frame_valid_mask[two_inst_mask] = dist_mask & angle_mask & size_mask & bp_mask
 
-        segment_break_mask = np.zeros(self.total_frames, dtype=bool)
-        segment_break_mask[two_inst_mask] = dist_mask
+        segmentation_mask = two_inst_mask.copy()
+        if self.ambiguous_frames:
+            segmentation_mask[self.ambiguous_frames] = False # Break segment at ambiguous frames when there are ambiguous frames
+            frame_valid_mask[self.ambiguous_frames] = False
+        else:
+            segmentation_mask[two_inst_mask] = dist_mask
 
-        return segment_break_mask, frame_valid_mask
+        for seg_start, seg_end in indices_to_spans(np.where(segmentation_mask)[0]):
+            if seg_end < start_idx or seg_start > end_idx:
+                continue
+            
+            seg_start = max(seg_start, start_idx)
+            seg_end = min(seg_end, end_idx-1)
+
+            seg_frames = [i for i in range(seg_start, seg_end + 1) if frame_valid_mask[i]]
+            if len(seg_frames) <= 3:
+                continue
+            self.seg_list.append(seg_frames)
+
+        return frame_valid_mask
 
     def _crop_rotate_and_export(self, ca:Cutout_Augments):
         if self.use_cache:
@@ -273,88 +273,30 @@ class Track_Fixer:
             frame_list=frame_list,
             max_workers=self.worker_num,
         )
+        # self._log_seg_list()
+
         co.extract_frames(ca, self.seg_list, self.use_cache)
     
-    def _run_contrain_magic(self, start_idx, end_idx, min_samples:int = 100, segment_samples: int=10):
+    def _run_contrain_magic(self, start_idx, end_idx, segment_samples: int = 20):
 
         from utils.torch import Crop_Dataset, Embedding_Visualizer, Contrastive_Trainer, Cutout_Dataloader
 
         dataloader = Cutout_Dataloader(folder_path=self.temp_dir, seg_list=self.seg_list)
 
-        init_ratio = 0.9
-        total_samples = sum(len(seg) for seg in self.seg_list)
-        init_ratio = min(max(min_samples / total_samples, 0.9), 0.9)
-
         trainer = Contrastive_Trainer()
-        first_iter = True
         if self.emp.pretrained_model_path and os.path.exists(self.emp.pretrained_model_path):
             logger.info(f"[TF] Loading pretrained model: {self.emp.pretrained_model_path}")
             trainer.load_checkpoint(self.emp.pretrained_model_path, strict=False)
 
-        prev_val_score = 1e-6 
-        while init_ratio < 1.0 and self.emp.epochs > 0:
-            train_seg_indices = dataloader.select_training_segments(ratio=init_ratio)
+        train_seg_indices = dataloader.select_training_segments(ratio=1.0)
 
-            logger.info(f"[TF] Loading {len(train_seg_indices)} training segments...")
-            train_datasets = dataloader.load_all_segments_for_training(train_seg_indices)
+        logger.info(f"[TF] Loading {len(train_seg_indices)} training segments...")
+        train_datasets = dataloader.load_all_segments_for_training(train_seg_indices)
 
-            trainer.train(dataset=train_datasets, emp=self.emp, skip_easy=not first_iter)
-
-            val_seg_indices = dataloader.select_validation_segments(exclude=train_seg_indices, ratio=init_ratio)
-            val_datasets = dataloader.load_all_segments_for_training(val_seg_indices)
-
-            pos_thresh, neg_thresh, sil = trainer.eval_on_dataset(val_datasets)
-            margin = pos_thresh - neg_thresh
-            val_score = min(margin, sil)
-
-            logger.info(
-                f"[EVAL] Ratio {init_ratio:.0%}: "
-                f"margin={margin:.3f} (target: {self.emp.margin}), "
-                f"sil={sil:.3f} (target: {self.emp.sil}), "
-                f"combined={val_score:.3f}"
-            )
-            
-            improvement = val_score - prev_val_score
-
-            if margin >= self.emp.margin and sil >= self.emp.sil:
-                logger.info(f"[TF] Validation passed at ratio={init_ratio:.1f}, validating again to prevent lucky shots.")
-
-                dlb_val_seg_indices = dataloader.select_validation_segments(
-                    exclude=list(train_seg_indices) + list(val_seg_indices), 
-                    ratio=init_ratio
-                )
-                if dlb_val_seg_indices:
-                    val_datasets = dataloader.load_all_segments_for_training(dlb_val_seg_indices)
-                    pos_thresh, neg_thresh, sil = trainer.eval_on_dataset(val_datasets)
-                    margin = pos_thresh - neg_thresh
-                    val_score = min(margin, sil)
-                    
-                    if margin >= self.emp.margin and sil >= self.emp.sil:
-                        logger.info(f"[TF] ✓ Double-validation passed. Stopping at {init_ratio:.0%}.")
-                        break
-                    else:
-                        logger.info(f"[TF] ✗ Double-validation failed. Continuing to gather more data.")
-            elif improvement < self.emp.min_imp * 5:
-                logger.info(
-                    f"[TF] ✗ Diminishing returns detected: "
-                    f"improvement {improvement:.3f} < threshold {self.emp.min_imp * 5:.3f}. "
-                    f"Stopping at {init_ratio:.0%} data."
-                )
-                break
-            else:
-                logger.info(
-                    f"[TF] Improvement {improvement:.3f} >= {self.emp.min_imp * 5:.3f}, "
-                    f"continuing to next ratio..."
-                )
-
-            prev_val_score = val_score
-
-            first_iter = False
-            init_ratio += 0.2
-            trainer.model.train()
+        trainer.double_train(dataset=train_datasets, emp=self.emp)
 
         if self.emp.save_model:
-            model_path = os.path.join(self.extractor.get_video_dir(), f"{self.extractor.get_video_name()}_contrastive_trained_ratio{int(init_ratio*100)}.pth")
+            model_path = os.path.join(self.extractor.get_video_dir(), f"{self.extractor.get_video_name(no_ext=True)}_contrastive_trained.pth")
             trainer.save_checkpoint(model_path)
             logger.info(f"[TF] Model saved to {model_path}")
 
@@ -744,3 +686,26 @@ class Track_Fixer:
             return "exit"
         else:
             return dialog.user_decisions
+        
+    def _log_seg_list(self):
+        import json
+        raw_seg = []
+        seg_len = []
+        for seg in self.seg_list:
+            raw_seg.append((seg[0], seg[-1]))
+            seg_len.append(seg[-1]-seg[0]+1)
+
+        unique_elements, counts = np.unique(seg_len, return_counts=True)
+        sorted_indices = np.argsort(counts)[::-1]
+        sorted_elements = unique_elements[sorted_indices]
+
+        data = {
+            "median": int(np.median(seg_len)),
+            "mean": int(np.mean(seg_len)),
+            "min": int(np.min(seg_len)),
+            "max": int(np.max(seg_len)),
+            "len_occurences": sorted_elements.tolist(),
+            "raw_seg": raw_seg
+        }
+        with open ("debug.json", "w") as file:
+            json.dump(data, file)

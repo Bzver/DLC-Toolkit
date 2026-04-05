@@ -75,7 +75,7 @@ class Cutout_Dataloader:
             else:
                 logger.warning(f"[CLOAD] Chunk not found: {chunk_path}")
 
-        self.min_segment_length = max(np.median(all_len), 10)
+        self.min_segment_length = 10
 
         return index
     
