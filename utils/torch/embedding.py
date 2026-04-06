@@ -1,6 +1,6 @@
 import os
 import datetime
-from scipy.ndimage import gaussian_filter1d
+from scipy.stats import gaussian_kde
 from scipy.signal import find_peaks
 
 import numpy as np
@@ -84,19 +84,17 @@ class Contrastive_Trainer:
             self._train_easy(dataset, optimizer_warmup, emp)
 
         embeddings = self._extract_embeddings_list(dataset)
+        sim_array, margin_array = self._similarity_eval(embeddings, dataset)
+        mean_score, p10_score = self._silhouette_eval(embeddings)
 
-        pos_thresh, neg_thresh = self._similarity_eval(embeddings)
-        score = self._silhouette_eval(embeddings)
+        mean_margin = np.mean(margin_array)
+        p10_margin = np.percentile(margin_array, 10.0)
 
-        if pos_thresh - neg_thresh >= emp.margin and score >= emp.sil:
-            logger.info(
-                f"[CONTRAIN] Separation score: {pos_thresh - neg_thresh} >= {emp.margin}; sihouette score: {score} >= {emp.sil}. "
-                "Stopping training early...")
-
+        if self._check_early_stopping(emp, mean_margin, mean_score, p10_margin, p10_score):
             self.model.eval()
             return self.model
 
-        self._train_hard(dataset, optimizer, emp, embeddings, pos_thresh, neg_thresh, skip_easy)
+        self._train_hard(dataset, optimizer, emp, embeddings, sim_array, skip_easy)
         
         self.model.eval()
         return self.model
@@ -120,19 +118,6 @@ class Contrastive_Trainer:
         
         self.model.train()
         return np.vstack(embeddings) if embeddings else np.array([])
-
-    def eval_on_dataset(
-            self,
-            val_dataset: List[Crop_Dataset],
-            batch_size: int = 128,
-            supress_verbose: bool = False,
-    ) -> Tuple[float, float]:
-
-        val_emb = self._extract_embeddings_list(val_dataset, batch_size)
-        pos_thresh, neg_thresh = self._similarity_eval(val_emb, supress_verbose)
-        val_sil = self._silhouette_eval(val_emb, supress_verbose)
-
-        return pos_thresh, neg_thresh, val_sil
 
     def save_checkpoint(self, path: str, metadata: dict = None):
         checkpoint = {
@@ -230,9 +215,9 @@ class Contrastive_Trainer:
 
         within_to_cross_ratio = (1 - cross_triplet_ratio) / cross_triplet_ratio
 
-        pos_thresh, neg_thresh = self._similarity_eval(segment_embeddings)
+        sim_array, _ = self._similarity_eval(segment_embeddings, dataset)
         within_triplets = self._mine_hard_triplets(
-            dataset, segment_embeddings, pos_thresh, neg_thresh, max_triplets=int(len(cross_triplets)*within_to_cross_ratio), mining_mode="median")
+            dataset, segment_embeddings, sim_array[:, 1, 0], sim_array[:, 2, 1], max_triplets=int(len(cross_triplets)*within_to_cross_ratio), mining_mode="median")
 
         self.model.train()
     
@@ -240,9 +225,9 @@ class Contrastive_Trainer:
         pleatau_val = 0
         eval_interval = max(1, emp.epochs // 10)
         eval_patience = max(2, emp.pleatau) 
-        best_bimodal_score = -1.0
         best_loss = 1e6
-    
+
+        best_bimodal_score = -1.0
         for epoch in range(emp.epochs):
             np.random.shuffle(within_triplets)
             np.random.shuffle(cross_triplets)
@@ -314,26 +299,26 @@ class Contrastive_Trainer:
                 logger.info(f"[CROSSTRAIN] Loss plateaued for {emp.pleatau} epochs. Evaluating final state...")
                 force_eval = True
             
-            if (epoch + 1) % eval_interval == 0 or force_eval or epoch == emp.epochs - 1:
-                embeddings = self._extract_embeddings_list(dataset)
-                all_embeddings = np.vstack(list(embeddings.values()))
+            if epoch % eval_interval == 0 or force_eval or epoch == emp.epochs - 1:
+                segment_embeddings = self._extract_embeddings_list(dataset)
+                all_embeddings = np.vstack(list(segment_embeddings.values()))
                 kmeans = KMeans(n_clusters=2, random_state=42)
                 kmeans.fit_predict(all_embeddings)
                 centroids = kmeans.cluster_centers_
                 dist_to_c0 = np.linalg.norm(all_embeddings - centroids[0], axis=1)
                 dist_to_c1 = np.linalg.norm(all_embeddings - centroids[1], axis=1)
 
-                margin = np.abs(dist_to_c0 - dist_to_c1)
+                assign_margin = np.abs(dist_to_c0 - dist_to_c1)
                 distances = np.concatenate([dist_to_c0, dist_to_c1])
                 result = self._compute_bimodality_score(distances)
-    
-                mean_margin = np.mean(margin)
-                std_margin = np.std(margin)
-                confidence_cv = mean_margin / (std_margin + 1e-6)
+                confidence_cv = np.mean(assign_margin) / (np.std(assign_margin) + 1e-6)
 
                 logger.info(
                     f"[CROSSTRAIN-EVAL] Epoch {epoch+1}: "
+                    f"Biomodal={result['bimodal']}, "
                     f"Bimodal Score={result['score']:.3f}, "
+                    f"Peak Ratio={result['peak_ratio']:.3f}, "
+                    f"Center Deviation={result['center_deviation']:.3f}, "
                     f"Valley Depth={result['valley_depth']:.3f}, "
                     f"CV={confidence_cv:.3f}"
                 )
@@ -349,12 +334,18 @@ class Contrastive_Trainer:
                 else:
                     pleatau_val += 1
 
-                if result['bimodal'] and best_bimodal_score > 0.8 and confidence_cv > 10:
+                if result['bimodal'] and best_bimodal_score > 0.8 and confidence_cv > 7:
                     logger.info(f"[CROSSTRAIN] Clean bimodal separation achieved. Stopping early.")
                     break
                 if pleatau_val >= eval_patience or force_eval:
                     logger.info(f"[CROSSTRAIN] Confidence plateaued. Stopping early.")
                     break
+
+                sim_array, _ = self._similarity_eval(segment_embeddings, dataset)
+                within_triplets = self._mine_hard_triplets(
+                    dataset, segment_embeddings, sim_array[:, 1, 0], sim_array[:, 2, 1], max_triplets=int(len(cross_triplets)*within_to_cross_ratio), mining_mode="median")
+                
+                prototypes = self._compute_segment_prototypes(dataset, segment_embeddings)
                 cross_triplets = self._mine_cross_triplets(dataset, segment_embeddings, prototypes, max_triplets=emp.triplets*2)
                 if len(cross_triplets) == 0:
                     logger.warning("[CROSSTRAIN] Triplets exhausted. Stopping early.")
@@ -574,14 +565,13 @@ class Contrastive_Trainer:
             datasets: List[Crop_Dataset],
             optimizer: torch.optim.Adam, 
             emp: Emb_Params, 
-            embeddings: np.ndarray, 
-            pos_thresh: float, 
-            neg_thresh: float,
+            embeddings: np.ndarray,
+            sim_array: np.ndarray,
             skip_easy: bool = False
     ):
 
         hard_triplets = self._mine_hard_triplets(
-            datasets, embeddings, pos_thresh, neg_thresh, max_triplets=emp.triplets, mining_mode="semihard"
+            datasets, embeddings, sim_array[:, 1, 0], sim_array[:, 2, 1], max_triplets=emp.triplets, mining_mode="semihard"
         )
 
         if len(hard_triplets) == 0:
@@ -671,8 +661,13 @@ class Contrastive_Trainer:
     
                 logger.info(f"[HARDTRAIN] Loss plateaued for {emp.pleatau} epochs in hard mode. Evaluating final state...")
 
-                pos_thresh, neg_thresh, sil = self.eval_on_dataset(datasets)
-                if pos_thresh - neg_thresh >= emp.margin and sil >= emp.sil:
+                embeddings = self._extract_embeddings_list(datasets)
+                sim_array, margin_array = self._similarity_eval(embeddings, datasets)
+                mean_score, p10_score = self._silhouette_eval(embeddings)
+                mean_margin = np.mean(margin_array)
+                p10_margin = np.percentile(margin_array, 10.0)
+
+                if self._check_early_stopping(emp, mean_margin, mean_score, p10_margin, p10_score):
                     logger.info("[HARDTRAIN] Thresholds met on convergence. Stopping early.")
                 else:
                     logger.info("[HARDTRAIN] Model converged to best possible state. Stopping early.")
@@ -684,15 +679,20 @@ class Contrastive_Trainer:
             if eval_needed or epoch == emp.epochs - 1:
                 last_eval = epoch
 
-                pos_thresh, neg_thresh, sil = self.eval_on_dataset(datasets)
-                eval_score = min(pos_thresh - neg_thresh, sil)
+                embeddings = self._extract_embeddings_list(datasets)
+                sim_array, margin_array = self._similarity_eval(embeddings, datasets)
+                mean_score, p10_score = self._silhouette_eval(embeddings)
+                mean_margin = np.mean(margin_array)
+                p10_margin = np.percentile(margin_array, 10.0)
+
+                eval_score = min(mean_margin, mean_score)
 
                 eval_patience = max(3, emp.pleatau//4)
                 if eval_score - best_eval < emp.min_imp:
                     pleatau_eval += 1
                     logger.info(f"[HARDTRAIN] Current eval pleatau: {pleatau_eval}, last improvement: {eval_score - best_eval:.3f}, patience: {eval_patience}")
 
-                if pos_thresh - neg_thresh >= emp.margin and sil >= emp.sil:
+                if self._check_early_stopping(emp, mean_margin, mean_score, p10_margin, p10_score):
                     logger.info("[HARDTRAIN] Thresholds met on convergence. Stopping early.")
                     break
                 elif epoch == emp.epochs - 1:
@@ -704,7 +704,7 @@ class Contrastive_Trainer:
                 else:
                     segment_embeddings = self._extract_embeddings_list(datasets)
                     logger.info(f"[HARDTRAIN] Updating hard triplets at epoch {epoch+1}...")
-                    result = self._mine_hard_triplets(datasets, segment_embeddings, pos_thresh, neg_thresh, max_triplets=emp.triplets, mining_mode=curr_miner)
+                    result = self._mine_hard_triplets(datasets, segment_embeddings, sim_array[:, 1, 0], sim_array[:, 2, 1], max_triplets=emp.triplets, mining_mode=curr_miner)
                     num_result = len(result)
                     if num_result < 10:
                         logger.info(f"[HARDTRAIN] Hard triplets too few ({num_result}, stopping...")
@@ -751,8 +751,8 @@ class Contrastive_Trainer:
             self,
             datasets: List[Crop_Dataset],
             segment_embeddings: Dict[int, np.ndarray],
-            pos_threshold: float,
-            neg_threshold: float,
+            pos_thresholds: np.ndarray,
+            neg_thresholds: np.ndarray,
             max_triplets: int = 5000,
             mining_mode: str = "semihard"
     ) -> List[Tuple[int, int, int, int]]:
@@ -762,6 +762,9 @@ class Contrastive_Trainer:
         for ds_idx, dataset in enumerate(datasets):
             if ds_idx not in segment_embeddings:
                 continue
+    
+            pos_threshold = pos_thresholds[ds_idx]
+            neg_threshold = neg_thresholds[ds_idx]
             
             embeddings = segment_embeddings[ds_idx]
             motion_ids = np.array(dataset.motion_ids[:len(embeddings)])
@@ -826,7 +829,7 @@ class Contrastive_Trainer:
             if len(triplets) >= max_triplets:
                 break
         
-        logger.info(f"[CONTRAIN] Found {len(triplets)} hard triplets (mode={mining_mode}, pos<{pos_threshold:.2f}, neg>{neg_threshold:.2f})")
+        logger.info(f"[CONTRAIN] Found {len(triplets)} hard triplets (mode={mining_mode}, avg_pos_thresh={np.mean(pos_thresholds):.2f}, avg_neg_thresh={np.mean(neg_thresholds):.2f})")
         return triplets
 
     def _contrastive_loss(
@@ -857,31 +860,45 @@ class Contrastive_Trainer:
         return var_weight * var_penalty
 
     @staticmethod
-    def _similarity_eval(embeddings, suppress_verbose=False) -> Tuple[float, float]:
-        pos_sims, neg_sims = [], []
-        
-        for emb in embeddings.values():
+    def _check_early_stopping(emp, mean_margin, mean_score, p10_margin, p10_score):
+        if mean_margin > emp.margin and mean_score >= emp.sil:
+            logger.info(
+                f"[CONTRAIN] Separation score: {mean_margin} >= {emp.margin} (p10: {p10_margin}); sihouette score: {mean_score} >= {emp.sil}. (p10: {p10_score})")
+            if p10_margin >= emp.margin * 0.8 and p10_score >= emp.sil * 0.8:
+                return True
+            
+        return False
+
+    @staticmethod
+    def _similarity_eval(embeddings, datasets, suppress_verbose=False) -> Tuple[np.ndarray, np.ndarray]:
+        sim_array = np.full((len(embeddings), 3, 2), np.nan)
+
+        for i, (ds_idx, emb) in enumerate(embeddings.items()):
+            dataset = datasets[ds_idx]
             sim_sub = cosine_similarity(emb)
             n_sub = len(emb)
             
-            motion_ids = np.array([i % 2 for i in range(n_sub)])
+            motion_ids = np.array(dataset.motion_ids[:len(emb)])
             
             i_idx, j_idx = np.triu_indices(n_sub, k=1)
             valid_sims = sim_sub[i_idx, j_idx]
             same_mouse = motion_ids[i_idx] == motion_ids[j_idx]
             
-            pos_sims.extend(valid_sims[same_mouse].tolist())
-            neg_sims.extend(valid_sims[~same_mouse].tolist())
-        
-        if not pos_sims or not neg_sims:
-            logger.warning("[CONTRAIN] Similarity score is empty, using defaults")
-            return 0.5, 0.3
+            pos_sim = valid_sims[same_mouse]
+            neg_sim = valid_sims[~same_mouse]
+    
+            for k, sim in enumerate([pos_sim, neg_sim]):
+                sim_array[i, 0, k] = np.mean(sim)
+                sim_array[i, 1, k] = np.percentile(sim, 20)
+                sim_array[i, 2, k] = np.percentile(sim, 80)
 
-        if not suppress_verbose:
-            logger.info(f"[CONTRAIN] Same-mouse: {np.mean(pos_sims):.3f} ± {np.std(pos_sims):.3f}")
-            logger.info(f"[CONTRAIN] Diff-mouse: {np.mean(neg_sims):.3f} ± {np.std(neg_sims):.3f}")
+        margin_array = sim_array[:, 1, 0] - sim_array[:, 2, 1]
         
-        return np.percentile(pos_sims, 30), np.percentile(neg_sims, 70)
+        if not suppress_verbose:
+            logger.info(f"[CONTRAIN] Same-mouse: {np.mean(sim_array[:, 0, 0]):.3f} ± {np.std(sim_array[:, 0, 0]):.3f} (p10: {np.percentile(sim_array[:, 0, 0], 10)})")
+            logger.info(f"[CONTRAIN] Diff-mouse: {np.mean(sim_array[:, 0, 1]):.3f} ± {np.std(sim_array[:, 0, 1]):.3f} (p10: {np.percentile(sim_array[:, 0, 1], 10)})")
+        
+        return sim_array, margin_array
 
     @staticmethod
     def _silhouette_eval(embeddings, suppress_verbose=False):
@@ -898,72 +915,105 @@ class Contrastive_Trainer:
 
         if silhouette_scores:
             mean_score = np.mean(silhouette_scores)
+            std_score = np.std(silhouette_scores)
+            p10_score = np.percentile(silhouette_scores, 10.0)
             if not suppress_verbose:
-                logger.info(f"[CONTRAIN] Silhouette score = {mean_score:.3f}")
-            return mean_score
+                logger.info(f"[CONTRAIN] Silhouette score = {mean_score:.3f} ± {std_score:.3f} (p10: {p10_score:.3f})")
+            return mean_score, p10_score
         else:
-            return 0.0
+            return 0.0, 0.0
     
     @staticmethod
-    def _compute_bimodality_score(distances: np.ndarray, n_bins: int = 50, smooth_sigma: float = 1.0) -> Dict[str, any]:
+    def _compute_bimodality_score(
+            distances: np.ndarray, 
+            min_valley_depth: float = 0.90,
+            max_center_deviation: float = 0.15,
+            min_peak_separation_frac: float = 0.15,
+            kde_bw_factor: float = 0.2
+            ) -> Dict[str, any]:
+        
         default_result = {
             'bimodal': False,
             'score': 0.0,
             'valley_depth': 0.0,
             'peak_ratio': 0.0,
+            'center_deviation': 1.0,
             'peak_positions': (0.0, 0.0),
             'valley_position': 0.0
         }
 
-        if len(distances) < 100:
+        if len(distances) < 50:
             return default_result
 
-        hist, bin_edges = np.histogram(distances, bins=n_bins, density=True)
-        bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-        hist_smooth = np.maximum(gaussian_filter1d(hist, sigma=smooth_sigma), 0)
-        min_distance = max(2, int(n_bins * 0.20)) 
-        prominence_threshold = 0.15 * np.max(hist_smooth)
-        peaks, _ = find_peaks(hist_smooth, prominence=prominence_threshold, distance=min_distance)
-
-        if len(peaks) < 2:
-            return default_result
-
-        peak_heights = hist_smooth[peaks]
-        top_two_idx = np.argsort(peak_heights)[-2:][::-1]
-        top_peaks = peaks[top_two_idx]
-        top_heights = peak_heights[top_two_idx]
-
-        if top_peaks[0] > top_peaks[1]:
-            top_peaks = top_peaks[::-1]
-            top_heights = top_heights[::-1]
-
-        valley_start = top_peaks[0]
-        valley_end = top_peaks[1]
-        valley_region = hist_smooth[valley_start:valley_end+1]
+        x_data = distances.reshape(1, -1)
+        kde = gaussian_kde(x_data, bw_method=kde_bw_factor)
+        data_min, data_max = np.min(distances), np.max(distances)
+        data_range = data_max - data_min
         
-        if len(valley_region) == 0:
+        x_grid = np.linspace(data_min - 0.1 * data_range, data_max + 0.1 * data_range, 1000)
+        y_grid = kde(x_grid)
+
+        global_max = np.max(y_grid)
+        if global_max < 1e-9:
             return default_result
             
-        valley_min = np.min(valley_region)
-        valley_idx = valley_start + np.argmin(valley_region)
+        peaks, properties = find_peaks(y_grid, prominence=0.25 * global_max, distance=50)
         
-        mean_peak_height = np.mean(top_heights)
+        if len(peaks) < 2:
+            return default_result
+        
+        prominences = properties['prominences']
+        top_two_indices = np.argsort(prominences)[-2:][::-1]
+        
+        p1_idx = peaks[top_two_indices[0]]
+        p2_idx = peaks[top_two_indices[1]]
+        
+        if p1_idx > p2_idx:
+            p1_idx, p2_idx = p2_idx, p1_idx
+            
+        p1_pos = x_grid[p1_idx]
+        p2_pos = x_grid[p2_idx]
+        h1 = y_grid[p1_idx]
+        h2 = y_grid[p2_idx]
 
-        peak_ratio = min(top_heights) / (max(top_heights) + 1e-6)
+        if (p2_pos - p1_pos) < (data_range * min_peak_separation_frac):
+            return default_result
 
-        valley_depth = 1.0 - (valley_min / (mean_peak_height + 1e-6))
-        valley_depth = np.clip(valley_depth, 0.0, 1.0)
+        valley_region = y_grid[p1_idx : p2_idx + 1]
+        valley_min_val = np.min(valley_region)
+        valley_idx = p1_idx + np.argmin(valley_region)
+        valley_pos = x_grid[valley_idx]
+        
+        mean_peak_height = (h1 + h2) / 2.0
+        
+        valley_depth = 1.0 - (valley_min_val / (mean_peak_height + 1e-6))
+        
+        expected_midpoint_pos = (p1_pos + p2_pos) / 2.0
+        distance_between_peaks = p2_pos - p1_pos
+        
+        if distance_between_peaks == 0:
+            return default_result
+            
+        center_deviation = abs(valley_pos - expected_midpoint_pos) / (distance_between_peaks / 2.0)
 
-        score = 0.7 * valley_depth + 0.3 * peak_ratio
-        score = np.clip(score, 0.0, 1.0)
+        peak_ratio = min(h1, h2) / (max(h1, h2) + 1e-6)
+        
+        if valley_depth < min_valley_depth:
+            return {**default_result, 'valley_depth': float(valley_depth), 'center_deviation': float(center_deviation)}
+            
+        if center_deviation > max_center_deviation:
+            return {**default_result, 'valley_depth': float(valley_depth), 'center_deviation': float(center_deviation)}
 
-        is_bimodal = bool(score > 0.6)
-
+        centering_score = 1.0 - center_deviation
+        final_score = (0.7 * valley_depth) + (0.3 * centering_score)
+        final_score = np.clip(final_score, 0.0, 1.0)
+        
         return {
-            'bimodal': is_bimodal,
-            'score': float(score),
+            'bimodal': True,
+            'score': float(final_score),
             'valley_depth': float(valley_depth),
             'peak_ratio': float(peak_ratio),
-            'peak_positions': (float(bin_centers[top_peaks[0]]), float(bin_centers[top_peaks[1]])),
-            'valley_position': float(bin_centers[valley_idx])
+            'center_deviation': float(center_deviation),
+            'peak_positions': (float(p1_pos), float(p2_pos)),
+            'valley_position': float(valley_pos)
         }

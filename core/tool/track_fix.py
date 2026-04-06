@@ -277,7 +277,7 @@ class Track_Fixer:
 
         co.extract_frames(ca, self.seg_list, self.use_cache)
     
-    def _run_contrain_magic(self, start_idx, end_idx, segment_samples: int = 20):
+    def _run_contrain_magic(self, start_idx, end_idx, segment_samples: int = 80):
 
         from utils.torch import Crop_Dataset, Embedding_Visualizer, Contrastive_Trainer, Cutout_Dataloader
 
