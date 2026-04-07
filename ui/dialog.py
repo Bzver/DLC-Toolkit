@@ -465,12 +465,12 @@ class Track_Fix_Config_Dialog(QDialog):
                 "save_model": True,
                 "pretrained_model_path": None,
                 "max_epochs": 100,
-                "warmup_epochs": 10,
+                "warmup_epochs": 5,
                 "batch_size": 128,
                 "max_triplets": 5000,
                 "pleatau_patience": 20,
                 "lr_exponent": 5,  # 1e-5
-                "margin_thresh": 1.0,
+                "margin_thresh": 1.2,
                 "sil_thresh": 0.8,
                 "min_imp": 0.05,
                 "worker_num": 16,
@@ -485,15 +485,15 @@ class Track_Fix_Config_Dialog(QDialog):
                 "skip_sweep": False,
                 "use_kalman": True,
                 "kp_smooth": True,
-                "save_model": False,
+                "save_model": True,
                 "pretrained_model_path": "PROMPT_USER",
-                "max_epochs": 20,
-                "warmup_epochs": 0,
+                "max_epochs": 25,
+                "warmup_epochs": 3,
                 "batch_size": 128,
                 "max_triplets": 5000,
-                "pleatau_patience": 3,
+                "pleatau_patience": 10,
                 "lr_exponent": 5,
-                "margin_thresh": 1.0,
+                "margin_thresh": 1.2,
                 "sil_thresh": 0.8,
                 "min_imp": 0.05,
                 "worker_num": 16,
@@ -516,7 +516,7 @@ class Track_Fix_Config_Dialog(QDialog):
                 "max_triplets": 5000,
                 "pleatau_patience": 3,
                 "lr_exponent": 5,
-                "margin_thresh": 1.0,
+                "margin_thresh": 1.2,
                 "sil_thresh": 0.8,
                 "min_imp": 0.01,
                 "worker_num": 16,
@@ -756,15 +756,16 @@ class Track_Fix_Config_Dialog(QDialog):
         self.min_imp_spin.setValue(vals.get("min_imp", 0.01))
         self.cache_cbx.setChecked(vals.get("use_cache", True))
 
-        model_path = vals.get("pretrained_model_path")
-        if model_path == "PROMPT_USER":
-            self._on_load_model()
-        elif model_path:
-            self.pretrained_model_path = model_path
-            self._update_model_label(model_path)
-        else:
-            self.pretrained_model_path = None
-            self.model_path_label.setText("")
+        if self.pretrained_model_path is None:
+            model_path = vals.get("pretrained_model_path")
+            if model_path == "PROMPT_USER":
+                self._on_load_model()
+            elif model_path:
+                self.pretrained_model_path = model_path
+                self._update_model_label(model_path)
+            else:
+                self.pretrained_model_path = None
+                self.model_path_label.setText("")
         
         self._toggle_contrastive_params()
     

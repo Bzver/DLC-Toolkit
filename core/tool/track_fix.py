@@ -119,7 +119,7 @@ class Track_Fixer:
             centroids=self.centroids,
             cutout_dim=cutout_dim,
             angle_array=angles,
-            grayscaling=True
+            grayscaling=False
             )
 
         self._crop_rotate_and_export(ca)
@@ -215,8 +215,8 @@ class Track_Fixer:
             end_idx: int,
             inst_dist_threshold: float = 0.8,
             size_threshold: Tuple[float, float] = (0.3, 2.5),
-            bp_threshold: int = 4,
-            twist_angle_threshold: float = 50.0,
+            bp_threshold: int = 6,
+            twist_angle_threshold: float = 30.0,
             ) -> np.ndarray:
 
         instance_count = get_instance_count_per_frame(self.pred_data_array)
@@ -293,7 +293,8 @@ class Track_Fixer:
         logger.info(f"[TF] Loading {len(train_seg_indices)} training segments...")
         train_datasets = dataloader.load_all_segments_for_training(train_seg_indices)
 
-        trainer.double_train(dataset=train_datasets, emp=self.emp)
+        if self.emp.epochs > 0:
+            trainer.train(dataset=train_datasets, emp=self.emp, skip_easy=self.emp.warmup==0)
 
         if self.emp.save_model:
             model_path = os.path.join(self.extractor.get_video_dir(), f"{self.extractor.get_video_name(no_ext=True)}_contrastive_trained.pth")
@@ -312,7 +313,7 @@ class Track_Fixer:
             mids_flat = [mid for _ in frames for mid in [0, 1]]
             frames_flat = [f for f in frames for _ in range(2)]
             
-            ds = Crop_Dataset(crops, mids_flat, frames_flat, is_ir=True)
+            ds = Crop_Dataset(crops, mids_flat, frames_flat, is_ir=False)
             
             embs = trainer.extract_embeddings(ds)
             
@@ -356,7 +357,7 @@ class Track_Fixer:
                 mids_flat = [mid for _ in frames for mid in [0, 1]]
                 frames_flat = [f for f in frames for _ in range(2)]
                 
-                ds = Crop_Dataset(crops, mids_flat, frames_flat, is_ir=True)
+                ds = Crop_Dataset(crops, mids_flat, frames_flat, is_ir=False)
                 new_embs = trainer.extract_embeddings(ds)
                 
                 segment_embeddings[seg_idx] = new_embs
@@ -404,7 +405,6 @@ class Track_Fixer:
 
         tsne_pix = vis.plot_tsne_combined()
         tsne_pix.save(os.path.join(self.temp_dir, "tsne_combined.png"))
-
         agreement_pix, stable_swap_candidates, diagnosis_timeline = vis.plot_agreement_timeline()
         agreement_pix.save(os.path.join(self.temp_dir, "agreement_timeline.png"))
 
@@ -419,8 +419,10 @@ class Track_Fixer:
         except Exception as e:
             logger.error(f"[VIS] Failed to export diagnosis timeline: {e}")
         
-        pix_dialog = Dual_Pixmap_Dialog(agreement_pix, tsne_pix, max_height=480, parent=self.main)
-        pix_dialog.show()
+        if not self.avtomat:
+            pix_dialog = Dual_Pixmap_Dialog(agreement_pix, tsne_pix, max_height=480, parent=self.main)
+            pix_dialog.show()
+
         logger.info("[TF] Visualization complete.")
         
         if self.id_lock and self.co_single_array is not None:
