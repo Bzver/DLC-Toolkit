@@ -5,11 +5,12 @@ import yaml
 from collections import defaultdict
 from contextlib import contextmanager
 from PySide6 import QtWidgets
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Literal
 
 from core.runtime import Data_Manager
-from core.tool import DLC_Inference, Track_Fixer, Mark_Generator
+from core.tool import DLC_Inference, Track_Fixer, Mark_Generator, Outlier_Finder
 from core.io import backup_existing_prediction, get_existing_projects, csv_op, prediction_to_csv, Frame_Extractor
+from ui import Track_Fix_Config_Dialog
 from utils.helper import get_instance_count_per_frame
 from utils.logger import logger, set_headless_mode
 
@@ -18,8 +19,6 @@ MAX_FRAMES_PER_RUN: int = 10000
 WORKSPACE_EXTENSIONS: Tuple[str, ...] = (".joblib", ".pkl")
 VIDEO_EXTENSIONS: Tuple[str, ...] = (".mp4", ".avi", ".mkv")
 
-
-############################################################################################
 
 def batch_backup_project(root_dir: str):
     workspaces = _find_files_by_extension(root_dir, WORKSPACE_EXTENSIONS)
@@ -41,6 +40,25 @@ def batch_backup_project(root_dir: str):
         return os.path.isfile(new_path)
 
     _process_batch(workspaces, process_workspace, "Workspace Backup")
+
+def batch_extract_track_fix_info(root_dir: str):
+    target_files = {"agreement_timeline.png", "diagnosis_timeline.csv", "tsne_combined.png"}
+    levels = ("101T_", "103T_", "201T_", "203T_", "301T_", "303T_", "401T_", "403T_")
+    for root, _, files in os.walk(root_dir):
+        if "bvt_temp" not in root:
+            continue
+
+        for file in files:
+            if file not in target_files:
+                continue
+            for level in levels:
+                if level in root:
+                    level_trunc = level.replace("T_", "")
+                    dest_folder = os.path.join(root_dir, level_trunc)
+                    os.makedirs(dest_folder, exist_ok=True)
+                    shutil.move(os.path.join(root, file), os.path.join(dest_folder, file))
+                    logger.info(f"Moved track fix info from {root} to {dest_folder}.")
+                    break
 
 def batch_migration_pkl_to_joblib(root_dir: str):
     workspaces = _find_files_by_extension(root_dir, ".pkl")
@@ -193,8 +211,60 @@ def batch_export_csv(
     
     _process_batch(workspaces, process_workspace, "CSV export")
 
+def batch_data_clean(root_dir:str):
+    workspaces = _find_files_by_extension(root_dir, WORKSPACE_EXTENSIONS)
+    if not workspaces:
+        logger.info("[BATCH] No workspace files found for track correction")
+        return
+    
+    _log_batch_progress("data cleaning", workspaces)
+    def process_workspace(ws_path: str) -> bool:
+        dm = Data_Manager(
+            init_vid_callback=_pseudo_callback,
+            refresh_callback=_pseudo_callback
+        )
+        dm.load_workspace(str(ws_path))
+    
+        if dm.angle_map_data is None:
+            dm._init_canon_pose()
+        
+        of = Outlier_Finder(
+            pred_data_array=dm.dlc_data.pred_data_array,
+            skele_list=dm.dlc_data.skeleton,
+            kp_to_idx=dm.dlc_data.keypoint_to_idx,
+            angle_map_data=dm.angle_map_data)
+        
+        of.hide()
+        of.mode_combo.setCurrentText("Keypoint")
+        of.keypoint_container.outlier_bone_gbox.setChecked(True)
+        of.keypoint_container.confidence_spinbox.setValue(0.3)
+        of._get_outlier_mask()
+        outlier_kp_mask = of.outliers
 
-def batch_correct_tracking(root_dir:str) -> None:
+        F, I, D = dm.dlc_data.pred_data_array.shape
+        K = D//3
+        pred_data_array = np.reshape(dm.dlc_data.pred_data_array, (F, I, K, 3))
+        pred_data_array[outlier_kp_mask] = np.nan
+
+        of.mode_combo.setCurrentText("Instance")
+        of.instance_container.confidence_spinbox.setValue(0.8)
+        of.instance_container.outlier_duplicate_gbox.setChecked(True)
+        of._get_outlier_mask()
+        outlier_inst_mask = of.outliers
+        
+        pred_data_array = np.reshape(pred_data_array, (F, I, K*3))
+        pred_data_array[outlier_inst_mask] = np.nan
+
+        dm.dlc_data.pred_data_array = pred_data_array
+        dm.save_workspace()
+    
+    _process_batch(workspaces, process_workspace, "data cleaning")
+
+def batch_track_fix(
+        root_dir:str,
+        weight_path:Optional[str]=None,
+        lock_id:bool=False,
+        ):
     workspaces = _find_files_by_extension(root_dir, WORKSPACE_EXTENSIONS)
     if not workspaces:
         logger.info("[BATCH] No workspace files found for track correction")
@@ -209,16 +279,37 @@ def batch_correct_tracking(root_dir:str) -> None:
         )
         dm.load_workspace(str(ws_path))
         
+        tfd = Track_Fix_Config_Dialog(dm.total_frames)
+        tfd.hide()
+
+        tfd.pretrained_model_path = weight_path
+        tfd._on_preset_changed("Inference")
+        tfd._on_accept()
+
+        kp_smooth = tfd.kp_smooth
+        skip_sweep = tfd.skip_motion_sweep
+        skip_contrast = tfd.skip_contrastive
+        use_kalman = tfd.use_kalman
+        use_cache = tfd.use_cache
+        emp = tfd.emp
+
         with managed_frame_extractor(dm.video_file) as extractor:
             if dm.angle_map_data is None:
                 dm._init_canon_pose()
-            
+
             tf = Track_Fixer(
-                dm.dlc_data.pred_data_array,
-                dm.dlc_data,
-                extractor,
-                dm.angle_map_data,
-                avtomat=True
+                pred_data_array=dm.dlc_data.pred_data_array,
+                dlc_data=dm.dlc_data,
+                extractor=extractor,
+                anglemap=dm.angle_map_data,
+                kp_smooth=kp_smooth,
+                skip_sweep=skip_sweep,
+                blob_array=dm.blob_array if lock_id else None,
+                avtomat=True,
+                skip_contrast=skip_contrast,
+                use_kalman=use_kalman,
+                use_cache=use_cache,
+                emp=emp,
             )
             dm.dlc_data.pred_data_array = tf.track_correction()
         
@@ -336,7 +427,7 @@ def batch_inference(
     dlc_config_path: str, 
     force_load_new_config: bool = False,
     use_dm_list: bool = False,
-    mark_gen_cmd: list | None=None,
+    mark_gen_mode: Literal["None", "NM", "NM-I", "stride10"] = "None",
     crop: bool = False,
     mask: bool = False,
     grayscale: bool = False,
@@ -366,7 +457,7 @@ def batch_inference(
             dlc_config_path=dlc_config_path,
             force_load_new_config=force_load_new_config,
             use_dm_list=use_dm_list,
-            mark_gen_cmd=mark_gen_cmd if mark_gen_cmd else [],
+            mark_gen_mode=mark_gen_mode,
             crop=crop,
             crop_region=crop_region,
             use_mask=mask,
@@ -393,7 +484,7 @@ def _inference_workspace_vid(
         dlc_config_path: Optional[str] = None,
         force_load_new_config: bool = False,
         use_dm_list: bool = False,
-        mark_gen_cmd: list = [],
+        mark_gen_mode: Literal["None", "NM", "NM-I", "stride10"] = "None",
         crop: bool = False,
         crop_region: Optional[Tuple[int, int, int, int]] = None,
         use_mask: bool = False,
@@ -433,8 +524,8 @@ def _inference_workspace_vid(
 
     if use_dm_list:
         inference_list = dm.get_frames("marked")
-    elif mark_gen_cmd:
-        inference_list = _acquire_inference_list_from_markgen(dm)
+    elif mark_gen_mode != "None":
+        inference_list = _acquire_inference_list_from_markgen(dm, mark_gen_mode)
     else:
         inference_list = sorted(range(dm.total_frames))
 
@@ -478,10 +569,11 @@ def _inference_workspace_vid(
                 inference_window._shuffle_spinbox_changed(shuffle_idx)
 
         logger.info(f"[BATCH] Inference process initiated. cropping: {crop}, masking: {use_mask}, grayscaling: {grayscale}")
+        QtWidgets.QApplication.processEvents()
         inference_window._inference_pipe(headless=True)
         inference_window.close()
 
-def _acquire_inference_list_from_markgen(dm:Data_Manager):
+def _acquire_inference_list_from_markgen(dm:Data_Manager, mark_gen_mode:Literal["None", "NM", "NM-I", "stride10"]):
     mg = Mark_Generator(
         total_frames=dm.total_frames,
         pred_data_array=dm.dlc_data.pred_data_array if dm.dlc_data else None,
@@ -491,26 +583,67 @@ def _acquire_inference_list_from_markgen(dm:Data_Manager):
         )
     mg.hide()
 
-    inference_list = []
+    match mark_gen_mode:
+        case "NM":
+            inference_list = []
+            if dm.blob_array is not None or np.any(dm.blob_array!=0):
+                mg.mode_option.setCurrentText("Animal Num")
+                mg.blob_source_radio.setChecked(True)
+                mg.two_plus_animal_checkbox.setChecked(True)
 
-    if dm.blob_array is not None or np.any(dm.blob_array!=0):
-        mg.mode_option.setCurrentText("Animal Num")
-        mg.blob_source_radio.setChecked(True)
-        mg.merged_animal_checkbox.setChecked(True)
-        mg.two_plus_animal_checkbox.setChecked(True)
+                frames_by_count = mg.find_frames_to_mark()
+                if frames_by_count:
+                    inference_list.extend(frames_by_count)
+                    mg.buffer_size_spin.setValue(20)
+                    frames_buffer = mg._mark_count_change_frames()
+                    inference_list.extend(frames_buffer)
 
-        frames_by_count = mg.find_frames_to_mark()
-        if frames_by_count:
-            inference_list.extend(frames_by_count)
-            mg.buffer_size_spin.setValue(20)
+            mg.mode_option.setCurrentText("Stride")
+            mg.stride_spin.setValue(10)
+            frames_by_interval = mg.find_frames_to_mark()
+            if frames_by_interval:
+                inference_list.extend(frames_by_interval)
+        case "NM-I":
+            nmi_prereqs = [
+                dm.blob_array is not None,
+                dm.dlc_data is not None,
+                dm.dlc_data.pred_data_array is not None
+                ]
+            assert all(nmi_prereqs), "Inference list acquisition with 'NM=I' mode must have all of non None (blob_array, dlc_data.pred_data_array) in dm."
+
+            full_mask = np.zeros(dm.total_frames, dtype=bool)
+
+            mg.mode_option.setCurrentText("Animal Num")
+
+            mg.dlc_source_radio.setChecked(True)
+            mg.zero_animal_checkbox.setChecked(True)
+            mask_0 = full_mask.copy()
+            mask_0[mg.find_frames_to_mark()] = True
+            mg.one_animal_checkbox.setChecked(True)
+            mask_0_1 = full_mask.copy()
+            mask_0_1[mg.find_frames_to_mark()] = True
+
+            mg.zero_animal_checkbox.setChecked(False)
+            mg.one_animal_checkbox.setChecked(False)
+
+            mg.blob_source_radio.setChecked(True)
+            mg.two_plus_animal_checkbox.setChecked(True)
+
+            frames_by_count = mg.find_frames_to_mark()
+            mask_2p = full_mask.copy()
+            mask_2p[frames_by_count] = mask_0_1[frames_by_count]
+
+            mg.buffer_size_spin.setValue(15)
             frames_buffer = mg._mark_count_change_frames()
-            inference_list.extend(frames_buffer)
+            mask_bf = full_mask.copy()
+            mask_bf[frames_buffer] = mask_0[frames_buffer]
 
-    mg.mode_option.setCurrentText("Stride")
-    mg.stride_spin.setValue(10)
-    frames_by_interval = mg.find_frames_to_mark()
-    if frames_by_interval:
-        inference_list.extend(frames_by_interval)
+            full_mask = mask_2p | mask_bf
+            inference_list = np.where(full_mask)[0].tolist()
+        case "stride10":
+            mg.mode_option.setCurrentText("Stride")
+            mg.stride_spin.setValue(10)
+            inference_list = mg.find_frames_to_mark()
 
     mg.close()
     return sorted(set(inference_list))
@@ -612,38 +745,66 @@ def _parse_auto_pred_filename(filename: str):
 if __name__ == "__main__":
     app = QtWidgets.QApplication([])
     set_headless_mode(True)
-    rootdir = r""
+    rootdir = r"D:\Data\Videos\20250918 Marathon"
     dlc_config_path = "D:/Project/DLC-Models/NTD-Blob/config.yaml"
  
-    dial_tone = 1
+    CROPPING = True
+    MASKING = True
+    GRAYSCALING = False
+    BATCH = 16
+    DT_BATCH = 16
 
-    match dial_tone: 
-        case 1:
-            batch_inference(
-                rootdir,
-                dlc_config_path,
-                force_load_new_config=True,
-                use_dm_list=False,
-                mark_gen_cmd=["dummy"],
-                crop=True,
-                mask=False,
-                grayscale=False,
-                infer_as_video=True,
-                batch_size=16,
-                detector_batch_size=16
-            )
-        case 2:
-            batch_export_csv(
-                rootdir,
-                with_conf=True,
-                no_scorer_header=True,
-                animal_num_filtering=True,
-                min_animal_num=2,
-                frame_count_filtering=True,
-                frame_count_max=6000,
+    dial_tones = [2]
+
+    for tone in dial_tones:
+        match tone: 
+            case 1:
+                batch_inference(
+                    rootdir,
+                    dlc_config_path,
+                    force_load_new_config=True,
+                    use_dm_list=False,
+                    crop=CROPPING,
+                    mask=MASKING,
+                    grayscale=GRAYSCALING,
+                    infer_as_video=True,
+                    batch_size=BATCH,
+                    detector_batch_size=DT_BATCH
                 )
-        case 3: batch_create_workspaces(rootdir, dlc_config_path)
-        case 4: batch_convert_to_grayscale(dlc_config_path)
-        case 5: batch_convert_csv_to_h5(dlc_config_path)
-        case 6: batch_migration_pkl_to_joblib(rootdir)
-        case 7: batch_backup_project(rootdir)
+            case 2:
+                mgm = "NM-I"
+                batch_inference(
+                    rootdir,
+                    dlc_config_path,
+                    force_load_new_config=True,
+                    mark_gen_mode=mgm,
+                    crop=CROPPING,
+                    mask=MASKING,
+                    grayscale=GRAYSCALING,
+                    infer_as_video=False,
+                    batch_size=BATCH,
+                    detector_batch_size=DT_BATCH
+                )
+            case 3:
+                batch_track_fix(
+                    rootdir,
+                    weight_path=r"D:\Data\Videos\20250913 Marathon\301T_aaa_20251030160615_combined_cut_contrastive_trained.pth",
+                    lock_id=True,
+                )
+            case 4:
+                batch_export_csv(
+                    rootdir,
+                    with_conf=True,
+                    no_scorer_header=True,
+                    animal_num_filtering=True,
+                    min_animal_num=2,
+                    frame_count_filtering=True,
+                    frame_count_max=6000,
+                    )
+            case 5: batch_convert_to_grayscale(dlc_config_path)
+            case 6: batch_convert_csv_to_h5(dlc_config_path)
+            case 7: batch_migration_pkl_to_joblib(rootdir)
+            case 8: batch_backup_project(rootdir)
+            case 9: batch_create_workspaces(rootdir, dlc_config_path)
+            case 10: batch_extract_track_fix_info(rootdir)
+            case 11: batch_data_clean(rootdir)
