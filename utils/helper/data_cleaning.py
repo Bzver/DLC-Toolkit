@@ -1,17 +1,14 @@
 import numpy as np
-from typing import Union, List, Tuple, Dict, Iterable
-from utils.logger import logger
+from typing import Union, List, Tuple, Iterable
 
 
 def clean_inconsistent_nans(pred_data_array:np.ndarray):
-    logger.info("Cleaning up NaN keypoints that somehow has confidence value...")
     nan_mask = np.isnan(pred_data_array)
     x_is_nan = nan_mask[:, :, 0::3]
     y_is_nan = nan_mask[:, :, 1::3]
     keypoints_to_fully_nan = x_is_nan | y_is_nan
     full_nan_sweep_mask = np.repeat(keypoints_to_fully_nan, 3, axis=-1)
     pred_data_array[full_nan_sweep_mask] = np.nan
-    logger.info("NaN keypoint confidence cleaned.")
     return pred_data_array
 
 def clean_blob_array_for_inference(blob_array:np.ndarray, buffer_size:int=5) -> Tuple[np.ndarray, np.ndarray]:

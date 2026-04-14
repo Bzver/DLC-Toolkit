@@ -6,14 +6,15 @@ from utils.logger import logger
 
 
 class Temp_Manager:
-    def __init__(self, video_filepath: str):
+    def __init__(self, video_filepath: str, force_clean:bool=False):
         self.video_filepath = video_filepath
         self.video_name = os.path.splitext(os.path.basename(self.video_filepath))[0]
 
         self.temp_dir_root = os.path.join(os.path.dirname(self.video_filepath), "bvt_temp")
         os.makedirs(self.temp_dir_root, exist_ok=True)
 
-        self._clean()
+        limit= 0 if force_clean else 1
+        self._clean(limit = limit)
 
     def create(self, sub_name:str, use_existing:bool=False) -> str:
         self.temp_dir = os.path.join(self.temp_dir_root, self.video_name, sub_name)
