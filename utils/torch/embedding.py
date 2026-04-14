@@ -4,14 +4,14 @@ from scipy.stats import gaussian_kde
 from scipy.signal import find_peaks
 
 import numpy as np
-from sklearn.cluster import KMeans, MiniBatchKMeans
-from sklearn.metrics import silhouette_score
+from sklearn.cluster import MiniBatchKMeans
 from sklearn.metrics.pairwise import cosine_similarity
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
+from torch.utils.data import DataLoader
 
 from typing import List, Tuple, Dict
 
@@ -45,13 +45,12 @@ class Contrastive_Trainer:
 
     def train(
         self, 
-        dataset: List[Crop_Dataset],
+        datasets: List[Crop_Dataset],
         emp: Emb_Params,
         skip_easy: bool = False,
         ):
-
-        n_segments = len(dataset) if isinstance(dataset, list) else 1
-        total_frames = sum(len(ds) for ds in dataset) if isinstance(dataset, list) else len(dataset)
+        n_segments = len(datasets) if isinstance(datasets, list) else 1
+        total_frames = sum(len(ds) for ds in datasets) if isinstance(datasets, list) else len(dataset)
 
         logger.info(f"[CONTRAIN] About to run training with following args:\n"
             f"  - lr:                   {emp.lr:.2e}\n"
@@ -61,7 +60,6 @@ class Contrastive_Trainer:
             f"  - max_triplet:          {emp.triplets}\n"
             f"  - pleatau_patience:     {emp.pleatau}\n"
             f"  - margin_thresh:        {emp.margin:.2f}\n"
-            f"  - sil_thresh:           {emp.sil:.2f}\n"
             f"  - min_improv:           {emp.min_imp:.2f}\n"
             f"  - n_segments:           {n_segments}\n"
             f"  - total_samples:        {total_frames}\n"
@@ -71,42 +69,57 @@ class Contrastive_Trainer:
         optimizer = torch.optim.Adam(self.model.parameters(), lr=emp.lr)
 
         if not skip_easy and emp.warmup != 0:
-            self._train_easy(dataset, optimizer_warmup, emp)
+            self._train_easy(datasets, optimizer_warmup, emp)
 
-        embeddings = self._extract_embeddings_list(dataset)
-        sim_array, margin_array = self._similarity_eval(embeddings, dataset)
-        mean_score, p10_score, _ = self._silhouette_eval(embeddings)
+        self.total_ds = len(datasets)
+        reserve_indices = []
+        if self.total_ds > 250:
+            reserve_indices = np.random.choice(self.total_ds, self.total_ds-250, replace=False).tolist()
+
+        self.ds_status = np.ones(self.total_ds, dtype=np.uint8) # 1: active, 2: good, 3: unseen
+        self.ds_status[reserve_indices] = 0
+
+        embeddings = self._extract_embeddings_list(datasets)
+        sim_array, margin_array = self._similarity_eval(embeddings, datasets)
+
         mean_margin = np.nanmean(margin_array)
         p10_margin = np.nanpercentile(margin_array, 10.0)
 
-        if self._check_early_stopping(emp, embeddings, mean_margin, mean_score, p10_margin, p10_score):
+        if self._check_early_stopping(emp, embeddings, mean_margin, p10_margin):
             self.model.eval()
             return self.model
 
-        self._train_hard(dataset, optimizer, emp, embeddings, sim_array, skip_easy)
+        self._train_hard(datasets, optimizer, emp, embeddings, sim_array, skip_easy)
         
         self.model.eval()
         return self.model
 
     def extract_embeddings(
-            self,
-            dataset: Crop_Dataset, 
-            batch_size: int = 128
+        self,
+        dataset: Crop_Dataset, 
+        batch_size: int = 128,
     ) -> np.ndarray:
 
         embeddings = []
         self.model.eval()
 
-        with torch.no_grad():
-            for i in range(0, len(dataset), batch_size):
-                batch_idx = range(i, min(i + batch_size, len(dataset)))
-                batch_imgs = [dataset[idx][0] for idx in batch_idx]
-                batch_tensors = torch.stack(batch_imgs).to(self.device)
-                embs = self.model(batch_tensors).cpu().numpy()
-                embeddings.append(embs)
+        with torch.inference_mode():
+            loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True, drop_last=False)
+            embs = []
+            for batch_data in loader:
+                if isinstance(batch_data, (list, tuple)):
+                    batch_tensors = batch_data[0]
+                else:
+                    batch_tensors = batch_data
+
+                batch_tensors = batch_tensors.to(self.device, non_blocking=True)
+                batch_embs = self.model(batch_tensors)
+                embs.append(batch_embs)
+
+            embeddings = torch.cat(embs, dim=0).cpu().numpy()
         
         self.model.train()
-        return np.vstack(embeddings) if embeddings else np.array([])
+        return embeddings
 
     def save_checkpoint(self, path: str, metadata: dict = None):
         checkpoint = {
@@ -161,32 +174,53 @@ class Contrastive_Trainer:
         return metadata
 
     def _extract_embeddings_list(
-            self,
-            datasets: List[Crop_Dataset],
-            datasets_to_skip: List[int] = [],
-            batch_size: int = 128,
+        self,
+        datasets: List[Crop_Dataset],
+        batch_size: int = 128,
     ) -> Dict[int, np.ndarray]:
 
         segment_embeddings = {}
         self.model.eval()
-        
-        for ds_idx, ds in enumerate(datasets):
-            if ds_idx in datasets_to_skip:
-                segment_embeddings[ds_idx] = np.full(1, np.nan)
-                continue
 
-            embs = []
-            with torch.no_grad():
-                for i in range(0, len(ds), batch_size):
-                    batch_idx = range(i, min(i + batch_size, len(ds)))
-                    batch_imgs = [ds[idx][0] for idx in batch_idx]
-                    batch_tensors = torch.stack(batch_imgs).to(self.device)
-                    batch_embs = self.model(batch_tensors).cpu().numpy()
+        len_good = np.sum(self.ds_status == 2)
+        len_active = np.sum(self.ds_status == 1)
+        len_unseen = np.sum(self.ds_status == 0)
+
+        if len_active < 250 and len_unseen > 0:
+            unseen_indices = np.where(self.ds_status == 0)[0]
+            unseen_needed = min(len_unseen, 250-len_active)
+            indices_to_add = unseen_indices[np.random.choice(len_unseen, unseen_needed, replace=False)].tolist()
+            self.ds_status[indices_to_add] = 1
+            len_active = np.sum(self.ds_status == 1)
+
+        if len_active < 250 and len_good > 0:
+            good_indices = np.where(self.ds_status == 2)[0]
+            good_needed = min(len_good, min(0.1*len_good, 250-len_active))
+            indices_to_add = good_indices[np.random.choice(len_good, good_needed, replace=False)].tolist()
+            self.ds_status[indices_to_add] = 1
+
+        with torch.inference_mode():
+            for ds_idx, ds in enumerate(datasets):
+                if self.ds_status[ds_idx] != 1:
+                    segment_embeddings[ds_idx] = np.full(1, np.nan)
+                    continue
+
+                loader = DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=0, pin_memory=True, drop_last=False)
+
+                embs = []
+                for batch_data in loader:
+                    if isinstance(batch_data, (list, tuple)):
+                        batch_tensors = batch_data[0]
+                    else:
+                        batch_tensors = batch_data
+    
+                    batch_tensors = batch_tensors.to(self.device, non_blocking=True)
+                    batch_embs = self.model(batch_tensors)
                     embs.append(batch_embs)
-            
-            if embs:
-                segment_embeddings[ds_idx] = np.vstack(embs)
-        
+
+                if embs:
+                    segment_embeddings[ds_idx] = torch.cat(embs, dim=0).cpu().numpy()
+                
         self.model.train()
         return segment_embeddings
 
@@ -322,7 +356,7 @@ class Contrastive_Trainer:
             logger.warning("[HARDTRAIN] Skipping hard training phase, proceeding with current model state.")
             return
         
-        eval_interval = 5
+        eval_interval = 10
 
         logger.info(f"[CONTRAIN] Training on hard triplets...")
         self.model.train()
@@ -335,8 +369,6 @@ class Contrastive_Trainer:
         last_eval = emp.warmup - 1
         best_eval = 0.0
         pleatau_eval = 0
-
-        datasets_to_skip = []
 
         for epoch in range(emp.warmup, emp.epochs):
             total_loss = 0
@@ -406,11 +438,10 @@ class Contrastive_Trainer:
 
                 embeddings = self._extract_embeddings_list(datasets)
                 sim_array, margin_array = self._similarity_eval(embeddings, datasets)
-                mean_score, p10_score, _ = self._silhouette_eval(embeddings)
                 mean_margin = np.nanmean(margin_array)
                 p10_margin = np.nanpercentile(margin_array, 10.0)
 
-                if self._check_early_stopping(emp, embeddings, mean_margin, mean_score, p10_margin, p10_score):
+                if self._check_early_stopping(emp, embeddings, mean_margin, p10_margin):
                     logger.info("[HARDTRAIN] Thresholds met on convergence. Stopping early.")
                 else:
                     logger.info("[HARDTRAIN] Model converged to best possible state. Stopping early.")
@@ -422,16 +453,16 @@ class Contrastive_Trainer:
             if eval_needed or epoch == emp.epochs - 1:
                 last_eval = epoch
 
-                embeddings = self._extract_embeddings_list(datasets, datasets_to_skip)
+                embeddings = self._extract_embeddings_list(datasets)
                 sim_array, margin_array = self._similarity_eval(embeddings, datasets)
-                mean_score, p10_score, sil_array = self._silhouette_eval(embeddings)
 
-                good_segment_indices = np.where((margin_array > emp.margin) & (sil_array > emp.sil))[0].tolist()
-                datasets_to_skip.extend(np.random.choice(good_segment_indices, size=int(0.9*len(good_segment_indices)), replace=False))
+                good_segment_indices = np.where(margin_array > emp.margin)[0].tolist()
+                self.ds_status[good_segment_indices] = 2
+                len_good = np.sum(self.ds_status==2)
 
                 mean_margin = np.nanmean(margin_array)
                 p10_margin = np.nanpercentile(margin_array, 10.0)
-                eval_score = min(mean_margin, mean_score)
+                eval_score = mean_margin
 
                 eval_patience = max(3, emp.pleatau//4)
                 if eval_score - best_eval < emp.min_imp:
@@ -439,10 +470,10 @@ class Contrastive_Trainer:
                     logger.info(f"[HARDTRAIN] Current eval pleatau: {pleatau_eval}, last improvement: {eval_score - best_eval:.3f}, patience: {eval_patience}")
                 else:
                     pleatau_eval = 0
-                if len(datasets_to_skip) > len(datasets) * 0.95:
+                if len_good > len(datasets) * 0.9:
                     logger.info("[HARDTRAIN] Most segments are good. Stopping early.")
                     break
-                if self._check_early_stopping(emp, embeddings, mean_margin, mean_score, p10_margin, p10_score):
+                if self._check_early_stopping(emp, embeddings, mean_margin, p10_margin):
                     logger.info("[HARDTRAIN] Thresholds met on convergence. Stopping early.")
                     break
                 if epoch == emp.epochs - 1:
@@ -452,9 +483,9 @@ class Contrastive_Trainer:
                     logger.info("[HARDTRAIN] Model converged to best possible state. Stopping early.")
                     break
 
-                logger.info(f"[HARDTRAIN] Updating hard triplets at epoch {epoch+1}, skipping {len(datasets_to_skip)} segments...")
+                logger.info(f"[HARDTRAIN] Updating hard triplets at epoch {epoch+1}, skipping {len_good} segments...")
                 result = self._mine_hard_triplets(
-                    datasets, embeddings, sim_array[:, 1, 0], sim_array[:, 2, 1], max_triplets=emp.triplets, mining_mode=curr_miner, segments_to_skip=datasets_to_skip)
+                    datasets, embeddings, sim_array[:, 1, 0], sim_array[:, 2, 1], max_triplets=emp.triplets, mining_mode=curr_miner)
                 num_result = len(result)
                 if num_result < 10:
                     logger.info(f"[HARDTRAIN] Hard triplets too few ({num_result}, stopping...")
@@ -504,7 +535,6 @@ class Contrastive_Trainer:
             pos_thresholds: np.ndarray,
             neg_thresholds: np.ndarray,
             max_triplets: int = 5000,
-            segments_to_skip: List[int] = [],
             mining_mode: str = "semihard"
     ) -> List[Tuple[int, int, int, int]]:
 
@@ -513,7 +543,7 @@ class Contrastive_Trainer:
         for ds_idx, dataset in enumerate(datasets):
             if ds_idx not in segment_embeddings:
                 continue
-            if ds_idx in segments_to_skip:
+            if self.ds_status[ds_idx] != 1:
                 continue
     
             pos_threshold = pos_thresholds[ds_idx]
@@ -585,11 +615,16 @@ class Contrastive_Trainer:
         logger.info(f"[CONTRAIN] Found {len(triplets)} hard triplets (mode={mining_mode}, avg_pos_thresh={np.mean(pos_thresholds):.2f}, avg_neg_thresh={np.mean(neg_thresholds):.2f})")
         return triplets
 
-    def _check_early_stopping(self, emp, embeddings, mean_margin, mean_score, p10_margin, p10_score):
-        if mean_margin > emp.margin and mean_score >= emp.sil:
-            logger.info(
-                f"[CONTRAIN] Separation score: {mean_margin} >= {emp.margin} (p10: {p10_margin}); sihouette score: {mean_score} >= {emp.sil}. (p10: {p10_score})")
-            if p10_margin >= emp.margin * 0.8 and p10_score >= emp.sil * 0.8:
+    def _check_early_stopping(self, emp, embeddings, mean_margin, p10_margin):
+        len_unseen = np.sum(self.ds_status==0)
+        if len_unseen > self.total_ds // 2:
+            logger.info(f"[CONTRAIN] Unseen datasets ({len_unseen}) too many (>{self.total_ds//2})")
+            return False
+
+        if mean_margin > emp.margin:
+            logger.info(f"[CONTRAIN] Separation score: {mean_margin} >= {emp.margin} (p10: {p10_margin})" )
+            if p10_margin >= emp.margin * 0.8:
+                logger.info(f"[CONTRAIN] Separation score satisfied, calling biomodal evaluation." )
                 if self._biomodal_eval(embeddings):
                     return True
             
@@ -623,7 +658,7 @@ class Contrastive_Trainer:
         return var_weight * var_penalty
 
     @staticmethod
-    def _similarity_eval(embeddings:Dict[int, np.ndarray], datasets, suppress_verbose=False) -> Tuple[np.ndarray, np.ndarray]:
+    def _similarity_eval(embeddings:Dict[int, np.ndarray], datasets) -> Tuple[np.ndarray, np.ndarray]:
         sim_array = np.full((len(embeddings), 3, 2), np.nan)
 
         for ds_idx, emb in embeddings.items():
@@ -649,65 +684,60 @@ class Contrastive_Trainer:
                 sim_array[ds_idx, 2, k] = np.percentile(sim, 80)
 
         margin_array = sim_array[:, 1, 0] - sim_array[:, 2, 1]
-        
-        if not suppress_verbose:
-            logger.info(f"[CONTRAIN] Same-mouse: {np.nanmean(sim_array[:, 0, 0]):.3f} ± {np.nanstd(sim_array[:, 0, 0]):.3f} (p10: {np.nanpercentile(sim_array[:, 0, 0], 10)})")
-            logger.info(f"[CONTRAIN] Diff-mouse: {np.nanmean(sim_array[:, 0, 1]):.3f} ± {np.nanstd(sim_array[:, 0, 1]):.3f} (p90: {np.nanpercentile(sim_array[:, 0, 1], 90)})")
-        
+
         return sim_array, margin_array
 
     @staticmethod
-    def _silhouette_eval(embeddings:Dict[int, np.ndarray], suppress_verbose=False):
-        sil_array = np.full(len(embeddings), np.nan)
+    def _biomodal_eval(embeddings: Dict[int, np.ndarray]) -> bool:
+        valid_embs = [emb for emb in embeddings.values() if emb.size > 1]
+        
+        if not valid_embs:
+            logger.warning("[BIOMODAL] No valid embeddings found for evaluation.")
+            return False
 
-        for ds_idx, emb in embeddings.items():
-            if emb.size == 1:
-                continue
-            try:
-                kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
-                labels = kmeans.fit_predict(emb)
-                score = silhouette_score(emb, labels)
-                sil_array[ds_idx] = score
-            except ValueError:
-                continue
+        total_points = sum(emb.shape[0] for emb in valid_embs)
+        if total_points < 100:
+            logger.warning(f"[BIOMODAL] Too few points ({total_points}) for reliable bimodality test.")
+            return False
 
-        mean_score = np.nanmean(sil_array)
-        std_score = np.nanstd(sil_array)
-        p10_score = np.nanpercentile(sil_array, 10.0)
-        if not suppress_verbose:
-            logger.info(f"[CONTRAIN] Silhouette score = {mean_score:.3f} ± {std_score:.3f} (p10: {p10_score:.3f})")
-        return mean_score, p10_score, sil_array
-    
-    @staticmethod
-    def _biomodal_eval(embeddings:Dict[int, np.ndarray]):
-
-        all_embeddings = np.vstack([emb for emb in embeddings.values() if emb.size > 1])
-
+        all_embeddings = np.vstack([emb for emb in valid_embs]).astype(np.float32)
+        
         kmeans = MiniBatchKMeans(
             n_clusters=2,
             random_state=42,
-            batch_size=1024,
-            n_init=5,
+            batch_size=min(1024, total_points),
+            n_init=10,
             max_iter=300,
-            )
+            reassignment_ratio=0.01,
+            verbose=0
+        )
+        
         kmeans.fit_predict(all_embeddings)
         centroids = kmeans.cluster_centers_
-        dist_to_c0 = np.linalg.norm(all_embeddings - centroids[0], axis=1)
-        dist_to_c1 = np.linalg.norm(all_embeddings - centroids[1], axis=1)
+
+        data_norms_sq = np.sum(all_embeddings**2, axis=1)
+        centroid_norms_sq = np.sum(centroids**2, axis=1)
+        
+        dot_products = np.dot(all_embeddings, centroids.T)
+        dists_sq = data_norms_sq[:, np.newaxis] + centroid_norms_sq - 2 * dot_products
+        
+        dists_sq = np.maximum(dists_sq, 0.0)
+        distances_to_centroids = np.sqrt(dists_sq) 
+        
+        dist_to_c0 = distances_to_centroids[:, 0]
+        dist_to_c1 = distances_to_centroids[:, 1]
 
         assign_margin = np.abs(dist_to_c0 - dist_to_c1)
-        distances = np.concatenate([dist_to_c0, dist_to_c1])
 
-        result = Contrastive_Trainer._compute_bimodality_score(distances)
-        confidence_cv = np.mean(assign_margin) / (np.std(assign_margin) + 1e-6)
+        all_distances = np.hstack([dist_to_c0, dist_to_c1])
+        result = Contrastive_Trainer._compute_bimodality_score(all_distances)
+        
+        std_margin = np.std(assign_margin)
+        confidence_cv = np.mean(assign_margin) / (std_margin + 1e-6)
 
         logger.info(
-            f"Biomodal={result['bimodal']}, "
-            f"Bimodal Score={result['score']:.3f}, "
-            f"Peak Ratio={result['peak_ratio']:.3f}, "
-            f"Center Deviation={result['center_deviation']:.3f}, "
-            f"Valley Depth={result['valley_depth']:.3f}, "
-            f"CV={confidence_cv:.3f}"
+            f"[BIOMODAL] Score={result['score']:.3f}, Peak Ratio={result['peak_ratio']:.3f}, "
+            f"Valley Depth={result['valley_depth']:.3f}, CV={confidence_cv:.3f}, N={total_points}"
         )
 
         if result['bimodal'] and result["score"] > 0.9 and result["center_deviation"] < 0.1 and result["valley_depth"] > 0.8 and confidence_cv > 5:

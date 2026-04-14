@@ -12,7 +12,7 @@ from ui import Dual_Pixmap_Dialog
 from utils.track import Kalman, swap_track
 from utils.pose import (
     calculate_pose_centroids, calculate_pose_array_rotations, calculate_pose_array_bbox,
-    outlier_rotation, outlier_size, outlier_bodypart,
+    outlier_rotation, outlier_size, outlier_bodypart, outlier_duplicate, outlier_removal
     )
 from utils.helper import get_instance_count_per_frame, get_instances_on_current_frame, indices_to_spans, array_to_iterable_runs
 from utils.dataclass import Loaded_DLC_Data, Cutout_Augments, Emb_Params
@@ -38,6 +38,7 @@ class Track_Fixer:
         skip_sweep: bool = False,
         kp_smooth: bool = True,
         blob_array: np.ndarray|None = None,
+        force_locked_id: int = -1,
         avtomat: bool = False,
         skip_contrast: bool = False,
         use_kalman: bool = True,
@@ -55,11 +56,16 @@ class Track_Fixer:
         self.skip_sweep = skip_sweep
         self.kp_smooth = kp_smooth
         self.blob_array = blob_array
+        self.forced_lock = force_locked_id > 0
         self.avtomat = avtomat
         self.skip_contrast = skip_contrast
         self.use_kalman = use_kalman
         self.main = parent
         self.total_frames = self.pred_data_array.shape[0]
+
+        duplicate_mask = outlier_duplicate(self.pred_data_array)
+        self.pred_data_array = outlier_removal(self.pred_data_array, duplicate_mask)
+
         self.centroids, _ = calculate_pose_centroids(self.pred_data_array)
         self.inst_count_per_frame = get_instance_count_per_frame(self.pred_data_array)
         self.mice_length = self._get_mice_length()
@@ -75,7 +81,7 @@ class Track_Fixer:
         self.id_lock = self.blob_array is not None
         self.last_id_locker = 0
         self.locker_stable_swap = []
-        self.locked_idx = 0
+        self.locked_idx = force_locked_id if self.forced_lock else 0
 
         self.seg_list = []
 
@@ -89,7 +95,7 @@ class Track_Fixer:
             end_idx = self.total_frames
 
         if self.id_lock:
-            self.co_single_array = np.array((self.blob_array[:, 0] == 1) & (self.inst_count_per_frame <= 1))
+            self.co_single_array = np.array((self.blob_array[:, 0] <= 1) & (self.inst_count_per_frame <= 1))
             for start, end, value in array_to_iterable_runs(self.co_single_array):
                 if end - start + 1 < 5 and value:
                     self.co_single_array[start:end+1] = False
@@ -105,7 +111,6 @@ class Track_Fixer:
             return self.pred_data_array
 
         qc_mask = self._find_eligible_frames(start_idx, end_idx)
-
         crop_coords = calculate_pose_array_bbox(self.pred_data_array[qc_mask], padding=15).astype(np.uint16)
         cutout_dim = int(np.percentile(crop_coords[..., 2:4] - crop_coords[..., 0:2], 90))
 
@@ -131,9 +136,9 @@ class Track_Fixer:
         if self.skip_sweep:
             return
         
-        if self.id_lock:
+        if self.id_lock and not self.forced_lock:
             try:
-                lock_mask = (self.inst_count_per_frame == 1) & (self.blob_array[:,0] == 1)
+                lock_mask = (self.inst_count_per_frame == 1) & (self.blob_array[:,0] <= 1)
                 lock_frame_indices = np.where(lock_mask)[0][:10]
             except:
                 pass
@@ -213,10 +218,10 @@ class Track_Fixer:
             self,
             start_idx: int,
             end_idx: int,
-            inst_dist_threshold: float = 0.8,
-            size_threshold: Tuple[float, float] = (0.3, 2.5),
+            inst_dist_threshold: float = 0.5,
+            size_threshold: Tuple[float, float] = (0.5, 2.5),
             bp_threshold: int = 6,
-            twist_angle_threshold: float = 30.0,
+            twist_angle_threshold: float = 90.0,
             ) -> np.ndarray:
 
         instance_count = get_instance_count_per_frame(self.pred_data_array)
@@ -227,7 +232,6 @@ class Track_Fixer:
 
         two_inst_array = self.pred_data_array[two_inst_mask]
         centroids_two_inst = self.centroids[two_inst_mask]
-
         dists = np.linalg.norm(centroids_two_inst[:, 1, :] - centroids_two_inst[:, 0, :], axis=-1)
         dist_mask = dists > inst_dist_threshold * self.mice_length
 
@@ -294,7 +298,7 @@ class Track_Fixer:
         train_datasets = dataloader.load_all_segments_for_training(train_seg_indices)
 
         if self.emp.epochs > 0:
-            trainer.train(dataset=train_datasets, emp=self.emp, skip_easy=self.emp.warmup==0)
+            trainer.train(datasets=train_datasets, emp=self.emp, skip_easy=self.emp.warmup==0)
 
         if self.emp.save_model:
             model_path = os.path.join(self.extractor.get_video_dir(), f"{self.extractor.get_video_name(no_ext=True)}_contrastive_trained.pth")
@@ -321,51 +325,6 @@ class Track_Fixer:
             segment_frame_indices.append(frames_flat)
             segment_motion_ids.append(mids_flat)
     
-        all_embeddings = np.vstack(segment_embeddings)
-        kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
-        visual_labels = kmeans.fit_predict(all_embeddings)
-
-        centroids = kmeans.cluster_centers_ 
-        dist_to_c0 = np.linalg.norm(all_embeddings - centroids[0], axis=1)
-        dist_to_c1 = np.linalg.norm(all_embeddings - centroids[1], axis=1)
-
-        margin = np.abs(dist_to_c0 - dist_to_c1)
-        margin_scale = np.percentile(margin, 75)
-        confidence = 1 / (1 + np.exp(-(margin - margin_scale) / (margin_scale * 0.5)))
-
-        segment_confidence = []
-        idx = 0
-        for seg_emb in segment_embeddings:
-            n = len(seg_emb)
-            segment_confidence.append(confidence[idx:idx+n])
-            idx += n
-
-        logger.info("[TF] Checking for low-confidence segments...")
-        confidence_threshold = 0.5
-        min_confident_ratio = 0.4
-
-        for seg_idx in range(len(segment_embeddings)):
-            confidences = segment_confidence[seg_idx]
-            confident_ratio = np.sum(confidences >= confidence_threshold) / len(confidences)
-            
-            if confident_ratio < min_confident_ratio:
-                logger.debug(f"[TF] Segment {seg_idx}: low confidence ({confident_ratio:.1%}), re-mining with more samples")
-
-                images, frames, _ = dataloader.load_segment_samples(seg_idx, n_samples=2*segment_samples)
-                
-                crops = [images[i, mouse_idx] for i in range(len(frames)) for mouse_idx in range(2)]
-                mids_flat = [mid for _ in frames for mid in [0, 1]]
-                frames_flat = [f for f in frames for _ in range(2)]
-                
-                ds = Crop_Dataset(crops, mids_flat, frames_flat, is_ir=False)
-                new_embs = trainer.extract_embeddings(ds)
-                
-                segment_embeddings[seg_idx] = new_embs
-                segment_frame_indices[seg_idx] = frames_flat
-                segment_motion_ids[seg_idx] = mids_flat
-    
-        logger.info("[TF] Re-clustering with updated embeddings...")
-
         all_embeddings = np.vstack(segment_embeddings)
         kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
         visual_labels = kmeans.fit_predict(all_embeddings)
@@ -517,22 +476,9 @@ class Track_Fixer:
             return 1e6
         return min_cost
 
-    def _handle_single_observation(self, frame_idx: int, ref_positions: np.ndarray, compare_only: bool = False) -> bool:
+    def _handle_single_observation(self, frame_idx: int, ref_positions: np.ndarray) -> bool:
         obs_idx = get_instances_on_current_frame(self.pred_data_array, frame_idx)[0]
         obs_pos = self.centroids[frame_idx, obs_idx]
-
-        costs = []
-        candidates = []
-        for candidate_idx in [0, 1]:
-            if not np.isnan(ref_positions[candidate_idx, 0]):
-                d = np.linalg.norm(obs_pos - ref_positions[candidate_idx])
-                costs.append(d)
-                candidates.append(candidate_idx)
-
-        if compare_only:
-            assert len(candidates) == 1, "Compare_only arg only supports 1vs1 comparison!"
-            cost = costs[0]
-            return cost <= self.MAX_DIST_THRESHOLD * self.mice_length
 
         if self.id_lock and self.co_single_array[frame_idx] and self.co_single_array[max(0, frame_idx-1)]: #Continuous co-single block, not checkpoint
             logger.debug(f"Frame {frame_idx}: Blob array supplied, locking single obs to instance 0.")
@@ -542,6 +488,14 @@ class Track_Fixer:
             self.last_id_locker = frame_idx
             self._update_kalman_with_observation(frame_idx, [self.locked_idx], [self.locked_idx])
             return True
+
+        costs = []
+        candidates = []
+        for candidate_idx in [0, 1]:
+            if not np.isnan(ref_positions[candidate_idx, 0]):
+                d = np.linalg.norm(obs_pos - ref_positions[candidate_idx])
+                costs.append(d)
+                candidates.append(candidate_idx)
 
         if not candidates:
             return False
@@ -582,15 +536,19 @@ class Track_Fixer:
             if abs(c0 - c1)/(c0 + c1) < self.AMBIGUITY_THRESHOLD:
                 logger.debug(f"Frame {frame_idx}: Ambiguous single observation (costs {c0:.1f}, {c1:.1f})")
                 return False
-        return True
+            else:
+                self.ambiguous_frames.append(frame_idx)
+                return True
 
     def _handle_two_observations(self, frame_idx: int, ref_positions: np.ndarray) -> bool | float:
         valid_ref = np.where(np.all(~np.isnan(ref_positions), axis=-1))[0]
         n_ref = len(valid_ref)
         if n_ref == 1:
+            self.ambiguous_frames.append(frame_idx)
             ref_idx = valid_ref[0]
             cost_swap = np.linalg.norm(self.centroids[frame_idx, 1 - ref_idx] - ref_positions[ref_idx])
             cost_no_swap = np.linalg.norm(self.centroids[frame_idx, ref_idx] - ref_positions[ref_idx])
+            return True
         elif n_ref == 2:
             cost_matrix = np.full((2, 2), np.inf)
             for obs_idx in [0, 1]:
@@ -610,7 +568,8 @@ class Track_Fixer:
         if abs(cost_swap - cost_no_swap)/(cost_swap + cost_no_swap) < self.AMBIGUITY_THRESHOLD:
             logger.debug(f"Frame {frame_idx}: Ambiguous two-obs match (Δcost={abs(cost_swap - cost_no_swap):.1f})")
             return False
-        return True
+        else:
+            return True
 
     def _update_kalman_with_observation(self, frame_idx: int, observed_inst_ids: List[int], assigned_ids: List[int]):
         if not self.use_kalman:

@@ -467,11 +467,10 @@ class Track_Fix_Config_Dialog(QDialog):
                 "max_epochs": 100,
                 "warmup_epochs": 5,
                 "batch_size": 128,
-                "max_triplets": 5000,
+                "max_triplets": 2500,
                 "pleatau_patience": 20,
                 "lr_exponent": 5,  # 1e-5
                 "margin_thresh": 1.2,
-                "sil_thresh": 0.8,
                 "min_imp": 0.05,
                 "worker_num": 16,
                 "use_cache": True,
@@ -485,42 +484,18 @@ class Track_Fix_Config_Dialog(QDialog):
                 "skip_sweep": False,
                 "use_kalman": True,
                 "kp_smooth": True,
-                "save_model": True,
+                "save_model": False ,
                 "pretrained_model_path": "PROMPT_USER",
                 "max_epochs": 25,
-                "warmup_epochs": 3,
+                "warmup_epochs": 0,
                 "batch_size": 128,
-                "max_triplets": 5000,
+                "max_triplets": 2500,
                 "pleatau_patience": 10,
                 "lr_exponent": 5,
                 "margin_thresh": 1.2,
-                "sil_thresh": 0.8,
                 "min_imp": 0.05,
                 "worker_num": 16,
                 "use_cache": True,
-                "avtomat": False,
-            }
-        },
-        "Motion Sweep Only": {
-            "description": "Skip contrastive learning entirely. Use only motion-based correction.",
-            "values": {
-                "skip_contrastive": True,
-                "skip_sweep": False,
-                "use_kalman": True,
-                "kp_smooth": True,
-                "save_model": False,
-                "pretrained_model_path": None,
-                "max_epochs": 0,
-                "warmup_epochs": 0,
-                "batch_size": 128,
-                "max_triplets": 5000,
-                "pleatau_patience": 3,
-                "lr_exponent": 5,
-                "margin_thresh": 1.2,
-                "sil_thresh": 0.8,
-                "min_imp": 0.01,
-                "worker_num": 16,
-                "use_cache": False,
                 "avtomat": False,
             }
         },
@@ -654,7 +629,7 @@ class Track_Fix_Config_Dialog(QDialog):
         param_grid.addWidget(self.warmup_epochs_spin, 0, 1)
 
         self.batch_size_spin = Spinbox_With_Label("Batch Size:", (2, 4096), 128)
-        self.max_triplet_spin = Spinbox_With_Label("Max Triplets per Mining:", (5000, 100000), 5000)
+        self.max_triplet_spin = Spinbox_With_Label("Max Triplets per Mining:", (100, 100000), 5000)
         self.batch_size_spin.value_changed.connect(self._on_manual_change)
         self.max_triplet_spin.value_changed.connect(self._on_manual_change)
         param_grid.addWidget(self.batch_size_spin, 1, 0)
@@ -675,15 +650,6 @@ class Track_Fix_Config_Dialog(QDialog):
         self.margin_thresh_spin.setSingleStep(0.05)
         self.margin_thresh_spin.setToolTip("Minimum required gap between same-mouse and diff-mouse similarity")
         self.margin_thresh_spin.valueChanged.connect(self._on_manual_change)
-        
-        sil_layout = QHBoxLayout()
-        self.sil_thresh_spin = QDoubleSpinBox()
-        self.sil_thresh_spin.setRange(0.1, 1.0)
-        self.sil_thresh_spin.setValue(0.8)
-        self.sil_thresh_spin.setDecimals(2)
-        self.sil_thresh_spin.setSingleStep(0.05)
-        self.sil_thresh_spin.setToolTip("Minimum required silhouette score for cluster quality")
-        self.sil_thresh_spin.valueChanged.connect(self._on_manual_change)
 
         min_imp_layout = QHBoxLayout()
         self.min_imp_spin = QDoubleSpinBox()
@@ -696,8 +662,6 @@ class Track_Fix_Config_Dialog(QDialog):
         
         margin_layout.addWidget(QLabel("Margin:"))
         margin_layout.addWidget(self.margin_thresh_spin)
-        sil_layout.addWidget(QLabel("Silhouette:"))
-        sil_layout.addWidget(self.sil_thresh_spin)
         min_imp_layout.addWidget(QLabel("Min Improvement:"))
         min_imp_layout.addWidget(self.min_imp_spin)
 
@@ -707,7 +671,6 @@ class Track_Fix_Config_Dialog(QDialog):
 
         cl_layout.addLayout(param_grid)
         cl_layout.addLayout(margin_layout)
-        cl_layout.addLayout(sil_layout)
         cl_layout.addLayout(min_imp_layout)
         cl_layout.addWidget(self.cache_cbx)
 
@@ -752,7 +715,6 @@ class Track_Fix_Config_Dialog(QDialog):
         self.max_pleatau_spin.setValue(vals.get("pleatau_patience", 3))
         self.lr_spin.setValue(vals.get("lr_exponent", 5))
         self.margin_thresh_spin.setValue(vals.get("margin_thresh", 1.0))
-        self.sil_thresh_spin.setValue(vals.get("sil_thresh", 0.8))
         self.min_imp_spin.setValue(vals.get("min_imp", 0.01))
         self.cache_cbx.setChecked(vals.get("use_cache", True))
 
@@ -840,7 +802,6 @@ class Track_Fix_Config_Dialog(QDialog):
             lr=10**-self.lr_spin.value(),
             min_imp=self.min_imp_spin.value(),
             margin=self.margin_thresh_spin.value(),
-            sil=self.sil_thresh_spin.value(),
             save_model=self.save_model,
             pretrained_model_path=self.pretrained_model_path,
         )
