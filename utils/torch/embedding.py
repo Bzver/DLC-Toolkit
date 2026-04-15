@@ -366,8 +366,6 @@ class Contrastive_Trainer:
         logger.info(f"[CONTRAIN] Training on hard triplets with eval interval set to {eval_interval}...")
         self.model.train()
 
-        curr_miner = "hard" if skip_easy else "semihard"
-
         best_loss = 1e6
         pleatau_train = 0
 
@@ -432,15 +430,7 @@ class Contrastive_Trainer:
                 pleatau_train = 0
 
             if pleatau_train >= emp.pleatau:
-                if curr_miner == "semihard":
-                    curr_miner = "hard"
-                    best_loss = float('inf')
-                    pleatau_train = 0
-                    logger.info("[HARDTRAIN] Switching to HARD mining. Resetting patience.")
-                    continue
-    
-                logger.info(f"[HARDTRAIN] Loss plateaued for {emp.pleatau} epochs in hard mode. Evaluating final state...")
-
+                logger.info(f"[HARDTRAIN] Loss plateaued for {emp.pleatau} epochs. Evaluating final state...")
                 embeddings = self._extract_embeddings_list(datasets)
                 sim_array, margin_array = self._similarity_eval(embeddings, datasets)
                 mean_margin = np.nanmean(margin_array)
@@ -490,7 +480,7 @@ class Contrastive_Trainer:
 
                 logger.info(f"[HARDTRAIN] Updating hard triplets at epoch {epoch+1}, skipping {len_good} segments...")
                 result = self._mine_hard_triplets(
-                    datasets, embeddings, sim_array[:, 1, 0], sim_array[:, 2, 1], max_triplets=emp.triplets, mining_mode=curr_miner)
+                    datasets, embeddings, sim_array[:, 1, 0], sim_array[:, 2, 1], max_triplets=emp.triplets)
                 num_result = len(result)
                 if num_result < 10:
                     logger.info(f"[HARDTRAIN] Hard triplets too few ({num_result}, stopping...")
