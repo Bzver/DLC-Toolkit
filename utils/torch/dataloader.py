@@ -95,31 +95,6 @@ class Cutout_Dataloader:
         
         return images, frame_indices, motion_ids
     
-    def load_segment_samples(
-        self, 
-        seg_idx: int, 
-        n_samples: int = 5
-    ) -> Tuple[np.ndarray, List[int], List[int]]:
-
-        all_images, all_frames, all_mids = self.load_segment(seg_idx)
-        
-        n_total = len(all_frames)
-        
-        if n_total <= n_samples:
-            return all_images, all_frames, all_mids
-
-        step = n_total / n_samples
-        sample_indices = [int(i * step) for i in range(n_samples)]
-
-        if sample_indices[-1] != n_total - 1:
-            sample_indices[-1] = n_total - 1
-
-        sampled_images = all_images[sample_indices]
-        sampled_frames = [all_frames[i] for i in sample_indices]
-        sampled_mids = [all_mids[i * 2] for i in sample_indices for _ in range(2)]  # Both mice per frame
-        
-        return sampled_images, sampled_frames, sampled_mids
-    
     def load_all_segments_for_training(
         self, 
         train_seg_indices: List[int],
@@ -159,6 +134,7 @@ class Cutout_Dataloader:
             return [sorted_segs[int(i * step)] for i in range(n)]
     
     def select_validation_segments(self, exclude: List[int], ratio: float = 0.1) -> List[int]:
+        # UNUSED
         available = [i for i in range(len(self.segment_index)) if i not in exclude and self.segment_index[i]['length'] >= self.min_segment_length]
         n = int(ratio * len(available))
 

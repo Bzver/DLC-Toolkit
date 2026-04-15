@@ -1,6 +1,8 @@
 import os
 import numpy as np
 import pandas as pd
+import json
+
 from tqdm import tqdm
 from scipy.signal import savgol_filter
 from sklearn.cluster import KMeans
@@ -234,6 +236,7 @@ class Track_Fixer:
         centroids_two_inst = self.centroids[two_inst_mask]
         dists = np.linalg.norm(centroids_two_inst[:, 1, :] - centroids_two_inst[:, 0, :], axis=-1)
         dist_mask = dists > inst_dist_threshold * self.mice_length
+        strict_dist_mask = dists > 0.3 * self.mice_length
 
         angle_mask = ~np.any(outlier_rotation(two_inst_array, self.anglemap, twist_angle_threshold), axis=-1)
         size_mask = ~np.any(outlier_size(two_inst_array, *size_threshold), axis=-1)
@@ -245,6 +248,7 @@ class Track_Fixer:
         segmentation_mask = two_inst_mask.copy()
         if self.ambiguous_frames:
             segmentation_mask[self.ambiguous_frames] = False # Break segment at ambiguous frames when there are ambiguous frames
+            segmentation_mask[two_inst_mask] = strict_dist_mask # And frames that are dangerously close
             frame_valid_mask[self.ambiguous_frames] = False
         else:
             segmentation_mask[two_inst_mask] = dist_mask
@@ -281,7 +285,7 @@ class Track_Fixer:
 
         co.extract_frames(ca, self.seg_list, self.use_cache)
     
-    def _run_contrain_magic(self, start_idx, end_idx, segment_samples: int = 80):
+    def _run_contrain_magic(self, start_idx, end_idx):
 
         from utils.torch import Crop_Dataset, Embedding_Visualizer, Contrastive_Trainer, Cutout_Dataloader
 
@@ -305,13 +309,13 @@ class Track_Fixer:
             trainer.save_checkpoint(model_path)
             logger.info(f"[TF] Model saved to {model_path}")
 
-        logger.info(f"[TF] Running inference on ALL segments ({segment_samples} frames per segment)")
+        logger.info(f"[TF] Running inference on ALL segments")
         segment_embeddings = []
         segment_frame_indices = []
         segment_motion_ids = []
 
         for seg_idx in tqdm(range(len(dataloader.segment_index)), desc="Inferring Segments", ncols=200):
-            images, frames, _ = dataloader.load_segment_samples(seg_idx, n_samples=segment_samples)
+            images, frames, _ = dataloader.load_segment(seg_idx)
 
             crops = [images[i, mouse_idx] for i in range(len(frames)) for mouse_idx in range(2)]
             mids_flat = [mid for _ in frames for mid in [0, 1]]
@@ -324,7 +328,7 @@ class Track_Fixer:
             segment_embeddings.append(embs)
             segment_frame_indices.append(frames_flat)
             segment_motion_ids.append(mids_flat)
-    
+
         all_embeddings = np.vstack(segment_embeddings)
         kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
         visual_labels = kmeans.fit_predict(all_embeddings)
@@ -393,28 +397,34 @@ class Track_Fixer:
 
     def _process_stable_swap_candidates(self, stable_swap_candidates):
         stable_spans = indices_to_spans(stable_swap_candidates)
+        all_swap_orders = []
+
         for start, end in stable_spans:
             start_idx = max(0, start - 10)
             fin_idx = min(end + 11, self.total_frames-1)
             amb_in_range = [f for f in self.ambiguous_frames if f >= start and f <= end]
+
             if self.avtomat:
                 swap_orders = []
-                if not amb_in_range:
-                    swap_orders.append((start, "t"))
-                    swap_orders.append((end, "t"))
-                elif amb_in_range[0] >= end - 1:
-                    return
-                else:
+                if amb_in_range and self.skip_contrast:
                     swap_orders.append((amb_in_range[0], "t"))
                     if len(amb_in_range) >= 2:
                         swap_orders.append((amb_in_range[-1], "t"))
                     else:
                         swap_orders.append((end, "t"))
+                else:
+                    swap_orders.append((start, "t"))
+                    swap_orders.append((end, "t"))
+                all_swap_orders.extend(swap_orders)
             else:
                 swap_orders = self._launch_dialog_swap(amb_in_range, start_idx, fin_idx)
 
             if not self._execute_swap_orders(swap_orders, fin_idx):
                 return
+            
+            if all_swap_orders:
+                with open (os.path.join(self.temp_dir, "swap_orders.json"), "w") as file:
+                    json.dump(all_swap_orders, file, indent=4)
 
     def _correct_frame_with_hungarian(self, frame_idx: int) -> bool:
         n_obs = len(get_instances_on_current_frame(self.pred_data_array, frame_idx))
@@ -649,7 +659,6 @@ class Track_Fixer:
             return dialog.user_decisions
         
     def _log_seg_list(self):
-        import json
         raw_seg = []
         seg_len = []
         for seg in self.seg_list:

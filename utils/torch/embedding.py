@@ -195,7 +195,7 @@ class Contrastive_Trainer:
 
         if len_active < 250 and len_good > 0:
             good_indices = np.where(self.ds_status == 2)[0]
-            good_needed = min(len_good, min(0.1*len_good, 250-len_active))
+            good_needed = min(len_good, min(len_good//10, 250-len_active))
             indices_to_add = good_indices[np.random.choice(len_good, good_needed, replace=False)].tolist()
             self.ds_status[indices_to_add] = 1
 
@@ -356,9 +356,14 @@ class Contrastive_Trainer:
             logger.warning("[HARDTRAIN] Skipping hard training phase, proceeding with current model state.")
             return
         
-        eval_interval = 10
+        if emp.pleatau > 10:
+            eval_interval = 10
+        elif emp.pleatau > 5:
+            eval_interval = 5
+        else:
+            eval_interval = 1
 
-        logger.info(f"[CONTRAIN] Training on hard triplets...")
+        logger.info(f"[CONTRAIN] Training on hard triplets with eval interval set to {eval_interval}...")
         self.model.train()
 
         curr_miner = "hard" if skip_easy else "semihard"
@@ -456,7 +461,7 @@ class Contrastive_Trainer:
                 embeddings = self._extract_embeddings_list(datasets)
                 sim_array, margin_array = self._similarity_eval(embeddings, datasets)
 
-                good_segment_indices = np.where(margin_array > emp.margin)[0].tolist()
+                good_segment_indices = np.where(margin_array > emp.margin)[0]
                 self.ds_status[good_segment_indices] = 2
                 len_good = np.sum(self.ds_status==2)
 
@@ -612,17 +617,16 @@ class Contrastive_Trainer:
             if len(triplets) >= max_triplets:
                 break
         
-        logger.info(f"[CONTRAIN] Found {len(triplets)} hard triplets (mode={mining_mode}, avg_pos_thresh={np.mean(pos_thresholds):.2f}, avg_neg_thresh={np.mean(neg_thresholds):.2f})")
+        logger.info(f"[CONTRAIN] Found {len(triplets)} hard triplets (mode={mining_mode}, avg_pos_thresh={np.nanmean(pos_thresholds):.2f}, avg_neg_thresh={np.nanmean(neg_thresholds):.2f})")
         return triplets
 
     def _check_early_stopping(self, emp, embeddings, mean_margin, p10_margin):
         len_unseen = np.sum(self.ds_status==0)
-        if len_unseen > self.total_ds // 2:
-            logger.info(f"[CONTRAIN] Unseen datasets ({len_unseen}) too many (>{self.total_ds//2})")
-            return False
-
         if mean_margin > emp.margin:
             logger.info(f"[CONTRAIN] Separation score: {mean_margin} >= {emp.margin} (p10: {p10_margin})" )
+            if len_unseen > self.total_ds // 2:
+                logger.info(f"[CONTRAIN] Unseen datasets ({len_unseen}) too many (>{self.total_ds//2})")
+                return False
             if p10_margin >= emp.margin * 0.8:
                 logger.info(f"[CONTRAIN] Separation score satisfied, calling biomodal evaluation." )
                 if self._biomodal_eval(embeddings):
@@ -683,7 +687,7 @@ class Contrastive_Trainer:
                 sim_array[ds_idx, 1, k] = np.percentile(sim, 20)
                 sim_array[ds_idx, 2, k] = np.percentile(sim, 80)
 
-        margin_array = sim_array[:, 1, 0] - sim_array[:, 2, 1]
+        margin_array = sim_array[:, 0, 0] - sim_array[:, 0, 1]
 
         return sim_array, margin_array
 
