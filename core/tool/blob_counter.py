@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGroupBox, QLabel, QFileDialog,
     QSizePolicy, QSlider, QComboBox, QPushButton,
 )
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import matplotlib
 matplotlib.use("QtAgg")
@@ -274,8 +274,10 @@ class Blob_Counter(QGroupBox):
             logger.info(f"║ {title} ║")
             logger.info(f"╚{border}╝")
 
+            pbar = tqdm(len(segments), desc=f"Segment Counting", leave=False, ncols=100)
+
             try:
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                with ProcessPoolExecutor(max_workers=max_workers) as executor:
                     futures = {
                         executor.submit(self._process_segment, idx, chunk[0], chunk[1]): idx
                         for idx, chunk in enumerate(segments)
@@ -289,19 +291,16 @@ class Blob_Counter(QGroupBox):
                         except Exception as e:
                             logger.error(f"[THREAD_EXP] Segment failed: {e}")
 
+                        pbar.update(1)
+
             except Exception as e:
                 logger.error(f"[THREAD_EXP] Critical failure: {e}")
+            finally:
+                pbar.close()
 
             self.video_counted.emit(self.blob_array)
 
     def _process_segment(self, seg_idx:int, start_idx: int, end_idx: int) -> Tuple[int, int, np.ndarray]:
-        pbar = tqdm(
-            total=end_idx - start_idx,
-            desc=f"Segment {seg_idx} [{start_idx}-{end_idx}]",
-            leave=False, 
-            ncols=200
-        )
-
         extractor = Frame_Extractor(self.video_filepath)
         try:
             extractor.start_sequential_read(start=start_idx, end=end_idx)
@@ -320,14 +319,11 @@ class Blob_Counter(QGroupBox):
 
                 chunk_array[frame_idx, 0] = count
                 chunk_array[frame_idx, 1] = merged
-                pbar.update(1)
                 frame_idx += 1
         except Exception as e:
             logger.warning(f"[Segment_{seg_idx}] Failed: {e}")
-            pbar.set_description(f"Segment {seg_idx} FAILED")
             return None
         finally:
-            pbar.close()
             extractor.finish_sequential_read()
 
         return start_idx, end_idx, chunk_array
