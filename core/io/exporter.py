@@ -2,7 +2,7 @@ import os
 import numpy as np
 import cv2
 import subprocess
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from tqdm import tqdm
 
 from typing import List, Optional
@@ -121,12 +121,12 @@ class Frame_Exporter_Threaded:
         self.worker_zero = None
 
         if os.path.isdir(self.video_filepath) or len(frame_list) < 100:
-            self.worker_zero = Frame_Exporter(video_filepath, output_folder, frame_list)
+            self.worker_zero = Frame_Exporter(video_filepath, output_folder, frame_list, need_pbar=True)
 
         tm = Temp_Manager(video_filepath)
         self.temp_dir = tm.create("export")
 
-    def extract_frames(self, aug, chunked_segments:List[List[int]]=[], use_cache:bool=False):
+    def extract_frames(self, aug: Cutout_Augments|Exporter_Augments, chunked_segments:List[List[int]]=[], use_cache:bool=False):
         if self.worker_zero:
             return self.worker_zero.extract_frames(aug, use_cache)
 
@@ -139,8 +139,10 @@ class Frame_Exporter_Threaded:
 
         self._job_info_verbose(segments, aug)
 
+        pbar = tqdm(total=len(segments), desc="Segments Completed", unit="seg", ncols=100)
+
         try:
-            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
                 futures = {
                     executor.submit(self._worker_process_segment, idx, chunk, aug, self.temp_dir, to_video=False, use_cache=use_cache): idx
                     for idx, chunk in enumerate(segments)
@@ -153,12 +155,16 @@ class Frame_Exporter_Threaded:
                             all_indices.extend(indices)
                     except Exception as e:
                         logger.error(f"[THREAD_EXP] Segment failed: {e}")
+                    
+                    pbar.update(1)
             
             logger.info(f"[THREAD_EXP] Image extraction complete. {len(all_indices)} frames.")
             return sorted(all_indices)
 
         except Exception as e:
             logger.error(f"[THREAD_EXP] Critical failure: {e}")
+        finally:
+            pbar.close()
 
     def extract_frames_into_video(self, ea, video_name:str="temp_extract.mp4"):
         if self.worker_zero:
@@ -172,9 +178,10 @@ class Frame_Exporter_Threaded:
         all_indices = []
 
         self._job_info_verbose(segments, ea)
+        pbar = tqdm(total=len(segments), desc="Segments Completed", unit="seg", ncols=100)
 
         try:
-            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
                 futures = {
                     executor.submit(self._worker_process_segment, idx, chunk, ea, self.temp_dir, to_video=True, use_cache=False): idx
                     for idx, chunk in enumerate(segments)
@@ -188,10 +195,14 @@ class Frame_Exporter_Threaded:
                     except Exception as e:
                         logger.error(f"[THREAD_EXP] Segment failed: {e}")
 
+                    pbar.update(1)
+            
                 self._concat_videos(video_output_path)
 
         except Exception as e:
             logger.error(f"[THREAD_EXP] Critical failure: {e}")
+        finally:
+            pbar.close()
 
     def _job_info_verbose(self, segments, aug:Exporter_Augments|Cutout_Augments):
         line1 = f"FRAME EXPORTOR | {self.max_workers} workers | {len(segments)} segments | MODE: {aug.mode}"
@@ -218,13 +229,7 @@ class Frame_Exporter_Threaded:
             use_cache: bool,
     ) -> Optional[List[int]]:
 
-        pbar = tqdm(
-            total=len(frame_list),
-            desc=f"Segment {seg_idx} [{min(frame_list)}-{max(frame_list)}]",
-            leave=False, 
-            ncols=200
-        )
-        worker_fe = Frame_Exporter(self.video_filepath, temp_dir if to_video else self.save_folder, frame_list, pbar)
+        worker_fe = Frame_Exporter(self.video_filepath, temp_dir if to_video else self.save_folder, frame_list)
         try:
             if to_video:
                 seg_filename = f"batch_extract_{seg_idx:04d}.mp4"
@@ -235,7 +240,6 @@ class Frame_Exporter_Threaded:
                 return indices
         except Exception as e:
             logger.warning(f"[Segment_{seg_idx}] Failed: {e}")
-            pbar.set_description(f"Segment {seg_idx} FAILED")
             if to_video:
                 seg_path = os.path.join(temp_dir, seg_filename)
                 os.remove(seg_path)
@@ -245,8 +249,6 @@ class Frame_Exporter_Threaded:
                     logger.warning(f"[WORKER_{seg_idx}] Substituting failed segment with placeholder.")
                 else:
                     logger.error(f"[WORKER_{seg_idx}] Failed to generate placeholder.")
-        finally:
-            pbar.close()
 
     def _task_splitter(self, probe_length:int=100) -> List[List[int]]:
         num_probe = (len(self.frame_list) - 1) // probe_length + 1
@@ -367,17 +369,17 @@ class Frame_Exporter:
             video_filepath:str,
             output_folder:str,
             frame_list:List[int],
-            progress_bar:tqdm=None
+            need_pbar:bool=False
             ):
         self.video_filepath = video_filepath
         self.save_folder = output_folder
         self.frame_list = frame_list
 
-        self.homegrown_pbar = progress_bar is None
-        if self.homegrown_pbar:
+        self.need_pbar = need_pbar
+        if self.need_pbar:
             self.pbar = tqdm(total=len(frame_list), desc=f"Extracting [{min(frame_list)}-{max(frame_list)}]", leave=False, ncols=200)
         else:
-            self.pbar = progress_bar
+            self.pbar = None
 
         assert self.video_filepath != self.save_folder, "Invalid destination."
 
@@ -415,7 +417,7 @@ class Frame_Exporter:
 
         self._validate_extracted_indices()
 
-        if self.homegrown_pbar:
+        if self.need_pbar:
             self.pbar.close()
 
         return self.extracted_indices
@@ -451,7 +453,7 @@ class Frame_Exporter:
         logger.debug(f"[EXPORTER] Video saved to {video_output_path}")
 
         self._validate_extracted_indices()
-        if self.homegrown_pbar:
+        if self.need_pbar:
             self.pbar.close()
         return self.extracted_indices
 
@@ -516,7 +518,8 @@ class Frame_Exporter:
             image_output_path = os.path.join(self.save_folder, image_path)
             cv2.imwrite(image_output_path, frame)
 
-        self.pbar.update(1)
+        if self.need_pbar:
+            self.pbar.update(1)
         self.extracted_indices.append(frame_idx)
 
     def _cutout_augmentation(self, ca:Cutout_Augments, frame:np.ndarray, frame_idx:int):
@@ -551,7 +554,8 @@ class Frame_Exporter:
                 arr_idx = self.frame_to_arr_idx[frame_idx]
                 self.cutout_images[arr_idx, inst_idx, ...] = frame_inst
 
-        self.pbar.update(1)
+        if self.need_pbar:
+            self.pbar.update(1)
         self.extracted_indices.append(frame_idx)
 
     def _sparse_frame_extraction(self, aug:Exporter_Augments|Cutout_Augments, writer=None):
