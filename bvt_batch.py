@@ -47,14 +47,14 @@ def batch_extract_track_fix_info(root_dir: str):
     for root, _, files in os.walk(root_dir):
         if "bvt_temp" not in root:
             continue
-
         for file in files:
             if file not in target_files:
                 continue
             for level in levels:
                 if level in root:
                     level_trunc = level.replace("T_", "")
-                    dest_folder = os.path.join(root_dir, level_trunc)
+                    base_dir = root.split("bvt_temp")[0]
+                    dest_folder = os.path.join(base_dir, level_trunc)
                     os.makedirs(dest_folder, exist_ok=True)
                     shutil.move(os.path.join(root, file), os.path.join(dest_folder, file))
                     logger.info(f"Moved track fix info from {root} to {dest_folder}.")
@@ -264,7 +264,6 @@ def batch_data_clean(root_dir:str):
     
     _process_batch(workspaces, process_workspace, "data cleaning")
 
-
 def batch_duplicate_check(root_dir:str):
     workspaces = _find_files_by_extension(root_dir, WORKSPACE_EXTENSIONS)
     if not workspaces:
@@ -304,14 +303,19 @@ def batch_duplicate_check(root_dir:str):
     _process_batch(workspaces, process_workspace, "d check")
 
 def batch_temp_dir_clean(root_dir:str):
-    Temp_Manager(os.path.join(root_dir, "blahblah.mp4"), force_clean=True)
-    temp_dir_root = os.path.join(root_dir, "bvt_temp")
+    for root, dirs, _ in os.walk(root_dir):
+        for dirr in dirs:
+            if dirr != "bvt_temp":
+                continue
 
-    for entry in os.listdir(temp_dir_root):
-        full_path = os.path.join(temp_dir_root, entry)
-        if os.path.isdir(full_path):
-            logger.info(f"[TMCLEAN] Failed to remove {full_path}.")
-    
+            Temp_Manager(os.path.join(root, "blahblah.mp4"), force_clean=True)
+            temp_dir_root = os.path.join(root, "bvt_temp")
+
+            for entry in os.listdir(temp_dir_root):
+                full_path = os.path.join(temp_dir_root, entry)
+                if os.path.isdir(full_path):
+                    logger.info(f"[TMCLEAN] Failed to remove {full_path}.")
+            
     logger.info("[TMCLEAN] Finished.")
 
 def batch_track_fix(
@@ -718,7 +722,6 @@ def _autoload_pred(workspace_file: str, dm: Data_Manager, dlc_config_path: Optio
         candidate_preds.sort(key=lambda x: os.path.getmtime(x), reverse=True)
         newest_pred = candidate_preds[0]
 
-        logger.info(f"[AUTOLOAD] No prediction in workspace; loading newest prediction: {newest_pred}")
         try:
             if dm.dlc_data and dm.dlc_data.dlc_config_filepath:
                 dm.load_pred_to_dm(
@@ -801,16 +804,16 @@ def _parse_auto_pred_filename(filename: str):
 if __name__ == "__main__":
     app = QtWidgets.QApplication([])
     set_headless_mode(True)
-    rootdir = r"D:\Data\Videos\20251012 Marathon"
+    rootdir = r"D:\Data\Videos\20251018 Marathon"
     dlc_config_path = "D:/Project/DLC-Models/NTD-Blob/config.yaml"
  
     CROPPING = True
-    MASKING = True
+    MASKING = False
     GRAYSCALING = False
     BATCH = 16
     DT_BATCH = 16
 
-    dial_tones = [4, 2, 3, 10, 5]
+    dial_tones = [3]
 
     for tone in dial_tones:
         match tone: 
@@ -819,15 +822,16 @@ if __name__ == "__main__":
                     rootdir,
                     dlc_config_path,
                     force_load_new_config=True,
-                    mark_gen_mode="None",
-                    use_dm_list=True,
+                    mark_gen_mode="NM",
+                    use_dm_list=False,
                     crop=CROPPING,
                     mask=MASKING,
                     grayscale=GRAYSCALING,
-                    infer_as_video=True,
+                    infer_as_video=False,
                     batch_size=BATCH,
                     detector_batch_size=DT_BATCH
                 )
+                batch_temp_dir_clean(rootdir)
             case 2:
                 mgm = "NM-I"
                 batch_inference(
@@ -844,10 +848,11 @@ if __name__ == "__main__":
             case 3:
                 batch_track_fix(
                     rootdir,
-                    weight_path=r"D:\Data\Videos\20251012 Marathon\1012\201T_aaa_20251030202238_combined_cut_cut_contrastive_trained.pth",
+                    weight_path=r"D:\Data\Videos\20250913 Marathon\301T_aaa_20251030160615_combined_cut_contrastive_trained.pth",
                     lock_id=True,
                     force_locked_id=0,
                 )
+                batch_extract_track_fix_info(rootdir)
             case 4: batch_data_clean(rootdir)
             case 5: batch_temp_dir_clean(rootdir)
             case 6: batch_convert_csv_to_h5(dlc_config_path)
