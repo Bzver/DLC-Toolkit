@@ -33,7 +33,6 @@ class Embedding_Visualizer:
         self.n_samples = len(self.embeddings)
 
         self.visual_labels = np.hstack(visual_labels)
-        self.segment_visual_labels = visual_labels
         self.assignment_confidence = assignment_confidence
         self.confidence_flat = np.hstack(assignment_confidence) if assignment_confidence else None
         self.confidence_threshold = confidence_threshold
@@ -131,20 +130,25 @@ class Embedding_Visualizer:
         return pixmap
 
     def plot_agreement_timeline(self, dpi: int = 150) -> Tuple[any, List[int]]:
-        baseline_segments = min(15, self.n_segments)
-        cluster_votes = {0: {0: 0, 1: 0}, 1: {0: 0, 1: 0}}
+        mapping = {0: 0, 1: 1}
 
-        for seg_idx in range(baseline_segments):
-            v_labels = self.segment_visual_labels[seg_idx]
-            m_ids = self.segment_motion_ids[seg_idx]
-            for v_cluster in [0, 1]:
-                for m_id in [0, 1]:
-                    mask = (v_labels == v_cluster) & (np.array(m_ids) == m_id)
-                    cluster_votes[v_cluster][m_id] += np.sum(mask)
+        if self.confidence_flat is not None:
+            high_conf_mask = self.confidence_flat >= self.confidence_threshold
+        else:
+            high_conf_mask = np.ones(self.n_samples, dtype=bool)
 
-        mapping = {vc: max(cluster_votes[vc], key=cluster_votes[vc].get) for vc in [0, 1]}
-        if mapping[0] == mapping[1]:
-            mapping = {0: 0, 1: 1}
+        n_confident = np.sum(high_conf_mask)
+        if n_confident > 0:
+            agree_default = (self.visual_labels == self.motion_ids) & high_conf_mask
+            agree_ratio = np.sum(agree_default) / n_confident
+
+            if agree_ratio < 0.5:
+                mapping = {0: 1, 1: 0}
+                logger.info(f"[VIS] Flipped cluster mapping: default agreement={agree_ratio:.2%} < 50%")
+            else:
+                logger.info(f"[VIS] Using default cluster mapping: agreement={agree_ratio:.2%}")
+        else:
+            logger.warning("[VIS] No high-confidence samples for mapping decision; using default")
 
         agreement_timeline = np.full(self.total_frames, np.nan)
 

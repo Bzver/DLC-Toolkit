@@ -89,7 +89,7 @@ class Contrastive_Trainer:
             self.model.eval()
             return self.model
 
-        self._train_hard(datasets, optimizer, emp, embeddings, sim_array, skip_easy)
+        self._train_hard(datasets, optimizer, emp, embeddings, sim_array)
         
         self.model.eval()
         return self.model
@@ -343,8 +343,7 @@ class Contrastive_Trainer:
             optimizer: torch.optim.Adam, 
             emp: Emb_Params, 
             embeddings: Dict[int, np.ndarray],
-            sim_array: np.ndarray,
-            skip_easy: bool = False
+            sim_array: np.ndarray
     ):
 
         hard_triplets = self._mine_hard_triplets(
@@ -356,12 +355,11 @@ class Contrastive_Trainer:
             logger.warning("[HARDTRAIN] Skipping hard training phase, proceeding with current model state.")
             return
         
-        if emp.pleatau > 10:
-            eval_interval = 10
-        elif emp.pleatau > 5:
-            eval_interval = 5
-        else:
-            eval_interval = 1
+        eval_interval = 1
+        for pleatau_tier in [100, 50, 20, 10, 5]:
+            if emp.pleatau > pleatau_tier:
+                eval_interval = pleatau_tier
+                break
 
         logger.info(f"[CONTRAIN] Training on hard triplets with eval interval set to {eval_interval}...")
         self.model.train()
@@ -459,7 +457,7 @@ class Contrastive_Trainer:
                 p10_margin = np.nanpercentile(margin_array, 10.0)
                 eval_score = mean_margin
 
-                eval_patience = max(3, emp.pleatau//4)
+                eval_patience = max(3, emp.pleatau//5)
                 if eval_score - best_eval < emp.min_imp:
                     pleatau_eval += 1
                     logger.info(f"[HARDTRAIN] Current eval pleatau: {pleatau_eval}, last improvement: {eval_score - best_eval:.3f}, patience: {eval_patience}")
