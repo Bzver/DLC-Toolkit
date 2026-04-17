@@ -525,6 +525,7 @@ class Blob_Counter(QGroupBox):
         self.double_blob_area_threshold = config.double_blob_area_threshold
 
         self.threshold_slider.setValue(self.threshold)
+        self.db_threshold_slider.setValue(self.double_blob_area_threshold)
         self.threshold_value_label.setText(str(self.threshold))
         self.min_area_slider.setValue(self.min_blob_area)
         self.min_area_value_label.setText(str(self.min_blob_area))
@@ -535,9 +536,9 @@ class Blob_Counter(QGroupBox):
 
     def _export_config_json(self):
         config_dict = {
-            "threshold": self.threshold,
-            "double_blob_area_threshold": self.double_blob_area_threshold,
-            "min_blob_area": self.min_blob_area,
+            "threshold": str(self.threshold),
+            "double_blob_area_threshold": str(self.double_blob_area_threshold),
+            "min_blob_area": str(self.min_blob_area),
             "bg_removal_method": self.bg_removal_method,
             "blob_type": self.blob_type,
             "roi": list(self.roi) if self.roi else None
@@ -567,6 +568,7 @@ class Blob_Counter(QGroupBox):
                 self.threshold_value_label.setText(str(self.threshold))
             if "double_blob_area_threshold" in d:
                 self.double_blob_area_threshold = int(d["double_blob_area_threshold"])
+                self.db_threshold_slider.setValue(self.double_blob_area_threshold)
             if "min_blob_area" in d:
                 self.min_blob_area = int(d["min_blob_area"])
                 self.min_area_slider.setValue(self.min_blob_area)
@@ -698,7 +700,7 @@ def process_segment_worker(
 
     bg_removal_method = config.bg_removal_method
     background_frame = None
-    if bg_removal_method is not None:
+    if bg_removal_method != "None":
         background_frame = config.background_frames[bg_removal_method]
     
     try:
