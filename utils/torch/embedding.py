@@ -76,7 +76,7 @@ class Contrastive_Trainer:
         if self.total_ds > 250:
             reserve_indices = np.random.choice(self.total_ds, self.total_ds-250, replace=False).tolist()
 
-        self.ds_status = np.ones(self.total_ds, dtype=np.uint8) # 1: active, 2: good, 3: unseen
+        self.ds_status = np.ones(self.total_ds, dtype=np.uint8) # 0: unseen, 1: active, 2: good, 3: dropped
         self.ds_status[reserve_indices] = 0
 
         embeddings = self._extract_embeddings_list(datasets)
@@ -182,6 +182,7 @@ class Contrastive_Trainer:
         segment_embeddings = {}
         self.model.eval()
 
+        len_dropped = np.sum(self.ds_status == 3)
         len_good = np.sum(self.ds_status == 2)
         len_active = np.sum(self.ds_status == 1)
         len_unseen = np.sum(self.ds_status == 0)
@@ -189,14 +190,21 @@ class Contrastive_Trainer:
         if len_active < 250 and len_unseen > 0:
             unseen_indices = np.where(self.ds_status == 0)[0]
             unseen_needed = min(len_unseen, 250-len_active)
-            indices_to_add = unseen_indices[np.random.choice(len_unseen, unseen_needed, replace=False)].tolist()
+            indices_to_add = unseen_indices[np.random.choice(len_unseen, unseen_needed, replace=False)]
+            self.ds_status[indices_to_add] = 1
+            len_active = np.sum(self.ds_status == 1)
+
+        if len_active < 250 and len_dropped > 0:
+            dropped_indices = np.where(self.ds_status == 3)[0]
+            dropped_needed = min(len_dropped, 250-len_active)
+            indices_to_add = dropped_indices[np.random.choice(len_dropped, dropped_needed, replace=False)]
             self.ds_status[indices_to_add] = 1
             len_active = np.sum(self.ds_status == 1)
 
         if len_active < 250 and len_good > 0:
             good_indices = np.where(self.ds_status == 2)[0]
             good_needed = min(len_good, min(len_good//10, 250-len_active))
-            indices_to_add = good_indices[np.random.choice(len_good, good_needed, replace=False)].tolist()
+            indices_to_add = good_indices[np.random.choice(len_good, good_needed, replace=False)]
             self.ds_status[indices_to_add] = 1
 
         with torch.inference_mode():
@@ -368,8 +376,8 @@ class Contrastive_Trainer:
         pleatau_train = 0
 
         last_eval = emp.warmup - 1
+        last_len_good = 0
         best_eval = 0.0
-        pleatau_eval = 0
 
         for epoch in range(emp.warmup, emp.epochs):
             total_loss = 0
@@ -457,24 +465,31 @@ class Contrastive_Trainer:
                 p10_margin = np.nanpercentile(margin_array, 10.0)
                 eval_score = mean_margin
 
-                eval_patience = max(3, emp.pleatau//5)
-                if eval_score - best_eval < emp.min_imp:
-                    pleatau_eval += 1
-                    logger.info(f"[HARDTRAIN] Current eval pleatau: {pleatau_eval}, last improvement: {eval_score - best_eval:.3f}, patience: {eval_patience}")
-                else:
-                    pleatau_eval = 0
+                reshuffle_needed = False
+                if epoch == emp.epochs - 1:
+                    logger.info("[HARDTRAIN] Max epoch reached. Stopping...")
+                    break
+                if eval_score < best_eval:
+                    if np.all(self.ds_status != 0):
+                        logger.info("[HARDTRAIN] Model converged to best possible state. Stopping early.")
+                        break
+                    elif last_len_good >= len_good:
+                        logger.info(f"[HARDTRAIN] Reshuffling: Score dipped ({eval_score:.3f}<{best_eval:.3f}).")
+                        self.ds_status[self.ds_status==1] = 3
+                        reshuffle_needed = True
                 if len_good > len(datasets) * 0.9:
                     logger.info("[HARDTRAIN] Most segments are good. Stopping early.")
                     break
                 if self._check_early_stopping(emp, embeddings, mean_margin, p10_margin):
                     logger.info("[HARDTRAIN] Thresholds met on convergence. Stopping early.")
                     break
-                if epoch == emp.epochs - 1:
-                    logger.info("[HARDTRAIN] Max epoch reached. Stopping...")
-                    break
-                if pleatau_eval >= eval_patience:
-                    logger.info("[HARDTRAIN] Model converged to best possible state. Stopping early.")
-                    break
+
+                last_len_good = len_good
+
+                if reshuffle_needed:
+                    last_len_good = 0
+                    embeddings = self._extract_embeddings_list(datasets)
+                    sim_array, margin_array = self._similarity_eval(embeddings, datasets)
 
                 logger.info(f"[HARDTRAIN] Updating hard triplets at epoch {epoch+1}, skipping {len_good} segments...")
                 result = self._mine_hard_triplets(
