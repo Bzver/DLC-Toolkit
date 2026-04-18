@@ -33,13 +33,6 @@ class Loaded_DLC_Data:
             data["pred_data_array"] = pred_data_array.copy()
         return cls(**data)
 
-@dataclass
-class Swap_Calculation_Config:
-    show_progress: bool
-    start_frame: int
-    frame_count_min: int
-    frame_count_max: int
-    until_next_error: bool
 
 @dataclass
 class Plot_Config:
@@ -71,11 +64,13 @@ class Plotter_Callbacks:
     box_coords_callback: Callable[[int, float, float], None]
     box_object_callback: Callable[[object], None]
 
+
 @dataclass
 class Nav_Callback:
     change_frame_callback: Callable[[int], None]
     nav_prev_callback: Callable[[], None]
     nav_next_callback: Callable[[], None]
+
 
 @dataclass
 class Blob_Config:
