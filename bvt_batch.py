@@ -341,8 +341,10 @@ def batch_track_fix(
         tfd = Track_Fix_Config_Dialog(dm.total_frames)
         tfd.hide()
 
-        tfd.pretrained_model_path = weight_path
-        tfd._on_preset_changed("Inference")
+        if weight_path is not None:
+            tfd.pretrained_model_path = weight_path
+            tfd._on_preset_changed("Inference")
+
         tfd._on_accept()
 
         kp_smooth = tfd.kp_smooth
@@ -804,7 +806,7 @@ def _parse_auto_pred_filename(filename: str):
 if __name__ == "__main__":
     app = QtWidgets.QApplication([])
     set_headless_mode(True)
-    rootdir = r"D:\Data\Videos\20251018 Marathon"
+    rootdir = r"D:\DGH\Data\Videos\20260416 Marathon\0418"
     dlc_config_path = "D:/Project/DLC-Models/NTD-Blob/config.yaml"
  
     CROPPING = True
@@ -813,7 +815,7 @@ if __name__ == "__main__":
     BATCH = 16
     DT_BATCH = 16
 
-    dial_tones = [3]
+    dial_tones = [1]
 
     for tone in dial_tones:
         match tone: 
@@ -848,7 +850,7 @@ if __name__ == "__main__":
             case 3:
                 batch_track_fix(
                     rootdir,
-                    weight_path=r"D:\Data\Videos\20250913 Marathon\301T_aaa_20251030160615_combined_cut_contrastive_trained.pth",
+                    weight_path=None,
                     lock_id=True,
                     force_locked_id=0,
                 )

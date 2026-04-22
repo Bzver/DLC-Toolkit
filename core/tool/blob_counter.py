@@ -262,7 +262,7 @@ class Blob_Counter(QGroupBox):
             segments.append((seg_start, seg_end))
 
         areas = []
-        pbar = tqdm(total=len(segments), desc="Analyzing blobs", leave=False, ncols=100)
+        pbar = tqdm(total=len(segments), desc="Analyzing blobs", leave=True, ncols=100)
         config_dict = self.get_config().to_dict()
 
         try:
@@ -464,7 +464,7 @@ class Blob_Counter(QGroupBox):
         border = "═" * (len(title) + 2)
         logger.info(f"\n╔{border}╗\n║ {title} ║\n╚{border}╝")
 
-        pbar = tqdm(total=len(segments), desc="Processing segments", leave=False, ncols=100)
+        pbar = tqdm(total=len(segments), desc="Processing segments", leave=True, ncols=100)
         config_dict = self.get_config().to_dict()
 
         try:
@@ -541,7 +541,7 @@ class Blob_Counter(QGroupBox):
             "min_blob_area": str(self.min_blob_area),
             "bg_removal_method": self.bg_removal_method,
             "blob_type": self.blob_type,
-            "roi": list(self.roi) if self.roi else None
+            "roi": [str(x) for x in self.roi] if self.roi else None
         }
         file_path, _ = QFileDialog.getSaveFileName(self, "Export Config", "", "JSON Files (*.json)")
         if file_path:

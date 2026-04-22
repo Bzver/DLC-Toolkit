@@ -377,7 +377,7 @@ class Frame_Exporter:
 
         self.need_pbar = need_pbar
         if self.need_pbar:
-            self.pbar = tqdm(total=len(frame_list), desc=f"Extracting [{min(frame_list)}-{max(frame_list)}]", leave=False, ncols=200)
+            self.pbar = tqdm(total=len(frame_list), desc=f"Extracting [{min(frame_list)}-{max(frame_list)}]", leave=True, ncols=200)
         else:
             self.pbar = None
 

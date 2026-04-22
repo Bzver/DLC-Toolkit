@@ -490,16 +490,26 @@ class Data_Manager:
             return
 
         if not os.path.isfile(self.video_file):
-            if self.headless:
-                logger.error(f"Cannot find video at {self.video_file}")
-            else:
-                Loggerbox.error(self.main, "Video File Missing", f"Cannot find video at {self.video_file}")
-                file_dialog = QFileDialog(self.main)
-                video_path, _ = file_dialog.getOpenFileName(self.main, "Load Video", "", "Video Files (*.mp4 *.avi *.mov *.mkv);;All Files (*)")
-                self.video_file = video_path
+            workspace_dir = os.path.dirname(file_path)
 
-            if not self.video_file:
-                return
+            video_found = False
+            for suffix in [".mp4",".avi",".mov",".mkv"]:
+                video_name_with_suffix = f"{self.video_name}{suffix}"
+                if video_name_with_suffix in os.listdir(workspace_dir):
+                    self.video_file = os.path.join(workspace_dir, video_name_with_suffix)
+                    video_found = True
+
+            if not video_found:
+                if self.headless:
+                    logger.error(f"Cannot find video at {self.video_file}")
+                else:
+                    Loggerbox.error(self.main, "Video File Missing", f"Cannot find video at {self.video_file}")
+                    file_dialog = QFileDialog(self.main)
+                    video_path, _ = file_dialog.getOpenFileName(self.main, "Load Video", "", "Video Files (*.mp4 *.avi *.mov *.mkv);;All Files (*)")
+                    self.video_file = video_path
+
+                if not self.video_file:
+                    return
 
         self.init_vid_callback(self.video_file)
 

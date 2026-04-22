@@ -148,7 +148,7 @@ class Track_Fixer:
                 num_0 = np.sum(~np.isnan(self.centroids[lock_frame_indices, 0, 0]))
                 self.locked_idx = 0 if num_0 >= 5 else 1
 
-        pbar = tqdm(total=end_idx - start_idx, desc=f"Motion Sweep In Progress", leave=False, ncols=200)        
+        pbar = tqdm(total=end_idx - start_idx, desc=f"Motion Sweep In Progress", leave=True, ncols=200)        
         try:
             for f in range(start_idx, end_idx):
                 logger.debug(f"--------- frame {f} ---------")
@@ -220,7 +220,7 @@ class Track_Fixer:
             self,
             start_idx: int,
             end_idx: int,
-            inst_dist_threshold: float = 0.5,
+            inst_dist_threshold: float = 0.6,
             size_threshold: Tuple[float, float] = (0.5, 2.5),
             bp_threshold: int = 6,
             twist_angle_threshold: float = 90.0,

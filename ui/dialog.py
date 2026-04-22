@@ -472,7 +472,7 @@ class Track_Fix_Config_Dialog(QDialog):
                 "lr_exponent": 5,  # 1e-5
                 "margin_thresh": 0.8,
                 "min_imp": 0.05,
-                "worker_num": 16,
+                "worker_num": 8,
                 "use_cache": True,
                 "avtomat": False,
             }
@@ -494,7 +494,7 @@ class Track_Fix_Config_Dialog(QDialog):
                 "lr_exponent": 5,
                 "margin_thresh": 0.8,
                 "min_imp": 0.05,
-                "worker_num": 16,
+                "worker_num": 8,
                 "use_cache": True,
                 "avtomat": False,
             }
@@ -611,7 +611,7 @@ class Track_Fix_Config_Dialog(QDialog):
         self.cl_group = cl_group
         cl_layout = QVBoxLayout()
 
-        self.worker_spin = Spinbox_With_Label("Cutout Extraction Workers:", (1, 256), 16)
+        self.worker_spin = Spinbox_With_Label("Cutout Extraction Workers:", (1, 256), 8)
         self.worker_spin.value_changed.connect(self._on_manual_change)
         cl_layout.addWidget(self.worker_spin)
 
@@ -707,7 +707,7 @@ class Track_Fix_Config_Dialog(QDialog):
         self.save_model_cbx.setChecked(vals.get("save_model", False))
         self.avtomat_cbx.setChecked(vals.get("avtomat", False))
 
-        self.worker_spin.setValue(vals.get("worker_num", 16))
+        self.worker_spin.setValue(vals.get("worker_num", 8))
         self.max_epochs_spin.setValue(vals.get("max_epochs", 100))
         self.warmup_epochs_spin.setValue(vals.get("warmup_epochs", 10))
         self.batch_size_spin.setValue(vals.get("batch_size", 128))
