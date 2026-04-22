@@ -8,14 +8,15 @@ from PySide6 import QtWidgets
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QVBoxLayout, QFileDialog
 
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Literal
 
 from core.runtime import Data_Manager, Video_Manager
 from core.tool import Annotation_Config, Annotation_Summary_Table, Prediction_Plotter, Uno_Stack
-from core.io import load_annotation, prediction_to_csv, load_onehot_csv
+from core.io import load_annotation, prediction_to_csv, Frame_Exporter_Threaded, load_onehot_csv
 from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Status_Bar, Frame_List_Dialog
 from utils.track import interpolate_track_all
 from utils.helper import frame_to_pixmap, frame_to_grayscale, get_instance_count_per_frame, array_to_iterable_runs, get_next_frame_in_list
+from utils.dataclass import Exporter_Augments
 from utils.logger import Loggerbox, logger
 
 
@@ -52,7 +53,7 @@ class Frame_Annotator:
         self.main = parent
 
         self.annot_menu_config = {
-            "Import":{
+            "Import Annotation":{
                 "buttons": [
                     ("Import Annotation From File", self._load_annotation),
                     ("Import Frame List As Annotation", self._import_frame_list),
@@ -67,13 +68,14 @@ class Frame_Annotator:
                     ("Change Behaviors To Navigate", self._choose_behav_to_nav),
                 ]   
             },
-            "Save":{
+            "Export Annotation":{
                 "buttons": [
                     ("Export in Text", self._export_annotation_to_text),
                     ("Export in Mat", self._export_annotation_to_mat),
                     ("Export in One-Hot", self._export_annotation_to_onehot),
                     ("Export Truncated One-Hot for ASOID Training", self._export_training_package),
                     ("Export Truncated One-Hot for ASOID Inference", self._export_inference_package),
+                    ("Export Short Video Segment for ASOID refinement", self._export_refine_package)
                 ]
             },
         }
@@ -662,8 +664,6 @@ class Frame_Annotator:
         if self.dm.dlc_data is None or self.dm.dlc_data.pred_data_array is None:
             return
 
-        _, cat_list_to_use = self._choose_behavior_categories()
-
         file_dialog = QFileDialog(self.main)
 
         folder_path = file_dialog.getExistingDirectory(self.main, "Select Export Folder for ASOID Training", "")
@@ -679,34 +679,21 @@ class Frame_Annotator:
             pred_data_array = interpolate_track_all(pred_data_array, inst_idx, max_gap)
 
         instance_array = get_instance_count_per_frame(pred_data_array)
-        
-        cat_mask = np.zeros_like(instance_array, dtype=bool)
-        if cat_list_to_use:
-            cat_mask[cat_list_to_use] = True
-        else:
-            cat_mask[:] = True
-
-        behavior_list = [b for b in self.idx_to_cat.values()]
 
         frames_to_use = np.zeros_like(instance_array, dtype=bool)
         truncated_arrays = []
 
-        for start, end, value in array_to_iterable_runs(instance_array != I):
-            if value:
+        for start, end, value in array_to_iterable_runs(instance_array == I):
+            if not value:
                 continue
             if end - start + 1 < min_duration:
                 continue
 
-            cat_list_in_range = np.where(cat_mask[start:end+1])[0].tolist()
-            cat_list_in_range = [f + start for f in cat_list_in_range]
-
-            if not cat_list_in_range:
-                continue
-
-            frames_to_use[cat_list_in_range] = True
-            truncated_arrays.append(self.annot_array[cat_list_in_range])
+            frames_to_use[start:end+1] = True
+            truncated_arrays.append(self.annot_array[start:end+1])
 
         frame_list = np.where(frames_to_use)[0].tolist()
+
         truncated_behavior_array = np.concatenate(truncated_arrays)
         truncated_pred_array = pred_data_array[frames_to_use]
 
@@ -725,7 +712,7 @@ class Frame_Annotator:
 
         file_path = os.path.join(folder_path, "behav", f"{self.dm.video_name}_ASOiD_train.csv")
         pred_path = os.path.join(folder_path, "pred", f"{self.dm.video_name}_ASOiD_train.csv")
-        self._csv_exporter_worker(df_annot, file_path, truncated_pred_array, pred_path, frame_list, training=True)
+        self._csv_exporter_worker(df_annot, file_path, truncated_pred_array, pred_path, frame_list, mode="train")
 
     def _export_inference_package(self, min_duration:int=10, max_gap:int=3, fps:int=10):
         if self.dm.dlc_data is None or self.dm.dlc_data.pred_data_array is None:
@@ -747,8 +734,8 @@ class Frame_Annotator:
         frames_to_use = np.zeros_like(instance_array, dtype=bool)
         truncated_arrays = []
 
-        for start, end, value in array_to_iterable_runs(instance_array != I):
-            if value:
+        for start, end, value in array_to_iterable_runs(instance_array == I):
+            if not value:
                 continue
             if end - start + 1 < min_duration:
                 continue
@@ -774,28 +761,70 @@ class Frame_Annotator:
         df_annot.insert(0, "time", np.arange(len(frame_list)) / fps)
 
         pred_path = file_path.replace(".csv", "_pred.csv")
-        self._csv_exporter_worker(df_annot, file_path, truncated_pred_array, pred_path, frame_list, training=False)
+        self._csv_exporter_worker(df_annot, file_path, truncated_pred_array, pred_path, frame_list, mode="infer")
 
-    def _csv_exporter_worker(self, df_annot, annot_path, truncated_pred_array, pred_path, frame_list, training):
+    def _export_refine_package(self, max_gap=10, min_length=600, seg_needed=10):
+        if self.dm.dlc_data is None or self.dm.dlc_data.pred_data_array is None:
+            return
+
+        file_dialog = QFileDialog(self.main)
+
+        folder_path = file_dialog.getExistingDirectory(self.main, "Select Export Folder for ASOID Refining", "")
+        if not folder_path:
+            return
+        
+        os.makedirs(os.path.join(folder_path, "refine"), exist_ok=True)
+
+        pred_data_array = self.dm.dlc_data.pred_data_array.copy()
+        I = pred_data_array.shape[1]
+        for inst_idx in range(I):
+            pred_data_array = interpolate_track_all(pred_data_array, inst_idx, max_gap)
+
+        instance_array = get_instance_count_per_frame(pred_data_array)
+
+        segs = []
+        for start, end, value in array_to_iterable_runs(instance_array == I):
+            if len(segs) >= seg_needed:
+                break
+            if not value:
+                continue
+            if end - start + 1 < min_length:
+                continue
+            
+            segs.append((start, end+1))
+
+        for seg in segs:
+            frame_list = list(range(*seg))
+
+            truncated_pred_array = pred_data_array[frame_list]
+            pred_path = os.path.join(folder_path, "refine", f"{self.dm.video_name}_frame{seg[0]}-{seg[1]}_ASOiD_refine.csv")
+            self._csv_exporter_worker(None, pred_path, truncated_pred_array, pred_path, frame_list, mode="refine")
+
+    def _csv_exporter_worker(self, df_annot, annot_path, truncated_pred_array, pred_path, frame_list, mode:Literal["train", "infer", "refine"]="train"):
         try:
-            if training:
-                df_annot.to_csv(annot_path, sep=',', index=False, float_format='%.6f')
-            else:
-                json_path = annot_path.replace(".csv", ".json")
-                with open(json_path, 'w') as f:
-                    json.dump({
-                        "used_frames": frame_list,
-                        "total_frames": self.dm.total_frames,
-                        "total_exported_frames": len(frame_list),
-                        "behav_map": self.behav_map,
-                    }, f, indent=2)
+            match mode:
+                case "train": df_annot.to_csv(annot_path, sep=',', index=False, float_format='%.6f')
+                case "infer":
+                    json_path = annot_path.replace(".csv", ".json")
+                    with open(json_path, 'w') as f:
+                        json.dump({
+                            "used_frames": frame_list,
+                            "total_frames": self.dm.total_frames,
+                            "total_exported_frames": len(frame_list),
+                            "behav_map": self.behav_map,
+                        }, f, indent=2)
+                case "refine": 
+                    output_folder = os.path.basename(pred_path)
+                    fe = Frame_Exporter_Threaded(self.dm.video_file, output_folder, frame_list)
+                    ea = Exporter_Augments(crop_coord=self.dm.roi)
+                    fe.extract_frames_into_video(ea, video_name=f"{self.dm.video_name}_frame{frame_list[0]}-{frame_list[-1]}.mp4")
 
-            prediction_to_csv(self.dm.dlc_data, truncated_pred_array, pred_path, keep_conf=True, no_scorer_row=not training)
+            prediction_to_csv(self.dm.dlc_data, truncated_pred_array, pred_path, keep_conf=True, no_scorer_row=mode!="train")
 
         except Exception as e:
             Loggerbox.error(self.main, "Failed", f"Failed to save {pred_path}, Exception: {e}", exc=e)
         else:
-            if training:
-                logger.info(f"Successfully saved to {pred_path}")
+            if mode == "refine":
+                logger.info(self.main, "Success", f"Successfully saved to {pred_path}")
             else:
                 Loggerbox.info(self.main, "Success", f"Successfully saved to {pred_path}")
