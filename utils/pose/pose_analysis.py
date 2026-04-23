@@ -235,12 +235,36 @@ def calculate_pose_array_bbox(
     Returns:
     - bbox_array (F, I, 4)
     """
-    coords_x = pred_data_array[:, :, 0::3]
-    coords_y = pred_data_array[:, :, 1::3]
+    coords_x = pred_data_array[..., 0::3]
+    coords_y = pred_data_array[..., 1::3]
     x1_array, y1_array, x2_array, y2_array = calculate_pose_bbox(coords_x, coords_y, padding)
-    bbox_array = np.stack([x1_array, y1_array, x2_array, y2_array], axis=2)
+    bbox_array = np.stack([x1_array, y1_array, x2_array, y2_array], axis=-1)
 
     return bbox_array
+
+def calculate_pose_dim(
+        pred_data_array:np.ndarray,
+        angle_map: Dict[str, int]
+):
+    """
+    Compute the physical dimensions (width and height) of the pose in its canonical orientation.
+    
+    Args:
+        pred_data_array (np.ndarray): Input pose array of shape (F, I, 3*K), where F is frames, 
+            I is instances, and K is keypoints. The last dimension contains [x, y, confidence] 
+            triplets for each keypoint.
+        angle_map (Dict[str, int]): Dictionary containing anatomical keypoint indices, specifically:
+            - 'head_idx': Index of the head keypoint
+            - 'tail_idx': Index of the tail keypoint
+    
+    Returns:
+        np.ndarray: Array of shape (F, I, 2) containing [width, height] dimensions for each 
+            frame and instance. Dimensions are computed from the bounding box of the 
+            canonically aligned pose coordinates.
+    """
+    _, align_poses = calculate_canonical_pose(pred_data_array, angle_map["head_idx"], angle_map["tail_idx"])
+    bbox_array = calculate_pose_array_bbox(align_poses, padding=0.0)
+    return bbox_array[..., 2:4] - bbox_array[..., 0:2]
 
 def calculate_pose_bbox(
         coords_x:np.ndarray,
