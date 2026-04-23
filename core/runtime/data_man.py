@@ -360,6 +360,8 @@ class Data_Manager:
     def get_mask_from_blob_config(self, frame_batch:np.ndarray):
         if not self.blob_config:
             return
+        if self.blob_config.background_frames is None:
+            return
         try:
             mask = get_smart_bg_masking(
                 frame_batched = frame_batch,
