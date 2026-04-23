@@ -460,7 +460,6 @@ class Track_Fix_Config_Dialog(QDialog):
             "values": {
                 "skip_contrastive": False,
                 "skip_sweep": False,
-                "use_kalman": True,
                 "kp_smooth": True,
                 "save_model": True,
                 "pretrained_model_path": None,
@@ -482,7 +481,6 @@ class Track_Fix_Config_Dialog(QDialog):
             "values": {
                 "skip_contrastive": False,
                 "skip_sweep": False,
-                "use_kalman": True,
                 "kp_smooth": True,
                 "save_model": False ,
                 "pretrained_model_path": "PROMPT_USER",
@@ -517,7 +515,6 @@ class Track_Fix_Config_Dialog(QDialog):
         self.skip_motion_sweep = False
         self.avtomat = False
         self.skip_contrastive = False
-        self.use_kalman = True
         self.use_cache = True
         self.worker_num = 8
         self.emp = None
@@ -561,11 +558,6 @@ class Track_Fix_Config_Dialog(QDialog):
         self.kp_smooth_cbx = QCheckBox("Keypoint Smoothing")
         self.kp_smooth_cbx.setChecked(True)
         opts_layout.addWidget(self.kp_smooth_cbx)
-
-        self.use_kalman_cbx = QCheckBox("Use Kalman Filter for Trajectory Prediction")
-        self.use_kalman_cbx.setChecked(True)
-        self.use_kalman_cbx.setToolTip("Enable Kalman filters for motion prediction and outlier rejection. Uncheck to rely solely on trajectory voting and last-known positions.")
-        opts_layout.addWidget(self.use_kalman_cbx)
 
         self.lock_id_cbx = QCheckBox("Lock ID During Exit For Unilateral Exit Setups")
         self.lock_id_cbx.setToolTip("For cases where only one mouse can exit the chamber and thus the remaining mouse's ID should be consistent.")
@@ -702,7 +694,6 @@ class Track_Fix_Config_Dialog(QDialog):
 
         self.skip_contrastive_cbx.setChecked(vals.get("skip_contrastive", False))
         self.skip_sweep_cbx.setChecked(vals.get("skip_sweep", False))
-        self.use_kalman_cbx.setChecked(vals.get("use_kalman", True))
         self.kp_smooth_cbx.setChecked(vals.get("kp_smooth", True))
         self.save_model_cbx.setChecked(vals.get("save_model", False))
         self.avtomat_cbx.setChecked(vals.get("avtomat", False))
@@ -785,7 +776,6 @@ class Track_Fix_Config_Dialog(QDialog):
         self.skip_motion_sweep = self.skip_sweep_cbx.isChecked()
         self.avtomat = self.avtomat_cbx.isChecked()
         self.skip_contrastive = self.skip_contrastive_cbx.isChecked()
-        self.use_kalman = self.use_kalman_cbx.isChecked()
         self.use_cache = self.cache_cbx.isChecked()
         self.worker_num = self.worker_spin.value()
         self.lock_id = self.lock_id_cbx.isChecked()
@@ -810,23 +800,23 @@ class Track_Fix_Config_Dialog(QDialog):
 
 
 class Dual_Pixmap_Dialog(QDialog):
-    def __init__(self, pixmap_left: QPixmap, pixmap_right: QPixmap, max_height=None, parent=None):
+    def __init__(self, pixmap_up: QPixmap, pixmap_down: QPixmap, max_width=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Pixmap Comparison")
 
-        if max_height is not None:
-            pixmap_left = self._scale_pixmap(pixmap_left, max_height)
-            pixmap_right = self._scale_pixmap(pixmap_right, max_height)
+        if max_width is not None:
+            pixmap_up = self._scale_pixmap(pixmap_up, max_width)
+            pixmap_down = self._scale_pixmap(pixmap_down, max_width)
 
-        layout = QHBoxLayout()
+        layout = QVBoxLayout()
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(10)
         
         label_left = QLabel()
         label_right = QLabel()
         
-        label_left.setPixmap(pixmap_left)
-        label_right.setPixmap(pixmap_right)
+        label_left.setPixmap(pixmap_up)
+        label_right.setPixmap(pixmap_down)
         
         label_left.adjustSize()
         label_right.adjustSize()
@@ -837,13 +827,13 @@ class Dual_Pixmap_Dialog(QDialog):
         self.setLayout(layout)
         self.adjustSize()
 
-    def _scale_pixmap(self, pixmap: QPixmap, max_height: int) -> QPixmap:
-        if pixmap.height() <= max_height:
+    def _scale_pixmap(self, pixmap: QPixmap, max_width: int) -> QPixmap:
+        if pixmap.width() <= max_width:
             return pixmap
             
         return pixmap.scaled(
-            pixmap.width(), 
-            max_height, 
+            max_width, 
+            pixmap.height(), 
             Qt.KeepAspectRatio, 
             Qt.SmoothTransformation
         )

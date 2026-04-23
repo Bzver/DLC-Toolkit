@@ -350,7 +350,6 @@ def batch_track_fix(
         kp_smooth = tfd.kp_smooth
         skip_sweep = tfd.skip_motion_sweep
         skip_contrast = tfd.skip_contrastive
-        use_kalman = tfd.use_kalman
         use_cache = tfd.use_cache
         emp = tfd.emp
 
@@ -369,7 +368,6 @@ def batch_track_fix(
                 force_locked_id=force_locked_id,
                 avtomat=True,
                 skip_contrast=skip_contrast,
-                use_kalman=use_kalman,
                 use_cache=use_cache,
                 emp=emp,
             )
@@ -806,7 +804,7 @@ def _parse_auto_pred_filename(filename: str):
 if __name__ == "__main__":
     app = QtWidgets.QApplication([])
     set_headless_mode(True)
-    rootdir = r"D:\DGH\Data\Videos\20260416 Marathon\0418"
+    rootdir = r"D:\Data\Videos\20260416 Marathon\0418"
     dlc_config_path = "D:/Project/DLC-Models/NTD-Blob/config.yaml"
  
     CROPPING = True
