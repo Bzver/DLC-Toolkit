@@ -104,14 +104,6 @@ class Embedding_Visualizer:
         ax.legend()
 
         ax = axes[1]
-        scatter = ax.scatter(embeddings_2d[:, 0], embeddings_2d[:, 1], c=frame_indices, cmap="viridis", alpha=0.6, s=15)
-        ax.set_title("By Frame Index", fontsize=10)
-        ax.set_xlabel("t-SNE 1")
-        ax.set_ylabel("t-SNE 2")
-        ax.grid(alpha=0.3)
-        plt.colorbar(scatter, ax=ax, label="Frame")
-
-        ax = axes[2]
         if self.confidence_flat is not None:
             for cluster in [0, 1]:
                 mask = visual_labels == cluster
@@ -122,6 +114,14 @@ class Embedding_Visualizer:
             scatter = ax.scatter(embeddings_2d[:, 0], embeddings_2d[:, 1], c=visual_labels, cmap="Set2", alpha=0.6, s=15)
             plt.colorbar(scatter, ax=ax, label="Cluster")
         ax.set_title("By Visual Cluster (K-Means)", fontsize=10)
+
+        ax = axes[2]
+        scatter = ax.scatter(embeddings_2d[:, 0], embeddings_2d[:, 1], c=frame_indices, cmap="viridis", alpha=0.6, s=15)
+        ax.set_title("By Frame Index", fontsize=10)
+        ax.set_xlabel("t-SNE 1")
+        ax.set_ylabel("t-SNE 2")
+        ax.grid(alpha=0.3)
+        plt.colorbar(scatter, ax=ax, label="Frame")
 
         plt.tight_layout()
         pixmap = fig_to_pixmap(fig, dpi=dpi)

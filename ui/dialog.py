@@ -460,14 +460,12 @@ class Track_Fix_Config_Dialog(QDialog):
             "values": {
                 "skip_contrastive": False,
                 "skip_sweep": False,
-                "kp_smooth": True,
                 "save_model": True,
                 "pretrained_model_path": None,
                 "max_epochs": 200,
-                "warmup_epochs": 10,
                 "batch_size": 128,
                 "max_triplets": 2500,
-                "pleatau_patience": 50,
+                "pleatau_patience": 20,
                 "lr_exponent": 5,  # 1e-5
                 "margin_thresh": 0.8,
                 "min_imp": 0.05,
@@ -481,15 +479,13 @@ class Track_Fix_Config_Dialog(QDialog):
             "values": {
                 "skip_contrastive": False,
                 "skip_sweep": False,
-                "kp_smooth": True,
-                "save_model": False ,
+                "save_model": True ,
                 "pretrained_model_path": "PROMPT_USER",
                 "max_epochs": 100,
-                "warmup_epochs": 0,
                 "batch_size": 128,
                 "max_triplets": 2500,
-                "pleatau_patience": 20,
-                "lr_exponent": 5,
+                "pleatau_patience": 10, 
+                "lr_exponent": 4,
                 "margin_thresh": 0.8,
                 "min_imp": 0.05,
                 "worker_num": 8,
@@ -554,10 +550,6 @@ class Track_Fix_Config_Dialog(QDialog):
         self.avtomat_cbx = QCheckBox("Auto mode")
         self.avtomat_cbx.setToolTip("Auto-accept ID swaps based on contrastive embedding agreement")
         opts_layout.addWidget(self.avtomat_cbx)
-
-        self.kp_smooth_cbx = QCheckBox("Keypoint Smoothing")
-        self.kp_smooth_cbx.setChecked(True)
-        opts_layout.addWidget(self.kp_smooth_cbx)
 
         self.lock_id_cbx = QCheckBox("Lock ID During Exit For Unilateral Exit Setups")
         self.lock_id_cbx.setToolTip("For cases where only one mouse can exit the chamber and thus the remaining mouse's ID should be consistent.")
@@ -694,7 +686,6 @@ class Track_Fix_Config_Dialog(QDialog):
 
         self.skip_contrastive_cbx.setChecked(vals.get("skip_contrastive", False))
         self.skip_sweep_cbx.setChecked(vals.get("skip_sweep", False))
-        self.kp_smooth_cbx.setChecked(vals.get("kp_smooth", True))
         self.save_model_cbx.setChecked(vals.get("save_model", False))
         self.avtomat_cbx.setChecked(vals.get("avtomat", False))
 
@@ -779,8 +770,6 @@ class Track_Fix_Config_Dialog(QDialog):
         self.use_cache = self.cache_cbx.isChecked()
         self.worker_num = self.worker_spin.value()
         self.lock_id = self.lock_id_cbx.isChecked()
-        self.kp_smooth = self.kp_smooth_cbx.isChecked()
-
         self.save_model = self.save_model_cbx.isChecked()
         
         self.emp = Emb_Params(

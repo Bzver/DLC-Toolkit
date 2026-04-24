@@ -870,7 +870,6 @@ class Frame_Label:
         emp = config_dlg.emp
         worker_num = config_dlg.worker_num
         lock_id = config_dlg.lock_id
-        kp_smooth = config_dlg.kp_smooth
         skip_contrast = config_dlg.skip_contrastive
         use_cache = config_dlg.use_cache
 
@@ -887,7 +886,6 @@ class Frame_Label:
             dlc_data=self.dm.dlc_data,
             extractor=self.vm.extractor,
             anglemap=self.dm.angle_map_data,
-            kp_smooth=kp_smooth,
             skip_sweep=skip_sweep,
             blob_array=self.dm.blob_array if lock_id else None,
             avtomat=avtomat,

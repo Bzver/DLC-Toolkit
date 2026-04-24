@@ -12,6 +12,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
 from torch.utils.data import DataLoader
+from torch.amp import autocast, GradScaler
 
 from typing import List, Tuple, Dict
 
@@ -42,20 +43,22 @@ class Contrastive_Trainer:
     def __init__(self, device='cuda' if torch.cuda.is_available() else 'cpu'):
         self.device = device
         self.model = Identity_Encoder().to(device)
+        self.scaler = GradScaler(device=device) if device == 'cuda' else None
+        self.use_amp = device == 'cuda' and torch.cuda.is_available()
 
     def train(
         self, 
         datasets: List[Crop_Dataset],
         emp: Emb_Params,
-        skip_easy: bool = False,
+        pretrained: bool = False,
         ):
+
         n_segments = len(datasets) if isinstance(datasets, list) else 1
-        total_frames = sum(len(ds) for ds in datasets) if isinstance(datasets, list) else len(dataset)
+        total_frames = sum(len(ds) for ds in datasets) if isinstance(datasets, list) else len(dataset)     
 
         logger.info(f"[CONTRAIN] About to run training with following args:\n"
             f"  - lr:                   {emp.lr:.2e}\n"
             f"  - epochs:               {emp.epochs}\n"
-            f"  - warmup_epoch:         {emp.warmup}\n"
             f"  - batch_size:           {emp.batch_size}\n"
             f"  - max_triplet:          {emp.triplets}\n"
             f"  - pleatau_patience:     {emp.pleatau}\n"
@@ -65,15 +68,11 @@ class Contrastive_Trainer:
             f"  - total_samples:        {total_frames}\n"
             )
 
-        optimizer_warmup = torch.optim.Adam(self.model.parameters(), lr=emp.lr*10)
         optimizer = torch.optim.Adam(self.model.parameters(), lr=emp.lr)
-
-        if not skip_easy and emp.warmup != 0:
-            self._train_easy(datasets, optimizer_warmup, emp)
 
         self.total_ds = len(datasets)
         reserve_indices = []
-        if self.total_ds > 250:
+        if self.total_ds > 250 and not pretrained:
             reserve_indices = np.random.choice(self.total_ds, self.total_ds-250, replace=False).tolist()
 
         self.ds_status = np.ones(self.total_ds, dtype=np.uint8) # 0: unseen, 1: active, 2: good, 3: dropped
@@ -88,6 +87,16 @@ class Contrastive_Trainer:
         if self._check_early_stopping(emp, embeddings, mean_margin, p10_margin):
             self.model.eval()
             return self.model
+
+        if pretrained:
+            self.ds_status[margin_array >= emp.margin] = 2
+            self.ds_status[margin_array < emp.margin] = 3
+            len_good = np.sum(self.ds_status==2)
+            len_dropped = np.sum(self.ds_status==3)
+            logger.info(f"[PREINIT] Eval done, moving {len_good} segments to good set, {len_dropped} segments to drop set.")
+
+            embeddings = self._extract_embeddings_list(datasets)
+            sim_array, _ = self._similarity_eval(embeddings, datasets)
 
         self._train_hard(datasets, optimizer, emp, embeddings, sim_array)
         
@@ -182,29 +191,33 @@ class Contrastive_Trainer:
         segment_embeddings = {}
         self.model.eval()
 
+        n_active = min(250, len(datasets))
+
         len_dropped = np.sum(self.ds_status == 3)
         len_good = np.sum(self.ds_status == 2)
         len_active = np.sum(self.ds_status == 1)
         len_unseen = np.sum(self.ds_status == 0)
 
-        if len_active < 250 and len_unseen > 0:
+        if len_active < n_active and len_good > 0:
+            good_indices = np.where(self.ds_status == 2)[0]
+            good_needed = min(len_good, n_active//5)
+            indices_to_add = good_indices[np.random.choice(len_good, good_needed, replace=False)]
+            self.ds_status[indices_to_add] = 1
+
+        len_active = np.sum(self.ds_status == 1)
+
+        if len_active < n_active and len_unseen > 0:
             unseen_indices = np.where(self.ds_status == 0)[0]
-            unseen_needed = min(len_unseen, 250-len_active)
+            unseen_needed = min(len_unseen, n_active - len_active)
             indices_to_add = unseen_indices[np.random.choice(len_unseen, unseen_needed, replace=False)]
             self.ds_status[indices_to_add] = 1
-            len_active = np.sum(self.ds_status == 1)
 
-        if len_active < 250 and len_dropped > 0:
+        len_active = np.sum(self.ds_status == 1)
+
+        if len_active < n_active and len_dropped > 0:
             dropped_indices = np.where(self.ds_status == 3)[0]
-            dropped_needed = min(len_dropped, 250-len_active)
+            dropped_needed = min(len_dropped, n_active - len_active)
             indices_to_add = dropped_indices[np.random.choice(len_dropped, dropped_needed, replace=False)]
-            self.ds_status[indices_to_add] = 1
-            len_active = np.sum(self.ds_status == 1)
-
-        if len_active < 250 and len_good > 0:
-            good_indices = np.where(self.ds_status == 2)[0]
-            good_needed = min(len_good, min(len_good//10, 250-len_active))
-            indices_to_add = good_indices[np.random.choice(len_good, good_needed, replace=False)]
             self.ds_status[indices_to_add] = 1
 
         with torch.inference_mode():
@@ -232,119 +245,6 @@ class Contrastive_Trainer:
         self.model.train()
         return segment_embeddings
 
-    def _compute_segment_prototypes(
-        self,
-        datasets: List[Crop_Dataset],
-        segment_embeddings: Dict[int, np.ndarray],
-        min_samples_per_proto: int = 5,
-        min_separation_score: float = 0.2
-    ) -> Dict[int, Dict[int, np.ndarray]]:
-    
-        prototypes = {}
-        
-        for ds_idx, dataset in enumerate(datasets):
-            if ds_idx not in segment_embeddings:
-                continue
-                
-            embeddings = segment_embeddings[ds_idx]
-            motion_ids = np.array(dataset.motion_ids[:len(embeddings)])
-            
-            if len(embeddings) < min_samples_per_proto * 2:
-                continue
-
-            centroids = []
-            valid_segment = True
-            for mid in [0, 1]:
-                mask = motion_ids == mid
-                if np.sum(mask) >= min_samples_per_proto:
-                    centroids.append(np.mean(embeddings[mask], axis=0))
-                else:
-                    valid_segment = False
-                    break
-            
-            if not valid_segment:
-                continue
-                
-            proto_0, proto_1 = np.array(centroids[0]), np.array(centroids[1])
-
-            sim = cosine_similarity([proto_0], [proto_1])[0, 0]
-            separation_score = 1.0 - sim 
-    
-            if separation_score >= min_separation_score:
-                prototypes[ds_idx] = {0: proto_0, 1: proto_1}
-                logger.debug(f"[PROTO] Seg {ds_idx}: Separation={separation_score:.3f}")
-            else:
-                logger.debug(f"[PROTO] Seg {ds_idx}: Skipped (Low Separation={separation_score:.3f})")
-                
-        logger.info(f"[PROTO] Valid prototypes: {len(prototypes)}/{len(datasets)}")
-        return prototypes
-
-    def _train_easy(
-            self, 
-            datasets: List[Crop_Dataset],
-            optimizer: torch.optim.Adam, 
-            emp: Emb_Params
-    ):
-
-        easy_triplets = self._mine_easy_triplets(datasets, window=20, max_triplets=emp.triplets)
-        logger.info(f"[EASYTRAIN] Mined {len(easy_triplets)} easy triplets from {len(datasets)} segments")
-        
-        self.model.train()
-
-        best_loss = 1e6
-        pleatau_train = 0
-        for epoch in range(emp.warmup):
-            total_loss = 0
-            np.random.shuffle(easy_triplets)
-            num_batches = max(1, len(easy_triplets) // emp.batch_size)
-            for batch_idx in range(num_batches):
-                start = batch_idx * emp.batch_size
-                end = start + emp.batch_size
-                batch_triplets = easy_triplets[start:end]
-                
-                anchor_imgs = []
-                pos_imgs = []
-                neg_imgs = []
-                
-                for ds_idx, anchor_idx, pos_idx, neg_idx in batch_triplets:
-                    ds = datasets[ds_idx]
-                    anchor_img, _, _, _ = ds[anchor_idx]
-                    pos_img, _, _, _ = ds[pos_idx]
-                    neg_img, _, _, _ = ds[neg_idx]
-                    
-                    anchor_imgs.append(anchor_img)
-                    pos_imgs.append(pos_img)
-                    neg_imgs.append(neg_img)
-                
-                anchor_batch = torch.stack(anchor_imgs).to(self.device)
-                pos_batch = torch.stack(pos_imgs).to(self.device)
-                neg_batch = torch.stack(neg_imgs).to(self.device)
-                
-                anchor_emb = self.model(anchor_batch)
-                pos_emb = self.model(pos_batch)
-                neg_emb = self.model(neg_batch)
-                
-                loss = self._contrastive_loss(anchor_emb, pos_emb, neg_emb, w_var=0.1)
-
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                total_loss += loss.item()
-
-            curr_loss = total_loss/num_batches
-            logger.info(f"[EASYTRAIN] Epoch {epoch+1}/{emp.warmup}, Loss: {curr_loss:.4e}")
-
-            if curr_loss >= best_loss or curr_loss == 0:
-                pleatau_train += 1
-            else:
-                pleatau_train = 0
-
-            if pleatau_train >= emp.pleatau:
-                logger.info(f"[EASYTRAIN] Pleatau hit, switching to hard mining.")
-                break
-            
-            best_loss = min(curr_loss, best_loss)
-
     def _train_hard(
             self, 
             datasets: List[Crop_Dataset],
@@ -363,9 +263,9 @@ class Contrastive_Trainer:
             logger.warning("[HARDTRAIN] Skipping hard training phase, proceeding with current model state.")
             return
         
-        eval_interval = 1
-        for pleatau_tier in [100, 50, 20, 10, 5]:
-            if emp.pleatau > pleatau_tier:
+        eval_interval = 5
+        for pleatau_tier in [5, 10, 25, 50, 75, 100]:
+            if emp.pleatau < pleatau_tier:
                 eval_interval = pleatau_tier
                 break
 
@@ -375,11 +275,11 @@ class Contrastive_Trainer:
         best_loss = 1e6
         pleatau_train = 0
 
-        last_eval = emp.warmup - 1
-        last_len_good = 0
+        last_eval = - 1
         best_eval = 0.0
+        pleatau_eval = 2
 
-        for epoch in range(emp.warmup, emp.epochs):
+        for epoch in range(emp.epochs):
             total_loss = 0
             np.random.shuffle(hard_triplets)
 
@@ -415,15 +315,20 @@ class Contrastive_Trainer:
                 pos_batch = torch.stack(pos_imgs).to(self.device)
                 neg_batch = torch.stack(neg_imgs).to(self.device)
                 
-                anchor_emb = self.model(anchor_batch)
-                pos_emb = self.model(pos_batch)
-                neg_emb = self.model(neg_batch)
-                
-                loss = self._contrastive_loss(anchor_emb, pos_emb, neg_emb, w_compat=0.1)
-                
+                with autocast(self.device):
+                    anchor_emb = self.model(anchor_batch)
+                    pos_emb = self.model(pos_batch)
+                    neg_emb = self.model(neg_batch)
+                    loss = self._contrastive_loss(anchor_emb, pos_emb, neg_emb, w_compat=0.1)
+
                 optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+                if self.use_amp:
+                    self.scaler.scale(loss).backward()
+                    self.scaler.step(optimizer)
+                    self.scaler.update()
+                else:
+                    loss.backward()
+                    optimizer.step()
                 total_loss += loss.item()
 
             curr_loss = total_loss/num_batches if num_batches > 0 else 0
@@ -436,62 +341,69 @@ class Contrastive_Trainer:
                 pleatau_train = 0
 
             if pleatau_train >= emp.pleatau:
-                logger.info(f"[HARDTRAIN] Loss plateaued for {emp.pleatau} epochs. Evaluating final state...")
-                embeddings = self._extract_embeddings_list(datasets)
-                sim_array, margin_array = self._similarity_eval(embeddings, datasets)
-                mean_margin = np.nanmean(margin_array)
-                p10_margin = np.nanpercentile(margin_array, 10.0)
-
-                if self._check_early_stopping(emp, embeddings, mean_margin, p10_margin):
-                    logger.info("[HARDTRAIN] Thresholds met on convergence. Stopping early.")
-                else:
-                    logger.info("[HARDTRAIN] Model converged to best possible state. Stopping early.")
-                break 
+                logger.info(f"[HARDTRAIN] Loss plateaued for {emp.pleatau} epochs. Calling eval...")
+                eval_needed = True
+                best_loss = 1e6
+            else:       
+                eval_needed = (epoch - last_eval) % eval_interval == 0
             
             best_loss = min(curr_loss, best_loss) if curr_loss > 0 else best_loss
-            eval_needed = (epoch - last_eval) % eval_interval == 0
 
             if eval_needed or epoch == emp.epochs - 1:
                 last_eval = epoch
 
                 embeddings = self._extract_embeddings_list(datasets)
-                sim_array, margin_array = self._similarity_eval(embeddings, datasets)
+                _, margin_array = self._similarity_eval(embeddings, datasets)
 
-                good_segment_indices = np.where(margin_array > emp.margin)[0]
-                self.ds_status[good_segment_indices] = 2
+                self.ds_status[margin_array >= emp.margin] = 2
+                self.ds_status[margin_array < emp.margin] = 3
                 len_good = np.sum(self.ds_status==2)
+                len_dropped = np.sum(self.ds_status==3)
+                logger.info(f"[HARDTRAIN] Eval done, all good segments: {len_good}, all dropped segments: {len_dropped}.")
+
+                len_unseen = np.sum(self.ds_status==0)
+                coverage_pct = (1 - len_unseen / len(datasets)) * 100
 
                 mean_margin = np.nanmean(margin_array)
                 p10_margin = np.nanpercentile(margin_array, 10.0)
                 eval_score = mean_margin
 
-                reshuffle_needed = False
+                if eval_score < best_eval and np.all(self.ds_status != 0):
+                    logger.info(f"[HARDTRAIN] Eval score ({eval_score}) < best ({best_eval}) while all data has been itered. pleatau: {pleatau_eval}")
+                    pleatau_eval += 1
+                else:
+                    pleatau_eval = 0
+
                 if epoch == emp.epochs - 1:
                     logger.info("[HARDTRAIN] Max epoch reached. Stopping...")
                     break
-                if eval_score < best_eval:
-                    if np.all(self.ds_status != 0):
-                        logger.info("[HARDTRAIN] Model converged to best possible state. Stopping early.")
-                        break
-                    elif last_len_good >= len_good:
-                        logger.info(f"[HARDTRAIN] Reshuffling: Score dipped ({eval_score:.3f}<{best_eval:.3f}).")
-                        self.ds_status[self.ds_status==1] = 3
-                        reshuffle_needed = True
                 if len_good > len(datasets) * 0.9:
                     logger.info("[HARDTRAIN] Most segments are good. Stopping early.")
+                    break
+                else:
+                    logger.info(f"[HARDTRAIN] {coverage_pct:.1f}% of segments evaluated at least once "
+                        f"(Unseen remaining: {len_unseen}/{len(datasets)})")
+                if pleatau_eval > 2:
+                    logger.info(f"[HARDTRAIN] Eval score pleataued, calling global eval.")
+                    self.ds_status[:] = 1
+                    embeddings = self._extract_embeddings_list(datasets)
+                    _, margin_array = self._similarity_eval(embeddings, datasets)
+                    mean_margin = np.nanmean(margin_array)
+                    p10_margin = np.nanpercentile(margin_array, 10.0)
+                    if self._check_early_stopping(emp, embeddings, mean_margin, p10_margin):
+                        logger.info("[HARDTRAIN] Thresholds met on convergence. Stopping early.")
+                    else:
+                        logger.info("[HARDTRAIN] Model did the best it could. Stopping early.")
                     break
                 if self._check_early_stopping(emp, embeddings, mean_margin, p10_margin):
                     logger.info("[HARDTRAIN] Thresholds met on convergence. Stopping early.")
                     break
 
-                last_len_good = len_good
+                logger.info(f"[HARDTRAIN] Updating hard triplets at epoch {epoch+1}.")
 
-                if reshuffle_needed:
-                    last_len_good = 0
-                    embeddings = self._extract_embeddings_list(datasets)
-                    sim_array, margin_array = self._similarity_eval(embeddings, datasets)
+                embeddings = self._extract_embeddings_list(datasets)
+                sim_array, _ = self._similarity_eval(embeddings, datasets)
 
-                logger.info(f"[HARDTRAIN] Updating hard triplets at epoch {epoch+1}, skipping {len_good} segments...")
                 result = self._mine_hard_triplets(
                     datasets, embeddings, sim_array[:, 1, 0], sim_array[:, 2, 1], max_triplets=emp.triplets)
                 num_result = len(result)
@@ -503,38 +415,6 @@ class Contrastive_Trainer:
                 logger.info(f"[HARDTRAIN] Re-mined {num_result} hard triplets")
                 
                 best_eval = max(eval_score, best_eval)
-
-    def _mine_easy_triplets(
-            self, 
-            datasets: List[Crop_Dataset],
-            window: int = 5, 
-            max_triplets: int = 5000
-    ) -> List[Tuple[int, int, int, int]]:
-
-        triplets = []
-
-        for ds_idx, dataset in enumerate(datasets):
-            frames = sorted(dataset.frame_to_indices.keys())
-
-            for frame_idx in frames:
-                indices_in_frame = dataset.frame_to_indices[frame_idx]
-                if len(indices_in_frame) != 2:
-                    continue
-                
-                idx_a, idx_b = indices_in_frame
-
-                for delta in range(1, window + 1):
-                    next_frame = frame_idx + delta
-                    if next_frame in dataset.frame_to_indices:
-                        next_indices = dataset.frame_to_indices[next_frame]
-                        for next_idx in next_indices:
-                            if dataset.motion_ids[next_idx] == dataset.motion_ids[idx_a]:
-                                triplets.append((ds_idx, idx_a, next_idx, idx_b))
-                                if len(triplets) >= max_triplets:
-                                    return triplets
-                        break
-
-        return triplets
 
     def _mine_hard_triplets(
             self,
@@ -624,11 +504,12 @@ class Contrastive_Trainer:
         return triplets
 
     def _check_early_stopping(self, emp, embeddings, mean_margin, p10_margin):
-        len_unseen = np.sum(self.ds_status==0)
+        logger.info(f"[CONTRAIN] Separation score: {mean_margin}, margin: {emp.margin} (p10: {p10_margin})" )
         if mean_margin > emp.margin:
-            logger.info(f"[CONTRAIN] Separation score: {mean_margin} >= {emp.margin} (p10: {p10_margin})" )
-            if len_unseen > self.total_ds // 2:
-                logger.info(f"[CONTRAIN] Unseen datasets ({len_unseen}) too many (>{self.total_ds//2})")
+            len_unseen = np.sum(self.ds_status==0)
+            len_dropped = np.sum(self.ds_status==3)
+            if len_unseen + len_dropped > self.total_ds // 5:
+                logger.info(f"[CONTRAIN] Unseen/dropped datasets ({len_unseen + len_dropped}) too many (>{self.total_ds//5})")
                 return False
             if p10_margin >= emp.margin * 0.8:
                 logger.info(f"[CONTRAIN] Separation score satisfied, calling biomodal evaluation." )

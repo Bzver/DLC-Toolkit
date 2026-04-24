@@ -4,7 +4,6 @@ import pandas as pd
 import json
 
 from tqdm import tqdm
-from scipy.signal import savgol_filter
 from sklearn.cluster import KMeans
 from typing import Tuple, List, Dict
 
@@ -37,7 +36,6 @@ class Track_Fixer:
         emp: Emb_Params,
         worker_num: int = 8,
         skip_sweep: bool = False,
-        kp_smooth: bool = True,
         blob_array: np.ndarray|None = None,
         force_locked_id: int = -1,
         avtomat: bool = False,
@@ -54,7 +52,6 @@ class Track_Fixer:
         self.emp = emp
         self.worker_num = worker_num
         self.skip_sweep = skip_sweep
-        self.kp_smooth = kp_smooth
         self.blob_array = blob_array
         self.forced_lock = force_locked_id > 0
         self.avtomat = avtomat
@@ -104,7 +101,6 @@ class Track_Fixer:
             elif self.ambiguous_frames:
                 swap_orders = self._launch_dialog_swap(self.ambiguous_frames, start_idx, end_idx)
                 self._execute_swap_orders(swap_orders, self.total_frames-1)
-            self._run_kp_smoothing()
             return self.pred_data_array
 
         qc_mask = self._find_eligible_frames(start_idx, end_idx)
@@ -128,7 +124,6 @@ class Track_Fixer:
 
         self._crop_rotate_and_export(ca)
         self._run_contrain_magic(start_idx, end_idx)
-        self._run_kp_smoothing()
         return self.pred_data_array
 
     def _motion_sweep(self, start_idx, end_idx):
@@ -153,62 +148,6 @@ class Track_Fixer:
                 self._correct_frame_with_hungarian(f)
         finally:
             pbar.close()
-
-    def _run_kp_smoothing(self):
-        if not self.kp_smooth:
-            return
-        
-        n_frames, n_instances, n_values = self.pred_data_array.shape
-        n_keypoints = n_values // 3
-        window_length = min(11, n_frames // 4)
-        if window_length % 2 == 0:
-            window_length += 1
-        polyorder = min(3, window_length - 1)
-        
-        smoothed = np.full_like(self.pred_data_array, np.nan)
-        
-        for inst_idx in range(n_instances):
-            for kp_idx in range(n_keypoints):
-                x_idx, y_idx, c_idx = kp_idx * 3, kp_idx * 3 + 1, kp_idx * 3 + 2
-
-                x_traj = self.pred_data_array[:, inst_idx, x_idx]
-                y_traj = self.pred_data_array[:, inst_idx, y_idx]
-                conf_traj = self.pred_data_array[:, inst_idx, c_idx]
-
-                conf_mask = conf_traj >= 0.3
-                x_weighted = np.where(conf_mask, x_traj, np.nan)
-                y_weighted = np.where(conf_mask, y_traj, np.nan)
-
-                smoothed_x = self._savgol_smooth(x_weighted, window_length, polyorder)
-                smoothed_y = self._savgol_smooth(y_weighted, window_length, polyorder)
-
-                blend_factor = np.clip(conf_traj, 0, 1)[:, np.newaxis]
-                smoothed[:, inst_idx, x_idx] = blend_factor.squeeze() * x_traj + (1 - blend_factor.squeeze()) * smoothed_x
-                smoothed[:, inst_idx, y_idx] = blend_factor.squeeze() * y_traj + (1 - blend_factor.squeeze()) * smoothed_y
-                smoothed[:, inst_idx, c_idx] = conf_traj
-
-        self.pred_data_array = smoothed
-        self.centroids, _ = calculate_pose_centroids(self.pred_data_array)
-
-    def _savgol_smooth(self, trajectory: np.ndarray, window_length: int, polyorder: int) -> np.ndarray:
-        result = trajectory.copy()
-        valid_mask = ~np.isnan(trajectory)
-        
-        if np.sum(valid_mask) < window_length:
-            return result
-
-        filled = trajectory.copy()
-        if not valid_mask.all():
-            valid_idx = np.where(valid_mask)[0]
-            if len(valid_idx) > 1:
-                filled[~valid_mask] = np.interp(np.where(~valid_mask)[0], valid_idx, trajectory[valid_mask])
-        try:
-            filtered = savgol_filter(filled, window_length, polyorder, mode='nearest')
-        except ValueError:
-            return result
-        
-        result[valid_mask] = filtered[valid_mask]
-        return result
 
     def _find_eligible_frames(
             self,
@@ -286,9 +225,12 @@ class Track_Fixer:
         dataloader = Cutout_Dataloader(folder_path=self.temp_dir, seg_list=self.seg_list)
 
         trainer = Contrastive_Trainer()
+
+        pretrained = False
         if self.emp.pretrained_model_path and os.path.exists(self.emp.pretrained_model_path):
             logger.info(f"[TF] Loading pretrained model: {self.emp.pretrained_model_path}")
             trainer.load_checkpoint(self.emp.pretrained_model_path, strict=False)
+            pretrained = True
 
         train_seg_indices = dataloader.select_training_segments(ratio=1.0)
 
@@ -296,7 +238,7 @@ class Track_Fixer:
         train_datasets = dataloader.load_all_segments_for_training(train_seg_indices)
 
         if self.emp.epochs > 0:
-            trainer.train(datasets=train_datasets, emp=self.emp, skip_easy=self.emp.warmup==0)
+            trainer.train(datasets=train_datasets, emp=self.emp, pretrained=pretrained)
 
         if self.emp.save_model:
             model_path = os.path.join(self.extractor.get_video_dir(), f"{self.extractor.get_video_name(no_ext=True)}_contrastive_trained.pth")
@@ -408,7 +350,7 @@ class Track_Fixer:
                         swap_orders.append((end, "t"))
                 else:
                     swap_orders.append((start, "t"))
-                    swap_orders.append((end, "t"))
+                    swap_orders.append((end+1, "t"))
                 all_swap_orders.extend(swap_orders)
             else:
                 swap_orders = self._launch_dialog_swap(amb_in_range, start_idx, fin_idx)
@@ -417,8 +359,8 @@ class Track_Fixer:
                 return
             
             if all_swap_orders:
-                with open (os.path.join(self.temp_dir, "swap_orders.json"), "w") as file:
-                    json.dump(all_swap_orders, file, indent=4)
+                with open (os.path.join(self.temp_dir, "stable_spans.json"), "w") as file:
+                    json.dump(stable_spans, file, indent=4)
 
     def _correct_frame_with_hungarian(self, frame_idx: int):
         valid_inst = get_instances_on_current_frame(self.pred_data_array, frame_idx)
