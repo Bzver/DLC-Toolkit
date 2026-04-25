@@ -443,6 +443,9 @@ class Data_Manager:
                 logger.error(f"Failed to save workspace:\n{e}")
             else:
                 Loggerbox.error(self.main, "Error Saving Workspace", f"Failed to save workspace:\n{e}", exc=e)
+            return False
+        else:
+            return True
 
     def load_workspace(self, file_path:str):
         if os.path.splitext(file_path)[1] == ".pkl":

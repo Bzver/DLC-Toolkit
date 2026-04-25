@@ -300,10 +300,10 @@ class Frame_App(QMainWindow):
     def _save_workspace(self):
         if not self.vm.check_status_msg():
             return
-        self.status_bar.show_message(f"Workspace Saved to {self.dm.video_file}")
         if self.flabel.pred_data_array is not None:
             self.dm.dlc_data.pred_data_array = self.flabel.pred_data_array.copy()
-        self.dm.save_workspace()
+        if self.dm.save_workspace():
+            Loggerbox.info(self, "Success", f"Successfully saved the workspace to {self.dm.video_file}.")
 
     def _save_prediction(self, to_dlc:bool=False, cropping=False):
         if not self._save_blocker():
