@@ -460,13 +460,14 @@ class Track_Fix_Config_Dialog(QDialog):
             "values": {
                 "skip_contrastive": False,
                 "skip_sweep": False,
+                'id_lock': False,
                 "save_model": True,
                 "pretrained_model_path": None,
                 "max_epochs": 200,
                 "batch_size": 128,
                 "max_triplets": 2500,
                 "pleatau_patience": 20,
-                "lr_exponent": 5,  # 1e-5
+                "lr_exponent": 4,  # 1e-4
                 "margin_thresh": 0.8,
                 "min_imp": 0.05,
                 "worker_num": 8,
@@ -475,13 +476,34 @@ class Track_Fix_Config_Dialog(QDialog):
             }
         },
         "Inference": {
-            "description": "Use pretrained model from similar video setup. Fast inference only.",
+            "description": "Use pretrained model for inference only.",
             "values": {
                 "skip_contrastive": False,
                 "skip_sweep": False,
-                "save_model": True ,
+                'id_lock': False,
+                "save_model": False ,
                 "pretrained_model_path": "PROMPT_USER",
-                "max_epochs": 100,
+                "max_epochs": 0,
+                "batch_size": 128,
+                "max_triplets": 2500,
+                "pleatau_patience": 10, 
+                "lr_exponent": 4,
+                "margin_thresh": 0.8,
+                "min_imp": 0.05,
+                "worker_num": 8,
+                "use_cache": True,
+                "avtomat": False,
+            }
+        },
+        "ID Lock": {
+            "description": "Use blob array and id lock as swap detector instead.",
+            "values": {
+                "skip_contrastive": True,
+                "skip_sweep": False,
+                'id_lock': True,
+                "save_model": False ,
+                "pretrained_model_path": None,
+                "max_epochs": 0,
                 "batch_size": 128,
                 "max_triplets": 2500,
                 "pleatau_patience": 10, 
@@ -688,7 +710,7 @@ class Track_Fix_Config_Dialog(QDialog):
         self.skip_sweep_cbx.setChecked(vals.get("skip_sweep", False))
         self.save_model_cbx.setChecked(vals.get("save_model", False))
         self.avtomat_cbx.setChecked(vals.get("avtomat", False))
-
+        self.lock_id_cbx.setChecked(vals.get("id_lock", False))
         self.worker_spin.setValue(vals.get("worker_num", 8))
         self.max_epochs_spin.setValue(vals.get("max_epochs", 100))
         self.warmup_epochs_spin.setValue(vals.get("warmup_epochs", 10))

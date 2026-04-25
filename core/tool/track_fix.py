@@ -12,7 +12,7 @@ from core.io import Frame_Extractor, Temp_Manager, Frame_Exporter_Threaded
 from ui import Dual_Pixmap_Dialog
 from utils.track import swap_track
 from utils.pose import (
-    calculate_pose_centroids, calculate_pose_array_rotations, calculate_pose_dim,
+    calculate_pose_array_rotations, calculate_pose_dim, calculate_anatomical_centers,
     outlier_rotation, outlier_size, outlier_bodypart, outlier_duplicate, outlier_removal
     )
 from utils.helper import get_instance_count_per_frame, get_instances_on_current_frame, indices_to_spans, array_to_iterable_runs
@@ -25,7 +25,7 @@ class Track_Fixer:
     AMBIGUITY_THRESHOLD = 0.15
     MAX_DIST_THRESHOLD = 1.2
     VOTE_WINDOW_SIZE = 10
-    MAX_POS_AGE_BEFORE_INVALIDATING = 25
+    MAX_POS_AGE_BEFORE_INVALIDATING = 10
 
     def __init__(
         self,
@@ -43,6 +43,7 @@ class Track_Fixer:
         use_cache: bool = True,
         parent = None
     ):
+
         if pred_data_array.shape[1] != 2:
             raise NotImplementedError("Track_Fixer supports exactly 2 instances.")
         self.pred_data_array = pred_data_array.copy()
@@ -60,9 +61,10 @@ class Track_Fixer:
         self.total_frames = self.pred_data_array.shape[0]
 
         duplicate_mask = outlier_duplicate(self.pred_data_array)
-        self.pred_data_array = outlier_removal(self.pred_data_array, duplicate_mask)
+        single_point_mask = outlier_bodypart(self.pred_data_array)
+        self.pred_data_array = outlier_removal(self.pred_data_array, duplicate_mask|single_point_mask)
 
-        self.centroids, _ = calculate_pose_centroids(self.pred_data_array)
+        self.centroids = calculate_anatomical_centers(self.pred_data_array, self.anglemap)
         self.inst_count_per_frame = get_instance_count_per_frame(self.pred_data_array)
         self.mice_length = self._get_mice_length()
 
@@ -95,9 +97,12 @@ class Track_Fixer:
 
         self._motion_sweep(start_idx, end_idx)
 
+        if self.blob_array is not None and self.locker_stable_swap:
+            self._process_stable_swap_candidates(self.locker_stable_swap)
+
         if self.skip_contrast:
             if self.blob_array is not None and self.locker_stable_swap:
-                self._process_stable_swap_candidates(self.locker_stable_swap)
+                self._audit_stable_swap_candidates(self.locker_stable_swap)
             elif self.ambiguous_frames:
                 swap_orders = self._launch_dialog_swap(self.ambiguous_frames, start_idx, end_idx)
                 self._execute_swap_orders(swap_orders, self.total_frames-1)
@@ -257,7 +262,7 @@ class Track_Fixer:
             mids_flat = [mid for _ in frames for mid in [0, 1]]
             frames_flat = [f for f in frames for _ in range(2)]
             
-            ds = Crop_Dataset(crops, mids_flat, frames_flat, is_ir=False)
+            ds = Crop_Dataset(crops, mids_flat, frames_flat)
             
             embs = trainer.extract_embeddings(ds)
             
@@ -304,7 +309,9 @@ class Track_Fixer:
 
         tsne_pix = vis.plot_tsne_combined()
         tsne_pix.save(os.path.join(self.temp_dir, "tsne_combined.png"))
-        agreement_pix, stable_swap_candidates, diagnosis_timeline = vis.plot_agreement_timeline()
+        agreement_pix, stable_swap_candidates_raw, diagnosis_timeline = vis.plot_agreement_timeline()
+
+        stable_swap_candidates = [f for f in stable_swap_candidates_raw if self.id_lock and not self.co_single_array[f]]
         agreement_pix.save(os.path.join(self.temp_dir, "agreement_timeline.png"))
 
         df_diagnosis = pd.DataFrame(diagnosis_timeline, columns=[
@@ -324,43 +331,38 @@ class Track_Fixer:
 
         logger.info("[TF] Visualization complete.")
         
-        if self.id_lock and self.co_single_array is not None:
-            stable_swap = [f for f in stable_swap_candidates if not self.co_single_array[f]]
-            stable_swap_candidates = stable_swap
-        
-        self._process_stable_swap_candidates(stable_swap_candidates)
-        self.centroids, _ = calculate_pose_centroids(self.pred_data_array)
+        if self.avtomat:
+            self._process_stable_swap_candidates(stable_swap_candidates)
+        else:
+            self._audit_stable_swap_candidates(stable_swap_candidates)
+
+        self.centroids = calculate_anatomical_centers(self.pred_data_array, self.anglemap)
 
     def _process_stable_swap_candidates(self, stable_swap_candidates):
         stable_spans = indices_to_spans(stable_swap_candidates)
-        all_swap_orders = []
+
+        for start, end in stable_spans:
+            amb_in_range = [f for f in self.ambiguous_frames if f >= start and f <= end]
+
+            if amb_in_range and self.skip_contrast:
+                self.pred_data_array = swap_track(self.pred_data_array, 0, swap_range=list(range(amb_in_range[0], end+1)))
+
+        if stable_spans:
+            with open (os.path.join(self.temp_dir, "stable_spans.json"), "w") as file:
+                json.dump(stable_spans, file, indent=4)
+
+    def _audit_stable_swap_candidates(self, stable_swap_candidates):
+        stable_spans = indices_to_spans(stable_swap_candidates)
 
         for start, end in stable_spans:
             start_idx = max(0, start - 10)
             fin_idx = min(end + 11, self.total_frames-1)
             amb_in_range = [f for f in self.ambiguous_frames if f >= start and f <= end]
 
-            if self.avtomat:
-                swap_orders = []
-                if amb_in_range and self.skip_contrast:
-                    swap_orders.append((amb_in_range[0], "t"))
-                    if len(amb_in_range) >= 2:
-                        swap_orders.append((amb_in_range[-1], "t"))
-                    else:
-                        swap_orders.append((end, "t"))
-                else:
-                    swap_orders.append((start, "t"))
-                    swap_orders.append((end+1, "t"))
-                all_swap_orders.extend(swap_orders)
-            else:
-                swap_orders = self._launch_dialog_swap(amb_in_range, start_idx, fin_idx)
+            swap_orders = self._launch_dialog_swap(amb_in_range, start_idx, fin_idx)
 
             if not self._execute_swap_orders(swap_orders, fin_idx):
                 return
-            
-            if all_swap_orders:
-                with open (os.path.join(self.temp_dir, "stable_spans.json"), "w") as file:
-                    json.dump(stable_spans, file, indent=4)
 
     def _correct_frame_with_hungarian(self, frame_idx: int):
         valid_inst = get_instances_on_current_frame(self.pred_data_array, frame_idx)
@@ -391,47 +393,71 @@ class Track_Fixer:
         logger.debug("[TF] Refs:"
             f" Inst 0: ({ref_pos[0, 0]:.1f}, {ref_pos[0, 1]:.1f}), Inst 1: ({ref_pos[1, 0]:.1f}, {ref_pos[1, 1]:.1f})")
         
+        max_dist_cost = self.MAX_DIST_THRESHOLD * self.mice_length
         if n_obs == 1:
             inst_idx = valid_inst[0]
             if n_ref == 1:
                 ref_idx = valid_ref[0]
                 if self.id_lock and self.co_single_array[frame_idx]:
                     if inst_idx != self.locked_idx:
+                        logger.debug(f"[TF] ID Lock: {self.id_lock}, inst_idx {inst_idx} != {self.locked_idx}.")
                         self._swap_ids_in_frame(frame_idx)
+                    self.last_id_locker = frame_idx
                 else:
                     dist = np.linalg.norm(ref_pos[ref_idx]-curr_pose[inst_idx])
-                    if dist > self.MAX_DIST_THRESHOLD * self.mice_length:
+                    if dist > max_dist_cost:
+                        logger.debug(f"[TF] Assgin cost too high ({dist:.2f} > {max_dist_cost:.2f}), add to ambiguous frame and skip ref update.")
                         self.ambiguous_frames.append(frame_idx)
                         return
                     elif inst_idx != ref_idx:
+                        logger.debug(f"[TF] inst_idx {inst_idx} != {ref_idx}, swapping.")
                         self._swap_ids_in_frame(frame_idx)
+        
+            elif self.id_lock and self.co_single_array[frame_idx] and self.co_single_array[frame_idx-1]:
+                if inst_idx != self.locked_idx:
+                    logger.debug(f"[TF] ID Lock: {self.id_lock}, inst_idx {inst_idx} != {self.locked_idx}.")
+                    self._swap_ids_in_frame(frame_idx)
+                self.last_id_locker = frame_idx
             else:
                 c0 = np.linalg.norm(ref_pos[inst_idx]-curr_pose[inst_idx])
                 c1 = np.linalg.norm(ref_pos[1-inst_idx]-curr_pose[inst_idx])
-                if min(c0, c1) > self.MAX_DIST_THRESHOLD * self.mice_length:
+                if min(c0, c1) > max_dist_cost:
+                    logger.debug(f"[TF] Assgin cost too high ({min(c0, c1):.2f} > {max_dist_cost:.2f}), add to ambiguous frame and skip ref update.")
+                    self.ambiguous_frames.append(frame_idx)
+                    return
+                if self.blob_array is not None and self.blob_array[frame_idx, 0] > 1 and c0+c1 < self.mice_length:
+                    logger.debug("[TF] Potential instance overlapping/missing, add to ambiguous frame and skip ref update.")
                     self.ambiguous_frames.append(frame_idx)
                     return
                 if abs(c0-c1) < self.AMBIGUITY_THRESHOLD * (c0+c1):
+                    logger.debug(f"[TF] Distance ambiguous ({abs(c0-c1):.2f} < {self.AMBIGUITY_THRESHOLD * (c0+c1):.2f}), add to ambiguous frame.")
                     self.ambiguous_frames.append(frame_idx)
                 if c0 > c1:
+                    logger.debug(f"[TF] No swap cost ({c0}) larger than swap cost ({c1}) swapping.")
                     self._swap_ids_in_frame(frame_idx)
     
                 if self.id_lock and self.co_single_array[frame_idx]:
                     new_inst_idx = get_instances_on_current_frame(self.pred_data_array, frame_idx)[0]
-                    if new_inst_idx != self.locked_idx:
-                        self._swap_ids_in_frame(frame_idx) # swap back and report
+                    if new_inst_idx != self.locked_idx and frame_idx > self.last_id_locker+1:
+                        logger.debug(f"[TF] Corrected inst {new_inst_idx} != locked inst {self.locked_idx} at checkpoint, logging swap segment.")
+                        self._swap_ids_in_frame(frame_idx)
                         self.ambiguous_frames.append(frame_idx)
+                        self.locker_stable_swap.extend(range(self.last_id_locker+1, frame_idx))
+                    self.last_id_locker = frame_idx
         else:
             if n_ref == 1:
                 ref_idx = valid_ref[0]
                 c0 = np.linalg.norm(ref_pos[ref_idx]-curr_pose[ref_idx])
                 c1 = np.linalg.norm(ref_pos[ref_idx]-curr_pose[1-ref_idx])
-                if min(c0, c1) > self.MAX_DIST_THRESHOLD * self.mice_length:
+                if min(c0, c1) > max_dist_cost:
+                    logger.debug(f"[TF] Assgin cost too high ({min(c0, c1):.2f} > {max_dist_cost:.2f}), add to ambiguous frame and skip ref update.")
                     self.ambiguous_frames.append(frame_idx)
                     return
                 if abs(c0-c1) < self.AMBIGUITY_THRESHOLD * (c0+c1):
+                    logger.debug(f"[TF] Distance ambiguous ({abs(c0-c1):.2f} < {self.AMBIGUITY_THRESHOLD * (c0+c1):.2f}), add to ambiguous frame.")
                     self.ambiguous_frames.append(frame_idx)
                 if c0 > c1:
+                    logger.debug(f"[TF] No swap cost ({c0}) larger than swap cost ({c1}) swapping.")
                     self._swap_ids_in_frame(frame_idx)
             else:
                 cost_matrix = np.zeros((2, 2))
@@ -440,15 +466,19 @@ class Track_Fixer:
                         cost_matrix[i, j] = np.linalg.norm(ref_pos[i]-curr_pose[j])
                 c0 = cost_matrix[0, 0] + cost_matrix[1, 1]
                 c1 = cost_matrix[1, 0] + cost_matrix[0, 1]
-                if min(c0, c1) > self.MAX_DIST_THRESHOLD * self.mice_length * 1.5:
+                if min(c0, c1) > max_dist_cost * 1.5:
+                    logger.debug(f"[TF] Assgin cost too high ({min(c0, c1):.2f} > {max_dist_cost * 1.5:.2f}), add to ambiguous frame and skip ref update.")
                     self.ambiguous_frames.append(frame_idx)
                     return
                 if abs(c0-c1) < self.AMBIGUITY_THRESHOLD * (c0+c1):
+                    logger.debug(f"[TF] Distance ambiguous ({abs(c0-c1):.2f} < {self.AMBIGUITY_THRESHOLD * (c0+c1):.2f}), add to ambiguous frame.")
                     self.ambiguous_frames.append(frame_idx)
                 if c0 > c1:
+                    logger.debug(f"[TF] No swap cost ({c0}) larger than swap cost ({c1}) swapping.")
                     self._swap_ids_in_frame(frame_idx)
 
         frame_inst_after_update = get_instances_on_current_frame(self.pred_data_array, frame_idx)
+        logger.debug(f"[TF] Frame instances after fixing: {frame_inst_after_update}, updating refs.")
         self.last_known_pos[frame_inst_after_update] = self.centroids[frame_idx, frame_inst_after_update]
         self.last_update[frame_inst_after_update] = frame_idx
 
