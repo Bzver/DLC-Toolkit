@@ -49,6 +49,48 @@ def clean_blob_array_for_inference(blob_array:np.ndarray, buffer_size:int=5) -> 
 
     return animal_count_array, merge_array
 
+def clean_outside_roi_pred(pred_data_array:np.ndarray, roi:Tuple[int, int, int, int]|np.ndarray) -> np.ndarray:
+    F, I, D = pred_data_array.shape
+    K = D // 3
+
+    poses = pred_data_array.reshape(F, I, K, 3)
+    xs = poses[..., 0]
+    ys = poses[..., 1]
+    
+    x1, y1, x2, y2 = roi
+
+    xs[xs < x1] = np.nan
+    xs[xs >= x2] = np.nan
+    ys[ys < y1] = np.nan
+    ys[ys >= y2] = np.nan
+
+    return clean_inconsistent_nans(poses.reshape(F, I, D))
+
+def clean_pred_in_mask(pred_data_array:np.ndarray, background_mask:np.ndarray) -> np.ndarray:
+    F, I, D = pred_data_array.shape
+    K = D // 3
+
+    poses = pred_data_array.reshape(F, I, K, 3)
+    
+    poses_no_nan = np.nan_to_num(poses, nan=-1.0)
+    xs = poses_no_nan[..., 0].astype(int)
+    ys = poses_no_nan[..., 1].astype(int)
+    
+    mask_array = background_mask[..., 0]
+    mask_bool = mask_array != 0
+    
+    H, W = mask_bool.shape
+
+    xs[xs < 0] = 0
+    xs[xs >= W] = W - 1
+    ys[ys < 0] = 0
+    ys[ys >= H] = H - 1
+
+    in_mask_region = mask_bool[ys, xs]
+    poses[in_mask_region, :] = np.nan
+
+    return poses.reshape(F, I, D)
+
 def indices_to_spans(indices: Union[np.ndarray, List[int]]) -> List[Tuple[int, int]]:
     """
     Convert a list/array of frame indices into contiguous spans (start, end).

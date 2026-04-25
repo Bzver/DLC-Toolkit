@@ -17,8 +17,8 @@ from utils.pose import (
     )
 from utils.track import interpolate_track_all, delete_track, swap_track, interpolate_track
 from utils.helper import (
-    frame_to_pixmap, get_instances_on_current_frame, validate_crop_coord,
-    get_instance_count_per_frame, clean_inconsistent_nans, frame_to_grayscale
+    frame_to_pixmap, get_instances_on_current_frame, validate_crop_coord, clean_outside_roi_pred,
+    clean_pred_in_mask, get_instance_count_per_frame, clean_inconsistent_nans, frame_to_grayscale
     )
 from utils.dataclass import Plot_Config, Plotter_Callbacks
 from utils.logger import Loggerbox, logger
@@ -369,29 +369,7 @@ class Frame_Label:
             Loggerbox.warning(self.main, "No Mask Detected", "No mask has been painted.")
 
         self._save_state_for_undo()
-        F, I, D = self.pred_data_array.shape
-        K = D // 3
-
-        poses = self.pred_data_array.reshape(F, I, K, 3)
-        
-        poses_no_nan = np.nan_to_num(poses, nan=-1.0)
-        xs = poses_no_nan[..., 0].astype(int)
-        ys = poses_no_nan[..., 1].astype(int)
-        
-        mask_array = self.dm.background_mask[..., 0]
-        mask_bool = mask_array != 0
-        
-        H, W = mask_bool.shape
-
-        xs[xs < 0] = 0
-        xs[xs >= W] = W - 1
-        ys[ys < 0] = 0
-        ys[ys >= H] = H - 1
-
-        in_mask_region = mask_bool[ys, xs]
-        poses[in_mask_region, :] = np.nan
-
-        self.pred_data_array = poses.reshape(F, I, D)
+        self.pred_data_array = clean_pred_in_mask(self.pred_data_array, self.dm.background_mask)
         self.display_current_frame()
 
     def _delete_outside_pred(self):
@@ -400,21 +378,7 @@ class Frame_Label:
             Loggerbox.warning(self.main, "No ROI Detected", "No ROI has been designated.")
 
         self._save_state_for_undo()
-        F, I, D = self.pred_data_array.shape
-        K = D // 3
-
-        poses = self.pred_data_array.reshape(F, I, K, 3)
-        xs = poses[..., 0]
-        ys = poses[..., 1]
-        
-        x1, y1, x2, y2 = roi
-
-        xs[xs < x1] = np.nan
-        xs[xs >= x2] = np.nan
-        ys[ys < y1] = np.nan
-        ys[ys >= y2] = np.nan
-
-        self.pred_data_array = clean_inconsistent_nans(poses.reshape(F, I, D))
+        self.pred_data_array = clean_outside_roi_pred(self.pred_data_array, roi)
         self.display_current_frame()
 
     def _delete_inst(self):
@@ -521,7 +485,6 @@ class Frame_Label:
 
         self.status_bar.show_message(f"Swapped instances between frames {start} to {end}.")
         self.display_current_frame()
-
 
     def _swap_track_continous(self):
         if self.pred_data_array is None:

@@ -3,6 +3,8 @@ from .data_cleaning import (
     clean_blob_array_for_inference,
     clean_inconsistent_nans,
     array_to_iterable_runs,
+    clean_outside_roi_pred,
+    clean_pred_in_mask,
     indices_to_spans,
     )
 from .frame_conversion import (
@@ -28,12 +30,14 @@ __all__ = (
     bye_bye_runtime_warning,
     infer_head_tail_indices,
     clean_inconsistent_nans,
+    clean_outside_roi_pred,
     array_to_iterable_runs,
     get_prev_frame_in_list,
     get_next_frame_in_list,
     get_smart_bg_masking,
     validate_crop_coord,
     crop_coord_to_array,
+    clean_pred_in_mask,
     frame_to_grayscale,
     indices_to_spans,
     build_angle_map,
