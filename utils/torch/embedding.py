@@ -351,6 +351,7 @@ class Contrastive_Trainer:
 
             if eval_needed or epoch == emp.epochs - 1:
                 last_eval = epoch
+                pleatau_train = 0
 
                 embeddings = self._extract_embeddings_list(datasets)
                 _, margin_array = self._similarity_eval(embeddings, datasets)
@@ -383,7 +384,7 @@ class Contrastive_Trainer:
                 else:
                     logger.info(f"[HARDTRAIN] {coverage_pct:.1f}% of segments evaluated at least once "
                         f"(Unseen remaining: {len_unseen}/{len(datasets)})")
-                if pleatau_eval > 2:
+                if pleatau_eval > 1:
                     logger.info(f"[HARDTRAIN] Eval score pleataued, calling global eval.")
                     self.ds_status[:] = 1
                     embeddings = self._extract_embeddings_list(datasets)

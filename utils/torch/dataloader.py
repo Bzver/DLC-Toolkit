@@ -10,23 +10,16 @@ from utils.logger import logger
 
 
 class Crop_Dataset(Dataset):
-    def __init__(self, crops, motion_ids, frame_indices, is_ir=False):
+    def __init__(self, crops, motion_ids, frame_indices):
         self.crops = crops
         self.motion_ids = motion_ids
         self.frame_indices = frame_indices
-
-        if is_ir:
-            tr_nm_mean = [0.485, 0.485, 0.485]
-            tr_nm_std = [0.229, 0.229, 0.229]
-        else:
-            tr_nm_mean = [0.485, 0.456, 0.406]
-            tr_nm_std=[0.229, 0.224, 0.225]
 
         self.transform = transforms.Compose([
             transforms.ToPILImage(),
             transforms.Resize((224, 224)),
             transforms.ToTensor(),
-            transforms.Normalize(mean=tr_nm_mean, std=tr_nm_std),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
 
         self.frame_to_indices = {}

@@ -211,6 +211,9 @@ class Embedding_Visualizer:
         for start, end, val in array_to_iterable_runs(plot_n_export):
             if val not in colors:
                 continue
+            if val == 1 and end + 1 - start < 5:
+                plot_n_export[start, end+1] = 0
+                val = 0
             label = labels[val] if val not in handled_labels else ""
             ax.fill_between(list(range(start, end+1)), 0, 1, color=colors[val], alpha=0.3, label=label)
             handled_labels.add(val)
