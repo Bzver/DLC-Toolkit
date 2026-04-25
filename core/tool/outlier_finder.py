@@ -421,8 +421,8 @@ class Outlier_Container(QtWidgets.QWidget):
 
 
 class Outlier_Container_KP(Outlier_Container):
-    def __init__(self, pred_data_array, angle_map_data = None, parent=None):
-        super().__init__(pred_data_array, angle_map_data, parent)
+    def __init__(self, pred_data_array, skele_list, kp_to_idx, angle_map_data = None, parent=None):
+        super().__init__(pred_data_array, skele_list, kp_to_idx, angle_map_data, parent)
 
         self.outlier_duplicate_gbox.setVisible(False)
         self.outlier_bodypart_gbox.setVisible(False)
