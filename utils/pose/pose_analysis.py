@@ -55,8 +55,7 @@ def calculate_anatomical_centers(
     angle_map_data: Dict[str, int]
 ) -> np.ndarray:
     """
-    Compute pose centers using anatomical center keypoint when available,
-    falling back to geometric centroid otherwise.
+    Compute pose centers using anatomical center keypoint when available, uses interpolated pose otherwise.
     
     Args:
         pred_data_array : (F, I, 3*K)
@@ -65,15 +64,18 @@ def calculate_anatomical_centers(
     Returns:
         centers : (F, I, 2) array of [x, y] centers
     """
-    center_idx = angle_map_data["center_idx"]
+    canon_pose, _ = calculate_canonical_pose(pred_data_array, angle_map_data['head_idx'], angle_map_data['tail_idx'])
 
-    centroids, _ = calculate_pose_centroids(pred_data_array)
+    F, I, _ = pred_data_array.shape
+    array_for_interp = pred_data_array.copy()
+    array_for_interp = generate_missing_kp_batch(array_for_interp, canon_pose, min_visible_kp=3)
     
-    center_x = pred_data_array[:, :, center_idx * 3]
-    center_y = pred_data_array[:, :, center_idx * 3 + 1]
+    center_idx = angle_map_data["center_idx"]
+    center_x = array_for_interp[:, :, center_idx * 3]
+    center_y = array_for_interp[:, :, center_idx * 3 + 1]
     valid = ~np.isnan(center_x) & ~np.isnan(center_y)
 
-    centers = centroids.copy()
+    centers = np.full((F, I, 2), np.nan)
     centers[valid, 0] = center_x[valid]
     centers[valid, 1] = center_y[valid]
 
@@ -408,3 +410,75 @@ def calculate_zoom_snap(
     new_zoom_level = max(0.1, min(new_zoom_level, 3.0))
 
     return new_zoom_level, center_x, center_y
+
+#############################################################################################################
+
+def generate_missing_kp_batch(
+    pred_data_array: np.ndarray,
+    canon_pose: np.ndarray,
+    min_visible_kp: int = 4
+) -> np.ndarray:
+    data = pred_data_array.copy()
+
+    N_frames, N_inst, flat_dim = data.shape
+    K = flat_dim // 3
+
+    data_reshaped = data.reshape(-1, K, 3)
+    total_instances = data_reshaped.shape[0]
+
+    non_nan_mask = np.all(~np.isnan(data_reshaped[..., :2]), axis=2)
+
+    mask_to_indices = {}
+    for idx in range(total_instances):
+        mask_key = tuple(non_nan_mask[idx].tolist())
+        if mask_key not in mask_to_indices:
+            mask_to_indices[mask_key] = []
+        mask_to_indices[mask_key].append(idx)
+
+    for mask_key, indices in mask_to_indices.items():
+        if len(indices) == 0:
+            continue
+
+        mask = np.array(mask_key)
+        if np.sum(mask) < min_visible_kp:
+            continue
+
+        group_data = data_reshaped[indices]
+        observed_kp = group_data[:, mask, :2]
+        canon_obs = canon_pose[mask][None, :, :]
+
+        try:
+            R, t = _fit_rigid_transform_batch(canon_obs, observed_kp)
+        except np.linalg.LinAlgError:
+            continue
+
+        canon_full = canon_pose[None, :, :]
+        transformed = np.einsum('bij,bkj->bki', R, canon_full) + t
+
+        missing_mask = ~mask
+        group_data[:, missing_mask, :2] = transformed[:, missing_mask, :]
+        group_data[:, missing_mask, 2] = 1.0
+
+        data_reshaped[indices] = group_data
+
+    pred_data_array[:] = data_reshaped.reshape(N_frames, N_inst, -1)
+    return pred_data_array
+
+def _fit_rigid_transform_batch(canon_observed: np.ndarray, observed_kp: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    canon_mean = np.nanmean(canon_observed, axis=1, keepdims=True)
+    obs_mean = np.nanmean(observed_kp, axis=1, keepdims=True)
+
+    canon_centered = canon_observed - canon_mean
+    obs_centered = observed_kp - obs_mean
+
+    H = np.einsum('bmi,bmj->bij', canon_centered, obs_centered)
+
+    U, _, Vt = np.linalg.svd(H)
+    R = np.einsum('bij,bjk->bik', Vt, U)
+
+    det_R = np.linalg.det(R)
+    R_reflect = np.array([[1, 0], [0, -1]], dtype=R.dtype)
+    R = np.where(det_R[:, None, None] < 0, R @ R_reflect, R)
+
+    t = obs_mean - np.einsum('bij,bkj->bki', R, canon_mean)
+    return R, t

@@ -2,6 +2,7 @@ from .pose_analysis import (
     calculate_pose_array_rotations,
     calculate_anatomical_centers,
     calculate_pose_array_bbox,
+    generate_missing_kp_batch,
     calculate_pose_centroids,
     calculate_canonical_pose,
     calculate_pose_rotations,
@@ -28,7 +29,6 @@ from .outlier import (
 )
 from .instance_op import (
     generate_missing_kp_for_inst,
-    generate_missing_kp_batch,
     generate_missing_inst,
     rotate_selected_inst,
 )
