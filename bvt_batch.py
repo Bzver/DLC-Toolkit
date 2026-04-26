@@ -11,7 +11,7 @@ from core.runtime import Data_Manager
 from core.tool import DLC_Inference, Track_Fixer, Mark_Generator, Outlier_Finder
 from core.io import backup_existing_prediction, get_existing_projects, csv_op, prediction_to_csv, Frame_Extractor, Temp_Manager
 from ui import Track_Fix_Config_Dialog
-from utils.helper import get_instance_count_per_frame
+from utils.helper import get_instance_count_per_frame, clean_outside_roi_pred, clean_pred_in_mask, validate_crop_coord
 from utils.logger import logger, set_headless_mode
 
 
@@ -42,7 +42,7 @@ def batch_backup_project(root_dir: str):
     _process_batch(workspaces, process_workspace, "Workspace Backup")
 
 def batch_extract_track_fix_info(root_dir: str):
-    target_files = {"agreement_timeline.png", "diagnosis_timeline.csv", "tsne_combined.png"}
+    target_files = {"agreement_timeline.png", "diagnosis_timeline.csv", "tsne_combined.png", "stable_spans.json"}
     levels = ("101T_", "103T_", "201T_", "203T_", "301T_", "303T_", "401T_", "403T_")
     for root, _, files in os.walk(root_dir):
         if "bvt_temp" not in root:
@@ -211,12 +211,12 @@ def batch_export_csv(
     
     _process_batch(workspaces, process_workspace, "CSV export")
 
-def batch_data_clean(root_dir:str):
+def batch_data_clean(root_dir:str, kp_clean:bool=False, inst_clean:bool=False):
     workspaces = _find_files_by_extension(root_dir, WORKSPACE_EXTENSIONS)
     if not workspaces:
         logger.info("[BATCH] No workspace files found for track correction")
         return
-    
+
     _log_batch_progress("data cleaning", workspaces)
     def process_workspace(ws_path: str) -> bool:
         dm = Data_Manager(
@@ -227,7 +227,16 @@ def batch_data_clean(root_dir:str):
     
         if dm.angle_map_data is None:
             dm._init_canon_pose()
-        
+
+        pred_data_array = dm.dlc_data.pred_data_array
+        roi = validate_crop_coord(dm.roi)
+        if roi is not None:
+            pred_data_array = clean_outside_roi_pred(pred_data_array, roi)
+        if dm.background_mask is not None:
+            pred_data_array = clean_pred_in_mask(pred_data_array, dm.background_mask)
+
+        dm.dlc_data.pred_data_array = pred_data_array
+
         of = Outlier_Finder(
             pred_data_array=dm.dlc_data.pred_data_array,
             skele_list=dm.dlc_data.skeleton,
@@ -235,27 +244,32 @@ def batch_data_clean(root_dir:str):
             angle_map_data=dm.angle_map_data)
         
         of.hide()
-        of.mode_combo.setCurrentText("Keypoint")
-        of.keypoint_container.outlier_bone_gbox.setChecked(True)
-        of.keypoint_container.confidence_spinbox.setValue(0.3)
-        of._get_outlier_mask()
-        outlier_kp_mask = of.outliers
 
-        F, I, D = dm.dlc_data.pred_data_array.shape
-        K = D//3
-        pred_data_array = np.reshape(dm.dlc_data.pred_data_array, (F, I, K, 3))
-        pred_data_array[outlier_kp_mask] = np.nan
+        if kp_clean:
+            of.mode_combo.setCurrentText("Keypoint")
+            of.keypoint_container.outlier_bone_gbox.setChecked(True)
+            of.keypoint_container.outlier_confidence_gbox.setChecked(False)
+            of._get_outlier_mask()
+            outlier_kp_mask = of.outliers
 
-        of.mode_combo.setCurrentText("Instance")
-        of.instance_container.outlier_duplicate_gbox.setChecked(True)
-        of.instance_container.confidence_spinbox.setValue(0.6)
-        of.instance_container.outlier_size_gbox.setChecked(True)
-        of.instance_container.min_size_spinbox.setValue(0.3)
-        of._get_outlier_mask()
-        outlier_inst_mask = of.outliers
-        
-        pred_data_array = np.reshape(pred_data_array, (F, I, K*3))
-        pred_data_array[outlier_inst_mask] = np.nan
+            F, I, D = dm.dlc_data.pred_data_array.shape
+            K = D//3
+            pred_data_array = np.reshape(dm.dlc_data.pred_data_array, (F, I, K, 3))
+            pred_data_array[outlier_kp_mask] = np.nan
+            pred_data_array = np.reshape(pred_data_array, (F, I, K*3))
+
+        if inst_clean:
+            of.mode_combo.setCurrentText("Instance")
+            of.instance_container.outlier_duplicate_gbox.setChecked(True)
+            of.instance_container.confidence_spinbox.setValue(0.6)
+            of.instance_container.outlier_size_gbox.setChecked(True)
+            of.instance_container.min_size_spinbox.setValue(0.3)
+            of.instance_container.outlier_bodypart_gbox.setChecked(True)
+            of.instance_container.bodypart_spinbox.setValue(3)
+            of._get_outlier_mask()
+            outlier_inst_mask = of.outliers
+            
+            pred_data_array[outlier_inst_mask] = np.nan
 
         dm.dlc_data.pred_data_array = pred_data_array
         dm.save_workspace()
@@ -320,10 +334,12 @@ def batch_temp_dir_clean(root_dir:str):
 
 def batch_track_fix(
         root_dir:str,
-        weight_path:Optional[str]=None,
+        auto_load_weight:bool=False,
+        inference_only:bool=False,
         lock_id:bool=False,
         force_locked_id:int=-1,
         ):
+
     workspaces = _find_files_by_extension(root_dir, WORKSPACE_EXTENSIONS)
     if not workspaces:
         logger.info("[BATCH] No workspace files found for track correction")
@@ -337,17 +353,20 @@ def batch_track_fix(
             refresh_callback=_pseudo_callback
         )
         dm.load_workspace(str(ws_path))
-        
         tfd = Track_Fix_Config_Dialog(dm.total_frames)
         tfd.hide()
 
-        if weight_path is not None:
-            tfd.pretrained_model_path = weight_path
-            tfd._on_preset_changed("Inference")
+        if auto_load_weight:
+            weight_path = ws_path.replace("_workspace.joblib", "_contrastive_trained.pth")
+            if os.path.isfile(weight_path):
+                logger.info(f"Auto loaded weight path at {weight_path}")
+                tfd.pretrained_model_path = weight_path
+        
+        if inference_only and tfd.pretrained_model_path is not None:
+            tfd.preset_combo.setCurrentText("Inference")
 
         tfd._on_accept()
 
-        kp_smooth = tfd.kp_smooth
         skip_sweep = tfd.skip_motion_sweep
         skip_contrast = tfd.skip_contrastive
         use_cache = tfd.use_cache
@@ -362,7 +381,6 @@ def batch_track_fix(
                 dlc_data=dm.dlc_data,
                 extractor=extractor,
                 anglemap=dm.angle_map_data,
-                kp_smooth=kp_smooth,
                 skip_sweep=skip_sweep,
                 blob_array=dm.blob_array if lock_id else None,
                 force_locked_id=force_locked_id,
@@ -374,6 +392,8 @@ def batch_track_fix(
             dm.dlc_data.pred_data_array = tf.track_correction()
         
         dm.save_workspace()
+        save_path = f"{ws_path.split('_workspace')[0]}_auto_pred_corrected.h5"
+        dm.save_pred(dm.dlc_data.pred_data_array, save_path)
         return True
     
     _process_batch(workspaces, process_workspace, "track correction")
@@ -800,11 +820,16 @@ def _parse_auto_pred_filename(filename: str):
     dlc_params = rest[:inference_pos]
     return video_name, dlc_params
 
+############################################################################################
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication([])
     set_headless_mode(True)
     rootdir = r"D:\Data\Videos\20260416 Marathon\0418"
+
+    if not os.path.isdir(rootdir):
+        print(f"{rootdir} does not exist!")
+
     dlc_config_path = "D:/Project/DLC-Models/NTD-Blob/config.yaml"
  
     CROPPING = True
@@ -813,7 +838,12 @@ if __name__ == "__main__":
     BATCH = 16
     DT_BATCH = 16
 
-    dial_tones = [1]
+    dial_tones = [3]
+    """
+    1 - inference; 2 - rerun; 3 - track fix; 4 - track clean; 5 - temp dir clean;
+    6 - csv 2 h5; 7 - pkl migration; 8 - backup workspace; 9- create workspace;
+    10 - extract track fix info; 11 - convert grayscale; 12 - export csv;
+    """
 
     for tone in dial_tones:
         match tone: 
@@ -846,14 +876,16 @@ if __name__ == "__main__":
                     detector_batch_size=DT_BATCH
                 )
             case 3:
+                batch_data_clean(rootdir, kp_clean=True)
                 batch_track_fix(
                     rootdir,
-                    weight_path=None,
+                    auto_load_weight=False,
+                    inference_only=False,
                     lock_id=True,
                     force_locked_id=0,
                 )
                 batch_extract_track_fix_info(rootdir)
-            case 4: batch_data_clean(rootdir)
+            case 4: batch_data_clean(rootdir, kp_clean=True, inst_clean=True)
             case 5: batch_temp_dir_clean(rootdir)
             case 6: batch_convert_csv_to_h5(dlc_config_path)
             case 7: batch_migration_pkl_to_joblib(rootdir)
@@ -861,5 +893,4 @@ if __name__ == "__main__":
             case 9: batch_create_workspaces(rootdir, dlc_config_path)
             case 10: batch_extract_track_fix_info(rootdir)
             case 11: batch_convert_to_grayscale(dlc_config_path)
-            case 12: batch_duplicate_check(rootdir)
-            case 13: batch_export_csv(rootdir, with_conf=True, no_scorer_header=True, animal_num_filtering=True, min_animal_num=2)
+            case 12: batch_export_csv(rootdir, with_conf=True, no_scorer_header=True, animal_num_filtering=True, min_animal_num=2)
