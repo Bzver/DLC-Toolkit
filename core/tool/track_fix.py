@@ -12,7 +12,7 @@ from core.io import Frame_Extractor, Temp_Manager, Frame_Exporter_Threaded
 from ui import Dual_Pixmap_Dialog
 from utils.track import swap_track
 from utils.pose import (
-    calculate_pose_array_rotations, calculate_pose_dim, calculate_anatomical_centers,
+    calculate_pose_array_rotations, calculate_pose_dim, calculate_anatomical_centers, calculate_pose_centroids,
     outlier_rotation, outlier_size, outlier_bodypart, outlier_duplicate, outlier_removal
     )
 from utils.helper import get_instance_count_per_frame, get_instances_on_current_frame, indices_to_spans, array_to_iterable_runs
@@ -101,11 +101,12 @@ class Track_Fixer:
             self._process_stable_swap_candidates(self.locker_stable_swap)
 
         if self.skip_contrast:
-            if self.blob_array is not None and self.locker_stable_swap:
-                self._audit_stable_swap_candidates(self.locker_stable_swap)
-            elif self.ambiguous_frames:
-                swap_orders = self._launch_dialog_swap(self.ambiguous_frames, start_idx, end_idx)
-                self._execute_swap_orders(swap_orders, self.total_frames-1)
+            if not self.avtomat:
+                if self.blob_array is not None and self.locker_stable_swap:
+                    self._audit_stable_swap_candidates(self.locker_stable_swap)
+                elif self.ambiguous_frames:
+                    swap_orders = self._launch_dialog_swap(self.ambiguous_frames, start_idx, end_idx)
+                    self._execute_swap_orders(swap_orders, self.total_frames-1)
             return self.pred_data_array
 
         qc_mask = self._find_eligible_frames(start_idx, end_idx)
@@ -159,7 +160,7 @@ class Track_Fixer:
             start_idx: int,
             end_idx: int,
             inst_dist_threshold: float = 0.5,
-            size_threshold: Tuple[float, float] = (0.5, 2.5),
+            size_threshold: Tuple[float, float] = (0.7, 2.0),
             bp_threshold: int = 6,
             twist_angle_threshold: float = 90.0,
             ) -> np.ndarray:
@@ -171,7 +172,9 @@ class Track_Fixer:
             raise ValueError("No frame with two insts, cannot perform contrastive learning.")
 
         two_inst_array = self.pred_data_array[two_inst_mask]
-        centroids_two_inst = self.centroids[two_inst_mask]
+
+        geo_centroids, _ = calculate_pose_centroids(self.pred_data_array)
+        centroids_two_inst = geo_centroids[two_inst_mask]
         dists = np.linalg.norm(centroids_two_inst[:, 1, :] - centroids_two_inst[:, 0, :], axis=-1)
         dist_mask = dists > inst_dist_threshold * self.mice_length
         strict_dist_mask = dists > 0.3 * self.mice_length
@@ -198,10 +201,24 @@ class Track_Fixer:
             seg_start = max(seg_start, start_idx)
             seg_end = min(seg_end, end_idx-1)
 
-            seg_frames = [i for i in range(seg_start, seg_end + 1) if frame_valid_mask[i]]
-            if len(seg_frames) <= 3:
-                continue
-            self.seg_list.append(seg_frames)
+            for chunk_start in range(seg_start, seg_end + 1, 1000):
+                chunk_end = min(chunk_start + 1000 - 1, seg_end)
+
+                chunk_frames = [i for i in range(chunk_start, chunk_end + 1) if frame_valid_mask[i]]
+                chunk_length = len(chunk_frames)
+
+                if chunk_length <= 3:
+                    continue
+
+                subsample_prec = self.emp.subsample
+                if subsample_prec < 1.0 and chunk_length > 11:
+                    target_n = max(int(chunk_length * subsample_prec), 10)
+                    indices = np.linspace(0, chunk_length - 1, target_n, dtype=int)
+                    subsampled_chunk = np.array(chunk_frames)[indices].tolist()
+                    self.seg_list.append(subsampled_chunk)
+                    continue
+
+                self.seg_list.append(chunk_frames)
 
         return frame_valid_mask
 

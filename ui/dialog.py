@@ -463,12 +463,12 @@ class Track_Fix_Config_Dialog(QDialog):
                 'id_lock': False,
                 "save_model": True,
                 "pretrained_model_path": None,
-                "max_epochs": 200,
+                "max_epochs": 100,
                 "batch_size": 128,
-                "max_triplets": 2500,
+                "max_triplets": 5000,
                 "pleatau_patience": 20,
-                "lr_exponent": 4,  # 1e-4
-                "margin_thresh": 0.8,
+                "lr_exponent": 4,
+                "margin_thresh": 0.6,
                 "min_imp": 0.05,
                 "worker_num": 8,
                 "use_cache": True,
@@ -485,10 +485,10 @@ class Track_Fix_Config_Dialog(QDialog):
                 "pretrained_model_path": "PROMPT_USER",
                 "max_epochs": 0,
                 "batch_size": 128,
-                "max_triplets": 2500,
+                "max_triplets": 5000,
                 "pleatau_patience": 10, 
                 "lr_exponent": 4,
-                "margin_thresh": 0.8,
+                "margin_thresh": 0.6,
                 "min_imp": 0.05,
                 "worker_num": 8,
                 "use_cache": True,
@@ -505,10 +505,10 @@ class Track_Fix_Config_Dialog(QDialog):
                 "pretrained_model_path": None,
                 "max_epochs": 0,
                 "batch_size": 128,
-                "max_triplets": 2500,
+                "max_triplets": 5000,
                 "pleatau_patience": 10, 
                 "lr_exponent": 4,
-                "margin_thresh": 0.8,
+                "margin_thresh": 0.6,
                 "min_imp": 0.05,
                 "worker_num": 8,
                 "use_cache": True,
@@ -537,6 +537,8 @@ class Track_Fix_Config_Dialog(QDialog):
         self.worker_num = 8
         self.emp = None
         self.fix_range = (0, self.total_frames-1)
+
+        self.subsample_prec = min(100, 1e7//self.total_frames)
 
         self.save_model = False
         self.pretrained_model_path = None
@@ -625,14 +627,13 @@ class Track_Fix_Config_Dialog(QDialog):
         param_grid.setHorizontalSpacing(15)
         param_grid.setVerticalSpacing(10)
 
-        self.max_epochs_spin = Spinbox_With_Label("Max Epochs:", (0, 200), 100)
-        self.warmup_epochs_spin = Spinbox_With_Label("Warmup Epochs:", (0, 200), 5)
+        self.max_epochs_spin = Spinbox_With_Label("Max Epochs:", (0, 100), 50)
+        self.subsample_perc_spin = Spinbox_With_Label("Subsample Percentage:", (0, 100), self.subsample_prec)
         self.max_epochs_spin.value_changed.connect(self._on_manual_change)
-        self.warmup_epochs_spin.value_changed.connect(self._on_manual_change)
-        self.warmup_epochs_spin.value_changed.connect(self._validate_warmup)
+        self.subsample_perc_spin.value_changed.connect(self._on_manual_change)
 
         param_grid.addWidget(self.max_epochs_spin, 0, 0)
-        param_grid.addWidget(self.warmup_epochs_spin, 0, 1)
+        param_grid.addWidget(self.subsample_perc_spin, 0, 1)
 
         self.batch_size_spin = Spinbox_With_Label("Batch Size:", (2, 4096), 128)
         self.max_triplet_spin = Spinbox_With_Label("Max Triplets per Mining:", (100, 100000), 5000)
@@ -713,7 +714,6 @@ class Track_Fix_Config_Dialog(QDialog):
         self.lock_id_cbx.setChecked(vals.get("id_lock", False))
         self.worker_spin.setValue(vals.get("worker_num", 8))
         self.max_epochs_spin.setValue(vals.get("max_epochs", 100))
-        self.warmup_epochs_spin.setValue(vals.get("warmup_epochs", 10))
         self.batch_size_spin.setValue(vals.get("batch_size", 128))
         self.max_triplet_spin.setValue(vals.get("max_triplets", 5000))
         self.max_pleatau_spin.setValue(vals.get("pleatau_patience", 3))
@@ -776,14 +776,6 @@ class Track_Fix_Config_Dialog(QDialog):
         else:
             self.avtomat_cbx.setDisabled(False)
 
-    def _validate_range(self):
-        if self.start_spin.value() > self.end_spin.value():
-            self.warmup_epochs_spin.setValue(0)
-
-    def _validate_warmup(self):
-        if self.warmup_epochs_spin.value() > self.max_epochs_spin.value():
-            self.warmup_epochs_spin.setValue(self.max_epochs_spin.value())
-
     def _on_accept(self):
         self.fix_range = (self.start_spin.value(), self.end_spin.value())
         self.skip_motion_sweep = self.skip_sweep_cbx.isChecked()
@@ -799,7 +791,7 @@ class Track_Fix_Config_Dialog(QDialog):
             triplets=self.max_triplet_spin.value(),
             pleatau=self.max_pleatau_spin.value(),
             epochs=self.max_epochs_spin.value(),
-            warmup=self.warmup_epochs_spin.value(),
+            subsample=self.subsample_perc_spin.value()/100,
             lr=10**-self.lr_spin.value(),
             min_imp=self.min_imp_spin.value(),
             margin=self.margin_thresh_spin.value(),

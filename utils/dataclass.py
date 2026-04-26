@@ -116,7 +116,7 @@ class Emb_Params:
     triplets: int
     pleatau: int
     epochs: int
-    warmup: int
+    subsample: float
     lr: float
     min_imp: float
     margin: float

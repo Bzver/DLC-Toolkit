@@ -65,8 +65,9 @@ def calculate_anatomical_centers(
         centers : (F, I, 2) array of [x, y] centers
     """
     canon_pose, _ = calculate_canonical_pose(pred_data_array, angle_map_data['head_idx'], angle_map_data['tail_idx'])
+    centroids, _ = calculate_pose_centroids(pred_data_array)
 
-    F, I, _ = pred_data_array.shape
+    centers = centroids
     array_for_interp = pred_data_array.copy()
     array_for_interp = generate_missing_kp_batch(array_for_interp, canon_pose, min_visible_kp=3)
     
@@ -75,7 +76,6 @@ def calculate_anatomical_centers(
     center_y = array_for_interp[:, :, center_idx * 3 + 1]
     valid = ~np.isnan(center_x) & ~np.isnan(center_y)
 
-    centers = np.full((F, I, 2), np.nan)
     centers[valid, 0] = center_x[valid]
     centers[valid, 1] = center_y[valid]
 

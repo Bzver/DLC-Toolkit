@@ -69,6 +69,7 @@ class Contrastive_Trainer:
             )
 
         optimizer = torch.optim.Adam(self.model.parameters(), lr=emp.lr)
+        self.lr_reduced = False
 
         self.total_ds = len(datasets)
         reserve_indices = []
@@ -79,16 +80,13 @@ class Contrastive_Trainer:
         self.ds_status[reserve_indices] = 0
 
         embeddings = self._extract_embeddings_list(datasets)
-        sim_array, margin_array = self._similarity_eval(embeddings, datasets)
-
-        mean_margin = np.nanmean(margin_array)
-        p10_margin = np.nanpercentile(margin_array, 10.0)
-
-        if self._check_early_stopping(emp, embeddings, mean_margin, p10_margin):
-            self.model.eval()
-            return self.model
+        sim_array, margin_array, weighted_mean = self._similarity_eval(embeddings, datasets)
 
         if pretrained:
+            if self._check_early_stopping(emp, embeddings, weighted_mean):
+                self.model.eval()
+                return self.model
+
             self.ds_status[margin_array >= emp.margin] = 2
             self.ds_status[margin_array < emp.margin] = 3
             len_good = np.sum(self.ds_status==2)
@@ -96,9 +94,9 @@ class Contrastive_Trainer:
             logger.info(f"[PREINIT] Eval done, moving {len_good} segments to good set, {len_dropped} segments to drop set.")
 
             embeddings = self._extract_embeddings_list(datasets)
-            sim_array, _ = self._similarity_eval(embeddings, datasets)
+            sim_array, _, _ = self._similarity_eval(embeddings, datasets)
 
-        self._train_hard(datasets, optimizer, emp, embeddings, sim_array)
+        self._train_hard(datasets, optimizer, emp, embeddings, sim_array, weighted_mean)
         
         self.model.eval()
         return self.model
@@ -251,11 +249,14 @@ class Contrastive_Trainer:
             optimizer: torch.optim.Adam, 
             emp: Emb_Params, 
             embeddings: Dict[int, np.ndarray],
-            sim_array: np.ndarray
+            sim_array: np.ndarray,
+            mean_margin: float
     ):
 
+        first_mine_mode = "random" if mean_margin < 0.1 else "semihard"
+
         hard_triplets = self._mine_hard_triplets(
-            datasets, embeddings, sim_array[:, 1, 0], sim_array[:, 2, 1], max_triplets=emp.triplets, mining_mode="semihard"
+            datasets, embeddings, sim_array[:, 1, 0], sim_array[:, 2, 1], max_triplets=emp.triplets, mining_mode=first_mine_mode
         )
 
         if len(hard_triplets) == 0:
@@ -319,11 +320,13 @@ class Contrastive_Trainer:
                     anchor_emb = self.model(anchor_batch)
                     pos_emb = self.model(pos_batch)
                     neg_emb = self.model(neg_batch)
-                    loss = self._contrastive_loss(anchor_emb, pos_emb, neg_emb, w_compat=0.1)
+                    loss = self._contrastive_loss(anchor_emb, pos_emb, neg_emb, margin=emp.margin, w_compat=0.1)
 
                 optimizer.zero_grad()
                 if self.use_amp:
                     self.scaler.scale(loss).backward()
+                    self.scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                     self.scaler.step(optimizer)
                     self.scaler.update()
                 else:
@@ -354,7 +357,7 @@ class Contrastive_Trainer:
                 pleatau_train = 0
 
                 embeddings = self._extract_embeddings_list(datasets)
-                _, margin_array = self._similarity_eval(embeddings, datasets)
+                _, margin_array, weighted_mean = self._similarity_eval(embeddings, datasets)
 
                 self.ds_status[margin_array >= emp.margin] = 2
                 self.ds_status[margin_array < emp.margin] = 3
@@ -362,22 +365,24 @@ class Contrastive_Trainer:
                 len_dropped = np.sum(self.ds_status==3)
                 logger.info(f"[HARDTRAIN] Eval done, all good segments: {len_good}, all dropped segments: {len_dropped}.")
 
+                eval_score = weighted_mean
+
                 len_unseen = np.sum(self.ds_status==0)
                 coverage_pct = (1 - len_unseen / len(datasets)) * 100
-
-                mean_margin = np.nanmean(margin_array)
-                p10_margin = np.nanpercentile(margin_array, 10.0)
-                eval_score = mean_margin
-
+                if len_unseen == 0 and not self.lr_reduced and eval_score > emp.margin * 0.7:
+                    old_lr = optimizer.param_groups[0]['lr']
+                    new_lr = old_lr * 0.1 
+                    for param_group in optimizer.param_groups:
+                        param_group['lr'] = new_lr
+                    self.lr_reduced = True
+                    logger.info(f"[HARDTRAIN] All segments evaluated (100% coverage). Dropping LR: {old_lr:.2e} → {new_lr:.2e}")
+    
                 if eval_score < best_eval and np.all(self.ds_status != 0):
                     logger.info(f"[HARDTRAIN] Eval score ({eval_score}) < best ({best_eval}) while all data has been itered. pleatau: {pleatau_eval}")
                     pleatau_eval += 1
                 else:
                     pleatau_eval = 0
 
-                if epoch == emp.epochs - 1:
-                    logger.info("[HARDTRAIN] Max epoch reached. Stopping...")
-                    break
                 if len_good > len(datasets) * 0.9:
                     logger.info("[HARDTRAIN] Most segments are good. Stopping early.")
                     break
@@ -388,22 +393,24 @@ class Contrastive_Trainer:
                     logger.info(f"[HARDTRAIN] Eval score pleataued, calling global eval.")
                     self.ds_status[:] = 1
                     embeddings = self._extract_embeddings_list(datasets)
-                    _, margin_array = self._similarity_eval(embeddings, datasets)
-                    mean_margin = np.nanmean(margin_array)
-                    p10_margin = np.nanpercentile(margin_array, 10.0)
-                    if self._check_early_stopping(emp, embeddings, mean_margin, p10_margin):
+                    _, margin_array, weighted_mean = self._similarity_eval(embeddings, datasets)
+
+                    if self._check_early_stopping(emp, embeddings, weighted_mean):
                         logger.info("[HARDTRAIN] Thresholds met on convergence. Stopping early.")
                     else:
                         logger.info("[HARDTRAIN] Model did the best it could. Stopping early.")
                     break
-                if self._check_early_stopping(emp, embeddings, mean_margin, p10_margin):
+                if self._check_early_stopping(emp, embeddings, weighted_mean):
                     logger.info("[HARDTRAIN] Thresholds met on convergence. Stopping early.")
+                    break
+                if epoch == emp.epochs - 1:
+                    logger.info("[HARDTRAIN] Max epoch reached. Stopping...")
                     break
 
                 logger.info(f"[HARDTRAIN] Updating hard triplets at epoch {epoch+1}.")
 
                 embeddings = self._extract_embeddings_list(datasets)
-                sim_array, _ = self._similarity_eval(embeddings, datasets)
+                sim_array, _, _ = self._similarity_eval(embeddings, datasets)
 
                 result = self._mine_hard_triplets(
                     datasets, embeddings, sim_array[:, 1, 0], sim_array[:, 2, 1], max_triplets=emp.triplets)
@@ -428,8 +435,14 @@ class Contrastive_Trainer:
     ) -> List[Tuple[int, int, int, int]]:
 
         triplets = []
+        triplet_quota = (max_triplets + 1) // len(datasets) + 1
 
         for ds_idx, dataset in enumerate(datasets):
+            if len(triplets) >= max_triplets:
+                break
+
+            triplets_ds = []
+
             if ds_idx not in segment_embeddings:
                 continue
             if self.ds_status[ds_idx] != 1:
@@ -447,6 +460,9 @@ class Contrastive_Trainer:
             sim_matrix = cosine_similarity(embeddings)
 
             for i in range(len(embeddings)):
+                if len(triplets_ds) >= triplet_quota:
+                    break
+
                 anchor_id = motion_ids[i]
 
                 same_mouse_mask = motion_ids == anchor_id
@@ -496,26 +512,24 @@ class Contrastive_Trainer:
                     case "random":
                         neg_idx = np.random.choice(diff_mouse_candidates)
                 
-                triplets.append((ds_idx, i, pos_idx, neg_idx))
-            
-            if len(triplets) >= max_triplets:
-                break
-        
+                triplets_ds.append((ds_idx, i, pos_idx, neg_idx))
+
+            triplets.extend(triplets_ds)
+
         logger.info(f"[CONTRAIN] Found {len(triplets)} hard triplets (mode={mining_mode}, avg_pos_thresh={np.nanmean(pos_thresholds):.2f}, avg_neg_thresh={np.nanmean(neg_thresholds):.2f})")
         return triplets
 
-    def _check_early_stopping(self, emp, embeddings, mean_margin, p10_margin):
-        logger.info(f"[CONTRAIN] Separation score: {mean_margin}, margin: {emp.margin} (p10: {p10_margin})" )
-        if mean_margin > emp.margin:
+    def _check_early_stopping(self, emp, embeddings, weighted_mean):
+        logger.info(f"[CONTRAIN] Separation score: {weighted_mean}, margin: {emp.margin}" )
+        if weighted_mean > emp.margin:
             len_unseen = np.sum(self.ds_status==0)
             len_dropped = np.sum(self.ds_status==3)
             if len_unseen + len_dropped > self.total_ds // 5:
-                logger.info(f"[CONTRAIN] Unseen/dropped datasets ({len_unseen + len_dropped}) too many (>{self.total_ds//5})")
+                logger.info(f"[CONTRAIN] Unseen/dropped datasets ({len_unseen + len_dropped}) too many (>{self.total_ds//4})")
                 return False
-            if p10_margin >= emp.margin * 0.8:
-                logger.info(f"[CONTRAIN] Separation score satisfied, calling biomodal evaluation." )
-                if self._biomodal_eval(embeddings):
-                    return True
+            logger.info(f"[CONTRAIN] Separation score satisfied, calling biomodal evaluation." )
+            if self._biomodal_eval(embeddings):
+                return True
             
         return False
 
@@ -547,8 +561,9 @@ class Contrastive_Trainer:
         return var_weight * var_penalty
 
     @staticmethod
-    def _similarity_eval(embeddings:Dict[int, np.ndarray], datasets) -> Tuple[np.ndarray, np.ndarray]:
+    def _similarity_eval(embeddings:Dict[int, np.ndarray], datasets) -> Tuple[np.ndarray, np.ndarray, float]:
         sim_array = np.full((len(embeddings), 3, 2), np.nan)
+        dslen_array = np.full(len(embeddings), np.nan)
 
         for ds_idx, emb in embeddings.items():
             if emb.size == 1:
@@ -567,14 +582,17 @@ class Contrastive_Trainer:
             pos_sim = valid_sims[same_mouse]
             neg_sim = valid_sims[~same_mouse]
     
+            dslen_array[ds_idx] = len(valid_sims)
             for k, sim in enumerate([pos_sim, neg_sim]):
                 sim_array[ds_idx, 0, k] = np.mean(sim)
-                sim_array[ds_idx, 1, k] = np.percentile(sim, 20)
-                sim_array[ds_idx, 2, k] = np.percentile(sim, 80)
+                sim_array[ds_idx, 1, k] = np.percentile(sim, 30)
+                sim_array[ds_idx, 2, k] = np.percentile(sim, 70)
 
         margin_array = sim_array[:, 0, 0] - sim_array[:, 0, 1]
+        valid_mask = ~(np.isnan(margin_array) | np.isnan(dslen_array))
+        weighted_mean = np.average(margin_array[valid_mask], weights=dslen_array[valid_mask])
 
-        return sim_array, margin_array
+        return sim_array, margin_array, weighted_mean
 
     @staticmethod
     def _biomodal_eval(embeddings: Dict[int, np.ndarray]) -> bool:

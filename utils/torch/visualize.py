@@ -170,8 +170,8 @@ class Embedding_Visualizer:
         segment_type_timeline = np.zeros(self.total_frames, dtype=np.uint8)
 
         for frame_idx in np.where(~np.isnan(agreement_timeline))[0]:
-            window_start = max(0, frame_idx - 5)
-            window_end = min(self.total_frames, frame_idx + 6)
+            window_start = max(0, frame_idx - 3)
+            window_end = min(self.total_frames, frame_idx + 3 + 1)
 
             segment_avg = np.nanmean(agreement_timeline[window_start:window_end])
             if segment_avg > 0.6:
@@ -211,7 +211,7 @@ class Embedding_Visualizer:
         for start, end, val in array_to_iterable_runs(plot_n_export):
             if val not in colors:
                 continue
-            if val == 1 and end + 1 - start < 5:
+            if val == 1 and end + 1 - start < 3:
                 plot_n_export[start, end+1] = 0
                 val = 0
             label = labels[val] if val not in handled_labels else ""
