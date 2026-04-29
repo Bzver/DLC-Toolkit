@@ -97,10 +97,9 @@ class Track_Fixer:
 
         self._motion_sweep(start_idx, end_idx)
 
-        if self.blob_array is not None and self.locker_stable_swap:
-            self._process_stable_swap_candidates(self.locker_stable_swap)
-
         if self.skip_contrast:
+            if self.blob_array is not None and self.locker_stable_swap:
+                self._process_stable_swap_candidates(self.locker_stable_swap)
             if not self.avtomat:
                 if self.blob_array is not None and self.locker_stable_swap:
                     self._audit_stable_swap_candidates(self.locker_stable_swap)
@@ -363,10 +362,14 @@ class Track_Fixer:
 
             if amb_in_range and self.skip_contrast:
                 self.pred_data_array = swap_track(self.pred_data_array, 0, swap_range=list(range(amb_in_range[0], end+1)))
+            elif end + 1 - start > 3:
+                self.pred_data_array = swap_track(self.pred_data_array, 0, swap_range=list(range(start, end+1)))
 
         if stable_spans:
             with open (os.path.join(self.temp_dir, "stable_spans.json"), "w") as file:
                 json.dump(stable_spans, file, indent=4)
+
+        self.centroids = calculate_anatomical_centers(self.pred_data_array, self.anglemap)
 
     def _audit_stable_swap_candidates(self, stable_swap_candidates):
         stable_spans = indices_to_spans(stable_swap_candidates)
@@ -380,6 +383,8 @@ class Track_Fixer:
 
             if not self._execute_swap_orders(swap_orders, fin_idx):
                 return
+
+        self.centroids = calculate_anatomical_centers(self.pred_data_array, self.anglemap)
 
     def _correct_frame_with_hungarian(self, frame_idx: int):
         valid_inst = get_instances_on_current_frame(self.pred_data_array, frame_idx)

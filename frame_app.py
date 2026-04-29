@@ -246,7 +246,7 @@ class Frame_App(QMainWindow):
             return
         try:
             file_dialog = QFileDialog(self)
-            prediction_path, _ = file_dialog.getOpenFileName(self, "Select Prediction", "", "HDF5 Files (*.h5)")
+            prediction_path, _ = file_dialog.getOpenFileName(self, "Select Prediction", "", "HDF5 Files (*.h5);;CSV Files (*.csv)")
             if not prediction_path:
                 return
 

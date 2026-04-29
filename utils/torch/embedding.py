@@ -369,13 +369,6 @@ class Contrastive_Trainer:
 
                 len_unseen = np.sum(self.ds_status==0)
                 coverage_pct = (1 - len_unseen / len(datasets)) * 100
-                if len_unseen == 0 and not self.lr_reduced and eval_score > emp.margin * 0.7:
-                    old_lr = optimizer.param_groups[0]['lr']
-                    new_lr = old_lr * 0.1 
-                    for param_group in optimizer.param_groups:
-                        param_group['lr'] = new_lr
-                    self.lr_reduced = True
-                    logger.info(f"[HARDTRAIN] All segments evaluated (100% coverage). Dropping LR: {old_lr:.2e} → {new_lr:.2e}")
     
                 if eval_score < best_eval and np.all(self.ds_status != 0):
                     logger.info(f"[HARDTRAIN] Eval score ({eval_score}) < best ({best_eval}) while all data has been itered. pleatau: {pleatau_eval}")
@@ -401,8 +394,21 @@ class Contrastive_Trainer:
                         logger.info("[HARDTRAIN] Model did the best it could. Stopping early.")
                     break
                 if self._check_early_stopping(emp, embeddings, weighted_mean):
-                    logger.info("[HARDTRAIN] Thresholds met on convergence. Stopping early.")
-                    break
+                    if not self.lr_reduced:
+                        old_lr = optimizer.param_groups[0]['lr']
+                        new_lr = old_lr * 0.1 
+                        for param_group in optimizer.param_groups:
+                            param_group['lr'] = new_lr
+                        self.lr_reduced = True
+                        logger.info(f"[HARDTRAIN] Threshold met, dropping LR: {old_lr:.2e} → {new_lr:.2e}")
+
+                    len_unseen = np.sum(self.ds_status==0)
+                    len_dropped = np.sum(self.ds_status==3)
+                    if len_unseen + len_dropped > self.total_ds // 5:
+                        logger.info(f"[CONTRAIN] Unseen/dropped datasets ({len_unseen + len_dropped}) too many (>{self.total_ds//4})")
+                    else:
+                        logger.info("[HARDTRAIN] Thresholds met on convergence. Stopping early.")
+                        break
                 if epoch == emp.epochs - 1:
                     logger.info("[HARDTRAIN] Max epoch reached. Stopping...")
                     break
@@ -522,11 +528,6 @@ class Contrastive_Trainer:
     def _check_early_stopping(self, emp, embeddings, weighted_mean):
         logger.info(f"[CONTRAIN] Separation score: {weighted_mean}, margin: {emp.margin}" )
         if weighted_mean > emp.margin:
-            len_unseen = np.sum(self.ds_status==0)
-            len_dropped = np.sum(self.ds_status==3)
-            if len_unseen + len_dropped > self.total_ds // 5:
-                logger.info(f"[CONTRAIN] Unseen/dropped datasets ({len_unseen + len_dropped}) too many (>{self.total_ds//4})")
-                return False
             logger.info(f"[CONTRAIN] Separation score satisfied, calling biomodal evaluation." )
             if self._biomodal_eval(embeddings):
                 return True

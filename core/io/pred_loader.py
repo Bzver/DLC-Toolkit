@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 
 from utils.logger import logger
 
+from .csv_op import csv_to_h5
 from .h5_op import validate_h5_keys, fix_h5_kp_order
 from .io_helper import (
     unflatten_data_array, add_mock_confidence_score, nuke_negative_val_in_loaded_pred, load_crop_notations)
@@ -100,6 +101,10 @@ class Prediction_Loader:
         logger.info(f"[PLOADER] Loading prediction data from {self.prediction_filepath}")
         if not os.path.isfile(self.prediction_filepath):
             raise FileNotFoundError(f"Prediction file not found at: {self.prediction_filepath}")
+
+        if self.prediction_filepath.endswith(".csv"):
+            csv_to_h5(self.prediction_filepath, config_data["multi_animal"], config_data["scorer"])
+            self.prediction_filepath.replace(".csv", ".h5")
 
         try:
             with h5py.File(self.prediction_filepath, "r") as pred_file:
