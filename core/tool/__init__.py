@@ -4,6 +4,7 @@ from .inference import DLC_Inference
 from .mark_gen import Mark_Generator
 from .outlier_finder import Outlier_Finder
 from .blob_counter import Blob_Counter
+from .annot_exporter import Annot_Exporter
 from .plot_config import Adjust_Property_Dialog, Adjust_Property_Box, Plot_Config_Menu
 from .label_loader import DLC_Save_Dialog, Load_Label_Dialog, DLC_Save_Dialog_Label
 from .reviewer import Parallel_Review_Dialog, Exit_Reentry_Dialog, Swap_Correction_Dialog
@@ -29,6 +30,7 @@ __all__ = (
     Outlier_Finder,
     Mark_Generator,
     Uno_Stack_Dict,
+    Annot_Exporter,
     DLC_Inference,
     Blob_Counter,
     Track_Fixer,

@@ -111,3 +111,40 @@ class Loggerbox:
                  buttons=QMessageBox.Yes | QMessageBox.No,
                  default=QMessageBox.No) -> QMessageBox.StandardButton:
         return cls.show(parent, title, text, QMessageBox.Question, buttons, default)
+
+
+class Safe_Operation:
+    def __init__(self, main_ref, operation_name, description="", headless:bool=False):
+        self.main_ref = main_ref
+        self.operation_name = operation_name
+        self.description = description
+        self.exception = None
+        self.headless = headless
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is not None:
+            self.exception = exc_val
+            
+            error_msg = f"Failed to {self.operation_name.lower()} {self.description}"
+            if self.description:
+                error_msg += f": {self.description}"
+
+            if not self.headless:
+                Loggerbox.error(
+                    self.main_ref, 
+                    self.operation_name, 
+                    f"{error_msg}. Exception: {str(exc_val)}", 
+                    exc=exc_val
+                )
+
+            return False 
+        else:
+            success_msg = f"Successfully {self.operation_name.lower()}"
+            if self.description:
+                success_msg += f" {self.description}"
+            
+            if not self.headless:
+                Loggerbox.info(self.main_ref, self.operation_name, success_msg)

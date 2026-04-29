@@ -1,23 +1,19 @@
 import os
 import json
-import scipy.io as sio
 import numpy as np
-import pandas as pd
 
 from PySide6 import QtWidgets
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QVBoxLayout, QFileDialog
 
-from typing import List, Dict, Optional, Tuple, Literal
+from typing import List, Dict, Optional, Tuple
 
 from core.runtime import Data_Manager, Video_Manager
 from core.tool import Annotation_Config, Annotation_Summary_Table, Prediction_Plotter, Uno_Stack
-from core.io import load_annotation, prediction_to_csv, Frame_Exporter_Threaded, load_onehot_csv
+from core.io import Annot_Exporter, load_annotation, load_onehot_csv
 from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Status_Bar, Frame_List_Dialog
-from utils.track import interpolate_track_all
-from utils.helper import frame_to_pixmap, frame_to_grayscale, get_instance_count_per_frame, array_to_iterable_runs, get_next_frame_in_list
-from utils.dataclass import Exporter_Augments
-from utils.logger import Loggerbox, logger
+from utils.helper import frame_to_pixmap, frame_to_grayscale, get_next_frame_in_list
+from utils.logger import Loggerbox, Safe_Operation
 
 
 class Frame_Annotator:
@@ -45,6 +41,7 @@ class Frame_Annotator:
                  status_bar: Status_Bar,
                  menu_slot_callback: callable,
                  parent: QtWidgets.QWidget):
+
         self.dm = data_manager
         self.vm = video_manager
         self.vid_play = video_play_widget
@@ -556,14 +553,13 @@ class Frame_Annotator:
         
         vid_path, _ = os.path.splitext(self.dm.video_file)
         save_path = f"{vid_path}_annot_backup.txt"
-        try:
-            self._export_txt_worker(save_path)
-            json_path = save_path.replace(".txt", ".json")
-            with open(json_path, 'w') as f:
-                json.dump({"behav_map": self.behav_map}, f, indent=2)
 
-        except Exception as e:
-            self.status_bar.show_message(f"Failed to auto save annotation: {e}")
+        with Safe_Operation(self.main, "Save Annotations", save_path):
+            if not hasattr(self, "annot_sum"):
+                self._init_annot_config()
+            segments = self.annot_sum.extract_segments(include_other=True)
+            ae = Annot_Exporter(self.annot_array, self.dm.video_name, self.behav_map, self.idx_to_cat, self.dm.roi)
+            ae.to_txt(save_path, segments)
 
     def _export_annotation_to_text(self):
         if self.annot_array is None:
@@ -576,32 +572,12 @@ class Frame_Annotator:
         if not file_path:
             return
 
-        try:
-            self._export_txt_worker(file_path)
-            json_path = file_path.replace(".txt", ".json")
-            with open(json_path, 'w') as f:
-                json.dump({"behav_map": self.behav_map}, f, indent=2)
-
-            Loggerbox.info(self.main, "Export Successful", f"Annotation exported to {file_path}")
-        except Exception as e:
-            Loggerbox.error(self.main, "Export Error", f"Failed to export annotation: {e}", exc=e)
-
-    def _export_txt_worker(self, file_path):
-        content = "Caltech Behavior Annotator - Annotation File\n\n"
-        content += "Configuration file:\n"
-        for category, (key, _) in self.behav_map.items():
-            content += f"{category}\t{key}\n"
-        content += "\n"
-        content += "S1:\tstart\tend\ttype\n"
-        content += "-----------------------------\n"
-        if not hasattr(self, "annot_sum"):
-            self._init_annot_config()
-        segments = self.annot_sum.extract_segments(include_other=True)
-        for category, start, end in segments:
-            content += f"\t{start}\t{end}\t{category}\n"
-
-        with open(file_path, 'w') as f:
-            f.write(content)
+        with Safe_Operation(self.main, "Save Annotations", file_path):
+            if not hasattr(self, "annot_sum"):
+                self._init_annot_config()
+            segments = self.annot_sum.extract_segments(include_other=True)
+            ae = Annot_Exporter(self.annot_array, self.dm.video_name, self.behav_map, self.idx_to_cat, self.dm.roi)
+            ae.to_txt(file_path, segments)
 
     def _export_annotation_to_mat(self):
         if self.annot_array is None:
@@ -613,54 +589,26 @@ class Frame_Annotator:
 
         if not file_path:
             return
-        
-        try:
-            behavior_struct = self.annot_array.copy()
-            annotation_struct = {
-                "streamID": 1,
-                "annotation": behavior_struct.reshape(-1, 1),
-                "behaviors": self.cat_to_idx
-            }
-            mat_to_save = {"annotation": annotation_struct}
-            sio.savemat(file_path, mat_to_save)
 
-            json_path = file_path.replace(".mat", ".json")
-            with open(json_path, 'w') as f:
-                json.dump({"behav_map": self.behav_map}, f, indent=2)
+        with Safe_Operation(self.main, "Save Annotations", file_path):
+            ae = Annot_Exporter(self.annot_array, self.dm.video_name, self.behav_map, self.idx_to_cat, self.dm.roi)
+            ae.to_mat(file_path)
 
-            Loggerbox.info(self.main, "Success", f"Successfully saved to {file_path}")
-        except Exception as e:
-            Loggerbox.error(self.main, "Failed", f"Failed to save {file_path}, Exception: {e}", exc=e)
-
-    def _export_annotation_to_onehot(self, fps:int=10):
+    def _export_annotation_to_onehot(self):
         if self.dm.dlc_data is None:
             return
         
         file_dialog = QFileDialog(self.main)
         file_path, _ = file_dialog.getSaveFileName(self.main, "Export Annotation to BORIS Onehot Format", "", "CSV Files (*.csv);;All Files (*)")
 
-        behavior_list = [b for b in self.idx_to_cat.values()]
-        onehot_array = np.zeros((self.dm.total_frames, len(behavior_list)))
-        onehot_array[np.arange(self.dm.total_frames), self.annot_array] = 1
+        if not file_path:
+            return
+        
+        with Safe_Operation(self.main, "Save Annotations", file_path):
+            ae = Annot_Exporter(self.annot_array, self.dm.video_name, self.behav_map, self.idx_to_cat, self.dm.roi)
+            ae.to_onehot(file_path, self.dm.dlc_data)
 
-        df_annot = pd.DataFrame(onehot_array, columns=behavior_list)
-        if "other" in behavior_list:
-            behavior_cols = [col for col in df_annot.columns if col != "other"]
-            new_column_order = behavior_cols + ["other"]
-            df_annot = df_annot[new_column_order]
-
-        df_annot.insert(0, "time", np.arange(self.dm.total_frames) / fps)
-
-        try:
-            df_annot.to_csv(file_path, sep=',', index=False, float_format='%.6f')
-            pred_path = file_path.replace(".csv", "_pred.csv")
-            prediction_to_csv(self.dm.dlc_data, self.dm.dlc_data.pred_data_array, pred_path, keep_conf=True, no_scorer_row=True)
-        except Exception as e:
-            Loggerbox.error(self.main, "Failed", f"Failed to save {file_path}, Exception: {e}", exc=e)
-        else:
-            Loggerbox.info(self.main, "Success", f"Successfully saved to {file_path}")
-
-    def _export_training_package(self, min_duration:int=10, max_gap:int=3, fps:int=10):
+    def _export_training_package(self):
         if self.dm.dlc_data is None or self.dm.dlc_data.pred_data_array is None:
             return
 
@@ -670,51 +618,11 @@ class Frame_Annotator:
         if not folder_path:
             return
         
-        os.makedirs(os.path.join(folder_path, "behav"), exist_ok=True)
-        os.makedirs(os.path.join(folder_path, "pred"), exist_ok=True)
+        with Safe_Operation(self.main, "Save Annotations", folder_path):
+            ae = Annot_Exporter(self.annot_array, self.dm.video_name, self.behav_map, self.idx_to_cat, self.dm.roi)
+            ae.to_asoid_train(folder_path, self.dm.dlc_data)
 
-        pred_data_array = self.dm.dlc_data.pred_data_array.copy()
-        I = pred_data_array.shape[1]
-        for inst_idx in range(I):
-            pred_data_array = interpolate_track_all(pred_data_array, inst_idx, max_gap)
-
-        instance_array = get_instance_count_per_frame(pred_data_array)
-
-        frames_to_use = np.zeros_like(instance_array, dtype=bool)
-        truncated_arrays = []
-
-        for start, end, value in array_to_iterable_runs(instance_array == I):
-            if not value:
-                continue
-            if end - start + 1 < min_duration:
-                continue
-
-            frames_to_use[start:end+1] = True
-            truncated_arrays.append(self.annot_array[start:end+1])
-
-        frame_list = np.where(frames_to_use)[0].tolist()
-
-        truncated_behavior_array = np.concatenate(truncated_arrays)
-        truncated_pred_array = pred_data_array[frames_to_use]
-
-        behavior_list = [b for b in self.idx_to_cat.values()]
-
-        truncated_one_hot = np.zeros((truncated_behavior_array.size, len(behavior_list)), dtype=int)
-        truncated_one_hot[np.arange(truncated_behavior_array.size), truncated_behavior_array] = 1
-
-        df_annot = pd.DataFrame(truncated_one_hot, columns=behavior_list)
-        if "other" in behavior_list:
-            behavior_cols = [col for col in df_annot.columns if col != "other"]
-            new_column_order = behavior_cols + ["other"]
-            df_annot = df_annot[new_column_order]
-
-        df_annot.insert(0, "time", np.arange(len(frame_list)) / fps)
-
-        file_path = os.path.join(folder_path, "behav", f"{self.dm.video_name}_ASOiD_train.csv")
-        pred_path = os.path.join(folder_path, "pred", f"{self.dm.video_name}_ASOiD_train.csv")
-        self._csv_exporter_worker(df_annot, file_path, truncated_pred_array, pred_path, frame_list, mode="train")
-
-    def _export_inference_package(self, min_duration:int=10, max_gap:int=3, fps:int=10):
+    def _export_inference_package(self):
         if self.dm.dlc_data is None or self.dm.dlc_data.pred_data_array is None:
             return
 
@@ -724,46 +632,11 @@ class Frame_Annotator:
         if not file_path:
             return
 
-        pred_data_array = self.dm.dlc_data.pred_data_array.copy()
-        I = pred_data_array.shape[1]
-        for inst_idx in range(I):
-            pred_data_array = interpolate_track_all(pred_data_array, inst_idx, max_gap)
+        with Safe_Operation(self.main, "Save Annotations", file_path):
+            ae = Annot_Exporter(self.annot_array, self.dm.video_name, self.behav_map, self.idx_to_cat, self.dm.roi)
+            ae.to_asoid_infer(file_path, self.dm.dlc_data)
 
-        instance_array = get_instance_count_per_frame(pred_data_array)
-        
-        frames_to_use = np.zeros_like(instance_array, dtype=bool)
-        truncated_arrays = []
-
-        for start, end, value in array_to_iterable_runs(instance_array == I):
-            if not value:
-                continue
-            if end - start + 1 < min_duration:
-                continue
-
-            frames_to_use[start:end+1] = True
-            truncated_arrays.append(self.annot_array[start:end+1])
-
-        frame_list = np.where(frames_to_use)[0].tolist()
-        truncated_behavior_array = np.concatenate(truncated_arrays)
-        truncated_pred_array = pred_data_array[frames_to_use]
-
-        behavior_list = [b for b in self.idx_to_cat.values()]
-
-        truncated_one_hot = np.zeros((truncated_behavior_array.size, len(behavior_list)), dtype=int)
-        truncated_one_hot[np.arange(truncated_behavior_array.size), truncated_behavior_array] = 1
-
-        df_annot = pd.DataFrame(truncated_one_hot, columns=behavior_list)
-        if "other" in behavior_list:
-            behavior_cols = [col for col in df_annot.columns if col != "other"]
-            new_column_order = behavior_cols + ["other"]
-            df_annot = df_annot[new_column_order]
-
-        df_annot.insert(0, "time", np.arange(len(frame_list)) / fps)
-
-        pred_path = file_path.replace(".csv", "_pred.csv")
-        self._csv_exporter_worker(df_annot, file_path, truncated_pred_array, pred_path, frame_list, mode="infer")
-
-    def _export_refine_package(self, max_gap=10, min_length=600, seg_needed=10):
+    def _export_refine_package(self):
         if self.dm.dlc_data is None or self.dm.dlc_data.pred_data_array is None:
             return
 
@@ -772,59 +645,7 @@ class Frame_Annotator:
         folder_path = file_dialog.getExistingDirectory(self.main, "Select Export Folder for ASOID Refining", "")
         if not folder_path:
             return
-        
-        os.makedirs(os.path.join(folder_path, "refine"), exist_ok=True)
-
-        pred_data_array = self.dm.dlc_data.pred_data_array.copy()
-        I = pred_data_array.shape[1]
-        for inst_idx in range(I):
-            pred_data_array = interpolate_track_all(pred_data_array, inst_idx, max_gap)
-
-        instance_array = get_instance_count_per_frame(pred_data_array)
-
-        segs = []
-        for start, end, value in array_to_iterable_runs(instance_array == I):
-            if len(segs) >= seg_needed:
-                break
-            if not value:
-                continue
-            if end - start + 1 < min_length:
-                continue
-            
-            segs.append((start, end+1))
-
-        for seg in segs:
-            frame_list = list(range(*seg))
-
-            truncated_pred_array = pred_data_array[frame_list]
-            pred_path = os.path.join(folder_path, "refine", f"{self.dm.video_name}_frame{seg[0]}-{seg[1]}_ASOiD_refine.csv")
-            self._csv_exporter_worker(None, pred_path, truncated_pred_array, pred_path, frame_list, mode="refine")
-
-    def _csv_exporter_worker(self, df_annot, annot_path, truncated_pred_array, pred_path, frame_list, mode:Literal["train", "infer", "refine"]="train"):
-        try:
-            match mode:
-                case "train": df_annot.to_csv(annot_path, sep=',', index=False, float_format='%.6f')
-                case "infer":
-                    json_path = annot_path.replace(".csv", ".json")
-                    with open(json_path, 'w') as f:
-                        json.dump({
-                            "used_frames": frame_list,
-                            "total_frames": self.dm.total_frames,
-                            "total_exported_frames": len(frame_list),
-                            "behav_map": self.behav_map,
-                        }, f, indent=2)
-                case "refine": 
-                    output_folder = os.path.basename(pred_path)
-                    fe = Frame_Exporter_Threaded(self.dm.video_file, output_folder, frame_list)
-                    ea = Exporter_Augments(crop_coord=self.dm.roi)
-                    fe.extract_frames_into_video(ea, video_name=f"{self.dm.video_name}_frame{frame_list[0]}-{frame_list[-1]}.mp4")
-
-            prediction_to_csv(self.dm.dlc_data, truncated_pred_array, pred_path, keep_conf=True, no_scorer_row=mode!="train")
-
-        except Exception as e:
-            Loggerbox.error(self.main, "Failed", f"Failed to save {pred_path}, Exception: {e}", exc=e)
-        else:
-            if mode == "refine":
-                logger.info(self.main, "Success", f"Successfully saved to {pred_path}")
-            else:
-                Loggerbox.info(self.main, "Success", f"Successfully saved to {pred_path}")
+    
+        with Safe_Operation(self.main, "Save Annotations", folder_path):
+            ae = Annot_Exporter(self.annot_array, self.dm.video_name, self.behav_map, self.idx_to_cat, self.dm.roi)
+            ae.to_asoid_infer(folder_path, self.dm.dlc_data)

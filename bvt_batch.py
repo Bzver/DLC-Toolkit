@@ -1,15 +1,17 @@
 import os
 import numpy as np
+import pandas as pd
 import shutil
 import yaml
 from collections import defaultdict
 from contextlib import contextmanager
+from datetime import datetime
 from PySide6 import QtWidgets
 from typing import List, Tuple, Optional, Literal
 
 from core.runtime import Data_Manager
-from core.tool import DLC_Inference, Track_Fixer, Mark_Generator, Outlier_Finder
-from core.io import backup_existing_prediction, get_existing_projects, csv_op, prediction_to_csv, Frame_Extractor, Temp_Manager
+from core.tool import DLC_Inference, Track_Fixer, Mark_Generator, Outlier_Finder, Annot_Exporter
+from core.io import backup_existing_prediction, get_existing_projects, prediction_to_csv, Frame_Extractor, Temp_Manager, csv_op
 from ui import Track_Fix_Config_Dialog
 from utils.helper import get_instance_count_per_frame, clean_outside_roi_pred, clean_pred_in_mask, validate_crop_coord
 from utils.logger import logger, set_headless_mode
@@ -20,18 +22,18 @@ WORKSPACE_EXTENSIONS: Tuple[str, ...] = (".joblib", ".pkl")
 VIDEO_EXTENSIONS: Tuple[str, ...] = (".mp4", ".avi", ".mkv")
 
 
-def batch_backup_project(root_dir: str):
-    workspaces = _find_files_by_extension(root_dir, WORKSPACE_EXTENSIONS)
+def batch_backup_project(rootdir: str):
+    workspaces = _find_files_by_extension(rootdir, ".joblib")
     if not workspaces:
         logger.info("[BATCH] No old workspace files found for backup")
         return
 
     _log_batch_progress("Workspace Backup", workspaces)
-    backup_dir = os.path.join(root_dir, "bvt_backup")
+    backup_dir = os.path.join(rootdir, "bvt_backup")
     os.makedirs(backup_dir, exist_ok=True)
     
     def process_workspace(ws_path:str) -> bool:
-        rel_dir = ws_path.split(root_dir)[1]
+        rel_dir = ws_path.split(rootdir)[1]
         new_path = f"{backup_dir}{rel_dir}"
         os.makedirs(os.path.dirname(new_path), exist_ok=True)
         if os.path.isfile(new_path):
@@ -41,10 +43,10 @@ def batch_backup_project(root_dir: str):
 
     _process_batch(workspaces, process_workspace, "Workspace Backup")
 
-def batch_extract_track_fix_info(root_dir: str):
+def batch_extract_track_fix_info(rootdir: str):
     target_files = {"agreement_timeline.png", "diagnosis_timeline.csv", "tsne_combined.png", "stable_spans.json"}
     levels = ("101T_", "103T_", "201T_", "203T_", "301T_", "303T_", "401T_", "403T_")
-    for root, _, files in os.walk(root_dir):
+    for root, _, files in os.walk(rootdir):
         if "bvt_temp" not in root:
             continue
         for file in files:
@@ -60,8 +62,8 @@ def batch_extract_track_fix_info(root_dir: str):
                     logger.info(f"Moved track fix info from {root} to {dest_folder}.")
                     break
 
-def batch_migration_pkl_to_joblib(root_dir: str):
-    workspaces = _find_files_by_extension(root_dir, ".pkl")
+def batch_migration_pkl_to_joblib(rootdir: str):
+    workspaces = _find_files_by_extension(rootdir, ".pkl")
     if not workspaces:
         logger.info("[BATCH] No old workspace files found for migration")
         return
@@ -163,7 +165,7 @@ def batch_create_workspaces(rootdir: str, dlc_config_path: str):
     _process_batch(videos, process_video, "workspace creation")
 
 def batch_export_csv(
-        root_dir: str, 
+        rootdir: str, 
         with_conf:bool=True,
         animal_num_filtering:bool=False,
         min_animal_num:int=2,
@@ -171,7 +173,7 @@ def batch_export_csv(
         frame_count_max:int=6000,
         no_scorer_header:bool=False
     ):
-    workspaces = _find_files_by_extension(root_dir, WORKSPACE_EXTENSIONS)
+    workspaces = _find_files_by_extension(rootdir, ".joblib")
     if not workspaces:
         logger.info("[BATCH] No workspace files found for export")
         return
@@ -211,8 +213,8 @@ def batch_export_csv(
     
     _process_batch(workspaces, process_workspace, "CSV export")
 
-def batch_data_clean(root_dir:str, kp_clean:bool=False, inst_clean:bool=False):
-    workspaces = _find_files_by_extension(root_dir, WORKSPACE_EXTENSIONS)
+def batch_data_clean(rootdir:str, kp_clean:bool=False, inst_clean:bool=False):
+    workspaces = _find_files_by_extension(rootdir, ".joblib")
     if not workspaces:
         logger.info("[BATCH] No workspace files found for track correction")
         return
@@ -278,13 +280,19 @@ def batch_data_clean(root_dir:str, kp_clean:bool=False, inst_clean:bool=False):
     
     _process_batch(workspaces, process_workspace, "data cleaning")
 
-def batch_duplicate_check(root_dir:str):
-    workspaces = _find_files_by_extension(root_dir, WORKSPACE_EXTENSIONS)
+def batch_export_to_asoid_inference(rootdir:str, catalogue_file:Optional[str]=None):
+    workspaces = _find_files_by_extension(rootdir, ".joblib")
     if not workspaces:
-        logger.info("[BATCH] No workspace files found for track correction")
+        logger.info("[BATCH] No workspace files.")
         return
-    
-    _log_batch_progress("d check", workspaces)
+
+    csv_lookup = None
+    if catalogue_file:
+        df = pd.read_csv(catalogue_file, header=None)
+        df['date'] = df[0].str.split(' ').str[0]
+        csv_lookup = dict(zip(zip(df['date'], df[1].astype(str)), df[2]))
+
+    _log_batch_progress("Exporting to Asoid Inference", workspaces)
     def process_workspace(ws_path: str) -> bool:
         dm = Data_Manager(
             init_vid_callback=_pseudo_callback,
@@ -292,32 +300,51 @@ def batch_duplicate_check(root_dir:str):
         )
         dm.load_workspace(str(ws_path))
     
-        if dm.angle_map_data is None:
-            dm._init_canon_pose()
-        
-        of = Outlier_Finder(
-            pred_data_array=dm.dlc_data.pred_data_array,
-            skele_list=dm.dlc_data.skeleton,
-            kp_to_idx=dm.dlc_data.keypoint_to_idx,
-            angle_map_data=dm.angle_map_data)
-        
-        of.hide()
-        of.mode_combo.setCurrentText("Instance")
-        of.instance_container.outlier_confidence_gbox.setChecked(False)
-        of.instance_container.outlier_duplicate_gbox.setChecked(True)
-        of._get_outlier_mask()
-        outlier_inst_mask = of.outliers
-        if np.any(outlier_inst_mask):
-            logger.info(f"[DCHECK] {np.sum(outlier_inst_mask)} duplicate poses in {ws_path}.")
-            return False
-        else:
-            logger.info(f"[DCHECK] No duplicate poses in {ws_path}.") 
-            return True
-    
-    _process_batch(workspaces, process_workspace, "d check")
+        def generate_pred_filename(file_path, csv_lookup):
+            parts = file_path.replace('\\', '/').split('/')
+            filename = parts[-1]
 
-def batch_temp_dir_clean(root_dir:str):
-    for root, dirs, _ in os.walk(root_dir):
+            m_idx = next(i for i, p in enumerate(parts) if 'Marathon' in p)
+            
+            proj_folder = parts[m_idx]
+            sub_folder = parts[m_idx + 1] if len(parts) > m_idx + 2 else None
+            
+            proj_date_str = proj_folder.split(' ')[0]
+            proj_dt = datetime.strptime(proj_date_str, "%Y%m%d")
+            
+            if sub_folder and len(sub_folder) == 4 and sub_folder.isdigit():
+                sub_dt = datetime.strptime(f"{proj_dt.year}{sub_folder}", "%Y%m%d")
+                day_num = (sub_dt - proj_dt).days + 1
+            else:
+                day_num = 1
+
+            subj_id = filename.split('_')[0][:-1] 
+            type_val = csv_lookup[(proj_date_str, subj_id[0])]
+            
+            last_two = subj_id[-2:]
+            if type_val == 'L':
+                role = 'sub' if last_two == '01' else 'dom'
+            else:
+                role = 'dom' if last_two == '01' else 'sub'
+
+            mmdd = proj_date_str[4:]
+            return f"{mmdd}_{role}_day{day_num}_{subj_id}.csv"
+
+        if csv_lookup is not None:
+            save_name = generate_pred_filename(ws_path, csv_lookup)
+        else:
+            save_name = ws_path.replace(".joblib", "_auto_export.csv")
+        
+        save_path = os.path.join(os.path.dirname(ws_path), save_name)
+        ae = Annot_Exporter(np.zeros(dm.total_frames), dm.video_name, None, None, dm.roi)
+        ae.to_asoid_infer(save_path, dm.dlc_data)
+
+        return True
+    
+    _process_batch(workspaces, process_workspace, "Exporting to Asoid Inference")
+
+def batch_temp_dir_clean(rootdir:str):
+    for root, dirs, _ in os.walk(rootdir):
         for dirr in dirs:
             if dirr != "bvt_temp":
                 continue
@@ -333,14 +360,14 @@ def batch_temp_dir_clean(root_dir:str):
     logger.info("[TMCLEAN] Finished.")
 
 def batch_track_fix(
-        root_dir:str,
+        rootdir:str,
         auto_load_weight:bool=False,
         inference_only:bool=False,
         lock_id:bool=False,
         force_locked_id:int=-1,
         ):
 
-    workspaces = _find_files_by_extension(root_dir, WORKSPACE_EXTENSIONS)
+    workspaces = _find_files_by_extension(rootdir, ".joblib")
     if not workspaces:
         logger.info("[BATCH] No workspace files found for track correction")
         return
@@ -408,8 +435,8 @@ def managed_frame_extractor(video_path:str):
 
 ############################################################################################
 
-def _find_video_files(root_dir: str) -> List[str]:
-    videos = _find_files_by_extension(root_dir, VIDEO_EXTENSIONS)
+def _find_video_files(rootdir: str) -> List[str]:
+    videos = _find_files_by_extension(rootdir, VIDEO_EXTENSIONS)
     filtered = []
     for video in videos:
         workspace_candidates = [
@@ -449,9 +476,9 @@ def _find_labeled_projects(dlc_config_path: str) -> List[str]:
 
     return all_dirs
 
-def _find_files_by_extension(root_dir:str, extensions: Tuple[str]) -> List[str]:
+def _find_files_by_extension(rootdir:str, extensions: Tuple[str]) -> List[str]:
     found = []
-    for root, _, files in os.walk(root_dir):
+    for root, _, files in os.walk(rootdir):
         for file in files:
             if file.endswith(extensions) and "backup" not in root and "temp" not in root:
                 found.append(os.path.join(root, file))
@@ -517,7 +544,7 @@ def batch_inference(
     shuffle_idx: Optional[int] = None,
     crop_region: Optional[Tuple[int, int, int, int]] = None
 ):
-    workspaces = _find_files_by_extension(rootdir, WORKSPACE_EXTENSIONS)
+    workspaces = _find_files_by_extension(rootdir, ".joblib")
     
     if not workspaces:
         logger.info("[BATCH] No workspace files found for inference")
@@ -825,72 +852,85 @@ def _parse_auto_pred_filename(filename: str):
 if __name__ == "__main__":
     app = QtWidgets.QApplication([])
     set_headless_mode(True)
-    rootdir = r"D:\Data\Videos\20260416 Marathon\0418"
 
-    if not os.path.isdir(rootdir):
-        print(f"{rootdir} does not exist!")
+    quened_dirs = [
+        # r'D:\Data\Videos\20250913 Marathon',
+        r'D:\Data\Videos\20250918 Marathon',
+        r'D:\Data\Videos\20251012 Marathon',
+        r'D:\Data\Videos\20251018 Marathon',
+        r'D:\Data\Videos\20251101 Marathon',
+        r'D:\Data\Videos\20251117 Marathon',
+        r'D:\Data\Videos\20251201 Marathon',
+        r'D:\Data\Videos\20260324 Marathon',
+        r'D:\Data\Videos\20260416 Marathon',
+    ]
 
-    dlc_config_path = "D:/Project/DLC-Models/NTD-Blob/config.yaml"
- 
-    CROPPING = True
-    MASKING = False
-    GRAYSCALING = False
-    BATCH = 16
-    DT_BATCH = 16
+    for rootdir in quened_dirs:
+        if not os.path.isdir(rootdir):
+            print(f"{rootdir} does not exist!")
+            continue
 
-    dial_tones = [3]
-    """
-    1 - inference; 2 - rerun; 3 - track fix; 4 - track clean; 5 - temp dir clean;
-    6 - csv 2 h5; 7 - pkl migration; 8 - backup workspace; 9- create workspace;
-    10 - extract track fix info; 11 - convert grayscale; 12 - export csv;
-    """
+        dlc_config_path = "D:/Project/DLC-Models/NTD-Blob/config.yaml"
+    
+        CROPPING = True
+        MASKING = False
+        GRAYSCALING = False
+        BATCH = 16
+        DT_BATCH = 16
 
-    for tone in dial_tones:
-        match tone: 
-            case 1:
-                batch_inference(
-                    rootdir,
-                    dlc_config_path,
-                    force_load_new_config=True,
-                    mark_gen_mode="NM",
-                    use_dm_list=False,
-                    crop=CROPPING,
-                    mask=MASKING,
-                    grayscale=GRAYSCALING,
-                    infer_as_video=False,
-                    batch_size=BATCH,
-                    detector_batch_size=DT_BATCH
-                )
-                batch_temp_dir_clean(rootdir)
-            case 2:
-                mgm = "NM-I"
-                batch_inference(
-                    rootdir,
-                    dlc_config_path,
-                    mark_gen_mode=mgm,
-                    crop=CROPPING,
-                    mask=MASKING,
-                    grayscale=GRAYSCALING,
-                    infer_as_video=False,
-                    batch_size=BATCH,
-                    detector_batch_size=DT_BATCH
-                )
-            case 3:
-                batch_data_clean(rootdir, kp_clean=True)
-                batch_track_fix(
-                    rootdir,
-                    auto_load_weight=False,
-                    inference_only=False,
-                    lock_id=True,
-                    force_locked_id=0,
-                )
-                batch_extract_track_fix_info(rootdir)
-            case 4: batch_data_clean(rootdir, kp_clean=True, inst_clean=True)
-            case 5: batch_temp_dir_clean(rootdir)
-            case 6: batch_convert_csv_to_h5(dlc_config_path)
-            case 7: batch_migration_pkl_to_joblib(rootdir)
-            case 8: batch_backup_project(rootdir)
-            case 9: batch_create_workspaces(rootdir, dlc_config_path)
-            case 10: batch_extract_track_fix_info(rootdir)
-            case 11: batch_convert_to_grayscale(dlc_config_path)
-            case 12: batch_export_csv(rootdir, with_conf=True, no_scorer_header=True, animal_num_filtering=True, min_animal_num=2)
+        dial_tones = [13]
+        """
+        1 - inference; 2 - rerun; 3 - track fix; 4 - track clean; 5 - temp dir clean;
+        6 - csv 2 h5; 7 - pkl migration; 8 - backup workspace; 9- create workspace;
+        10 - extract track fix info; 11 - convert grayscale; 12 - export csv;
+        """
+
+        for tone in dial_tones:
+            match tone: 
+                case 1:
+                    batch_inference(
+                        rootdir,
+                        dlc_config_path,
+                        force_load_new_config=True,
+                        mark_gen_mode="NM",
+                        use_dm_list=False,
+                        crop=CROPPING,
+                        mask=MASKING,
+                        grayscale=GRAYSCALING,
+                        infer_as_video=False,
+                        batch_size=BATCH,
+                        detector_batch_size=DT_BATCH
+                    )
+                    batch_temp_dir_clean(rootdir)
+                case 2:
+                    mgm = "NM-I"
+                    batch_inference(
+                        rootdir,
+                        dlc_config_path,
+                        mark_gen_mode=mgm,
+                        crop=CROPPING,
+                        mask=MASKING,
+                        grayscale=GRAYSCALING,
+                        infer_as_video=False,
+                        batch_size=BATCH,
+                        detector_batch_size=DT_BATCH
+                    )
+                case 3:
+                    batch_track_fix(
+                        rootdir,
+                        auto_load_weight=True,
+                        inference_only=True,
+                        lock_id=True,
+                        force_locked_id=0,
+                    )
+                    batch_extract_track_fix_info(rootdir)
+                case 4: batch_data_clean(rootdir, kp_clean=True, inst_clean=True)
+                case 5: batch_temp_dir_clean(rootdir)
+                case 6: batch_convert_csv_to_h5(dlc_config_path)
+                case 7: batch_migration_pkl_to_joblib(rootdir)
+                case 8: batch_backup_project(rootdir)
+                case 9: batch_create_workspaces(rootdir, dlc_config_path)
+                case 10: batch_extract_track_fix_info(rootdir)
+                case 11: batch_convert_to_grayscale(dlc_config_path)
+                case 12: batch_export_csv(rootdir, with_conf=True, no_scorer_header=True, animal_num_filtering=True, min_animal_num=2)
+                case 13: batch_export_to_asoid_inference(rootdir, catalogue_file="D:\Data\Videos\catalogue.csv")
