@@ -16,7 +16,7 @@ class Annot_Exporter:
     def __init__(
             self,
             annot_array:np.ndarray,
-            video_name:str,
+            video_file:str,
             behav_map:Dict[str, Tuple[str, str]],
             idx_to_cat:Dict[int, str],
             roi: Tuple[int, int, int, int] | np.ndarray
@@ -26,7 +26,8 @@ class Annot_Exporter:
         self.behav_map = behav_map
         self.total_frames = len(annot_array)
         self.idx_to_cat = idx_to_cat
-        self.video_name = video_name
+        self.video_file = video_file
+        self.video_name = os.path.splitext(os.path.basename(self.video_file))[0]
         self.roi = roi
 
     def to_txt(self, file_path, segments):
@@ -163,8 +164,11 @@ class Annot_Exporter:
             frame_list=frame_list,
             mode="infer")
 
-    def to_asoid_refine(self, folder_path, dlc_data:Loaded_DLC_Data, max_gap=10, min_length=600, seg_needed=10):
+    def to_asoid_refine(self, folder_path, dlc_data:Loaded_DLC_Data, seg_start=0, seg_end=-1, max_gap=10, min_length=50, seg_needed=10):
         os.makedirs(os.path.join(folder_path, "refine"), exist_ok=True)
+
+        if seg_end < 0:
+            seg_end = self.total_frames
 
         pred_data_array = dlc_data.pred_data_array.copy()
         I = pred_data_array.shape[1]
@@ -175,6 +179,10 @@ class Annot_Exporter:
 
         segs = []
         for start, end, value in array_to_iterable_runs(instance_array == I):
+            if start < seg_start:
+                continue
+            if start >= seg_end or end >= seg_end:
+                break
             if len(segs) >= seg_needed:
                 break
             if not value:
@@ -211,7 +219,7 @@ class Annot_Exporter:
                         "behav_map": self.behav_map,
                     }, f, indent=2)
             case "refine": 
-                output_folder = os.path.basename(pred_path)
+                output_folder = os.path.dirname(pred_path)
                 fe = Frame_Exporter_Threaded(self.video_file, output_folder, frame_list)
                 ea = Exporter_Augments(crop_coord=self.roi)
                 fe.extract_frames_into_video(ea, video_name=f"{self.video_name}_frame{frame_list[0]}-{frame_list[-1]}.mp4")

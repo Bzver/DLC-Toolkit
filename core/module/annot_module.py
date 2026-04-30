@@ -9,11 +9,11 @@ from PySide6.QtWidgets import QVBoxLayout, QFileDialog
 from typing import List, Dict, Optional, Tuple
 
 from core.runtime import Data_Manager, Video_Manager
-from core.tool import Annotation_Config, Annotation_Summary_Table, Prediction_Plotter, Uno_Stack
-from core.io import Annot_Exporter, load_annotation, load_onehot_csv
-from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Status_Bar, Frame_List_Dialog
+from core.tool import Annot_Exporter, Annotation_Config, Annotation_Summary_Table, Prediction_Plotter, Uno_Stack
+from core.io import load_annotation, load_onehot_csv
+from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Status_Bar, Frame_List_Dialog, Frame_Range_Dialog
 from utils.helper import frame_to_pixmap, frame_to_grayscale, get_next_frame_in_list
-from utils.logger import Loggerbox, Safe_Operation
+from utils.logger import Loggerbox
 
 
 class Frame_Annotator:
@@ -172,9 +172,8 @@ class Frame_Annotator:
         )
         if not csv_path:
             return
+        auto_path = f"{csv_path.split("_pred_annotated_iteration-")[0]}.json"
 
-        auto_path = csv_path.replace("_pred_annotated_iteration-0.csv", ".json")
-        print(auto_path)
         if os.path.isfile(auto_path):
             json_path = auto_path
         else:
@@ -554,12 +553,11 @@ class Frame_Annotator:
         vid_path, _ = os.path.splitext(self.dm.video_file)
         save_path = f"{vid_path}_annot_backup.txt"
 
-        with Safe_Operation(self.main, "Save Annotations", save_path):
-            if not hasattr(self, "annot_sum"):
-                self._init_annot_config()
-            segments = self.annot_sum.extract_segments(include_other=True)
-            ae = Annot_Exporter(self.annot_array, self.dm.video_name, self.behav_map, self.idx_to_cat, self.dm.roi)
-            ae.to_txt(save_path, segments)
+        if not hasattr(self, "annot_sum"):
+            self._init_annot_config()
+        segments = self.annot_sum.extract_segments(include_other=True)
+        ae = Annot_Exporter(self.annot_array, self.dm.video_file, self.behav_map, self.idx_to_cat, self.dm.roi)
+        ae.to_txt(save_path, segments)
 
     def _export_annotation_to_text(self):
         if self.annot_array is None:
@@ -572,12 +570,11 @@ class Frame_Annotator:
         if not file_path:
             return
 
-        with Safe_Operation(self.main, "Save Annotations", file_path):
-            if not hasattr(self, "annot_sum"):
-                self._init_annot_config()
-            segments = self.annot_sum.extract_segments(include_other=True)
-            ae = Annot_Exporter(self.annot_array, self.dm.video_name, self.behav_map, self.idx_to_cat, self.dm.roi)
-            ae.to_txt(file_path, segments)
+        if not hasattr(self, "annot_sum"):
+            self._init_annot_config()
+        segments = self.annot_sum.extract_segments(include_other=True)
+        ae = Annot_Exporter(self.annot_array, self.dm.video_file, self.behav_map, self.idx_to_cat, self.dm.roi)
+        ae.to_txt(file_path, segments)
 
     def _export_annotation_to_mat(self):
         if self.annot_array is None:
@@ -590,9 +587,8 @@ class Frame_Annotator:
         if not file_path:
             return
 
-        with Safe_Operation(self.main, "Save Annotations", file_path):
-            ae = Annot_Exporter(self.annot_array, self.dm.video_name, self.behav_map, self.idx_to_cat, self.dm.roi)
-            ae.to_mat(file_path)
+        ae = Annot_Exporter(self.annot_array, self.dm.video_file, self.behav_map, self.idx_to_cat, self.dm.roi)
+        ae.to_mat(file_path)
 
     def _export_annotation_to_onehot(self):
         if self.dm.dlc_data is None:
@@ -603,10 +599,9 @@ class Frame_Annotator:
 
         if not file_path:
             return
-        
-        with Safe_Operation(self.main, "Save Annotations", file_path):
-            ae = Annot_Exporter(self.annot_array, self.dm.video_name, self.behav_map, self.idx_to_cat, self.dm.roi)
-            ae.to_onehot(file_path, self.dm.dlc_data)
+    
+        ae = Annot_Exporter(self.annot_array, self.dm.video_file, self.behav_map, self.idx_to_cat, self.dm.roi)
+        ae.to_onehot(file_path, self.dm.dlc_data)
 
     def _export_training_package(self):
         if self.dm.dlc_data is None or self.dm.dlc_data.pred_data_array is None:
@@ -618,9 +613,8 @@ class Frame_Annotator:
         if not folder_path:
             return
         
-        with Safe_Operation(self.main, "Save Annotations", folder_path):
-            ae = Annot_Exporter(self.annot_array, self.dm.video_name, self.behav_map, self.idx_to_cat, self.dm.roi)
-            ae.to_asoid_train(folder_path, self.dm.dlc_data)
+        ae = Annot_Exporter(self.annot_array, self.dm.video_file, self.behav_map, self.idx_to_cat, self.dm.roi)
+        ae.to_asoid_train(folder_path, self.dm.dlc_data)
 
     def _export_inference_package(self):
         if self.dm.dlc_data is None or self.dm.dlc_data.pred_data_array is None:
@@ -632,9 +626,8 @@ class Frame_Annotator:
         if not file_path:
             return
 
-        with Safe_Operation(self.main, "Save Annotations", file_path):
-            ae = Annot_Exporter(self.annot_array, self.dm.video_name, self.behav_map, self.idx_to_cat, self.dm.roi)
-            ae.to_asoid_infer(file_path, self.dm.dlc_data)
+        ae = Annot_Exporter(self.annot_array, self.dm.video_file, self.behav_map, self.idx_to_cat, self.dm.roi)
+        ae.to_asoid_infer(file_path, self.dm.dlc_data)
 
     def _export_refine_package(self):
         if self.dm.dlc_data is None or self.dm.dlc_data.pred_data_array is None:
@@ -646,6 +639,10 @@ class Frame_Annotator:
         if not folder_path:
             return
     
-        with Safe_Operation(self.main, "Save Annotations", folder_path):
-            ae = Annot_Exporter(self.annot_array, self.dm.video_name, self.behav_map, self.idx_to_cat, self.dm.roi)
-            ae.to_asoid_infer(folder_path, self.dm.dlc_data)
+        frame_dialog = Frame_Range_Dialog(self.dm.total_frames, self.main)
+        start, end = 0, self.dm.total_frames
+        if frame_dialog.exec() == QtWidgets.QDialog.Accepted:
+            start, end = frame_dialog.selected_range
+
+        ae = Annot_Exporter(self.annot_array, self.dm.video_file, self.behav_map, self.idx_to_cat, self.dm.roi)
+        ae.to_asoid_refine(folder_path, self.dm.dlc_data, start, end)

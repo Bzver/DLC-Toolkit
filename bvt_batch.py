@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import shutil
 import yaml
+import json
 from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime
@@ -280,7 +281,7 @@ def batch_data_clean(rootdir:str, kp_clean:bool=False, inst_clean:bool=False):
     
     _process_batch(workspaces, process_workspace, "data cleaning")
 
-def batch_export_to_asoid_inference(rootdir:str, catalogue_file:Optional[str]=None):
+def batch_export_to_asoid_inference(rootdir:str, catalogue_file:Optional[str]=None, behav_map_file:Optional[str]=None):
     workspaces = _find_files_by_extension(rootdir, ".joblib")
     if not workspaces:
         logger.info("[BATCH] No workspace files.")
@@ -291,6 +292,12 @@ def batch_export_to_asoid_inference(rootdir:str, catalogue_file:Optional[str]=No
         df = pd.read_csv(catalogue_file, header=None)
         df['date'] = df[0].str.split(' ').str[0]
         csv_lookup = dict(zip(zip(df['date'], df[1].astype(str)), df[2]))
+
+    behav_map = None
+    if behav_map_file:
+        with open(behav_map_file, 'r') as f:
+            meta = json.load(f)
+            behav_map = meta["behav_map"]
 
     _log_batch_progress("Exporting to Asoid Inference", workspaces)
     def process_workspace(ws_path: str) -> bool:
@@ -336,7 +343,7 @@ def batch_export_to_asoid_inference(rootdir:str, catalogue_file:Optional[str]=No
             save_name = ws_path.replace(".joblib", "_auto_export.csv")
         
         save_path = os.path.join(os.path.dirname(ws_path), save_name)
-        ae = Annot_Exporter(np.zeros(dm.total_frames), dm.video_name, None, None, dm.roi)
+        ae = Annot_Exporter(np.zeros(dm.total_frames), dm.video_file, behav_map, None, dm.roi)
         ae.to_asoid_infer(save_path, dm.dlc_data)
 
         return True
@@ -855,36 +862,38 @@ if __name__ == "__main__":
 
     quened_dirs = [
         # r'D:\Data\Videos\20250913 Marathon',
-        r'D:\Data\Videos\20250918 Marathon',
-        r'D:\Data\Videos\20251012 Marathon',
-        r'D:\Data\Videos\20251018 Marathon',
-        r'D:\Data\Videos\20251101 Marathon',
-        r'D:\Data\Videos\20251117 Marathon',
-        r'D:\Data\Videos\20251201 Marathon',
-        r'D:\Data\Videos\20260324 Marathon',
+        # r'D:\Data\Videos\20250918 Marathon',
+        # r'D:\Data\Videos\20251012 Marathon',
+        # r'D:\Data\Videos\20251018 Marathon',
+        # r'D:\Data\Videos\20251101 Marathon',
+        # r'D:\Data\Videos\20251117 Marathon',
+        # r'D:\Data\Videos\20251201 Marathon',
+        # r'D:\Data\Videos\20260324 Marathon',
         r'D:\Data\Videos\20260416 Marathon',
     ]
+
+    dial_tones = [13]
+
+    """
+    1 - inference; 2 - rerun; 3 - track fix; 4 - track clean; 5 - temp dir clean;
+    6 - csv 2 h5; 7 - pkl migration; 8 - backup workspace; 9- create workspace;
+    10 - extract track fix info; 11 - convert grayscale; 12 - export csv; 13 - export ASOID
+    """
+
+    dlc_config_path =r"D:/Project/DLC-Models/NTD-Blob/config.yaml"
+    catalogue_file=r"D:\Data\Videos\catalogue.csv"
+    behav_map_file=r"D:\Data\Videos\20250913 Marathon\301T_aaa_20251030160615_combined_cut_annot.json"
+
+    CROPPING = True
+    MASKING = False
+    GRAYSCALING = False
+    BATCH = 16
+    DT_BATCH = 16
 
     for rootdir in quened_dirs:
         if not os.path.isdir(rootdir):
             print(f"{rootdir} does not exist!")
             continue
-
-        dlc_config_path = "D:/Project/DLC-Models/NTD-Blob/config.yaml"
-    
-        CROPPING = True
-        MASKING = False
-        GRAYSCALING = False
-        BATCH = 16
-        DT_BATCH = 16
-
-        dial_tones = [13]
-        """
-        1 - inference; 2 - rerun; 3 - track fix; 4 - track clean; 5 - temp dir clean;
-        6 - csv 2 h5; 7 - pkl migration; 8 - backup workspace; 9- create workspace;
-        10 - extract track fix info; 11 - convert grayscale; 12 - export csv;
-        """
-
         for tone in dial_tones:
             match tone: 
                 case 1:
@@ -933,4 +942,4 @@ if __name__ == "__main__":
                 case 10: batch_extract_track_fix_info(rootdir)
                 case 11: batch_convert_to_grayscale(dlc_config_path)
                 case 12: batch_export_csv(rootdir, with_conf=True, no_scorer_header=True, animal_num_filtering=True, min_animal_num=2)
-                case 13: batch_export_to_asoid_inference(rootdir, catalogue_file="D:\Data\Videos\catalogue.csv")
+                case 13: batch_export_to_asoid_inference(rootdir, catalogue_file, behav_map_file)
