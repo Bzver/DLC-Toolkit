@@ -52,7 +52,11 @@ class Blob_Counter(QGroupBox):
         self.total_frames = self.extractor.get_total_frames()
         self.current_frame = None
         self.frame_idx = 0
-        self.roi = tuple(roi) if roi is not None else None
+        self.roi = None
+        try:
+            self.roi = tuple(roi) if roi is not None else None
+        except:
+            pass
         self.blob_array = blob_array
         self.last_reset_query = 0
 

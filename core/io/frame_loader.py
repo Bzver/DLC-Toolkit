@@ -151,12 +151,7 @@ class Frame_Extractor:
             self._seq_cap = None
             logger.debug("[FLOADER] Sequential capture released.")
 
-    def clear_cache(self):
-        logger.debug("[FLOADER] Clearing frame cache.")
-        self._frame_cache.clear()
-
     def close(self):
-        self.clear_cache()
         if self.cap:
             self.cap.release()
             self.cap = None

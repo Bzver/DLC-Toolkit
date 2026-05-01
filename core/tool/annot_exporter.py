@@ -79,7 +79,7 @@ class Annot_Exporter:
         pred_path = file_path.replace(".csv", "_pred.csv")
         prediction_to_csv(dlc_data, dlc_data.pred_data_array, pred_path, keep_conf=True, no_scorer_row=True)
 
-    def to_asoid_train(self, folder_path, dlc_data:Loaded_DLC_Data, min_duration:int=10, max_gap:int=3, fps:int=10):
+    def to_asoid_train(self, folder_path, dlc_data:Loaded_DLC_Data, min_duration:int=1, max_gap:int=3, fps:int=10):
         os.makedirs(os.path.join(folder_path, "behav"), exist_ok=True)
         os.makedirs(os.path.join(folder_path, "pred"), exist_ok=True)
 
@@ -131,7 +131,7 @@ class Annot_Exporter:
             frame_list=frame_list,
             mode="train")
 
-    def to_asoid_infer(self, file_path, dlc_data:Loaded_DLC_Data, min_duration:int=10, max_gap:int=3, fps:int=10):
+    def to_asoid_infer(self, file_path, dlc_data:Loaded_DLC_Data, min_duration:int=1, max_gap:int=3, fps:int=10):
         pred_data_array = dlc_data.pred_data_array.copy()
         I = pred_data_array.shape[1]
         for inst_idx in range(I):
@@ -164,7 +164,7 @@ class Annot_Exporter:
             frame_list=frame_list,
             mode="infer")
 
-    def to_asoid_refine(self, folder_path, dlc_data:Loaded_DLC_Data, seg_start=0, seg_end=-1, max_gap=10, min_length=50, seg_needed=10):
+    def to_asoid_refine(self, folder_path, dlc_data:Loaded_DLC_Data, seg_start=0, seg_end=-1, max_gap=1, min_length=50, seg_needed=10):
         os.makedirs(os.path.join(folder_path, "refine"), exist_ok=True)
 
         if seg_end < 0:
@@ -172,8 +172,6 @@ class Annot_Exporter:
 
         pred_data_array = dlc_data.pred_data_array.copy()
         I = pred_data_array.shape[1]
-        for inst_idx in range(I):
-            pred_data_array = interpolate_track_all(pred_data_array, inst_idx, max_gap)
 
         instance_array = get_instance_count_per_frame(pred_data_array)
 
