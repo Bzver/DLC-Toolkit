@@ -11,8 +11,10 @@ from typing import List, Dict, Optional, Tuple
 from core.runtime import Data_Manager, Video_Manager
 from core.tool import Annot_Exporter, Annotation_Config, Annotation_Summary_Table, Prediction_Plotter, Uno_Stack
 from core.io import load_annotation, load_onehot_csv
-from ui import Menu_Widget, Video_Player_Widget, Shortcut_Manager, Status_Bar, Frame_List_Dialog, Frame_Range_Dialog
-from utils.helper import frame_to_pixmap, frame_to_grayscale, get_next_frame_in_list
+from ui import (
+    Menu_Widget, Video_Player_Widget, Shortcut_Manager, Status_Bar,
+    Frame_List_Dialog, Frame_Range_Dialog, Bout_Dialog, Composition_Dialog)
+from utils.helper import frame_to_pixmap, frame_to_grayscale, get_next_frame_in_list, refine_bouts_parallel
 from utils.logger import Loggerbox
 
 
@@ -61,6 +63,7 @@ class Frame_Annotator:
             "Analyze":{
                 "buttons": [
                     ("Filter Out Short Bout", self._filter_short_bout),
+                    ("Smart Bout Stitching", self._stitch_bouts),
                     ("Toggle Selected Beavior Navigation", self._toggle_category_nav_mode),
                     ("Change Behaviors To Navigate", self._choose_behav_to_nav),
                 ]   
@@ -470,39 +473,24 @@ class Frame_Annotator:
 
             after_counts = np.bincount(self.annot_array)
 
-            dialog = QtWidgets.QDialog(self.main)
-            dialog.setWindowTitle("Composition Change")
-            layout = QtWidgets.QVBoxLayout()
+            cdlg = Composition_Dialog(before_counts, after_counts, self.dm.total_frames, self.idx_to_cat)
+            cdlg.exec()
 
-            table = QtWidgets.QTableWidget()
-            table.setColumnCount(4)
-            table.setHorizontalHeaderLabels(["Behavior", "Before (%)", "After (%)", "Δ (%)"])
-            table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+            self._auto_save()
+            self.refresh_ui()
 
-            labels = np.union1d(np.where(before_counts)[0], np.where(after_counts)[0])
-            table.setRowCount(len(labels))
+    def _stitch_bouts(self):
+        self._save_state_for_undo()
+        before_counts = np.bincount(self.annot_array)
 
-            for row_idx, lbl in enumerate(np.sort(labels)):
-                b = before_counts[lbl] if lbl < len(before_counts) else 0
-                a = after_counts[lbl] if lbl < len(after_counts) else 0
-                pct_b = 100 * b / self.dm.total_frames
-                pct_a = 100 * a / self.dm.total_frames
-                delta = pct_a - pct_b
-                lbl_text = self.idx_to_cat[lbl]
+        bdlg = Bout_Dialog(self.main)
+        if bdlg.exec() == QtWidgets.QDialog.Accepted:
+            eps, min_cluster = bdlg.get_params()
+            self.annot_array = refine_bouts_parallel(self.annot_array, neutral_ids=[100], eps_frames=eps, min_cluster_size=min_cluster)
 
-                table.setItem(row_idx, 0, QtWidgets.QTableWidgetItem(str(lbl_text)))
-                table.setItem(row_idx, 1, QtWidgets.QTableWidgetItem(f"{pct_b:.2f}"))
-                table.setItem(row_idx, 2, QtWidgets.QTableWidgetItem(f"{pct_a:.2f}"))
-                item = QtWidgets.QTableWidgetItem(f"{delta:+.2f}")
-                item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                table.setItem(row_idx, 3, item)
-
-            table.resizeColumnsToContents()
-            layout.addWidget(table)
-            layout.addWidget(QtWidgets.QPushButton("OK", clicked=dialog.accept))
-            dialog.setLayout(layout)
-            dialog.adjustSize()
-            dialog.exec()
+            after_counts = np.bincount(self.annot_array)
+            cdlg = Composition_Dialog(before_counts, after_counts, self.dm.total_frames, self.idx_to_cat)
+            cdlg.exec()
 
             self._auto_save()
             self.refresh_ui()

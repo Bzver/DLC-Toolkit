@@ -1,6 +1,6 @@
 import numpy as np
 from functools import partial
-from PySide6 import QtWidgets, QtGui
+from PySide6 import QtWidgets, QtGui, QtCore
 from PySide6.QtCore import Qt, Signal, QPoint
 from PySide6.QtWidgets import (
     QPushButton, QHBoxLayout, QVBoxLayout, QDial, QDialog, QRadioButton, QGroupBox, QGridLayout, QFileDialog,
@@ -840,3 +840,111 @@ class Dual_Pixmap_Dialog(QDialog):
             Qt.KeepAspectRatio, 
             Qt.SmoothTransformation
         )
+
+
+class Bout_Dialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("DBSCAN Parameters")
+        self.setModal(True)
+        
+        layout = QVBoxLayout()
+        
+        self.eps_input = Spinbox_With_Label("Epsilon (eps):", (1, 100), 25)
+        self.min_samples_input = Spinbox_With_Label("Min Cluster Size:", (1, 100), 3)
+        layout.addWidget(self.eps_input)
+        layout.addWidget(self.min_samples_input)
+    
+        self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+
+        layout.addWidget(self.buttons)
+        self.setLayout(layout)
+
+    def get_params(self):
+        return self.eps_input.value(), self.min_samples_input.value()
+    
+
+class Composition_Dialog(QDialog):
+    def __init__(
+        self, 
+        before_counts: np.ndarray, 
+        after_counts: np.ndarray, 
+        total_frames: int, 
+        idx_to_cat: Dict[int, str],
+        parent=None, 
+        ):
+        super().__init__(parent)
+        self.setWindowTitle("Composition Change")
+        self.setMinimumWidth(500)
+
+        self.bc = before_counts
+        self.ac = after_counts
+        self.total_frames = total_frames
+        self.idx_to_cat = idx_to_cat
+
+        layout = QtWidgets.QVBoxLayout()
+        # --- Table Setup ---
+        table = QtWidgets.QTableWidget()
+        table.setColumnCount(4)
+        table.setHorizontalHeaderLabels(["Behavior", "Before (%)", "After (%)", "Δ (%)"])
+        table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        table.horizontalHeader().setStretchLastSection(True)
+
+        if table.columnWidth(0) < 150:
+            table.setColumnWidth(0, 150)
+
+        layout.addWidget(table)
+
+        self.setLayout(layout)
+        self.adjustSize()
+
+        self._show_composition_change(table)
+
+    def _show_composition_change(self, table):
+        before_indices = np.where(self.bc > 0)[0]
+        after_indices = np.where(self.ac > 0)[0]
+        
+        labels = np.union1d(before_indices, after_indices)
+        table.setRowCount(len(labels))
+
+        for row_idx, lbl in enumerate(np.sort(labels)):
+            b = self.bc[lbl] if lbl < len(self.bc) else 0
+            a = self.ac[lbl] if lbl < len(self.ac) else 0
+            
+            if self.total_frames > 0:
+                pct_b = 100 * b / self.total_frames
+                pct_a = 100 * a / self.total_frames
+            else:
+                pct_b = pct_a = 0.0
+                
+            delta = pct_a - pct_b
+            lbl_text = self.idx_to_cat.get(lbl, str(lbl))
+
+            item_name = QtWidgets.QTableWidgetItem(str(lbl_text))
+            item_name.setFlags(item_name.flags() & ~QtCore.Qt.ItemIsEditable)
+            table.setItem(row_idx, 0, item_name)
+
+            item_b = QtWidgets.QTableWidgetItem(f"{pct_b:.2f}")
+            item_b.setFlags(item_b.flags() & ~QtCore.Qt.ItemIsEditable)
+            table.setItem(row_idx, 1, item_b)
+
+            item_a = QtWidgets.QTableWidgetItem(f"{pct_a:.2f}")
+            item_a.setFlags(item_a.flags() & ~QtCore.Qt.ItemIsEditable)
+            table.setItem(row_idx, 2, item_a)
+
+            item_delta = QtWidgets.QTableWidgetItem(f"{delta:+.2f}")
+            item_delta.setTextAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+            item_delta.setFlags(item_delta.flags() & ~QtCore.Qt.ItemIsEditable)
+            
+            if delta > 0.001:
+                item_delta.setForeground(QtCore.Qt.darkGreen)
+            elif delta < -0.001:
+                item_delta.setForeground(QtCore.Qt.darkRed)
+                
+            table.setItem(row_idx, 3, item_delta)
+
+        table.resizeColumnsToContents()
+        

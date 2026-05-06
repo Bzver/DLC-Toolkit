@@ -4,6 +4,7 @@ from .data_cleaning import (
     clean_inconsistent_nans,
     array_to_iterable_runs,
     clean_outside_roi_pred,
+    refine_bouts_parallel,
     clean_pred_in_mask,
     indices_to_spans,
     )
@@ -20,6 +21,7 @@ from .mark_nav import navigate_to_marked_frame, get_prev_frame_in_list, get_next
 from .roi import get_roi_cv2, plot_roi, crop_coord_to_array, validate_crop_coord
 from .misc import handle_unsaved_changes_on_close, bye_bye_runtime_warning
 
+
 __all__ = (
     handle_unsaved_changes_on_close,
     clean_blob_array_for_inference,
@@ -34,6 +36,7 @@ __all__ = (
     array_to_iterable_runs,
     get_prev_frame_in_list,
     get_next_frame_in_list,
+    refine_bouts_parallel,
     get_smart_bg_masking,
     validate_crop_coord,
     crop_coord_to_array,
